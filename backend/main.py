@@ -747,6 +747,116 @@ Important: Return the complete sentences containing the matches, not just the ma
         "matches": matches
     }
 
+def _time_to_seconds(time_str: str) -> float:
+    """Convert HH:MM:SS format to seconds"""
+    h, m, s = map(int, time_str.split(':'))
+    return h * 3600 + m * 60 + s
+
+def _time_diff_minutes(time1: str, time2: str) -> float:
+    """Calculate difference between two timestamps in minutes"""
+    return (_time_to_seconds(time2) - _time_to_seconds(time1)) / 60
+
+@app.post("/generate_summary/")
+async def generate_summary(request: Request) -> Dict:
+    """Generate section summaries from transcription"""
+    if not hasattr(request.app.state, 'last_transcription'):
+        raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
+    
+    transcription = request.app.state.last_transcription
+    segments = transcription['transcription']['segments']
+    
+    # Group segments into logical sections (roughly 1-3 minutes each)
+    sections = []
+    current_section = []
+    section_start = "00:00:00"
+    min_section_duration = 1  # Minimum section duration in minutes
+    max_section_duration = 3  # Maximum section duration in minutes
+    
+    for segment in segments:
+        # Create new section when we reach desired duration or significant pause
+        start_time = segment['start_time']
+        if current_section:
+            # Check if we've reached minimum duration and have a natural break
+            section_duration = _time_diff_minutes(section_start, start_time)
+            if section_duration >= min_section_duration:
+                # Check for natural break (>2 second pause)
+                last_segment_end = _time_to_seconds(current_section[-1]['end_time'])
+                current_segment_start = _time_to_seconds(start_time)
+                pause_duration = current_segment_start - last_segment_end
+                
+                # Create new section if we have a significant pause or reached max duration
+                if pause_duration > 2 or section_duration >= max_section_duration:
+                    sections.append({
+                        "start": section_start,
+                        "end": current_section[-1]['end_time'],
+                        "segments": current_section.copy()
+                    })
+                    section_start = start_time
+                    current_section = [segment]
+                    continue
+        
+        current_section.append(segment)
+    
+    # Add the last section
+    if current_section:
+        sections.append({
+            "start": section_start,
+            "end": current_section[-1]['end_time'],
+            "segments": current_section
+        })
+    
+    # Generate summary for each section
+    summaries = []
+    for section in sections:
+        # Combine text from all segments
+        section_text = " ".join(seg["text"] for seg in section["segments"])
+        translated_text = " ".join(seg.get("translation", seg["text"]) for seg in section["segments"])
+        
+        # Only use translation if it's different from the original
+        text_to_summarize = translated_text if (
+            translated_text != section_text and 
+            transcription['transcription']['language'].lower() not in ["en", "english"]
+        ) else section_text
+        
+        try:
+            # Generate concise summary
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert at summarizing content. Create a concise summary (2-3 sentences) that captures the key points from this transcript section."},
+                    {"role": "user", "content": f"Section from {section['start']} to {section['end']}:\n\n{text_to_summarize}"}
+                ],
+                temperature=0.3
+            )
+            
+            # Generate descriptive title
+            title_response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Create a short, descriptive title (3-5 words) for this transcript section."},
+                    {"role": "user", "content": text_to_summarize}
+                ],
+                temperature=0.3
+            )
+            
+            summaries.append({
+                "title": title_response.choices[0].message.content.strip(),
+                "start": section["start"],
+                "end": section["end"],
+                "summary": response.choices[0].message.content.strip()
+            })
+        except Exception as e:
+            print(f"Error generating summary for section {section['start']}-{section['end']}: {e}")
+            # Add a placeholder for failed summaries
+            summaries.append({
+                "title": f"Section {section['start']}-{section['end']}",
+                "start": section["start"],
+                "end": section["end"],
+                "summary": "Summary generation failed. Please try again."
+            })
+    
+    return {"summaries": summaries}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 

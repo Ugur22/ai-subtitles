@@ -5,12 +5,14 @@ import { SubtitleControls } from './SubtitleControls';
 import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
 import ReactPlayer from 'react-player';
+import { SummaryPanel } from '../summary/SummaryPanel';
 
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playerRef = useRef<any>(null);
@@ -108,6 +110,11 @@ export const TranscriptionUpload = () => {
       parseInt(timeParts[2]);
       
     playerRef.current.seekTo(seconds);
+    console.log(`Seeking to timestamp: ${timeString} (${seconds} seconds)`);
+  };
+
+  const handleSummaryClick = () => {
+    setShowSummary(!showSummary);
   };
 
   return (
@@ -313,6 +320,12 @@ export const TranscriptionUpload = () => {
               
               <div className="flex items-center gap-3">
                 <button 
+                  onClick={handleSummaryClick}
+                  className={`px-4 py-2 ${showSummary ? 'bg-teal-600' : 'bg-teal-500'} text-white text-sm rounded-lg hover:bg-teal-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 flex items-center`}
+                >
+                  {showSummary ? 'Hide Summary' : 'Show Summary'}
+                </button>
+                <button 
                   onClick={startNewTranscription}
                   className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 text-white text-sm rounded-lg hover:from-teal-600 hover:to-cyan-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 flex items-center"
                 >
@@ -352,53 +365,66 @@ export const TranscriptionUpload = () => {
             </div>
           )}
           
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-sm font-medium text-gray-800">Transcript</h3>
-              <div className="flex items-center gap-3">
-                <label className="inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showTranslation}
-                    onChange={() => setShowTranslation(!showTranslation)}
-                    className="sr-only peer"
-                  />
-                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-                  <span className="ms-3 text-sm font-medium">Show English Translation</span>
-                </label>
-                <span className="px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
-                  {showTranslation ? 'ENGLISH' : transcription.transcription.language.toUpperCase()}
-                </span>
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className={`${showSummary ? 'md:w-2/3' : 'w-full'}`}>
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                  <h3 className="text-sm font-medium text-gray-800">Transcript</h3>
+                  <div className="flex items-center gap-3">
+                    <label className="inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showTranslation}
+                        onChange={() => setShowTranslation(!showTranslation)}
+                        className="sr-only peer"
+                      />
+                      <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
+                      <span className="ms-3 text-sm font-medium">Show English Translation</span>
+                    </label>
+                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
+                      {showTranslation ? 'ENGLISH' : transcription.transcription.language.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Custom display to handle translations */}
+                <div className="p-5 space-y-6">
+                  {transcription.transcription.segments.map((segment) => (
+                    <div key={segment.id} className="py-2 border-b border-gray-100 last:border-0">
+                      <div 
+                        className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                        onClick={() => seekToTimestamp(segment.start_time)}
+                      >
+                        <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        {segment.start_time} - {segment.end_time}
+                        <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                      </div>
+                      <p className="text-gray-800">
+                        {showTranslation && segment.translation ? segment.translation : segment.text}
+                      </p>
+                      {/* Show both when a translation is available */}
+                      {showTranslation && segment.translation && segment.translation !== segment.text && (
+                        <p className="text-xs text-gray-500 mt-1 italic">
+                          Original: {segment.text}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             
-            {/* Custom display to handle translations */}
-            <div className="p-5 space-y-6">
-              {transcription.transcription.segments.map((segment) => (
-                <div key={segment.id} className="py-2 border-b border-gray-100 last:border-0">
-                  <div 
-                    className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
-                    onClick={() => seekToTimestamp(segment.start_time)}
-                  >
-                    <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
-                    {segment.start_time} - {segment.end_time}
-                    <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
-                  </div>
-                  <p className="text-gray-800">
-                    {showTranslation && segment.translation ? segment.translation : segment.text}
-                  </p>
-                  {/* Show both when a translation is available */}
-                  {showTranslation && segment.translation && segment.translation !== segment.text && (
-                    <p className="text-xs text-gray-500 mt-1 italic">
-                      Original: {segment.text}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
+            {showSummary && (
+              <div className="md:w-1/3">
+                <SummaryPanel 
+                  isVisible={showSummary} 
+                  onSeekTo={seekToTimestamp}
+                />
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
