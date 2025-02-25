@@ -348,93 +348,227 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                     total_size += len(chunk)
                     pbar.update(len(chunk) / (1024 * 1024))
             temp_file.flush()
-
-        # Extract and compress audio from video
-        print("\nExtracting audio...")
-        audio_chunks = extract_audio(temp_file.name)
-        
-        # Process each audio chunk
-        all_segments = []
-        total_duration = 0
-        detected_language = None
-        
-        print("\nTranscribing audio...")
-        for chunk_idx, audio_path in enumerate(tqdm(audio_chunks, desc="Transcribing chunks", ncols=80)):
-            # Calculate time offset for this chunk
-            time_offset = chunk_idx * 600  # 600 seconds per chunk
             
-            # Transcribe the audio chunk
-            with open(audio_path, "rb") as audio_file:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    response_format="verbose_json"
-                )
+            # Check file size - if it's slightly over 25MB, we'll use more aggressive compression
+            file_size_mb = total_size / (1024 * 1024)
+            print(f"\nFile size: {file_size_mb:.2f}MB")
+            use_aggressive_compression = file_size_mb > 25 and file_size_mb < 30
 
-            # Convert transcript to dict if it's not already
-            if not isinstance(transcript, dict):
-                transcript = transcript.model_dump()
+        try:
+            # Extract and compress audio from video
+            print("\nExtracting audio...")
+            if use_aggressive_compression:
+                print("File slightly exceeds 25MB limit. Using aggressive compression...")
+                # Override compress_audio function for this file with more aggressive settings
+                def compress_audio_aggressive(input_path: str, output_path: str) -> str:
+                    try:
+                        # Check if ffmpeg is available
+                        if not shutil.which('ffmpeg'):
+                            raise Exception("ffmpeg is not installed. Please install ffmpeg first.")
 
-            # Store detected language from first chunk
-            if chunk_idx == 0:
-                detected_language = transcript['language']
-                print(f"\nDetected language: {detected_language}")
+                        # More aggressive compression settings
+                        command = [
+                            'ffmpeg', '-i', input_path,
+                            '-ac', '1',  # Convert to mono
+                            '-ar', '8000',  # Lower sample rate to 8kHz
+                            '-b:a', '16k',  # Lower bitrate to 16k
+                            output_path,
+                            '-y'  # Overwrite output file if it exists
+                        ]
+                        
+                        subprocess.run(command, check=True, capture_output=True)
+                        return output_path
+                    except subprocess.CalledProcessError as e:
+                        raise Exception(f"Error compressing audio: {e.stderr.decode()}")
+                
+                # Temporarily replace the compression function
+                original_compress_audio = compress_audio
+                globals()['compress_audio'] = compress_audio_aggressive
+                
+                # Extract audio with the more aggressive compression
+                audio_chunks = extract_audio(temp_file.name)
+                
+                # Restore original compression function
+                globals()['compress_audio'] = original_compress_audio
+            else:
+                # Use standard compression
+                audio_chunks = extract_audio(temp_file.name)
+            
+            # Process each audio chunk
+            all_segments = []
+            total_duration = 0
+            detected_language = None
+            
+            print("\nTranscribing audio...")
+            for chunk_idx, audio_path in enumerate(tqdm(audio_chunks, desc="Transcribing chunks", ncols=80)):
+                # Calculate time offset for this chunk
+                time_offset = chunk_idx * 600  # 600 seconds per chunk
+                
+                try:
+                    # Print debug info about the audio file
+                    audio_file_size = os.path.getsize(audio_path) / (1024 * 1024)
+                    print(f"Audio chunk {chunk_idx} size: {audio_file_size:.2f}MB")
+                    
+                    # Transcribe the audio chunk
+                    with open(audio_path, "rb") as audio_file:
+                        try:
+                            transcript = client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=audio_file,
+                                response_format="verbose_json"
+                            )
+                        except Exception as e:
+                            print(f"OpenAI API error: {str(e)}")
+                            # If file is too large for OpenAI, try more aggressive compression
+                            if "file too large" in str(e).lower():
+                                print("File too large for OpenAI API, trying more aggressive compression...")
+                                compressed_path = audio_path + ".compressed.wav"
+                                try:
+                                    # Ultra aggressive compression
+                                    command = [
+                                        'ffmpeg', '-i', audio_path,
+                                        '-ac', '1',         # Convert to mono
+                                        '-ar', '8000',      # Very low sample rate
+                                        '-b:a', '12k',      # Very low bitrate
+                                        '-acodec', 'libmp3lame',  # Use MP3 encoding which can be more compressed
+                                        compressed_path,
+                                        '-y'               # Overwrite output file if it exists
+                                    ]
+                                    subprocess.run(command, check=True, capture_output=True)
+                                    
+                                    # Check new file size
+                                    new_size = os.path.getsize(compressed_path) / (1024 * 1024)
+                                    print(f"Ultra-compressed size: {new_size:.2f}MB")
+                                    
+                                    # Try again with smaller file
+                                    with open(compressed_path, "rb") as compressed_file:
+                                        transcript = client.audio.transcriptions.create(
+                                            model="whisper-1",
+                                            file=compressed_file,
+                                            response_format="verbose_json"
+                                        )
+                                        
+                                    # Clean up temporary compressed file
+                                    os.unlink(compressed_path)
+                                except Exception as comp_error:
+                                    print(f"Compression or retry failed: {str(comp_error)}")
+                                    raise
+                            else:
+                                raise
 
-            # Adjust timestamps and add segments
-            for segment in transcript['segments']:
-                segment['start'] += time_offset
-                segment['end'] += time_offset
-                all_segments.append(segment)
+                    # Convert transcript to dict if it's not already
+                    if not isinstance(transcript, dict):
+                        transcript = transcript.model_dump()
 
-            # Update total duration
-            total_duration = max(total_duration, time_offset + transcript['duration'])
+                    # Store detected language from first chunk
+                    if chunk_idx == 0:
+                        detected_language = transcript['language']
+                        print(f"\nDetected language: {detected_language}")
 
-            # Clean up audio chunk file
-            os.unlink(audio_path)
+                    # Adjust timestamps and add segments
+                    for segment in transcript['segments']:
+                        segment['start'] += time_offset
+                        segment['end'] += time_offset
+                        all_segments.append(segment)
 
-        # Clean up the original video file
-        os.unlink(temp_file.name)
+                    # Update total duration
+                    total_duration = max(total_duration, time_offset + transcript['duration'])
 
-        # Translate segments in batches
-        print("\nTranslating segments...")
-        translated_segments = translate_segments(client, all_segments, detected_language)
+                    # Clean up audio chunk file
+                    os.unlink(audio_path)
 
-        # Format all segments with proper timestamps
-        print("\nFormatting results...")
-        formatted_segments = []
-        for segment in tqdm(translated_segments, desc="Formatting segments", ncols=80):
-            formatted_segment = {
-                "id": segment['id'],
-                "start_time": format_timestamp(segment['start']),
-                "end_time": format_timestamp(segment['end']),
-                "text": segment['text'].strip(),
-                "translation": segment['translation']
+                except Exception as e:
+                    # Clean up temporary files in case of error
+                    if 'temp_file' in locals():
+                        try:
+                            os.unlink(temp_file.name)
+                        except FileNotFoundError:
+                            pass
+                    # Clean up any remaining audio chunks
+                    if 'audio_chunks' in locals():
+                        for chunk_path in audio_chunks:
+                            try:
+                                os.unlink(chunk_path)
+                            except FileNotFoundError:
+                                pass
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            # Clean up the original video file
+            os.unlink(temp_file.name)
+
+            # Translate segments in batches
+            print("\nTranslating segments...")
+            
+            # Skip translation if content is already in English
+            if detected_language.lower() in ["en", "english"]:
+                print("Content already in English, skipping translation...")
+                for segment in all_segments:
+                    segment['translation'] = segment['text']  # Use original text as translation
+                translated_segments = all_segments
+            else:
+                translated_segments = translate_segments(client, all_segments, detected_language)
+
+            # Format all segments with proper timestamps
+            print("\nFormatting results...")
+            formatted_segments = []
+            for segment in tqdm(translated_segments, desc="Formatting segments", ncols=80):
+                formatted_segment = {
+                    "id": segment['id'],
+                    "start_time": format_timestamp(segment['start']),
+                    "end_time": format_timestamp(segment['end']),
+                    "text": segment['text'].strip(),
+                    "translation": segment['translation']
+                }
+                formatted_segments.append(formatted_segment)
+
+            # Sort segments by start time
+            formatted_segments.sort(key=lambda x: x['start_time'])
+
+            # Calculate total processing time
+            total_time = time.time() - start_time
+            print(f"\nTotal processing time: {format_eta(int(total_time))}")
+
+            result = {
+                "filename": file.filename,
+                "transcription": {
+                    "text": " ".join(segment['text'] for segment in all_segments),
+                    "translated_text": " ".join(segment['translation'] for segment in translated_segments),
+                    "language": detected_language,
+                    "duration": format_timestamp(total_duration),
+                    "segments": formatted_segments,
+                    "processing_time": format_eta(int(total_time))
+                }
             }
-            formatted_segments.append(formatted_segment)
+            
+            # Store the result for subtitle generation
+            request.app.state.last_transcription = result
+            
+            return result
 
-        # Sort segments by start time
-        formatted_segments.sort(key=lambda x: x['start_time'])
-
-        # Calculate total processing time
-        total_time = time.time() - start_time
-        print(f"\nTotal processing time: {format_eta(int(total_time))}")
-
-        result = {
-            "filename": file.filename,
-            "transcription": {
-                "text": " ".join(segment['text'] for segment in all_segments),
-                "translated_text": " ".join(segment['translation'] for segment in translated_segments),
-                "language": detected_language,
-                "duration": format_timestamp(total_duration),
-                "segments": formatted_segments,
-                "processing_time": format_eta(int(total_time))
-            }
-        }
-        
-        # Store the result for subtitle generation
-        request.app.state.last_transcription = result
-        
-        return result
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            # Clean up temporary files in case of error
+            if 'temp_file' in locals():
+                try:
+                    os.unlink(temp_file.name)
+                except FileNotFoundError:
+                    pass
+            # Clean up any remaining audio chunks
+            if 'audio_chunks' in locals():
+                for chunk_path in audio_chunks:
+                    try:
+                        os.unlink(chunk_path)
+                    except FileNotFoundError:
+                        pass
+            
+            # Log the detailed error with traceback
+            import traceback
+            error_details = f"Error: {str(e)}\n{traceback.format_exc()}"
+            print(error_details)
+            
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
     except Exception as e:
         # Clean up temporary files in case of error
@@ -450,7 +584,13 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                     os.unlink(chunk_path)
                 except FileNotFoundError:
                     pass
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        # Log the detailed error with traceback
+        import traceback
+        error_details = f"Error: {str(e)}\n{traceback.format_exc()}"
+        print(error_details)
+        
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 @app.get("/subtitles/{language}")
 async def get_subtitles(language: str, request: Request) -> Response:

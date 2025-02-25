@@ -1,39 +1,19 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { transcribeVideo, TranscriptionResponse } from '../../../services/api';
 import { SubtitleControls } from './SubtitleControls';
-import { TranscriptDisplay } from './TranscriptDisplay';
 import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
-
-// Define an adapter function to convert API response to the format expected by TranscriptDisplay
-const adaptTranscriptionForDisplay = (response: TranscriptionResponse) => {
-  return {
-    segments: response.transcription.segments.map(segment => ({
-      id: segment.id,
-      start_time: segment.start_time,
-      end_time: segment.end_time,
-      text: segment.text,
-      translation: segment.translation, // Add translation if available
-      speaker: 'Speaker 1', // Add default speaker property
-      words: segment.text.split(' ').map((word) => ({
-        word,
-        start: segment.start_time, // We don't have word-level timestamps, so using segment start
-        end: segment.end_time,     // We don't have word-level timestamps, so using segment end
-        speaker: 'Speaker 1'       // Default speaker for words as well
-      }))
-    })),
-    language: response.transcription.language,
-    duration: response.transcription.duration
-  };
-};
+import ReactPlayer from 'react-player';
 
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const playerRef = useRef<any>(null);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -43,9 +23,26 @@ export const TranscriptionUpload = () => {
     },
   });
 
+  // Clean up object URL when component unmounts or videoUrl changes
+  useEffect(() => {
+    return () => {
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+      }
+    };
+  }, [videoUrl]);
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Create and store video URL
+    if (file.type.includes('video')) {
+      const objectUrl = URL.createObjectURL(file);
+      setVideoUrl(objectUrl);
+    } else {
+      setVideoUrl(null);
+    }
 
     try {
       transcribeMutation.mutate(file);
@@ -70,7 +67,17 @@ export const TranscriptionUpload = () => {
     setDragActive(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      transcribeMutation.mutate(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      
+      // Create and store video URL for dropped file
+      if (file.type.includes('video')) {
+        const objectUrl = URL.createObjectURL(file);
+        setVideoUrl(objectUrl);
+      } else {
+        setVideoUrl(null);
+      }
+      
+      transcribeMutation.mutate(file);
     }
   };
 
@@ -81,6 +88,26 @@ export const TranscriptionUpload = () => {
   const startNewTranscription = () => {
     setTranscription(null);
     setShowTranslation(false);
+    
+    // Clean up video URL
+    if (videoUrl) {
+      URL.revokeObjectURL(videoUrl);
+      setVideoUrl(null);
+    }
+  };
+
+  // Function to seek to a specific timestamp in the video
+  const seekToTimestamp = (timeString: string) => {
+    if (!playerRef.current) return;
+    
+    // Convert "00:00:10" format to seconds
+    const timeParts = timeString.split(':');
+    const seconds = 
+      parseInt(timeParts[0]) * 3600 + 
+      parseInt(timeParts[1]) * 60 + 
+      parseInt(timeParts[2]);
+      
+    playerRef.current.seekTo(seconds);
   };
 
   return (
@@ -299,6 +326,31 @@ export const TranscriptionUpload = () => {
               </div>
             </div>
           </div>
+
+          {/* Video Player */}
+          {videoUrl && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="text-sm font-medium text-gray-800">Video</h3>
+              </div>
+              <div className="aspect-video w-full">
+                <ReactPlayer
+                  ref={playerRef}
+                  url={videoUrl}
+                  controls
+                  width="100%"
+                  height="100%"
+                  config={{
+                    file: {
+                      attributes: {
+                        controlsList: 'nodownload'
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
           
           <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
@@ -324,7 +376,10 @@ export const TranscriptionUpload = () => {
             <div className="p-5 space-y-6">
               {transcription.transcription.segments.map((segment) => (
                 <div key={segment.id} className="py-2 border-b border-gray-100 last:border-0">
-                  <div className="flex items-center mb-1 text-xs text-teal-600 font-medium">
+                  <div 
+                    className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                    onClick={() => seekToTimestamp(segment.start_time)}
+                  >
                     <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10"></circle>
                       <polyline points="12 6 12 12 16 14"></polyline>
