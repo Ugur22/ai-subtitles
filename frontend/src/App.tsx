@@ -1,0 +1,266 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { TranscriptionUpload } from './components/features/transcription/TranscriptionUpload';
+import './App.css';
+import { useState } from 'react';
+
+const queryClient = new QueryClient();
+
+function App() {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 to-cyan-50">
+        {/* Header */}
+        <header className="bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex h-16 items-center justify-between">
+              {/* Logo & Brand */}
+              <div className="flex items-center">
+                <div className="flex items-center space-x-2">
+                  <svg 
+                    className="h-8 w-8" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path 
+                      d="M12 15C8.667 15 6 13.5 6 10.5V5.5C6 2.5 8.667 1 12 1C15.333 1 18 2.5 18 5.5V10.5C18 13.5 15.333 15 12 15Z" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M10 18.5C10 19.6 10.9 20.5 12 20.5C13.1 20.5 14 19.6 14 18.5V17.5" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M3 10.5V9.5C3 7.84 4.34 6.5 6 6.5" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M21 10.5V9.5C21 7.84 19.66 6.5 18 6.5" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M6 10.5C6 10.5 9 12.5 12 12.5C15 12.5 18 10.5 18 10.5" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M8 23C9.1 23 10 22.1 10 21V20C10 18.9 9.1 18 8 18C6.9 18 6 18.9 6 20V21C6 22.1 6.9 23 8 23Z" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                    <path 
+                      d="M16 23C17.1 23 18 22.1 18 21V20C18 18.9 17.1 18 16 18C14.9 18 14 18.9 14 20V21C14 22.1 14.9 23 16 23Z" 
+                      stroke="currentColor" 
+                      strokeWidth="1.5" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span className="text-xl font-bold">VoiceScribe</span>
+                </div>
+              </div>
+
+              {/* Center Navigation */}
+              <nav className="hidden md:flex space-x-8">
+                <a href="#" className="text-white hover:text-teal-100 px-3 py-2 font-medium">Home</a>
+                <a href="#" className="text-white hover:text-teal-100 px-3 py-2 font-medium">Features</a>
+                <a href="#" className="text-white hover:text-teal-100 px-3 py-2 font-medium">Pricing</a>
+                <a href="#" className="text-white hover:text-teal-100 px-3 py-2 font-medium">Support</a>
+              </nav>
+              
+              {/* User & Menu */}
+              <div className="flex items-center space-x-4">
+                <button className="hidden md:flex items-center space-x-1 bg-teal-400 bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded-full text-sm">
+                  <span>Start Free Trial</span>
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                  </svg>
+                </button>
+                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-teal-400 bg-opacity-20">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                  </svg>
+                </div>
+                <button 
+                  onClick={() => setMenuOpen(!menuOpen)}
+                  className="md:hidden rounded-md p-2 hover:bg-teal-400 hover:bg-opacity-20 focus:outline-none"
+                >
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={menuOpen ? "M6 18L18 6M6 6l12 12" : "M4 6h16M4 12h16M4 18h16"} />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Mobile Menu */}
+          {menuOpen && (
+            <div className="md:hidden">
+              <div className="space-y-1 px-2 pt-2 pb-3">
+                <a href="#" className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-2 rounded-md">Home</a>
+                <a href="#" className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-2 rounded-md">Features</a>
+                <a href="#" className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-2 rounded-md">Pricing</a>
+                <a href="#" className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-2 rounded-md">Support</a>
+              </div>
+            </div>
+          )}
+        </header>
+
+        {/* Hero Section */}
+        <div className="relative overflow-hidden">
+          <div className="absolute inset-0">
+            <div className="absolute inset-y-0 left-0 w-3/4 bg-gradient-to-r from-teal-500/10 to-transparent"></div>
+            <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-gradient-to-t from-cyan-500/10 to-transparent"></div>
+          </div>
+          
+          <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-12">
+            <div className="md:flex md:items-center md:justify-between">
+              <div className="md:w-1/2 mb-8 md:mb-0">
+                <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl md:text-6xl">
+                  <span className="block">Instant Audio to Text</span>
+                  <span className="block text-teal-600">Powered by AI</span>
+                </h1>
+                <p className="mt-3 max-w-md text-base text-gray-500 sm:text-lg md:mt-5 md:text-xl">
+                  Transform any audio or video into accurate transcripts with timestamps, translations, and search capabilities.
+                </p>
+                <div className="mt-8">
+                  <div className="rounded-md shadow inline-flex">
+                    <a href="#upload" className="flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 md:py-4 md:text-lg md:px-8">
+                      Get Started
+                    </a>
+                  </div>
+                  <div className="mt-3 inline-flex ml-3">
+                    <a href="#" className="flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-teal-700 bg-teal-100 hover:bg-teal-200">
+                      Watch Demo
+                    </a>
+                  </div>
+                </div>
+              </div>
+              <div className="md:w-1/2 relative">
+                <div className="w-full flex justify-center">
+                  <img className="h-56 sm:h-72 md:h-80 lg:h-96" src="https://img.freepik.com/free-vector/voice-message-concept-illustration_114360-4233.jpg" alt="Audio to Text Illustration" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Features Brief */}
+        <div className="bg-gradient-to-r from-cyan-50 to-teal-50 py-10">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="bg-white p-6 rounded-xl shadow-sm flex items-start space-x-4">
+                <div className="shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Precise Timestamps</h3>
+                  <p className="mt-2 text-sm text-gray-500">Every word precisely timed for perfect subtitle synchronization.</p>
+                </div>
+              </div>
+              
+              <div className="bg-white p-6 rounded-xl shadow-sm flex items-start space-x-4">
+                <div className="shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Multi-language Support</h3>
+                  <p className="mt-2 text-sm text-gray-500">Automatic language detection with translation capabilities.</p>
+                </div>
+              </div>
+              
+              <div className="bg-white p-6 rounded-xl shadow-sm flex items-start space-x-4">
+                <div className="shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Smart Search</h3>
+                  <p className="mt-2 text-sm text-gray-500">Find exactly what you need with powerful semantic search.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Upload Area */}
+        <div id="upload" className="py-10">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <TranscriptionUpload />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <footer className="bg-gray-800 text-white">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider">Product</h3>
+                <ul className="mt-4 space-y-2">
+                  <li><a href="#" className="text-gray-300 hover:text-white">Features</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Pricing</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">API</a></li>
+                </ul>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider">Resources</h3>
+                <ul className="mt-4 space-y-2">
+                  <li><a href="#" className="text-gray-300 hover:text-white">Documentation</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Guides</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Support</a></li>
+                </ul>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider">Company</h3>
+                <ul className="mt-4 space-y-2">
+                  <li><a href="#" className="text-gray-300 hover:text-white">About</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Blog</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Contact</a></li>
+                </ul>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider">Legal</h3>
+                <ul className="mt-4 space-y-2">
+                  <li><a href="#" className="text-gray-300 hover:text-white">Privacy</a></li>
+                  <li><a href="#" className="text-gray-300 hover:text-white">Terms</a></li>
+                </ul>
+              </div>
+            </div>
+            <div className="mt-12 border-t border-gray-700 pt-8">
+              <p className="text-sm text-gray-400">© 2023 VoiceScribe. All rights reserved.</p>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </QueryClientProvider>
+  );
+}
+
+export default App;
