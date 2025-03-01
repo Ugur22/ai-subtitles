@@ -23,6 +23,9 @@ from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from fastapi.staticfiles import StaticFiles
 
+# Global variable to store the last transcription
+last_transcription_data = None
+
 # Load environment variables
 load_dotenv()
 
@@ -425,9 +428,60 @@ client = OpenAI(
     http_client=http_client
 )
 
+@app.post("/cleanup_screenshots/")
+async def cleanup_screenshots() -> Dict:
+    """Delete all screenshots from the static/screenshots directory"""
+    try:
+        screenshots_dir = os.path.join("static", "screenshots")
+        
+        # Check if directory exists
+        if not os.path.exists(screenshots_dir):
+            os.makedirs(screenshots_dir, exist_ok=True)
+            return {"success": True, "message": "Screenshots directory was empty"}
+        
+        # Count files before deletion
+        files = os.listdir(screenshots_dir)
+        file_count = len(files)
+        
+        # Delete all files in the directory
+        for filename in files:
+            file_path = os.path.join(screenshots_dir, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"Deleted: {file_path}")
+        
+        return {
+            "success": True, 
+            "message": f"Successfully deleted {file_count} screenshot files"
+        }
+    except Exception as e:
+        print(f"Error cleaning up screenshots: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error cleaning up screenshots: {str(e)}"
+        }
+
+@app.get("/current_transcription/")
+async def get_current_transcription(request: Request) -> Dict:
+    """Return the current transcription data"""
+    global last_transcription_data
+    
+    if not last_transcription_data:
+        raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
+    
+    # Count segments with screenshots
+    segment_count = len(last_transcription_data['transcription']['segments'])
+    screenshots_count = sum(1 for segment in last_transcription_data['transcription']['segments'] 
+                          if 'screenshot_url' in segment and segment['screenshot_url'])
+    
+    print(f"Sending transcription data: {segment_count} segments total, {screenshots_count} with screenshots")
+    return last_transcription_data
+
 @app.post("/transcribe/")
 async def transcribe_video(file: UploadFile, request: Request) -> Dict:
     """Handle video upload, extract audio, and transcribe"""
+    global last_transcription_data
+    
     try:
         if not file:
             raise HTTPException(status_code=400, detail="No file provided")
@@ -520,8 +574,12 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                             success = extract_screenshot(temp_input_path, segment.start, screenshot_path)
                             if success:
                                 # Add screenshot URL to segment
-                                segment.screenshot_url = f"/static/screenshots/{screenshot_filename}"
-                                print(f"Added screenshot URL: {segment.screenshot_url}")
+                                screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                                segment.screenshot_url = screenshot_url
+                                print(f"Added screenshot URL: {screenshot_url}")
+                            else:
+                                segment.screenshot_url = None
+                                print("Failed to add screenshot")
                     
                     # Process transcription result
                     print("\nProcessing transcription result...")
@@ -545,7 +603,11 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                             "processing_time": f"{time.time() - start_time:.1f} seconds"
                         }
                     }
+                    
+                    # Store in both request state and global variable
                     request.app.state.last_transcription = result
+                    last_transcription_data = result
+                    
                     print("\nTranscription processing completed successfully")
                     return result
             except Exception as e:

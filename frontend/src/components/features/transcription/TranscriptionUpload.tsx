@@ -7,6 +7,7 @@ import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
 import ReactPlayer from 'react-player';
 import { SummaryPanel } from '../summary/SummaryPanel';
 import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
+import axios from 'axios';
 
 interface ProcessingStatus {
   stage: 'uploading' | 'extracting' | 'transcribing' | 'complete';
@@ -201,6 +202,9 @@ export const TranscriptionUpload = () => {
   };
 
   const startNewTranscription = () => {
+    // Clean up previous screenshots from server
+    cleanupPreviousScreenshots();
+    
     setTranscription(null);
     setShowTranslation(false);
     
@@ -208,6 +212,17 @@ export const TranscriptionUpload = () => {
     if (videoUrl) {
       URL.revokeObjectURL(videoUrl);
       setVideoUrl(null);
+    }
+  };
+
+  // Function to delete previous screenshots
+  const cleanupPreviousScreenshots = async () => {
+    try {
+      await axios.post('http://localhost:8000/cleanup_screenshots/');
+      console.log('Previous screenshots cleaned up successfully');
+    } catch (error) {
+      console.error('Failed to cleanup screenshots:', error);
+      // Non-critical error, don't show to user
     }
   };
 
