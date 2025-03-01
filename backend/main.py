@@ -853,15 +853,31 @@ async def generate_summary(request: Request) -> Dict:
     # Generate summary for each section
     summaries = []
     for section in sections:
-        # Combine text from all segments
-        section_text = " ".join(seg["text"] for seg in section["segments"])
-        translated_text = " ".join(seg.get("translation", seg["text"]) for seg in section["segments"])
+        # Combine text from all segments - safely handling None values
+        section_text = " ".join(seg["text"] or "" for seg in section["segments"] if seg.get("text"))
+        
+        # Fix: Safely handle translation which might be None or missing
+        translated_texts = []
+        for seg in section["segments"]:
+            if seg.get("translation"):
+                translated_texts.append(seg["translation"])
+            elif seg.get("text"):
+                translated_texts.append(seg["text"])
+            else:
+                # Skip this segment if both text and translation are missing/None
+                continue
+                
+        translated_text = " ".join(translated_texts)
         
         # Only use translation if it's different from the original
         text_to_summarize = translated_text if (
             translated_text != section_text and 
             transcription['transcription']['language'].lower() not in ["en", "english"]
         ) else section_text
+        
+        # Skip empty sections
+        if not text_to_summarize:
+            continue
         
         try:
             # Generate concise summary

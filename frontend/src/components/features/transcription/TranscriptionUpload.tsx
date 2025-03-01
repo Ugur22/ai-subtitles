@@ -82,10 +82,8 @@ export const TranscriptionUpload = () => {
   const [showSummary, setShowSummary] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>({
-    stage: 'uploading',
-    progress: 0
-  });
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
+  const [hideProgressBar, setHideProgressBar] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playerRef = useRef<any>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -98,24 +96,31 @@ export const TranscriptionUpload = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [processingTimer, setProcessingTimer] = useState<NodeJS.Timeout | null>(null);
+  const [showProgressBar, setShowProgressBar] = useState(false);
+  const [isNewTranscription, setIsNewTranscription] = useState(false);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
     onMutate: () => {
-      // Start with extracting stage at 0%
-      setProcessingStatus({ stage: 'extracting', progress: 0 });
+      // Reset the flag when starting a new transcription
+      setIsNewTranscription(false);
       
-      // Clear any existing simulation
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-        setProgressSimulation(null);
+      // Show progress bar when starting a new transcription
+      setHideProgressBar(false);
+      
+      // Start with uploading status
+      setProcessingStatus({ stage: 'uploading', progress: 0 });
+      
+      // Start the timer for elapsed time
+      if (processingTimer) {
+        clearInterval(processingTimer);
       }
       
-      // Start a timer to track elapsed processing time
       setElapsedTime(0);
       const timer = setInterval(() => {
         setElapsedTime(prev => prev + 1);
       }, 1000);
+      
       setProcessingTimer(timer);
     },
     onSuccess: (data) => {
@@ -261,6 +266,10 @@ export const TranscriptionUpload = () => {
         setProgressSimulation(interval);
       }, 2000);
       
+      // Create FormData and append the file
+      const formData = new FormData();
+      formData.append('file', file);
+      
       // Upload file directly to backend
       transcribeMutation.mutate(file);
       
@@ -317,17 +326,25 @@ export const TranscriptionUpload = () => {
   };
 
   const startNewTranscription = () => {
-    // Clean up previous screenshots from server
-    cleanupPreviousScreenshots();
+    // Set flag to hide progress bar
+    setIsNewTranscription(true);
     
     setTranscription(null);
+    setVideoUrl(null);
+    setFile(null);
     setShowTranslation(false);
+    setShowSubtitles(false);
+    setUploadProgress(0);
+    setElapsedTime(0);
     
-    // Clean up video URL
-    if (videoUrl) {
-      URL.revokeObjectURL(videoUrl);
-      setVideoUrl(null);
+    if (processingTimer) {
+      clearInterval(processingTimer);
+      setProcessingTimer(null);
     }
+    
+    setTimeout(() => {
+      setShowSubtitles(true);
+    }, 500);
   };
 
   // Function to delete previous screenshots
@@ -568,6 +585,31 @@ export const TranscriptionUpload = () => {
     };
   }, [progressSimulation, processingTimer]);
 
+  // Update the handle functions for processing status to handle null
+  const updateUploadProgress = (progress: number) => {
+    setUploadProgress(progress);
+    setProcessingStatus(prevStatus => ({
+      ...prevStatus,
+      progress: Math.min(99, progress)
+    }));
+  };
+
+  const handleExtractingAudio = () => {
+    setProcessingStatus(prevStatus => ({
+      ...prevStatus,
+      stage: 'extracting',
+      progress: 0
+    }));
+  };
+
+  const handleTranscribing = () => {
+    setProcessingStatus(prevStatus => ({
+      ...prevStatus,
+      stage: 'transcribing',
+      progress: 0
+    }));
+  };
+
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -661,7 +703,7 @@ export const TranscriptionUpload = () => {
               </div>
 
               {/* Processing Status */}
-              {(processingStatus.stage !== 'uploading' || processingStatus.progress > 0) && (
+              {!isNewTranscription && processingStatus && (
                 <div className="w-full max-w-lg mx-auto mt-6 p-4 rounded-lg border border-gray-100">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-sm font-medium text-teal-700 flex items-center">
