@@ -29,15 +29,41 @@ export const TranscriptionUpload = () => {
   const playerRef = useRef<any>(null);
   const [file, setFile] = useState<File | null>(null);
   const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null);
+  const [showSubtitles, setShowSubtitles] = useState(true);
+  const [subtitleTrackUrl, setSubtitleTrackUrl] = useState<string | null>(null);
+  const [translatedSubtitleUrl, setTranslatedSubtitleUrl] = useState<string | null>(null);
+  const [progressSimulation, setProgressSimulation] = useState<NodeJS.Timeout | null>(null);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
+    onMutate: () => {
+      // Start with extracting stage at 0%
+      setProcessingStatus({ stage: 'extracting', progress: 0 });
+      
+      // Clear any existing simulation
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+        setProgressSimulation(null);
+      }
+    },
     onSuccess: (data) => {
+      // Clear simulation on success
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+        setProgressSimulation(null);
+      }
+      
       setTranscription(data);
       setProcessingStatus({ stage: 'complete', progress: 100 });
       setError(null);
     },
     onError: (error) => {
+      // Clear simulation on error
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+        setProgressSimulation(null);
+      }
+      
       console.error('Transcription error:', error);
       setError('Failed to transcribe the file. Please try again.');
       setProcessingStatus({ stage: 'uploading', progress: 0 });
@@ -53,6 +79,15 @@ export const TranscriptionUpload = () => {
     };
   }, [videoUrl]);
 
+  // Cleanup function for progress simulation
+  useEffect(() => {
+    return () => {
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+      }
+    };
+  }, [progressSimulation]);
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -66,11 +101,60 @@ export const TranscriptionUpload = () => {
 
   const processFile = async (file: File) => {
     try {
+      // Set initial extraction stage
       setProcessingStatus({ stage: 'extracting', progress: 0 });
+      
+      // Clear any existing simulation
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+        setProgressSimulation(null);
+      }
+      
+      // Start a timer to simulate progress in the extraction phase
+      const extractionTimer = setTimeout(() => {
+        // After 2 seconds, move to transcribing stage and start simulating progress
+        setProcessingStatus({ stage: 'transcribing', progress: 30 });
+        
+        // Simulate gradual progress for transcription phase (from 30% to 90%)
+        // Actual completion will be triggered by the onSuccess callback
+        const interval = setInterval(() => {
+          setProcessingStatus(prevStatus => {
+            // Don't update if we've already completed
+            if (prevStatus.stage === 'complete') {
+              clearInterval(interval);
+              return prevStatus;
+            }
+            
+            // Gradually increase progress, capping at 90%
+            const newProgress = Math.min(90, prevStatus.progress + 1);
+            
+            // If we've hit our cap, slow down the updates
+            if (newProgress === 90) {
+              clearInterval(interval);
+              // Create a much slower interval for the final stretch
+              const slowInterval = setInterval(() => {
+                setProcessingStatus(ps => ({ ...ps, progress: ps.progress + 0.1 }));
+              }, 2000);
+              setProgressSimulation(slowInterval);
+            }
+            
+            return { ...prevStatus, progress: newProgress };
+          });
+        }, 1000);
+        
+        setProgressSimulation(interval);
+      }, 2000);
       
       // Upload file directly to backend
       transcribeMutation.mutate(file);
       
+      // Clean up timer
+      return () => {
+        clearTimeout(extractionTimer);
+        if (progressSimulation) {
+          clearInterval(progressSimulation);
+        }
+      };
     } catch (error) {
       console.error('File processing failed:', error);
       setError('Failed to process the file. Please try again.');
@@ -141,6 +225,100 @@ export const TranscriptionUpload = () => {
 
   const handleSummaryClick = () => {
     setShowSummary(!showSummary);
+  };
+
+  // Generate WebVTT content from transcript segments
+  const generateWebVTT = (segments: any[], useTranslation: boolean = false): string => {
+    let vttContent = 'WEBVTT\n\n';
+    
+    segments.forEach((segment, index) => {
+      // Convert HH:MM:SS format to HH:MM:SS.000 (WebVTT requires milliseconds)
+      const startTime = segment.start_time.includes('.') 
+        ? segment.start_time 
+        : `${segment.start_time}.000`;
+        
+      const endTime = segment.end_time.includes('.') 
+        ? segment.end_time 
+        : `${segment.end_time}.000`;
+      
+      // Use translation if available and requested
+      const text = useTranslation && segment.translation 
+        ? segment.translation 
+        : segment.text;
+      
+      vttContent += `${index + 1}\n`;
+      vttContent += `${startTime} --> ${endTime}\n`;
+      vttContent += `${text}\n\n`;
+    });
+    
+    return vttContent;
+  };
+  
+  // Create and add subtitles to video
+  const createSubtitleTracks = () => {
+    if (!transcription) return;
+    
+    try {
+      // Generate original language WebVTT
+      const vttContent = generateWebVTT(transcription.transcription.segments);
+      const vttBlob = new Blob([vttContent], { type: 'text/vtt' });
+      const vttUrl = URL.createObjectURL(vttBlob);
+      setSubtitleTrackUrl(vttUrl);
+      
+      // Generate translated WebVTT if translations are available
+      const hasTranslations = transcription.transcription.segments.some(segment => segment.translation);
+      
+      if (hasTranslations) {
+        const translatedVttContent = generateWebVTT(transcription.transcription.segments, true);
+        const translatedVttBlob = new Blob([translatedVttContent], { type: 'text/vtt' });
+        const translatedVttUrl = URL.createObjectURL(translatedVttBlob);
+        setTranslatedSubtitleUrl(translatedVttUrl);
+      }
+    } catch (error) {
+      console.error('Error creating subtitles:', error);
+    }
+  };
+  
+  // Create subtitles when transcription is available
+  useEffect(() => {
+    if (transcription) {
+      createSubtitleTracks();
+    }
+    
+    // Cleanup function to revoke URLs when component unmounts
+    return () => {
+      if (subtitleTrackUrl) {
+        URL.revokeObjectURL(subtitleTrackUrl);
+      }
+      if (translatedSubtitleUrl) {
+        URL.revokeObjectURL(translatedSubtitleUrl);
+      }
+    };
+  }, [transcription]);
+  
+  // Update subtitles when translation toggle changes
+  useEffect(() => {
+    if (videoRef) {
+      const trackElements = videoRef.textTracks;
+      
+      if (trackElements.length > 0) {
+        // Hide all tracks first
+        for (let i = 0; i < trackElements.length; i++) {
+          trackElements[i].mode = 'hidden';
+        }
+        
+        // Show the active track if subtitles are enabled
+        if (showSubtitles) {
+          const trackIndex = showTranslation && trackElements.length > 1 ? 1 : 0;
+          trackElements[trackIndex].mode = 'showing';
+        }
+      }
+    }
+  }, [showTranslation, showSubtitles, videoRef]);
+  
+  // Toggle subtitles visibility
+  const toggleSubtitles = () => {
+    setShowSubtitles(!showSubtitles);
   };
 
   return (
@@ -261,18 +439,30 @@ export const TranscriptionUpload = () => {
                       )}
                     </span>
                     <span className="text-xs font-medium text-teal-700">
-                      {processingStatus.progress}%
+                      {processingStatus.stage === 'extracting' ? (
+                        'Step 1 of 3'
+                      ) : processingStatus.stage === 'transcribing' ? (
+                        'Step 2 of 3'
+                      ) : processingStatus.stage === 'complete' ? (
+                        'Step 3 of 3'
+                      ) : (
+                        `${processingStatus.progress}%`
+                      )}
                     </span>
                   </div>
                   <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full transition-all duration-300"
-                      style={{ width: `${processingStatus.progress}%` }}
-                    />
+                    {processingStatus.stage === 'extracting' ? (
+                      <div className="h-full w-full bg-teal-400 rounded-full animate-pulse opacity-60"></div>
+                    ) : (
+                      <div
+                        className="h-full bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full transition-all duration-300"
+                        style={{ width: `${processingStatus.progress}%` }}
+                      />
+                    )}
                   </div>
                   <p className="mt-2 text-2xs text-center text-gray-500">
                     {processingStatus.stage === 'extracting'
-                      ? 'Extracting audio from video file...'
+                      ? 'Extracting audio from video file. This may take several minutes depending on file size...'
                       : processingStatus.stage === 'transcribing'
                       ? 'Converting speech to text...'
                       : 'Processing your file...'}
@@ -384,8 +574,28 @@ export const TranscriptionUpload = () => {
           <div className="flex flex-col flex-grow overflow-hidden">
             {videoUrl && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-shrink-0">
-                <div className="px-5 py-3 border-b border-gray-200">
+                <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
                   <h3 className="text-sm font-medium text-gray-800">Video</h3>
+                  <div className="flex items-center space-x-2">
+                    <button 
+                      onClick={toggleSubtitles}
+                      className={`px-3 py-1 text-xs rounded-md flex items-center gap-1 ${
+                        showSubtitles 
+                          ? 'bg-teal-100 text-teal-700' 
+                          : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                      </svg>
+                      {showSubtitles ? 'Subtitles On' : 'Subtitles Off'}
+                    </button>
+                    {showSubtitles && (
+                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700">
+                        {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="aspect-video w-full bg-black">
                   <video
@@ -393,7 +603,26 @@ export const TranscriptionUpload = () => {
                     src={videoUrl}
                     controls
                     className="w-full max-h-[40vh] object-contain"
-                  />
+                  >
+                    {subtitleTrackUrl && (
+                      <track 
+                        src={subtitleTrackUrl} 
+                        kind="subtitles" 
+                        srcLang={transcription?.transcription.language || 'en'} 
+                        label={transcription?.transcription.language?.toUpperCase() || 'Original'} 
+                        default={showSubtitles && !showTranslation}
+                      />
+                    )}
+                    {translatedSubtitleUrl && (
+                      <track 
+                        src={translatedSubtitleUrl} 
+                        kind="subtitles" 
+                        srcLang="en" 
+                        label="ENGLISH" 
+                        default={showSubtitles && showTranslation}
+                      />
+                    )}
+                  </video>
                 </div>
               </div>
             )}
