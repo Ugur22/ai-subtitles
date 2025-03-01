@@ -21,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+from fastapi.staticfiles import StaticFiles
 
 # Load environment variables
 load_dotenv()
@@ -79,12 +80,12 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
         context_before = ""
         context_after = ""
         if i > 0:
-            context_before = f"Context before: {segments[i-1]['text']}\n"
+            context_before = f"Context before: {segments[i-1].text}\n"
         if i + BATCH_SIZE < len(segments):
-            context_after = f"\nContext after: {segments[i+BATCH_SIZE]['text']}"
+            context_after = f"\nContext after: {segments[i+BATCH_SIZE].text}"
         
         # Combine text with context
-        combined_text = context_before + "\n---\n".join([f"[{j}] {segment['text']}" for j, segment in enumerate(batch)]) + context_after
+        combined_text = context_before + "\n---\n".join([f"[{j}] {segment.text}" for j, segment in enumerate(batch)]) + context_after
         
         try:
             translated_text = translate_text(client, combined_text, source_lang)
@@ -132,22 +133,23 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
                     try:
                         context = ""
                         if j > 0:
-                            context += f"Previous: {batch[j-1]['text']}\n"
+                            context += f"Previous: {batch[j-1].text}\n"
                         if j < len(batch) - 1:
-                            context += f"\nNext: {batch[j+1]['text']}"
+                            context += f"\nNext: {batch[j+1].text}"
                         
                         single_translation = translate_text(
                             client,
-                            f"{context}\n---\n{segment['text']}",
+                            f"{context}\n---\n{segment.text}",
                             source_lang
                         )
                         # Remove any context markers from the translation
                         single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                        segment['translation'] = single_translation
+                        segment.translation = single_translation
                     except Exception as e:
-                        segment['translation'] = f"Translation error: {str(e)}"
+                        print(f"Individual translation error for segment {j}: {str(e)}")
+                        segment.translation = None
                 else:
-                    segment['translation'] = translation
+                    segment.translation = translation
                 
         except Exception as e:
             print(f"Batch translation error: {str(e)}")
@@ -156,20 +158,21 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
                 try:
                     context = ""
                     if j > 0:
-                        context += f"Previous: {batch[j-1]['text']}\n"
+                        context += f"Previous: {batch[j-1].text}\n"
                     if j < len(batch) - 1:
-                        context += f"\nNext: {batch[j+1]['text']}"
+                        context += f"\nNext: {batch[j+1].text}"
                     
                     single_translation = translate_text(
                         client,
-                        f"{context}\n---\n{segment['text']}",
+                        f"{context}\n---\n{segment.text}",
                         source_lang
                     )
                     # Remove any context markers from the translation
                     single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                    segment['translation'] = single_translation
+                    segment.translation = single_translation
                 except Exception as e:
-                    segment['translation'] = f"Translation error: {str(e)}"
+                    print(f"Individual translation error for segment {j}: {str(e)}")
+                    segment.translation = None
     
     return segments
 
@@ -357,10 +360,41 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
     except subprocess.CalledProcessError as e:
         raise Exception(f"Error processing video: {e.stderr.decode()}")
 
+def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> None:
+    """Extract a screenshot from a video at a specific timestamp."""
+    try:
+        print(f"\nExtracting screenshot at timestamp {timestamp}...")
+        print(f"Input path: {input_path}")
+        print(f"Output path: {output_path}")
+        
+        # Use FFmpeg to extract the frame
+        cmd = [
+            'ffmpeg', '-ss', str(timestamp),
+            '-i', input_path,
+            '-vframes', '1',
+            '-q:v', '2',  # High quality
+            '-vf', 'scale=320:-1',  # Resize to 320px width, maintain aspect ratio
+            output_path,
+            '-y'  # Overwrite if exists
+        ]
+        print(f"Running FFmpeg command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=True, capture_output=True)
+        print(f"Screenshot extraction completed successfully")
+        return True
+    except Exception as e:
+        print(f"Failed to extract screenshot at {timestamp}")
+        print(f"Error details: {str(e)}")
+        if isinstance(e, subprocess.CalledProcessError):
+            print(f"FFmpeg stderr: {e.stderr.decode()}")
+        return None
+
 # Initialize FastAPI app with custom request size limit
 app = FastAPI(
     title="Video Transcription API"
 )
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Configure CORS with more specific settings
 app.add_middleware(
@@ -415,6 +449,13 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
             # Save uploaded file in chunks to avoid memory issues
             temp_input_path = os.path.join(temp_dir, file.filename)
             temp_output_path = os.path.join(temp_dir, "audio.mp3")
+            screenshots_dir = os.path.join("static", "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+            
+            print(f"Created temp directory: {temp_dir}")
+            print(f"Input path: {temp_input_path}")
+            print(f"Output path: {temp_output_path}")
+            print(f"Screenshots directory: {screenshots_dir}")
             
             # Save file in chunks with a larger chunk size for better performance
             CHUNK_SIZE = 1024 * 1024 * 8  # 8MB chunks
@@ -432,7 +473,9 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                             )
                         buffer.write(chunk)
                         print(f"Uploaded: {total_size / (1024*1024):.1f} MB", end="\r")
+                print(f"\nUpload completed. Total size: {total_size / (1024*1024):.1f} MB")
             except Exception as e:
+                print(f"Upload error: {str(e)}")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Error uploading file: {str(e)}"
@@ -441,7 +484,9 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
             print("\nExtracting and compressing audio...")
             try:
                 process_video_with_ffmpeg(temp_input_path, temp_output_path)
+                print("Audio extraction completed successfully")
             except Exception as e:
+                print(f"Audio extraction error: {str(e)}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Error processing video: {str(e)}"
@@ -450,96 +495,75 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
             print("\nTranscribing audio...")
             try:
                 with open(temp_output_path, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        file=audio_file,
+                    # Transcribe with Whisper API
+                    print("Calling Whisper API...")
+                    response = client.audio.transcriptions.create(
                         model="whisper-1",
+                        file=audio_file,
                         response_format="verbose_json"
                     )
-                
-                # Normalize language names
-                language_map = {
-                    "en": "english",
-                    "de": "german",
-                    "it": "italian",
-                    "es": "spanish",
-                    "fr": "french"
-                }
-                detected_language = transcript.language.lower()
-                normalized_language = language_map.get(detected_language, detected_language)
-                print(f"\nDetected language: {normalized_language}")
+                    print("Transcription completed successfully")
+                    
+                    # Translate if not in English
+                    if response.language.lower() not in ['en', 'english']:
+                        print("\nTranslating segments to English...")
+                        response.segments = translate_segments(client, response.segments, response.language)
+                        print("Translation completed successfully")
+                    
+                    # Extract screenshots for each segment if it's a video file
+                    if file_extension in {'.mp4', '.mpeg', '.webm'}:
+                        print("\nExtracting screenshots for video segments...")
+                        for i, segment in enumerate(response.segments):
+                            print(f"\nProcessing segment {i+1}/{len(response.segments)}")
+                            screenshot_filename = f"{Path(file.filename).stem}_{segment.start:.2f}.jpg"
+                            screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                            success = extract_screenshot(temp_input_path, segment.start, screenshot_path)
+                            if success:
+                                # Add screenshot URL to segment
+                                segment.screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                                print(f"Added screenshot URL: {segment.screenshot_url}")
+                    
+                    # Process transcription result
+                    print("\nProcessing transcription result...")
+                    result = {
+                        "filename": file.filename,
+                        "transcription": {
+                            "text": response.text,
+                            "language": response.language,
+                            "duration": str(timedelta(seconds=int(float(response.duration)))),
+                            "segments": [
+                                {
+                                    "id": i,
+                                    "start_time": str(timedelta(seconds=int(float(s.start)))),
+                                    "end_time": str(timedelta(seconds=int(float(s.end)))),
+                                    "text": s.text,
+                                    "translation": s.translation if hasattr(s, 'translation') else None,
+                                    "screenshot_url": getattr(s, 'screenshot_url', None)
+                                }
+                                for i, s in enumerate(response.segments)
+                            ],
+                            "processing_time": f"{time.time() - start_time:.1f} seconds"
+                        }
+                    }
+                    request.app.state.last_transcription = result
+                    print("\nTranscription processing completed successfully")
+                    return result
             except Exception as e:
+                print(f"Transcription error: {str(e)}")
+                if hasattr(e, '__dict__'):
+                    print(f"Error details: {e.__dict__}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Error transcribing audio: {str(e)}"
                 )
             
-            # Process transcription results
-            segments = []
-            for segment in transcript.segments:
-                segments.append({
-                    "id": segment.id,
-                    "start_time": format_timestamp(segment.start),
-                    "end_time": format_timestamp(segment.end),
-                    "text": segment.text
-                })
-            
-            # Always translate if not English
-            translated_segments = segments.copy()
-            if normalized_language != "english":
-                try:
-                    print(f"\nTranslating from {normalized_language} to English...")
-                    translated_segments = translate_segments(client, segments.copy(), normalized_language)
-                    
-                    # Verify translations were successful
-                    failed_translations = [i for i, segment in enumerate(translated_segments) 
-                                        if not segment.get('translation') or 
-                                        'error' in segment['translation'].lower()]
-                    
-                    if failed_translations:
-                        print(f"Translation failed for segments: {failed_translations}")
-                        # Retry failed segments individually
-                        for i in failed_translations:
-                            try:
-                                print(f"Retrying translation for segment {i}")
-                                translated_text = translate_text(client, translated_segments[i]['text'], normalized_language)
-                                translated_segments[i]['translation'] = translated_text
-                            except Exception as e:
-                                print(f"Retry failed for segment {i}: {str(e)}")
-                                translated_segments[i]['translation'] = "Translation error occurred"
-                    
-                except Exception as e:
-                    print(f"Translation error: {str(e)}")
-                    # Set translations to empty strings if translation fails
-                    for segment in translated_segments:
-                        if 'translation' not in segment or not segment['translation']:
-                            segment['translation'] = "Translation error occurred"
-            else:
-                # For English content, set translation same as original text
-                for segment in translated_segments:
-                    segment['translation'] = segment['text']
-            
-            total_time = time.time() - start_time
-            print(f"\nTotal processing time: {format_timestamp(int(total_time))}")
-            
-            # Store the result in app state for subtitle generation
-            result = {
-                "filename": file.filename,
-                "transcription": {
-                    "text": transcript.text,
-                    "translated_text": next((s['translation'] for s in translated_segments if s.get('translation') and 'error' not in s['translation'].lower()), transcript.text),
-                    "language": normalized_language,
-                    "duration": format_timestamp(float(transcript.duration)),
-                    "segments": translated_segments,
-                    "processing_time": format_timestamp(total_time)
-                }
-            }
-            request.app.state.last_transcription = result
-            
-            return result
-            
     except HTTPException as e:
+        print(f"HTTP Exception: {e.detail}")
         raise e
     except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        if hasattr(e, '__dict__'):
+            print(f"Error details: {e.__dict__}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/subtitles/{language}")

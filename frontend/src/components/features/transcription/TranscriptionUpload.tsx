@@ -208,7 +208,7 @@ export const TranscriptionUpload = () => {
                     or click to browse files
                   </p>
                   <p className="text-xs text-gray-400 mt-3">
-                    Supports MP4, MP3, WAV files up to 25MB
+                    Supports MP4, MP3, WAV files up to 5GB
                   </p>
                 </div>
                 <input
@@ -440,26 +440,41 @@ export const TranscriptionUpload = () => {
                 <div className="p-5 space-y-6">
                   {transcription.transcription.segments.map((segment) => (
                     <div key={segment.id} className="py-2 border-b border-gray-100 last:border-0">
-                      <div 
-                        className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
-                        onClick={() => seekToTimestamp(segment.start_time)}
-                      >
-                        <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10"></circle>
-                          <polyline points="12 6 12 12 16 14"></polyline>
-                        </svg>
-                        {segment.start_time} - {segment.end_time}
-                        <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                      <div className="flex items-start gap-4">
+                        {segment.screenshot_url && (
+                          <div className="flex-shrink-0">
+                            <img 
+                              src={`http://localhost:8000${segment.screenshot_url}`}
+                              alt={`Screenshot at ${segment.start_time}`}
+                              className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
+                              onClick={() => seekToTimestamp(segment.start_time)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </div>
+                        )}
+                        <div className="flex-grow">
+                          <div 
+                            className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                            onClick={() => seekToTimestamp(segment.start_time)}
+                          >
+                            <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10"></circle>
+                              <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            {segment.start_time} - {segment.end_time}
+                            <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                          </div>
+                          <p className="text-gray-800">
+                            {showTranslation && segment.translation ? segment.translation : segment.text}
+                          </p>
+                          {/* Show both when a translation is available */}
+                          {showTranslation && segment.translation && segment.translation !== segment.text && (
+                            <p className="text-xs text-gray-500 mt-1 italic">
+                              Original: {segment.text}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-gray-800">
-                        {showTranslation && segment.translation ? segment.translation : segment.text}
-                      </p>
-                      {/* Show both when a translation is available */}
-                      {showTranslation && segment.translation && segment.translation !== segment.text && (
-                        <p className="text-xs text-gray-500 mt-1 italic">
-                          Original: {segment.text}
-                        </p>
-                      )}
                     </div>
                   ))}
                 </div>

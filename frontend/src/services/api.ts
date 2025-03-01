@@ -39,6 +39,7 @@ export interface TranscriptionResponse {
       end_time: string;
       text: string;
       translation: string | null;
+      screenshot_url?: string;  // Optional since it's only present for video files
     }>;
     processing_time: string;
   };

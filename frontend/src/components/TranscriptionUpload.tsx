@@ -153,7 +153,7 @@ const TranscriptionUpload = () => {
                   {dragActive ? 'Drop the file here' : 'Drag and drop your file here'}
                 </h3>
                 <p className="text-sm text-gray-500 mb-2">or click to browse files</p>
-                <p className="text-xs text-gray-400">Supports MP4, MP3, WAV files up to 25MB</p>
+                <p className="text-xs text-gray-400">Supports MP4, MP3, WAV files up to 5GB</p>
               </div>
             </div>
           </div>
