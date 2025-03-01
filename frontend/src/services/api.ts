@@ -93,11 +93,8 @@ export const searchTranscription = async (
   topic: string,
   semanticSearch: boolean = true
 ): Promise<SearchResponse> => {
-  const response = await api.post<SearchResponse>('/search/', {
-    topic,
-    semantic_search: semanticSearch,
-  });
-
+  const response = await api.post<SearchResponse>(`/search/?topic=${encodeURIComponent(topic)}&semantic_search=${semanticSearch}`);
+  
   return response.data;
 };
 
