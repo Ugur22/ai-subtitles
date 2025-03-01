@@ -7,6 +7,25 @@ const api = axios.create({
   },
 });
 
+// Add response interceptor for error handling
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      const message = error.response.data.detail || 'An error occurred';
+      throw new Error(message);
+    } else if (error.request) {
+      // The request was made but no response was received
+      throw new Error('No response from server. Please check your connection.');
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      throw new Error('Error setting up the request.');
+    }
+  }
+);
+
 export interface TranscriptionResponse {
   filename: string;
   transcription: {
@@ -47,17 +66,26 @@ export const transcribeVideo = async (file: File): Promise<TranscriptionResponse
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await api.post<TranscriptionResponse>('/transcribe/', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-    onUploadProgress: (progressEvent) => {
-      const percentage = (progressEvent.loaded / (progressEvent.total ?? 0)) * 100;
-      console.log(`Upload Progress: ${percentage}%`);
-    },
-  });
+  try {
+    const response = await api.post<TranscriptionResponse>('/transcribe/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        const percentage = (progressEvent.loaded / (progressEvent.total ?? 0)) * 100;
+        console.log(`Upload Progress: ${percentage}%`);
+      },
+      // Increase timeout for large files
+      timeout: 3600000, // 1 hour
+    });
 
-  return response.data;
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
+      throw new Error('Request timed out. The file might be too large or the server is busy.');
+    }
+    throw error;
+  }
 };
 
 export const searchTranscription = async (

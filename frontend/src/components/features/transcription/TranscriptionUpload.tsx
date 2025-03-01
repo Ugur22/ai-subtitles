@@ -6,6 +6,12 @@ import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
 import ReactPlayer from 'react-player';
 import { SummaryPanel } from '../summary/SummaryPanel';
+import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
+
+interface ProcessingStatus {
+  stage: 'uploading' | 'extracting' | 'transcribing' | 'complete';
+  progress: number;
+}
 
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -14,6 +20,11 @@ export const TranscriptionUpload = () => {
   const [showTranslation, setShowTranslation] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>({
+    stage: 'uploading',
+    progress: 0
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playerRef = useRef<any>(null);
 
@@ -21,8 +32,14 @@ export const TranscriptionUpload = () => {
     mutationFn: transcribeVideo,
     onSuccess: (data) => {
       setTranscription(data);
-      setUploadProgress(0);
+      setProcessingStatus({ stage: 'complete', progress: 100 });
+      setError(null);
     },
+    onError: (error) => {
+      console.error('Transcription error:', error);
+      setError('Failed to transcribe the file. Please try again.');
+      setProcessingStatus({ stage: 'uploading', progress: 0 });
+    }
   });
 
   // Clean up object URL when component unmounts or videoUrl changes
@@ -38,18 +55,32 @@ export const TranscriptionUpload = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Create and store video URL
-    if (file.type.includes('video')) {
+    setError(null);
+    try {
+      // Create and store video URL for local playback
       const objectUrl = URL.createObjectURL(file);
       setVideoUrl(objectUrl);
-    } else {
-      setVideoUrl(null);
-    }
-
-    try {
-      transcribeMutation.mutate(file);
+      
+      // Start processing
+      await processFile(file);
     } catch (error) {
-      console.error('Transcription failed:', error);
+      console.error('Processing failed:', error);
+      setError('Failed to process the file. Please try again.');
+      setProcessingStatus({ stage: 'uploading', progress: 0 });
+    }
+  };
+
+  const processFile = async (file: File) => {
+    try {
+      setProcessingStatus({ stage: 'extracting', progress: 0 });
+      
+      // Upload file directly to backend
+      transcribeMutation.mutate(file);
+      
+    } catch (error) {
+      console.error('File processing failed:', error);
+      setError('Failed to process the file. Please try again.');
+      throw error;
     }
   };
 
@@ -63,7 +94,7 @@ export const TranscriptionUpload = () => {
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
@@ -79,7 +110,11 @@ export const TranscriptionUpload = () => {
         setVideoUrl(null);
       }
       
-      transcribeMutation.mutate(file);
+      try {
+        await processFile(file);
+      } catch (error) {
+        console.error('Processing failed:', error);
+      }
     }
   };
 
@@ -130,6 +165,10 @@ export const TranscriptionUpload = () => {
                 </h2>
                 <p className="text-sm text-gray-600 max-w-lg mx-auto">
                   Upload your video or audio file and our AI will transcribe it with timestamps.
+                  <br />
+                  <span className="text-xs text-teal-600">
+                    Now supports large video files - we'll automatically extract the audio!
+                  </span>
                 </p>
               </div>
             
@@ -205,37 +244,47 @@ export const TranscriptionUpload = () => {
                 </div>
               </div>
 
-              {/* Progress Bar */}
-              {(uploadProgress > 0 || transcribeMutation.isPending) && (
+              {/* Processing Status */}
+              {(processingStatus.stage !== 'uploading' || processingStatus.progress > 0) && (
                 <div className="w-full max-w-lg mx-auto mt-6 p-4 rounded-lg border border-gray-100">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-sm font-medium text-teal-700 flex items-center">
-                      {transcribeMutation.isPending ? (
+                      {processingStatus.stage === 'extracting' ? (
                         <>
                           <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-teal-500" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                           </svg>
-                          Processing your file...
+                          Extracting audio...
+                        </>
+                      ) : processingStatus.stage === 'transcribing' ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-teal-500" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Transcribing audio...
                         </>
                       ) : (
-                        'Uploading...'
+                        'Processing...'
                       )}
                     </span>
                     <span className="text-xs font-medium text-teal-700">
-                      {uploadProgress > 0 ? `${uploadProgress.toFixed(0)}%` : ''}
+                      {processingStatus.progress}%
                     </span>
                   </div>
                   <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress || (transcribeMutation.isPending ? 100 : 25)}%` }}
+                      style={{ width: `${processingStatus.progress}%` }}
                     />
                   </div>
                   <p className="mt-2 text-2xs text-center text-gray-500">
-                    {transcribeMutation.isPending ? 
-                      'This might take a minute depending on the file size' : 
-                      'Your file is being uploaded securely'}
+                    {processingStatus.stage === 'extracting'
+                      ? 'Extracting audio from video file...'
+                      : processingStatus.stage === 'transcribing'
+                      ? 'Converting speech to text...'
+                      : 'Processing your file...'}
                   </p>
                 </div>
               )}
@@ -435,7 +484,7 @@ export const TranscriptionUpload = () => {
       )}
 
       {/* Error Display */}
-      {transcribeMutation.isError && (
+      {error && (
         <div className="mt-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-md mx-auto max-w-4xl">
           <div className="flex">
             <div className="flex-shrink-0">
@@ -448,7 +497,7 @@ export const TranscriptionUpload = () => {
             <div className="ml-3">
               <h3 className="text-sm font-medium text-red-800">Transcription Failed</h3>
               <p className="mt-1 text-xs text-red-700">
-                There was an error processing your file. Please ensure it's in a supported format and under 25MB.
+                {error}
               </p>
               <div className="mt-2">
                 <button 

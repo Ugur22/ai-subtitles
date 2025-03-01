@@ -15,6 +15,12 @@ import subprocess
 import shutil
 from tqdm import tqdm
 import time
+import ffmpeg
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Load environment variables
 load_dotenv()
@@ -29,71 +35,56 @@ def format_timestamp(seconds: float) -> str:
 
 def translate_text(client: OpenAI, text: str, source_lang: str) -> str:
     """Translate text to English using OpenAI's API"""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Much cheaper than GPT-4, still good for translation
-            messages=[
-                {"role": "system", "content": f"You are a professional translator from {source_lang} to English. Translate the following text accurately while maintaining the original meaning and tone. Only return the translation, nothing else."},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        raise Exception(f"Translation error: {str(e)}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
+Translate the following text accurately while maintaining the original meaning and tone.
+Important guidelines:
+- Maintain natural language flow and avoid word-for-word translation
+- Consider the context when translating repeated phrases
+- Keep the same format with [index] markers
+- Only return the translation, nothing else
+- Ensure each segment flows naturally with adjacent segments"""},
+                    {"role": "user", "content": text}
+                ],
+                temperature=0.7,  # Increased for more natural variations
+                max_tokens=2000,
+                timeout=30
+            )
+            translated = response.choices[0].message.content.strip()
+            if not translated:
+                raise Exception("Empty translation received")
+            return translated
+        except Exception as e:
+            if attempt == max_retries - 1:  # Last attempt
+                raise Exception(f"Translation failed after {max_retries} attempts: {str(e)}")
+            print(f"Translation attempt {attempt + 1} failed: {str(e)}. Retrying...")
+            time.sleep(1)  # Wait before retrying
 
 def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -> List[Dict]:
     """Translate a batch of segments to reduce API calls"""
-    # Process segments in larger batches to reduce API calls
-    BATCH_SIZE = 50  # Increased from 10 to 50
+    # Process segments in smaller batches for better reliability
+    BATCH_SIZE = 10  # Reduced batch size for better context handling
     
-    # Combine all segments first to estimate total length
-    all_text = " ".join(segment['text'] for segment in segments)
-    total_chars = len(all_text)
-    
-    # If total text is small enough, translate everything at once
-    if total_chars < 15000:  # GPT-3.5 can handle about 15k characters comfortably
-        try:
-            combined_text = "\n---\n".join([f"[{i}] {segment['text']}" for i, segment in enumerate(segments)])
-            translated_text = translate_text(client, combined_text, source_lang)
-            
-            # Split translations and map back to segments
-            translations = {}
-            current_index = None
-            current_text = []
-            
-            for line in translated_text.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                if line.startswith('[') and ']' in line:
-                    if current_index is not None:
-                        translations[current_index] = ' '.join(current_text).strip()
-                    try:
-                        current_index = int(line[line.find('[')+1:line.find(']')])
-                        current_text = [line[line.find(']')+1:].strip()]
-                    except ValueError:
-                        current_text.append(line)
-                else:
-                    if current_index is not None:
-                        current_text.append(line)
-            
-            if current_index is not None:
-                translations[current_index] = ' '.join(current_text).strip()
-            
-            for i, segment in enumerate(segments):
-                segment['translation'] = translations.get(i, "Translation error occurred")
-            
-            return segments
-            
-        except Exception as e:
-            print(f"Batch translation error: {str(e)}")
-    
-    # If text is too long, process in batches
+    # Split into smaller batches with context overlap
     for i in range(0, len(segments), BATCH_SIZE):
+        # Get current batch
         batch = segments[i:i + BATCH_SIZE]
-        combined_text = "\n---\n".join([f"[{j}] {segment['text']}" for j, segment in enumerate(batch)])
+        
+        # Add context from previous and next segments if available
+        context_before = ""
+        context_after = ""
+        if i > 0:
+            context_before = f"Context before: {segments[i-1]['text']}\n"
+        if i + BATCH_SIZE < len(segments):
+            context_after = f"\nContext after: {segments[i+BATCH_SIZE]['text']}"
+        
+        # Combine text with context
+        combined_text = context_before + "\n---\n".join([f"[{j}] {segment['text']}" for j, segment in enumerate(batch)]) + context_after
         
         try:
             translated_text = translate_text(client, combined_text, source_lang)
@@ -107,28 +98,78 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
                 line = line.strip()
                 if not line:
                     continue
+                
+                # Skip context lines
+                if line.startswith("Context "):
+                    continue
                     
                 if line.startswith('[') and ']' in line:
+                    # Save previous segment if exists
                     if current_index is not None:
                         translations[current_index] = ' '.join(current_text).strip()
+                    
+                    # Start new segment
                     try:
                         current_index = int(line[line.find('[')+1:line.find(']')])
                         current_text = [line[line.find(']')+1:].strip()]
                     except ValueError:
-                        current_text.append(line)
+                        # If index parsing fails, append to current segment
+                        if current_index is not None:
+                            current_text.append(line)
                 else:
                     if current_index is not None:
                         current_text.append(line)
             
+            # Save the last segment
             if current_index is not None:
                 translations[current_index] = ' '.join(current_text).strip()
             
+            # Map translations back to segments
             for j, segment in enumerate(batch):
-                segment['translation'] = translations.get(j, "Translation error occurred")
+                translation = translations.get(j)
+                if not translation:  # If translation is empty or None
+                    # Try to translate this segment individually with context
+                    try:
+                        context = ""
+                        if j > 0:
+                            context += f"Previous: {batch[j-1]['text']}\n"
+                        if j < len(batch) - 1:
+                            context += f"\nNext: {batch[j+1]['text']}"
+                        
+                        single_translation = translate_text(
+                            client,
+                            f"{context}\n---\n{segment['text']}",
+                            source_lang
+                        )
+                        # Remove any context markers from the translation
+                        single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
+                        segment['translation'] = single_translation
+                    except Exception as e:
+                        segment['translation'] = f"Translation error: {str(e)}"
+                else:
+                    segment['translation'] = translation
                 
         except Exception as e:
-            for segment in batch:
-                segment['translation'] = f"Translation failed: {str(e)}"
+            print(f"Batch translation error: {str(e)}")
+            # Try to translate each segment individually with context
+            for j, segment in enumerate(batch):
+                try:
+                    context = ""
+                    if j > 0:
+                        context += f"Previous: {batch[j-1]['text']}\n"
+                    if j < len(batch) - 1:
+                        context += f"\nNext: {batch[j+1]['text']}"
+                    
+                    single_translation = translate_text(
+                        client,
+                        f"{context}\n---\n{segment['text']}",
+                        source_lang
+                    )
+                    # Remove any context markers from the translation
+                    single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
+                    segment['translation'] = single_translation
+                except Exception as e:
+                    segment['translation'] = f"Translation error: {str(e)}"
     
     return segments
 
@@ -293,19 +334,55 @@ def format_eta(seconds: int) -> str:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
 
-# Initialize FastAPI app
-app = FastAPI(title="Video Transcription API")
+def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
+    """Process video and extract compressed audio using ffmpeg"""
+    try:
+        # Check if ffmpeg is available
+        if not shutil.which('ffmpeg'):
+            raise Exception("ffmpeg is not installed")
+
+        # Extract audio with compression settings
+        command = [
+            'ffmpeg',
+            '-i', input_path,
+            '-vn',  # Skip video
+            '-ac', '1',  # Convert to mono
+            '-ar', '16000',  # Sample rate 16kHz
+            '-b:a', '32k',  # Bitrate 32k
+            output_path,
+            '-y'  # Overwrite output file if it exists
+        ]
+        
+        subprocess.run(command, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Error processing video: {e.stderr.decode()}")
+
+# Initialize FastAPI app with custom request size limit
+app = FastAPI(
+    title="Video Transcription API"
+)
 
 # Configure CORS with more specific settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["http://localhost:5173"],  # Allow frontend origin
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
     expose_headers=["Content-Disposition"],  # Important for file downloads
     max_age=600,  # Cache preflight requests for 10 minutes
 )
+
+# Add middleware for handling large file uploads
+class LargeUploadMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == 'POST' and request.url.path == '/transcribe/':
+            # Set a 5GB limit for /transcribe/ endpoint
+            request._body_size_limit = 5 * 1024 * 1024 * 1024  # 5GB
+            request.scope["max_content_size"] = 5 * 1024 * 1024 * 1024  # 5GB
+        return await call_next(request)
+
+app.add_middleware(LargeUploadMiddleware)
 
 # Configure OpenAI with a custom httpx client
 http_client = httpx.Client()
@@ -316,281 +393,154 @@ client = OpenAI(
 
 @app.post("/transcribe/")
 async def transcribe_video(file: UploadFile, request: Request) -> Dict:
-    """
-    Endpoint to transcribe video files and return text with timestamps.
-    """
-    # Check if file is provided
-    if not file:
-        raise HTTPException(status_code=400, detail="No file provided")
-
-    # Check file extension
-    allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3'}
-    file_extension = Path(file.filename).suffix.lower()
-    if file_extension not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
-        )
-
+    """Handle video upload, extract audio, and transcribe"""
     try:
+        if not file:
+            raise HTTPException(status_code=400, detail="No file provided")
+            
+        # Validate file type
+        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3'}
+        file_extension = Path(file.filename).suffix.lower()
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
+            )
+            
         print(f"\nProcessing video: {file.filename}")
         start_time = time.time()
         
-        # Create a temporary file to store the uploaded video
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-            # Write the uploaded file content to temporary file in chunks
+        # Create a temporary directory for processing
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Save uploaded file in chunks to avoid memory issues
+            temp_input_path = os.path.join(temp_dir, file.filename)
+            temp_output_path = os.path.join(temp_dir, "audio.mp3")
+            
+            # Save file in chunks with a larger chunk size for better performance
+            CHUNK_SIZE = 1024 * 1024 * 8  # 8MB chunks
             total_size = 0
-            chunk_size = 1024 * 1024  # 1MB chunks
+            
             print("\nUploading video...")
-            with tqdm(total=None, unit='MB', unit_scale=True, ncols=80) as pbar:
-                while chunk := await file.read(chunk_size):
-                    temp_file.write(chunk)
-                    total_size += len(chunk)
-                    pbar.update(len(chunk) / (1024 * 1024))
-            temp_file.flush()
+            try:
+                with open(temp_input_path, "wb") as buffer:
+                    while chunk := await file.read(CHUNK_SIZE):
+                        total_size += len(chunk)
+                        if total_size > 5 * 1024 * 1024 * 1024:  # 5GB limit
+                            raise HTTPException(
+                                status_code=413,
+                                detail="File too large. Maximum size is 5GB."
+                            )
+                        buffer.write(chunk)
+                        print(f"Uploaded: {total_size / (1024*1024):.1f} MB", end="\r")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error uploading file: {str(e)}"
+                )
             
-            # Check file size - if it's slightly over 25MB, we'll use more aggressive compression
-            file_size_mb = total_size / (1024 * 1024)
-            print(f"\nFile size: {file_size_mb:.2f}MB")
-            use_aggressive_compression = file_size_mb > 25 and file_size_mb < 30
-
-        try:
-            # Extract and compress audio from video
-            print("\nExtracting audio...")
-            if use_aggressive_compression:
-                print("File slightly exceeds 25MB limit. Using aggressive compression...")
-                # Override compress_audio function for this file with more aggressive settings
-                def compress_audio_aggressive(input_path: str, output_path: str) -> str:
-                    try:
-                        # Check if ffmpeg is available
-                        if not shutil.which('ffmpeg'):
-                            raise Exception("ffmpeg is not installed. Please install ffmpeg first.")
-
-                        # More aggressive compression settings
-                        command = [
-                            'ffmpeg', '-i', input_path,
-                            '-ac', '1',  # Convert to mono
-                            '-ar', '8000',  # Lower sample rate to 8kHz
-                            '-b:a', '16k',  # Lower bitrate to 16k
-                            output_path,
-                            '-y'  # Overwrite output file if it exists
-                        ]
-                        
-                        subprocess.run(command, check=True, capture_output=True)
-                        return output_path
-                    except subprocess.CalledProcessError as e:
-                        raise Exception(f"Error compressing audio: {e.stderr.decode()}")
-                
-                # Temporarily replace the compression function
-                original_compress_audio = compress_audio
-                globals()['compress_audio'] = compress_audio_aggressive
-                
-                # Extract audio with the more aggressive compression
-                audio_chunks = extract_audio(temp_file.name)
-                
-                # Restore original compression function
-                globals()['compress_audio'] = original_compress_audio
-            else:
-                # Use standard compression
-                audio_chunks = extract_audio(temp_file.name)
-            
-            # Process each audio chunk
-            all_segments = []
-            total_duration = 0
-            detected_language = None
+            print("\nExtracting and compressing audio...")
+            try:
+                process_video_with_ffmpeg(temp_input_path, temp_output_path)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing video: {str(e)}"
+                )
             
             print("\nTranscribing audio...")
-            for chunk_idx, audio_path in enumerate(tqdm(audio_chunks, desc="Transcribing chunks", ncols=80)):
-                # Calculate time offset for this chunk
-                time_offset = chunk_idx * 600  # 600 seconds per chunk
+            try:
+                with open(temp_output_path, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        file=audio_file,
+                        model="whisper-1",
+                        response_format="verbose_json"
+                    )
                 
-                try:
-                    # Print debug info about the audio file
-                    audio_file_size = os.path.getsize(audio_path) / (1024 * 1024)
-                    print(f"Audio chunk {chunk_idx} size: {audio_file_size:.2f}MB")
-                    
-                    # Transcribe the audio chunk
-                    with open(audio_path, "rb") as audio_file:
-                        try:
-                            transcript = client.audio.transcriptions.create(
-                                model="whisper-1",
-                                file=audio_file,
-                                response_format="verbose_json"
-                            )
-                        except Exception as e:
-                            print(f"OpenAI API error: {str(e)}")
-                            # If file is too large for OpenAI, try more aggressive compression
-                            if "file too large" in str(e).lower():
-                                print("File too large for OpenAI API, trying more aggressive compression...")
-                                compressed_path = audio_path + ".compressed.wav"
-                                try:
-                                    # Ultra aggressive compression
-                                    command = [
-                                        'ffmpeg', '-i', audio_path,
-                                        '-ac', '1',         # Convert to mono
-                                        '-ar', '8000',      # Very low sample rate
-                                        '-b:a', '12k',      # Very low bitrate
-                                        '-acodec', 'libmp3lame',  # Use MP3 encoding which can be more compressed
-                                        compressed_path,
-                                        '-y'               # Overwrite output file if it exists
-                                    ]
-                                    subprocess.run(command, check=True, capture_output=True)
-                                    
-                                    # Check new file size
-                                    new_size = os.path.getsize(compressed_path) / (1024 * 1024)
-                                    print(f"Ultra-compressed size: {new_size:.2f}MB")
-                                    
-                                    # Try again with smaller file
-                                    with open(compressed_path, "rb") as compressed_file:
-                                        transcript = client.audio.transcriptions.create(
-                                            model="whisper-1",
-                                            file=compressed_file,
-                                            response_format="verbose_json"
-                                        )
-                                        
-                                    # Clean up temporary compressed file
-                                    os.unlink(compressed_path)
-                                except Exception as comp_error:
-                                    print(f"Compression or retry failed: {str(comp_error)}")
-                                    raise
-                            else:
-                                raise
-
-                    # Convert transcript to dict if it's not already
-                    if not isinstance(transcript, dict):
-                        transcript = transcript.model_dump()
-
-                    # Store detected language from first chunk
-                    if chunk_idx == 0:
-                        detected_language = transcript['language']
-                        print(f"\nDetected language: {detected_language}")
-
-                    # Adjust timestamps and add segments
-                    for segment in transcript['segments']:
-                        segment['start'] += time_offset
-                        segment['end'] += time_offset
-                        all_segments.append(segment)
-
-                    # Update total duration
-                    total_duration = max(total_duration, time_offset + transcript['duration'])
-
-                    # Clean up audio chunk file
-                    os.unlink(audio_path)
-
-                except Exception as e:
-                    # Clean up temporary files in case of error
-                    if 'temp_file' in locals():
-                        try:
-                            os.unlink(temp_file.name)
-                        except FileNotFoundError:
-                            pass
-                    # Clean up any remaining audio chunks
-                    if 'audio_chunks' in locals():
-                        for chunk_path in audio_chunks:
-                            try:
-                                os.unlink(chunk_path)
-                            except FileNotFoundError:
-                                pass
-                    raise HTTPException(status_code=500, detail=str(e))
-
-            # Clean up the original video file
-            os.unlink(temp_file.name)
-
-            # Translate segments in batches
-            print("\nTranslating segments...")
-            
-            # Skip translation if content is already in English
-            if detected_language.lower() in ["en", "english"]:
-                print("Content already in English, skipping translation...")
-                for segment in all_segments:
-                    segment['translation'] = segment['text']  # Use original text as translation
-                translated_segments = all_segments
-            else:
-                translated_segments = translate_segments(client, all_segments, detected_language)
-
-            # Format all segments with proper timestamps
-            print("\nFormatting results...")
-            formatted_segments = []
-            for segment in tqdm(translated_segments, desc="Formatting segments", ncols=80):
-                formatted_segment = {
-                    "id": segment['id'],
-                    "start_time": format_timestamp(segment['start']),
-                    "end_time": format_timestamp(segment['end']),
-                    "text": segment['text'].strip(),
-                    "translation": segment['translation']
+                # Normalize language names
+                language_map = {
+                    "en": "english",
+                    "de": "german",
+                    "it": "italian",
+                    "es": "spanish",
+                    "fr": "french"
                 }
-                formatted_segments.append(formatted_segment)
-
-            # Sort segments by start time
-            formatted_segments.sort(key=lambda x: x['start_time'])
-
-            # Calculate total processing time
+                detected_language = transcript.language.lower()
+                normalized_language = language_map.get(detected_language, detected_language)
+                print(f"\nDetected language: {normalized_language}")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error transcribing audio: {str(e)}"
+                )
+            
+            # Process transcription results
+            segments = []
+            for segment in transcript.segments:
+                segments.append({
+                    "id": segment.id,
+                    "start_time": format_timestamp(segment.start),
+                    "end_time": format_timestamp(segment.end),
+                    "text": segment.text
+                })
+            
+            # Always translate if not English
+            translated_segments = segments.copy()
+            if normalized_language != "english":
+                try:
+                    print(f"\nTranslating from {normalized_language} to English...")
+                    translated_segments = translate_segments(client, segments.copy(), normalized_language)
+                    
+                    # Verify translations were successful
+                    failed_translations = [i for i, segment in enumerate(translated_segments) 
+                                        if not segment.get('translation') or 
+                                        'error' in segment['translation'].lower()]
+                    
+                    if failed_translations:
+                        print(f"Translation failed for segments: {failed_translations}")
+                        # Retry failed segments individually
+                        for i in failed_translations:
+                            try:
+                                print(f"Retrying translation for segment {i}")
+                                translated_text = translate_text(client, translated_segments[i]['text'], normalized_language)
+                                translated_segments[i]['translation'] = translated_text
+                            except Exception as e:
+                                print(f"Retry failed for segment {i}: {str(e)}")
+                                translated_segments[i]['translation'] = "Translation error occurred"
+                    
+                except Exception as e:
+                    print(f"Translation error: {str(e)}")
+                    # Set translations to empty strings if translation fails
+                    for segment in translated_segments:
+                        if 'translation' not in segment or not segment['translation']:
+                            segment['translation'] = "Translation error occurred"
+            else:
+                # For English content, set translation same as original text
+                for segment in translated_segments:
+                    segment['translation'] = segment['text']
+            
             total_time = time.time() - start_time
-            print(f"\nTotal processing time: {format_eta(int(total_time))}")
-
+            print(f"\nTotal processing time: {format_timestamp(int(total_time))}")
+            
+            # Store the result in app state for subtitle generation
             result = {
                 "filename": file.filename,
                 "transcription": {
-                    "text": " ".join(segment['text'] for segment in all_segments),
-                    "translated_text": " ".join(segment['translation'] for segment in translated_segments),
-                    "language": detected_language,
-                    "duration": format_timestamp(total_duration),
-                    "segments": formatted_segments,
-                    "processing_time": format_eta(int(total_time))
+                    "text": transcript.text,
+                    "translated_text": next((s['translation'] for s in translated_segments if s.get('translation') and 'error' not in s['translation'].lower()), transcript.text),
+                    "language": normalized_language,
+                    "duration": format_timestamp(float(transcript.duration)),
+                    "segments": translated_segments,
+                    "processing_time": format_timestamp(total_time)
                 }
             }
-            
-            # Store the result for subtitle generation
             request.app.state.last_transcription = result
             
             return result
-
-        except HTTPException:
-            # Re-raise HTTP exceptions
-            raise
-        except Exception as e:
-            # Clean up temporary files in case of error
-            if 'temp_file' in locals():
-                try:
-                    os.unlink(temp_file.name)
-                except FileNotFoundError:
-                    pass
-            # Clean up any remaining audio chunks
-            if 'audio_chunks' in locals():
-                for chunk_path in audio_chunks:
-                    try:
-                        os.unlink(chunk_path)
-                    except FileNotFoundError:
-                        pass
             
-            # Log the detailed error with traceback
-            import traceback
-            error_details = f"Error: {str(e)}\n{traceback.format_exc()}"
-            print(error_details)
-            
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        # Clean up temporary files in case of error
-        if 'temp_file' in locals():
-            try:
-                os.unlink(temp_file.name)
-            except FileNotFoundError:
-                pass
-        # Clean up any remaining audio chunks
-        if 'audio_chunks' in locals():
-            for chunk_path in audio_chunks:
-                try:
-                    os.unlink(chunk_path)
-                except FileNotFoundError:
-                    pass
-        
-        # Log the detailed error with traceback
-        import traceback
-        error_details = f"Error: {str(e)}\n{traceback.format_exc()}"
-        print(error_details)
-        
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/subtitles/{language}")
 async def get_subtitles(language: str, request: Request) -> Response:
@@ -605,7 +555,16 @@ async def get_subtitles(language: str, request: Request) -> Response:
     if language not in ['original', 'english']:
         raise HTTPException(status_code=400, detail="Language must be 'original' or 'english'")
     
-    use_translation = (language == 'english')
+    # Verify we have segments
+    if not transcription['transcription']['segments']:
+        raise HTTPException(status_code=500, detail="No segments found in transcription")
+    
+    # For English subtitles, verify we have translations when needed
+    if language == 'english' and transcription['transcription']['language'] != 'english':
+        if not all('translation' in segment and segment['translation'] for segment in transcription['transcription']['segments']):
+            raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
+    
+    use_translation = (language == 'english' and transcription['transcription']['language'] != 'english')
     srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
     
     # Create filename based on original video and language
