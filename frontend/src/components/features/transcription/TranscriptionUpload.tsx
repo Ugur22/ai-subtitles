@@ -9,10 +9,70 @@ import { SummaryPanel } from '../summary/SummaryPanel';
 import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
 import axios from 'axios';
 
+// Add custom subtitle styles
+const subtitleStyles = `
+::cue {
+  background-color: rgba(0, 0, 0, 0.75);
+  color: white;
+  font-family: sans-serif;
+  font-size: 1em;
+  line-height: 1.4;
+  text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.8);
+  padding: 0.2em 0.5em;
+  border-radius: 0.2em;
+  white-space: pre-line;
+}
+`;
+
 interface ProcessingStatus {
   stage: 'uploading' | 'extracting' | 'transcribing' | 'complete';
   progress: number;
 }
+
+// Helper to format processing time for better readability
+const formatProcessingTime = (timeStr: string): string => {
+  // Try to extract a numeric value from the time string
+  let seconds = 0;
+  
+  // Try to parse seconds from the string
+  if (timeStr.includes('seconds')) {
+    seconds = parseFloat(timeStr.replace(' seconds', '').trim());
+  } else {
+    // If it's a number without units, assume it's seconds
+    const parsed = parseFloat(timeStr);
+    if (!isNaN(parsed)) {
+      seconds = parsed;
+    }
+  }
+  
+  // If we've successfully parsed a seconds value
+  if (seconds > 0) {
+    if (seconds < 5) {
+      // Very fast processing
+      return `${seconds.toFixed(1)} seconds (super fast!)`;
+    } else if (seconds < 60) {
+      // Less than a minute, keep as seconds
+      return `${seconds.toFixed(1)} seconds`;
+    } else {
+      // Convert to minutes and seconds
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = Math.round(seconds % 60);
+      
+      if (remainingSeconds === 0) {
+        // Even minutes
+        return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+      } else {
+        // Minutes and seconds
+        return minutes === 1 
+          ? `1 minute ${remainingSeconds} seconds` 
+          : `${minutes} minutes ${remainingSeconds} seconds`;
+      }
+    }
+  }
+  
+  // If we couldn't parse it, return the original
+  return timeStr;
+};
 
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -34,6 +94,10 @@ export const TranscriptionUpload = () => {
   const [subtitleTrackUrl, setSubtitleTrackUrl] = useState<string | null>(null);
   const [translatedSubtitleUrl, setTranslatedSubtitleUrl] = useState<string | null>(null);
   const [progressSimulation, setProgressSimulation] = useState<NodeJS.Timeout | null>(null);
+  const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [processingTimer, setProcessingTimer] = useState<NodeJS.Timeout | null>(null);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -46,12 +110,25 @@ export const TranscriptionUpload = () => {
         clearInterval(progressSimulation);
         setProgressSimulation(null);
       }
+      
+      // Start a timer to track elapsed processing time
+      setElapsedTime(0);
+      const timer = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+      setProcessingTimer(timer);
     },
     onSuccess: (data) => {
       // Clear simulation on success
       if (progressSimulation) {
         clearInterval(progressSimulation);
         setProgressSimulation(null);
+      }
+      
+      // Clear processing timer
+      if (processingTimer) {
+        clearInterval(processingTimer);
+        setProcessingTimer(null);
       }
       
       setTranscription(data);
@@ -63,6 +140,12 @@ export const TranscriptionUpload = () => {
       if (progressSimulation) {
         clearInterval(progressSimulation);
         setProgressSimulation(null);
+      }
+      
+      // Clear processing timer
+      if (processingTimer) {
+        clearInterval(processingTimer);
+        setProcessingTimer(null);
       }
       
       console.error('Transcription error:', error);
@@ -88,6 +171,38 @@ export const TranscriptionUpload = () => {
       }
     };
   }, [progressSimulation]);
+
+  // Add time update handler to track current video position
+  useEffect(() => {
+    if (videoRef) {
+      const handleTimeUpdate = () => {
+        setCurrentTime(videoRef.currentTime);
+        
+        // Find the currently active segment based on video time
+        if (transcription) {
+          const currentSegment = transcription.transcription.segments.find(segment => {
+            const startSeconds = convertTimeToSeconds(segment.start_time);
+            const endSeconds = convertTimeToSeconds(segment.end_time);
+            return videoRef.currentTime >= startSeconds && videoRef.currentTime <= endSeconds;
+          });
+          
+          setActiveSegmentId(currentSegment?.id ?? null);
+        }
+      };
+      
+      videoRef.addEventListener('timeupdate', handleTimeUpdate);
+      
+      return () => {
+        videoRef.removeEventListener('timeupdate', handleTimeUpdate);
+      };
+    }
+  }, [videoRef, transcription]);
+  
+  // Helper to convert HH:MM:SS to seconds
+  const convertTimeToSeconds = (timeString: string): number => {
+    const [hours, minutes, seconds] = timeString.split(':').map(Number);
+    return hours * 3600 + minutes * 60 + seconds;
+  };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -246,6 +361,30 @@ export const TranscriptionUpload = () => {
   const generateWebVTT = (segments: any[], useTranslation: boolean = false): string => {
     let vttContent = 'WEBVTT\n\n';
     
+    // Get language to optimize chunking
+    const language = transcription?.transcription.language || 'en';
+    
+    // Determine optimal chunk size based on language complexity
+    // Some languages are more information-dense and need fewer words per line
+    const getOptimalChunkSize = (lang: string): number => {
+      const langSettings: {[key: string]: number} = {
+        'en': 7,     // English - standard
+        'de': 5,     // German - longer words
+        'ja': 12,    // Japanese - character-based
+        'zh': 12,    // Chinese - character-based
+        'ko': 10,    // Korean - character-based
+        'it': 6,     // Italian
+        'fr': 6,     // French
+        'es': 6,     // Spanish
+        'ru': 5,     // Russian - longer words
+      };
+      
+      return langSettings[lang.toLowerCase()] || 6; // Default to 6 words
+    };
+    
+    // Base chunk size on language
+    const maxWordsPerChunk = getOptimalChunkSize(language);
+    
     segments.forEach((segment, index) => {
       // Convert HH:MM:SS format to HH:MM:SS.000 (WebVTT requires milliseconds)
       const startTime = segment.start_time.includes('.') 
@@ -261,12 +400,87 @@ export const TranscriptionUpload = () => {
         ? segment.translation 
         : segment.text;
       
-      vttContent += `${index + 1}\n`;
-      vttContent += `${startTime} --> ${endTime}\n`;
-      vttContent += `${text}\n\n`;
+      // Smart chunking based on:
+      // 1. Respect sentence boundaries (., ?, !)
+      // 2. Respect clause boundaries (,, :, ;) 
+      // 3. Keep important phrases together
+      
+      // Split into natural language chunks
+      const breakText = (text: string): string[] => {
+        if (text.length <= 42) { // Short text - no need to break
+          return [text];
+        }
+        
+        // Try to break at sentence boundaries first
+        const sentenceBreaks = text.match(/[.!?]+(?=\s|$)/g);
+        if (sentenceBreaks && sentenceBreaks.length > 1) {
+          // Multiple sentences - break at sentence boundaries
+          return text.split(/(?<=[.!?])\s+/g).filter(s => s.trim().length > 0);
+        }
+        
+        // Try to break at clause boundaries
+        const clauseMatches = text.match(/[,;:]+(?=\s|$)/g);
+        if (clauseMatches && clauseMatches.length > 0) {
+          // Break at clauses
+          return text.split(/(?<=[,;:])\s+/g).filter(s => s.trim().length > 0);
+        }
+        
+        // Last resort: break by word count
+        const words = text.split(' ');
+        const chunks = [];
+        
+        for (let i = 0; i < words.length; i += maxWordsPerChunk) {
+          chunks.push(words.slice(i, i + maxWordsPerChunk).join(' '));
+        }
+        
+        return chunks;
+      };
+      
+      const textChunks = breakText(text);
+      
+      // If only one chunk, display as is
+      if (textChunks.length === 1) {
+        vttContent += `${index + 1}\n`;
+        vttContent += `${startTime} --> ${endTime}\n`;
+        vttContent += `${text}\n\n`;
+      } else {
+        // Multiple chunks - distribute timing
+        const segmentDurationMs = timeToMs(endTime) - timeToMs(startTime);
+        const msPerChunk = segmentDurationMs / textChunks.length;
+        
+        textChunks.forEach((chunk, chunkIndex) => {
+          const chunkStartMs = timeToMs(startTime) + (chunkIndex * msPerChunk);
+          const chunkEndMs = chunkIndex === textChunks.length - 1 
+            ? timeToMs(endTime)  // Last chunk ends at segment end
+            : chunkStartMs + msPerChunk;
+          
+          vttContent += `${index + 1}.${chunkIndex + 1}\n`;
+          vttContent += `${msToTime(chunkStartMs)} --> ${msToTime(chunkEndMs)}\n`;
+          vttContent += `${chunk}\n\n`;
+        });
+      }
     });
     
     return vttContent;
+  };
+  
+  // Helper function to convert HH:MM:SS.mmm to milliseconds
+  const timeToMs = (timeString: string): number => {
+    const [time, ms = '0'] = timeString.split('.');
+    const [hours, minutes, seconds] = time.split(':').map(Number);
+    
+    return (hours * 3600 + minutes * 60 + seconds) * 1000 + parseInt(ms.padEnd(3, '0').substring(0, 3));
+  };
+  
+  // Helper function to convert milliseconds to HH:MM:SS.mmm format
+  const msToTime = (ms: number): string => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const milliseconds = ms % 1000;
+    
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
   };
   
   // Create and add subtitles to video
@@ -298,17 +512,23 @@ export const TranscriptionUpload = () => {
   useEffect(() => {
     if (transcription) {
       createSubtitleTracks();
+      
+      // Add custom subtitle styles to document head
+      const styleElement = document.createElement('style');
+      styleElement.innerHTML = subtitleStyles;
+      document.head.appendChild(styleElement);
+      
+      return () => {
+        if (subtitleTrackUrl) {
+          URL.revokeObjectURL(subtitleTrackUrl);
+        }
+        if (translatedSubtitleUrl) {
+          URL.revokeObjectURL(translatedSubtitleUrl);
+        }
+        // Remove custom styles when component unmounts
+        document.head.removeChild(styleElement);
+      };
     }
-    
-    // Cleanup function to revoke URLs when component unmounts
-    return () => {
-      if (subtitleTrackUrl) {
-        URL.revokeObjectURL(subtitleTrackUrl);
-      }
-      if (translatedSubtitleUrl) {
-        URL.revokeObjectURL(translatedSubtitleUrl);
-      }
-    };
   }, [transcription]);
   
   // Update subtitles when translation toggle changes
@@ -335,6 +555,18 @@ export const TranscriptionUpload = () => {
   const toggleSubtitles = () => {
     setShowSubtitles(!showSubtitles);
   };
+
+  // Cleanup function for timers when component unmounts
+  useEffect(() => {
+    return () => {
+      if (progressSimulation) {
+        clearInterval(progressSimulation);
+      }
+      if (processingTimer) {
+        clearInterval(processingTimer);
+      }
+    };
+  }, [progressSimulation, processingTimer]);
 
   return (
     <div className="h-full text-gray-900">
@@ -475,13 +707,18 @@ export const TranscriptionUpload = () => {
                       />
                     )}
                   </div>
-                  <p className="mt-2 text-2xs text-center text-gray-500">
-                    {processingStatus.stage === 'extracting'
-                      ? 'Extracting audio from video file. This may take several minutes depending on file size...'
-                      : processingStatus.stage === 'transcribing'
-                      ? 'Converting speech to text...'
-                      : 'Processing your file...'}
-                  </p>
+                  <div className="mt-2 flex justify-between text-2xs text-gray-500">
+                    <p className="text-center">
+                      {processingStatus.stage === 'extracting'
+                        ? 'Extracting audio from video file. This may take several minutes depending on file size...'
+                        : processingStatus.stage === 'transcribing'
+                        ? 'Converting speech to text...'
+                        : 'Processing your file...'}
+                    </p>
+                    <p className="text-right font-medium">
+                      {elapsedTime > 0 && `Time elapsed: ${formatProcessingTime(elapsedTime.toString())}`}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -558,7 +795,10 @@ export const TranscriptionUpload = () => {
                     <span className="font-medium text-gray-700">Language:</span> {transcription.transcription.language}
                   </div>
                   <div className="text-xs text-gray-500">
-                    <span className="font-medium text-gray-700">Processing Time:</span> {transcription.transcription.processing_time}
+                    <span className="font-medium text-gray-700">Processing Time:</span> 
+                    <span className="ml-1 px-1.5 py-0.5 bg-teal-50 text-teal-700 rounded-md font-medium">
+                      {formatProcessingTime(transcription.transcription.processing_time)}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -606,9 +846,15 @@ export const TranscriptionUpload = () => {
                       {showSubtitles ? 'Subtitles On' : 'Subtitles Off'}
                     </button>
                     {showSubtitles && (
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700">
+                      <button 
+                        onClick={() => setShowTranslation(!showTranslation)}
+                        className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors duration-200 flex items-center gap-1"
+                      >
                         {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
-                      </span>
+                        <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                        </svg>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -659,9 +905,15 @@ export const TranscriptionUpload = () => {
                         <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
                         <span className="ms-3 text-sm font-medium">Show English Translation</span>
                       </label>
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
-                        {showTranslation ? 'ENGLISH' : transcription.transcription.language.toUpperCase()}
-                      </span>
+                      <button 
+                        onClick={() => setShowTranslation(!showTranslation)}
+                        className="px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800 hover:bg-teal-200 transition-colors duration-200 flex items-center gap-1"
+                      >
+                        {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
+                        <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   
@@ -669,7 +921,12 @@ export const TranscriptionUpload = () => {
                   <div className="overflow-y-auto flex-grow">
                     <div className="p-5 space-y-6">
                       {transcription.transcription.segments.map((segment) => (
-                        <div key={segment.id} className="py-2 border-b border-gray-100 last:border-0">
+                        <div 
+                          key={segment.id} 
+                          className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
+                            activeSegmentId === segment.id ? 'bg-teal-50' : ''
+                          }`}
+                        >
                           <div className="flex items-start gap-4">
                             {segment.screenshot_url && (
                               <div className="flex-shrink-0">
@@ -694,7 +951,7 @@ export const TranscriptionUpload = () => {
                                 {segment.start_time} - {segment.end_time}
                                 <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
                               </div>
-                              <p className="text-gray-800">
+                              <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
                                 {showTranslation && segment.translation ? segment.translation : segment.text}
                               </p>
                               {/* Show both when a translation is available */}
