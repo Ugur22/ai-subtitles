@@ -616,15 +616,15 @@ export const TranscriptionUpload = () => {
       {!transcription && (
         <div className="mx-auto max-w-4xl">
           <div className="bg-white rounded-xl shadow-md overflow-hidden">
-            <div className="p-8">
-              <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            <div className="p-5">
+              <div className="text-center mb-4">
+                <h2 className="text-xl font-bold text-gray-900 mb-1">
                   Upload Your File
                 </h2>
-                <p className="text-sm text-gray-600 max-w-lg mx-auto">
+                <p className="text-xs text-gray-600 max-w-lg mx-auto">
                   Upload your video or audio file and our AI will transcribe it with timestamps.
                   <br />
-                  <span className="text-xs text-teal-600">
+                  <span className="text-2xs text-teal-600">
                     Now supports large video files - we'll automatically extract the audio!
                   </span>
                 </p>
@@ -633,7 +633,7 @@ export const TranscriptionUpload = () => {
               <div 
                 className={`
                   relative flex flex-col items-center justify-center
-                  w-full max-w-lg mx-auto h-64 border-2 border-dashed rounded-lg
+                  w-full max-w-lg mx-auto h-48 border-2 border-dashed rounded-lg
                   transition-all duration-300 ease-in-out
                   ${dragActive 
                     ? 'border-teal-500 bg-teal-50' 
@@ -647,10 +647,10 @@ export const TranscriptionUpload = () => {
                 onDrop={handleDrop}
                 onClick={handleButtonClick}
               >
-                <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
-                  <div className="mb-4">
+                <div className="flex flex-col items-center justify-center pt-3 pb-4 px-4 text-center">
+                  <div className="mb-2">
                     <svg
-                      className={`w-12 h-12 ${dragActive ? 'text-teal-500' : 'text-teal-400'}`}
+                      className={`w-10 h-10 ${dragActive ? 'text-teal-500' : 'text-teal-400'}`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -659,13 +659,13 @@ export const TranscriptionUpload = () => {
                       <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
                   </div>
-                  <h3 className="text-lg font-medium text-gray-700">
+                  <h3 className="text-base font-medium text-gray-700">
                     {dragActive ? "Drop to upload" : "Drag & drop your file here"}
                   </h3>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-2xs text-gray-500">
                     or click to browse files
                   </p>
-                  <p className="text-xs text-gray-400 mt-3">
+                  <p className="text-2xs text-gray-400 mt-1">
                     Supports MP4, MP3, WAV files up to 5GB
                   </p>
                 </div>
@@ -680,25 +680,25 @@ export const TranscriptionUpload = () => {
               </div>
 
               {/* File Format Info */}
-              <div className="mt-6 flex justify-center gap-4">
+              <div className="mt-4 flex justify-center gap-3">
                 <div className="flex items-center space-x-1 text-gray-600">
                   <svg className="w-3 h-3 text-teal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <polyline points="12 6 12 12 16 14"></polyline>
                   </svg>
-                  <span className="text-xs">Quick Processing</span>
+                  <span className="text-2xs">Quick Processing</span>
                 </div>
                 <div className="flex items-center space-x-1 text-gray-600">
                   <svg className="w-3 h-3 text-teal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
                   </svg>
-                  <span className="text-xs">Secure Upload</span>
+                  <span className="text-2xs">Secure Upload</span>
                 </div>
                 <div className="flex items-center space-x-1 text-gray-600">
                   <svg className="w-3 h-3 text-teal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
                   </svg>
-                  <span className="text-xs">High Accuracy</span>
+                  <span className="text-2xs">High Accuracy</span>
                 </div>
               </div>
 
@@ -930,102 +930,107 @@ export const TranscriptionUpload = () => {
               </div>
             )}
 
-            <div className="flex flex-col md:flex-row gap-6 flex-grow overflow-hidden mt-6">
-              <div className={`${showSummary ? 'md:w-2/3' : 'w-full'} flex flex-col overflow-hidden`}>
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col flex-grow">
-                  {/* Translation Toggle Header - Fixed below video */}
-                  <div className="bg-white z-40 px-5 py-3 border-b border-gray-200 flex justify-between items-center shadow-sm flex-shrink-0">
-                    <h3 className="text-sm font-medium text-gray-800">Transcript</h3>
-                    <div className="flex items-center gap-3">
-                      <label className="inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={showTranslation}
-                          onChange={() => setShowTranslation(!showTranslation)}
-                          className="sr-only peer"
-                        />
-                        <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-                        <span className="ms-3 text-sm font-medium">Show English Translation</span>
-                      </label>
-                      <button 
-                        onClick={() => setShowTranslation(!showTranslation)}
-                        className="px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800 hover:bg-teal-200 transition-colors duration-200 flex items-center gap-1"
-                      >
-                        {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
-                        <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                        </svg>
-                      </button>
-                    </div>
+            {/* Change the layout from a vertical flex column to a horizontal flex row with proper spacing */}
+            <div className="flex flex-col lg:flex-row gap-6 mt-4 h-full overflow-hidden">
+              {/* Transcript panel - set to fixed height on small screens and flex height on large screens */}
+              <div className="lg:w-1/2 bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden h-[400px] lg:h-auto flex-grow">
+                <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                  <h3 className="text-sm font-medium text-gray-800">Transcript</h3>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setShowTranslation(!showTranslation)}
+                      className={`px-2 py-1 rounded text-xs 
+                        ${showTranslation ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+                    >
+                      {showTranslation ? 'Show Original' : 'Show Translation'}
+                    </button>
                   </div>
-                  
-                  {/* Scrollable Transcript Section - Only this part scrolls */}
-                  <div className="overflow-y-auto flex-grow">
-                    <div className="p-5 space-y-6">
-                      {transcription.transcription.segments.map((segment) => (
-                        <div 
-                          key={segment.id} 
-                          className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
-                            activeSegmentId === segment.id ? 'bg-teal-50' : ''
-                          }`}
-                        >
-                          <div className="flex items-start gap-4">
-                            {segment.screenshot_url && (
-                              <div className="flex-shrink-0">
-                                <img 
-                                  src={`http://localhost:8000${segment.screenshot_url}`}
-                                  alt={`Screenshot at ${segment.start_time}`}
-                                  className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
-                                  onClick={() => seekToTimestamp(segment.start_time)}
-                                  style={{ cursor: 'pointer' }}
-                                />
-                              </div>
-                            )}
-                            <div className="flex-grow">
-                              <div 
-                                className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                </div>
+                
+                <div className="p-5 h-full overflow-y-auto">
+                  <div className="space-y-4">
+                    {transcription.transcription.segments.map((segment, index) => (
+                      <div 
+                        key={segment.id} 
+                        className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
+                          activeSegmentId === segment.id ? 'bg-teal-50' : ''
+                        }`}
+                      >
+                        <div className="flex items-start gap-4">
+                          {segment.screenshot_url && (
+                            <div className="flex-shrink-0">
+                              <img 
+                                src={`http://localhost:8000${segment.screenshot_url}`}
+                                alt={`Screenshot at ${segment.start_time}`}
+                                className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
                                 onClick={() => seekToTimestamp(segment.start_time)}
-                              >
-                                <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <circle cx="12" cy="12" r="10"></circle>
-                                  <polyline points="12 6 12 12 16 14"></polyline>
-                                </svg>
-                                {segment.start_time} - {segment.end_time}
-                                <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
-                              </div>
-                              <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
-                                {showTranslation && segment.translation ? segment.translation : segment.text}
-                              </p>
-                              {/* Show both when a translation is available */}
-                              {showTranslation && segment.translation && segment.translation !== segment.text && (
-                                <p className="text-xs text-gray-500 mt-1 italic">
-                                  Original: {segment.text}
-                                </p>
-                              )}
+                                style={{ cursor: 'pointer' }}
+                              />
                             </div>
+                          )}
+                          <div className="flex-grow">
+                            <div 
+                              className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                              onClick={() => seekToTimestamp(segment.start_time)}
+                            >
+                              <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                              </svg>
+                              {segment.start_time} - {segment.end_time}
+                              <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                            </div>
+                            <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
+                              {showTranslation && segment.translation ? segment.translation : segment.text}
+                            </p>
+                            {/* Show both when a translation is available */}
+                            {showTranslation && segment.translation && segment.translation !== segment.text && (
+                              <p className="text-xs text-gray-500 mt-1 italic">
+                                Original: {segment.text}
+                              </p>
+                            )}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
               
-              {showSummary && (
-                <div className="md:w-1/3 overflow-y-auto">
-                  <SummaryPanel 
-                    isVisible={showSummary} 
-                    onSeekTo={seekToTimestamp}
-                  />
+              {/* Search and Analytics panel - place to the right on large screens */}
+              <div className="lg:w-1/2 space-y-6 h-[400px] lg:h-auto flex-grow overflow-hidden flex flex-col">
+                <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-y-auto flex-grow">
+                  <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
+                    <div className="px-5 py-3 flex items-center justify-between">
+                      <h3 className="text-sm font-medium text-gray-800">Search & Analysis</h3>
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 overflow-y-auto h-full">
+                    <SearchPanel />
+                    <div className="mt-4">
+                      <AnalyticsPanel />
+                    </div>
+                  </div>
                 </div>
-              )}
+                
+                {showSummary && (
+                  <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-y-auto">
+                    <SummaryPanel 
+                      isVisible={showSummary} 
+                      onSeekTo={seekToTimestamp}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-shrink-0 mt-6">
+          {/* Remove this div since we've incorporated these components above */}
+          {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-shrink-0 mt-6 max-h-[600px] overflow-y-auto">
             <SearchPanel />
             <AnalyticsPanel />
-          </div>
+          </div> */}
         </div>
       )}
 

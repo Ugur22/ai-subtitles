@@ -81,8 +81,8 @@ export const SearchPanel = () => {
 
         {/* Search Results */}
         {searchMutation.isSuccess && (
-          <div className="mt-6">
-            <div className="flex items-center mb-4">
+          <div className="mt-6 max-h-[300px] overflow-y-auto pr-1">
+            <div className="flex items-center mb-4 sticky top-0 bg-white z-10 py-2">
               <h4 className="text-base font-medium text-gray-900">
                 Search Results
               </h4>
