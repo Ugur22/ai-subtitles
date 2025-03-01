@@ -47,7 +47,7 @@ export const SummaryPanel = ({ isVisible, onSeekTo }: SummaryPanelProps) => {
   if (!isVisible) return null;
   
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden mt-4">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
         <h3 className="text-sm font-medium text-gray-800">Content Summary</h3>
         {!summaries.length && !loading && (
@@ -88,7 +88,7 @@ export const SummaryPanel = ({ isVisible, onSeekTo }: SummaryPanelProps) => {
                 className="flex items-center justify-between px-5 py-3 cursor-pointer"
                 onClick={() => setExpandedSection(expandedSection === index ? null : index)}
               >
-                <div className="flex items-center">
+                <div className="flex items-center flex-1">
                   <button className="mr-2 text-gray-400">
                     {expandedSection === index ? (
                       <ChevronUpIcon className="w-4 h-4" />
@@ -98,25 +98,32 @@ export const SummaryPanel = ({ isVisible, onSeekTo }: SummaryPanelProps) => {
                   </button>
                   <span className="font-medium text-gray-800">{section.title}</span>
                 </div>
-                <button 
-                  className="text-xs text-teal-600 hover:text-teal-700"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSeekTo(section.start);
-                  }}
-                >
-                  {section.start}
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button 
+                    className="text-xs text-teal-600 hover:text-teal-700 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSeekTo(section.start);
+                    }}
+                  >
+                    {section.start}
+                  </button>
+                  <span className="text-xs text-gray-400">-</span>
+                  <button 
+                    className="text-xs text-teal-600 hover:text-teal-700 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSeekTo(section.end);
+                    }}
+                  >
+                    {section.end}
+                  </button>
+                </div>
               </div>
               
               {expandedSection === index && (
                 <div className="px-5 py-3 bg-gray-50 text-sm">
                   <p className="text-gray-700">{section.summary}</p>
-                  <div className="mt-2 text-right">
-                    <span className="text-xs text-gray-500">
-                      {section.start} - {section.end}
-                    </span>
-                  </div>
                 </div>
               )}
             </div>
