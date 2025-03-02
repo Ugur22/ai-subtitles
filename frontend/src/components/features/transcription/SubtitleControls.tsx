@@ -12,7 +12,11 @@ export const SubtitleControls = ({ filename }: SubtitleControlsProps) => {
     try {
       setDownloading(language);
       const blob = await getSubtitles(language);
-      const url = window.URL.createObjectURL(blob);
+      
+      // Create a new blob with explicit UTF-8 encoding to handle special characters properly
+      const newBlob = new Blob([blob], { type: 'text/srt;charset=utf-8' });
+      
+      const url = window.URL.createObjectURL(newBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${filename.split('.')[0]}_${language}.srt`;
