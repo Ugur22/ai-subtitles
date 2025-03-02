@@ -244,7 +244,7 @@ export const SummaryPanel = ({ isVisible, onSeekTo }: SummaryPanelProps) => {
                     <img 
                       src={formatScreenshotUrl(section.screenshot_url)}
                       alt={`Screenshot for ${section.title}`}
-                      className="w-16 h-16 object-cover rounded-md shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                      className="w-32 h-32 object-cover rounded-md shadow-sm hover:shadow-md transition-shadow cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleSeekTo(section.start);
@@ -258,13 +258,13 @@ export const SummaryPanel = ({ isVisible, onSeekTo }: SummaryPanelProps) => {
                 ) : (
                   <div className="flex-shrink-0 mr-3">
                     <div 
-                      className="w-16 h-16 bg-gray-100 flex items-center justify-center rounded-md cursor-pointer"
+                      className="w-24 h-24 bg-gray-100 flex items-center justify-center rounded-md cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleSeekTo(section.start);
                       }}
                     >
-                      <svg className="w-6 h-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
