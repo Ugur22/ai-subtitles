@@ -420,7 +420,23 @@ export const TranscriptionUpload = () => {
         setTimeout(() => {
           const segmentElement = document.getElementById(`transcript-segment-${matchingSegmentId}`);
           if (segmentElement) {
-            segmentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Find the scrollable container instead of scrolling the whole page
+            const transcriptContainer = document.querySelector('.flex-grow.overflow-auto');
+            if (transcriptContainer) {
+              // Calculate position relative to the container
+              const containerRect = transcriptContainer.getBoundingClientRect();
+              const elementRect = segmentElement.getBoundingClientRect();
+              const relativeTop = elementRect.top - containerRect.top;
+              
+              // Scroll the container, not the element
+              transcriptContainer.scrollTo({
+                top: transcriptContainer.scrollTop + relativeTop - 100, // 100px from top for better visibility
+                behavior: 'smooth'
+              });
+            } else {
+              // Fallback to the previous behavior
+              segmentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
           }
         }, 100);
       }
@@ -1243,8 +1259,8 @@ export const TranscriptionUpload = () => {
               )}
               
               {/* Tabs for Transcript and Summary */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-grow">
-                <div className="flex border-b border-gray-200">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-grow flex flex-col">
+                <div className="flex border-b border-gray-200 sticky top-0 bg-white z-10">
                   <button
                     onClick={() => setShowSummary(false)}
                     className={`px-5 py-3 text-sm font-medium ${!showSummary ? 'text-teal-600 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-700'}`}
@@ -1259,83 +1275,85 @@ export const TranscriptionUpload = () => {
                   </button>
                 </div>
                 
-                {/* Transcript Panel */}
-                {!showSummary && (
-                  <div className="overflow-y-auto max-h-[60vh]">
-                    <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => setShowTranslation(!showTranslation)}
-                          className={`px-2 py-1 rounded text-xs 
-                            ${showTranslation ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
-                        >
-                          {showTranslation ? 'Show Original' : 'Show Translation'}
-                        </button>
+                <div className="flex-grow overflow-auto">
+                  {!showSummary && (
+                    <div className="h-full">
+                      {/* Transcript content */}
+                      <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => setShowTranslation(!showTranslation)}
+                            className={`px-2 py-1 rounded text-xs 
+                              ${showTranslation ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+                          >
+                            {showTranslation ? 'Show Original' : 'Show Translation'}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="p-4 space-y-2">
-                      {transcription.transcription.segments.map((segment, index) => (
-                        <div 
-                          key={segment.id}
-                          id={`transcript-segment-${segment.id}`}
-                          className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
-                            activeSegmentId === segment.id ? 'bg-teal-50' : ''
-                          }`}
-                        >
-                          <div className="flex items-start gap-4">
-                            {segment.screenshot_url && (
-                              <div className="flex-shrink-0">
-                                <img 
-                                  src={`http://localhost:8000${segment.screenshot_url}`}
-                                  alt={`Screenshot at ${segment.start_time}`}
-                                  className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
-                                  onClick={() => seekToTimestamp(segment.start_time)}
-                                  style={{ cursor: 'pointer' }}
-                                />
-                              </div>
-                            )}
-                            <div className="flex-grow">
-                              <div 
-                                className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
-                                onClick={() => seekToTimestamp(segment.start_time)}
-                              >
-                                <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <circle cx="12" cy="12" r="10"></circle>
-                                  <polyline points="12 6 12 12 16 14"></polyline>
-                                </svg>
-                                {segment.start_time} - {segment.end_time}
-                                <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
-                              </div>
-                              <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
-                                {showTranslation && segment.translation ? segment.translation : segment.text}
-                              </p>
-                              {/* Show both when a translation is available */}
-                              {showTranslation && segment.translation && segment.translation !== segment.text && (
-                                <p className="text-xs text-gray-500 mt-1 italic">
-                                  Original: {segment.text}
-                                </p>
+                      <div className="p-4 space-y-2">
+                        {transcription.transcription.segments.map((segment, index) => (
+                          <div 
+                            key={segment.id}
+                            id={`transcript-segment-${segment.id}`}
+                            className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
+                              activeSegmentId === segment.id ? 'bg-teal-50' : ''
+                            }`}
+                          >
+                            <div className="flex items-start gap-4">
+                              {segment.screenshot_url && (
+                                <div className="flex-shrink-0">
+                                  <img 
+                                    src={`http://localhost:8000${segment.screenshot_url}`}
+                                    alt={`Screenshot at ${segment.start_time}`}
+                                    className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
+                                    onClick={() => seekToTimestamp(segment.start_time)}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                </div>
                               )}
+                              <div className="flex-grow">
+                                <div 
+                                  className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                                  onClick={() => seekToTimestamp(segment.start_time)}
+                                >
+                                  <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                  </svg>
+                                  {segment.start_time} - {segment.end_time}
+                                  <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                                </div>
+                                <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
+                                  {showTranslation && segment.translation ? segment.translation : segment.text}
+                                </p>
+                                {/* Show both when a translation is available */}
+                                {showTranslation && segment.translation && segment.translation !== segment.text && (
+                                  <p className="text-xs text-gray-500 mt-1 italic">
+                                    Original: {segment.text}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-                
-                {/* Summary Panel (replaces the left sidebar) */}
-                {showSummary && (
-                  <div className="overflow-y-auto h-full">
-                    <SummaryPanel 
-                      isVisible={showSummary}
-                      onSeekTo={seekToTimestamp}
-                      summaries={summaries}
-                      setSummaries={setSummaries}
-                      loading={summaryLoading}
-                      generateSummaries={generateSummaries}
-                    />
-                  </div>
-                )}
+                  )}
+                  
+                  {/* Summary Panel */}
+                  {showSummary && (
+                    <div className="h-full">
+                      <SummaryPanel 
+                        isVisible={showSummary}
+                        onSeekTo={seekToTimestamp}
+                        summaries={summaries}
+                        setSummaries={setSummaries}
+                        loading={summaryLoading}
+                        generateSummaries={generateSummaries}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             
