@@ -460,69 +460,56 @@ export const TranscriptionUpload = () => {
   // Handle when a saved transcription is loaded
   const handleTranscriptionLoaded = async (videoHash?: string) => {
     try {
-      // Fetch the current transcription
-      console.log('Fetching current transcription...');
-      const result = await fetchCurrentTranscription();
-      console.log('Finished fetching current transcription:', result);
+      let data;
       
-      if (result) {
-        try {
-          if (videoHash) {
-            // Directly use the provided video hash
-            console.log('Using provided video hash:', videoHash);
-            const videoEndpoint = `http://localhost:8000/video/${encodeURIComponent(videoHash)}`;
-            console.log('Video endpoint URL:', videoEndpoint);
-            
-            // Test if the video endpoint is accessible
-            try {
-              const response = await fetch(videoEndpoint, { 
-                method: 'GET',
-                headers: {
-                  'Range': 'bytes=0-1024' // Only request the first KB to verify access
-                }
-              });
-              console.log('Video endpoint test response:', response.status, response.statusText);
-              if (!response.ok) {
-                console.error('Video endpoint is not accessible');
-              } else {
-                // Set the video URL to the backend endpoint
-                setVideoUrl(videoEndpoint);
-                console.log('Set video URL to:', videoEndpoint);
-              }
-            } catch (error) {
-              console.error('Error testing video endpoint:', error);
-            }
-          } else {
-            // Fallback approach
-            console.log('No hash provided, attempting to find by filename:', result.filename);
-            const response = await fetch('http://localhost:8000/transcriptions/');
-            const data = await response.json();
-            
-            // Find the transcription with matching filename
-            const matchingTranscription = data.transcriptions.find(
-              (t: {video_hash: string, filename: string}) => t.filename === result.filename
-            );
-            
-            if (matchingTranscription) {
-              const hash = matchingTranscription.video_hash;
-              // Create a video URL using the backend endpoint
-              const videoEndpoint = `http://localhost:8000/video/${encodeURIComponent(hash)}`;
-              console.log('Loading video from endpoint with found hash:', videoEndpoint);
-              
-              // Set the video URL to the backend endpoint
-              setVideoUrl(videoEndpoint);
-            } else {
-              console.error('Could not find matching transcription for:', result.filename);
-            }
-          }
-        } catch (error) {
-          console.error('Failed to load video:', error);
-        }
+      if (videoHash) {
+        // Load a specific saved transcription
+        const response = await axios.get(`http://localhost:8000/transcription/${videoHash}`);
+        data = response.data;
+      } else {
+        // Load the current transcription
+        const response = await axios.get('http://localhost:8000/current_transcription/');
+        data = response.data;
       }
       
+      console.log("Loaded transcription data:", data);
+      
+      // Reset state for new transcription
+      setTranscription(data);
+      setFile(null);
+      setProcessingStatus({ stage: 'complete', progress: 100 });
       setShowSavedTranscriptions(false);
+      
+      // Reset summaries for the new transcription
+      setSummaries([]);
+      
+      // Load video if video_hash exists
+      if (data.video_hash) {
+        const videoPath = `http://localhost:8000/video/${data.video_hash}`;
+        console.log("Setting video URL:", videoPath);
+        setVideoUrl(videoPath);
+      } else if (data.file_path) {
+        // Fallback to try to extract hash from file_path
+        const pathParts = data.file_path.split('/');
+        const fileName = pathParts[pathParts.length - 1];
+        const hashMatch = fileName.match(/^([a-f0-9]+)\./i);
+        
+        if (hashMatch && hashMatch[1]) {
+          const extractedHash = hashMatch[1];
+          const videoPath = `http://localhost:8000/video/${extractedHash}`;
+          console.log("Setting video URL (extracted from filename):", videoPath);
+          setVideoUrl(videoPath);
+        } else {
+          console.error("Could not determine video hash from:", data);
+          setError("Could not load video: Missing video identifier");
+        }
+      } else {
+        console.error("No video_hash or file_path in transcription data:", data);
+        setError("Could not load video: Missing file information");
+      }
     } catch (error) {
-      console.error('Error loading transcription:', error);
+      console.error("Error loading transcription:", error);
+      setError("Failed to load the transcription. Please try again.");
     }
   };
 
@@ -780,7 +767,17 @@ export const TranscriptionUpload = () => {
       
       const data = await response.json();
       setTranscription(data);
+      // Reset summaries when loading a new transcription to prevent showing summaries from previous videos
+      setSummaries([]);
       setProcessingStatus({ stage: 'complete', progress: 100 });
+      
+      // Set video URL if video_hash is available
+      if (data.video_hash) {
+        const videoPath = `http://localhost:8000/video/${data.video_hash}`;
+        console.log("Setting video URL from current transcription:", videoPath);
+        setVideoUrl(videoPath);
+      }
+      
       return data;
     } catch (error) {
       console.error('Error fetching current transcription:', error);
@@ -794,9 +791,31 @@ export const TranscriptionUpload = () => {
     try {
       console.log("Generating summaries...");
       const response = await axios.post('http://localhost:8000/generate_summary/');
-      const summaryData = response.data.summaries;
+      console.log("Summary response:", response.data);
+      
+      const summaryData = response.data.summaries || [];
+      const responseFilename = response.data.filename;
+      
+      // More detailed logging to debug the issue
+      console.log("Current transcription:", transcription?.filename);
+      console.log("Response filename:", responseFilename);
+      
+      // Only perform the filename check if both filenames are defined and don't match
+      // This ensures we still show summaries even if one of the filenames is undefined
+      if (transcription && responseFilename && transcription.filename && 
+          responseFilename !== transcription.filename) {
+        console.warn("Summary filename mismatch:", responseFilename, "vs", transcription.filename);
+        // Continue anyway - don't return early
+      }
       
       console.log("Received summary data:", summaryData);
+      
+      if (!summaryData || summaryData.length === 0) {
+        console.warn("No summary data received");
+        setSummaryLoading(false);
+        return;
+      }
+      
       console.log("Now fetching screenshots for summaries...");
       
       // First set the basic summaries without screenshots

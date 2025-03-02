@@ -930,8 +930,15 @@ async def generate_summary(request: Request) -> Dict:
     if not hasattr(request.app.state, 'last_transcription'):
         raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
     
+    # Get the latest transcription data to ensure we're using the correct movie
     transcription = request.app.state.last_transcription
+    
+    # Include the filename in the response for verification
+    filename = transcription.get('filename', 'unknown_filename')
+    print(f"Generating summary for: {filename}")
+    
     segments = transcription['transcription']['segments']
+    print(f"Found {len(segments)} segments for summarization")
     
     # Group segments into logical sections (roughly 1-3 minutes each)
     sections = []
@@ -973,9 +980,11 @@ async def generate_summary(request: Request) -> Dict:
             "segments": current_section
         })
     
+    print(f"Created {len(sections)} logical sections for summarization")
+    
     # Generate summary for each section
     summaries = []
-    for section in sections:
+    for section_index, section in enumerate(sections):
         # Combine text from all segments - safely handling None values
         section_text = " ".join(seg["text"] or "" for seg in section["segments"] if seg.get("text"))
         
@@ -1039,7 +1048,14 @@ async def generate_summary(request: Request) -> Dict:
                 "summary": "Summary generation failed. Please try again."
             })
     
-    return {"summaries": summaries}
+    # Log summary generation results
+    print(f"Generated {len(summaries)} section summaries")
+    
+    return {
+        "summaries": summaries,
+        "filename": filename,  # Include filename for verification
+        "sections_count": len(sections)
+    }
 
 @app.get("/transcriptions/")
 async def list_transcriptions():
