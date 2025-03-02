@@ -410,50 +410,68 @@ export const TranscriptionUpload = () => {
   };
 
   // Handle when a saved transcription is loaded
-  const handleTranscriptionLoaded = async () => {
+  const handleTranscriptionLoaded = async (videoHash?: string) => {
     try {
       // Fetch the current transcription
+      console.log('Fetching current transcription...');
       const result = await fetchCurrentTranscription();
+      console.log('Finished fetching current transcription:', result);
       
-      if (result && result.file_path) {
+      if (result) {
         try {
-          console.log('Attempting to load video from:', result.file_path);
-          
-          // Create a video source element
-          const source = document.createElement('source');
-          source.src = `file://${result.file_path}`;
-          source.type = 'video/mp4'; // Assume MP4 as default
-          
-          // Get file extension to determine type
-          const extension = result.file_path.split('.').pop()?.toLowerCase();
-          if (extension === 'mp4') {
-            source.type = 'video/mp4';
-          } else if (extension === 'webm') {
-            source.type = 'video/webm';
-          } else if (extension === 'mov') {
-            source.type = 'video/quicktime';
-          }
-          
-          // Get the video element from state
-          if (videoRef) {
-            // Remove all child nodes (existing sources)
-            while (videoRef.firstChild) {
-              videoRef.removeChild(videoRef.firstChild);
-            }
+          if (videoHash) {
+            // Directly use the provided video hash
+            console.log('Using provided video hash:', videoHash);
+            const videoEndpoint = `http://localhost:8000/video/${encodeURIComponent(videoHash)}`;
+            console.log('Video endpoint URL:', videoEndpoint);
             
-            // Add the new source
-            videoRef.appendChild(source);
-            videoRef.load();
-            console.log('Video source loaded:', result.file_path);
+            // Test if the video endpoint is accessible
+            try {
+              const response = await fetch(videoEndpoint, { 
+                method: 'GET',
+                headers: {
+                  'Range': 'bytes=0-1024' // Only request the first KB to verify access
+                }
+              });
+              console.log('Video endpoint test response:', response.status, response.statusText);
+              if (!response.ok) {
+                console.error('Video endpoint is not accessible');
+              } else {
+                // Set the video URL to the backend endpoint
+                setVideoUrl(videoEndpoint);
+                console.log('Set video URL to:', videoEndpoint);
+              }
+            } catch (error) {
+              console.error('Error testing video endpoint:', error);
+            }
           } else {
-            console.warn('Video element not found in state');
+            // Fallback approach
+            console.log('No hash provided, attempting to find by filename:', result.filename);
+            const response = await fetch('http://localhost:8000/transcriptions/');
+            const data = await response.json();
+            
+            // Find the transcription with matching filename
+            const matchingTranscription = data.transcriptions.find(
+              (t: {video_hash: string, filename: string}) => t.filename === result.filename
+            );
+            
+            if (matchingTranscription) {
+              const hash = matchingTranscription.video_hash;
+              // Create a video URL using the backend endpoint
+              const videoEndpoint = `http://localhost:8000/video/${encodeURIComponent(hash)}`;
+              console.log('Loading video from endpoint with found hash:', videoEndpoint);
+              
+              // Set the video URL to the backend endpoint
+              setVideoUrl(videoEndpoint);
+            } else {
+              console.error('Could not find matching transcription for:', result.filename);
+            }
           }
         } catch (error) {
-          console.error('Failed to load video from path:', error);
+          console.error('Failed to load video:', error);
         }
       }
       
-      // Don't need to set transcription here again since fetchCurrentTranscription already does it
       setShowSavedTranscriptions(false);
     } catch (error) {
       console.error('Error loading transcription:', error);

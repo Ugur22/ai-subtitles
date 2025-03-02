@@ -124,6 +124,7 @@ export interface SavedTranscription {
   video_hash: string;
   filename: string;
   created_at: string;
+  file_path: string | null;
 }
 
 export const getSavedTranscriptions = async (): Promise<{ transcriptions: SavedTranscription[] }> => {
@@ -133,5 +134,10 @@ export const getSavedTranscriptions = async (): Promise<{ transcriptions: SavedT
 
 export const loadSavedTranscription = async (videoHash: string): Promise<TranscriptionResponse> => {
   const response = await api.get<TranscriptionResponse>(`/transcription/${videoHash}`);
+  return response.data;
+};
+
+export const deleteTranscription = async (videoHash: string): Promise<{ success: boolean; message: string }> => {
+  const response = await api.delete(`/transcription/${videoHash}`);
   return response.data;
 }; 

@@ -59,4 +59,18 @@ ENV/
 # Generated files
 static/screenshots/
 *.jpg
-*.png 
+*.png
+
+# Database files
+*.db
+transcriptions.db
+
+# Video and audio files
+static/videos/
+*.mp4
+*.mpeg
+*.webm
+*.mov
+*.mp3
+*.wav
+*.m4a 
