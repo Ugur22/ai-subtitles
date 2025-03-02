@@ -64,6 +64,7 @@ static/screenshots/
 # Database files
 *.db
 transcriptions.db
+backend/transcriptions.db
 
 # Video and audio files
 static/videos/
