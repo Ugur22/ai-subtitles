@@ -88,6 +88,15 @@ const checkFileExists = async (path: string): Promise<boolean> => {
   }
 };
 
+// Define the SummarySection interface that was in SummaryPanel.tsx
+interface SummarySection {
+  title: string;
+  start: string;
+  end: string;
+  summary: string;
+  screenshot_url?: string | null;
+}
+
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
@@ -114,6 +123,8 @@ export const TranscriptionUpload = () => {
   const [showProgressBar, setShowProgressBar] = useState(false);
   const [isNewTranscription, setIsNewTranscription] = useState(false);
   const [showSavedTranscriptions, setShowSavedTranscriptions] = useState(false);
+  const [summaries, setSummaries] = useState<SummarySection[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -398,6 +409,8 @@ export const TranscriptionUpload = () => {
   };
 
   const handleSummaryClick = () => {
+    setShowSearch(false);
+    setShowSavedTranscriptions(false);
     setShowSummary(!showSummary);
   };
 
@@ -737,6 +750,124 @@ export const TranscriptionUpload = () => {
     } catch (error) {
       console.error('Error fetching current transcription:', error);
       return null;
+    }
+  };
+
+  // Add a function to generate summaries here (moved from SummaryPanel)
+  const generateSummaries = async () => {
+    setSummaryLoading(true);
+    try {
+      console.log("Generating summaries...");
+      const response = await axios.post('http://localhost:8000/generate_summary/');
+      const summaryData = response.data.summaries;
+      
+      console.log("Received summary data:", summaryData);
+      console.log("Now fetching screenshots for summaries...");
+      
+      // First set the basic summaries without screenshots
+      setSummaries(summaryData);
+      
+      // Then try to enhance them with screenshots
+      try {
+        const enhancedSummaries = await fetchScreenshotsForSummaries(summaryData);
+        console.log("Final enhanced summaries:", enhancedSummaries);
+        setSummaries(enhancedSummaries);
+      } catch (screenshotError) {
+        console.error("Error adding screenshots to summaries:", screenshotError);
+        // We still have the basic summaries displayed
+      }
+      
+    } catch (error) {
+      console.error('Error generating summaries:', error);
+      // Handle error (you can add error state if needed)
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+  
+  // Add the helper function to fetch screenshots (moved from SummaryPanel)
+  const fetchScreenshotsForSummaries = async (summaryData: SummarySection[]) => {
+    try {
+      // Get the current transcription data
+      const response = await axios.get('http://localhost:8000/current_transcription/');
+      
+      if (response.status !== 200) {
+        console.error(`Error fetching transcription data: ${response.status}`);
+        return summaryData;
+      }
+      
+      const segments = response.data.transcription.segments;
+      
+      console.log("Fetched transcription data successfully");
+      console.log("Number of segments with screenshots:", segments.filter((s: any) => s.screenshot_url).length);
+      
+      // Match summary sections with segment screenshots
+      const enhancedSummaries = summaryData.map((summary: SummarySection) => {
+        // Find the best matching segment for this summary
+        // Strategy 1: Find a segment that's very close to the start time of the summary (within 5 seconds)
+        let matchingSegment = segments.find((segment: any) => 
+          Math.abs(timeToSeconds(segment.start_time) - timeToSeconds(summary.start)) < 5
+        );
+        
+        // Strategy 2: If no exact match found, try to find a segment that's contained within the summary time range
+        if (!matchingSegment) {
+          const summaryStartTime = timeToSeconds(summary.start);
+          const summaryEndTime = timeToSeconds(summary.end);
+          
+          matchingSegment = segments.find((segment: any) => {
+            const segmentTime = timeToSeconds(segment.start_time);
+            return segmentTime >= summaryStartTime && segmentTime <= summaryEndTime;
+          });
+        }
+        
+        // Strategy 3: If still no match, just take the closest segment
+        if (!matchingSegment) {
+          let closestSegment = segments[0];
+          let closestDiff = Math.abs(timeToSeconds(segments[0].start_time) - timeToSeconds(summary.start));
+          
+          for (const segment of segments) {
+            const diff = Math.abs(timeToSeconds(segment.start_time) - timeToSeconds(summary.start));
+            if (diff < closestDiff) {
+              closestDiff = diff;
+              closestSegment = segment;
+            }
+          }
+          
+          matchingSegment = closestSegment;
+        }
+        
+        return {
+          ...summary,
+          screenshot_url: matchingSegment?.screenshot_url || null
+        };
+      });
+      
+      return enhancedSummaries;
+    } catch (error) {
+      console.error('Error getting screenshots for summaries:', error);
+      return summaryData; // Return original data if something fails
+    }
+  };
+
+  // Add the timeToSeconds function that was missing
+  const timeToSeconds = (timeStr: string): number => {
+    try {
+      // Handle different time formats: HH:MM:SS or HH:MM:SS.mmm
+      const parts = timeStr.split(':');
+      if (parts.length !== 3) {
+        console.error(`Invalid time format: ${timeStr}`);
+        return 0;
+      }
+      
+      const hours = parseInt(parts[0], 10);
+      const minutes = parseInt(parts[1], 10);
+      // Handle seconds with milliseconds
+      const seconds = parseFloat(parts[2]);
+      
+      return hours * 3600 + minutes * 60 + seconds;
+    } catch (error) {
+      console.error(`Error converting time ${timeStr} to seconds:`, error);
+      return 0;
     }
   };
 
@@ -1174,10 +1305,14 @@ export const TranscriptionUpload = () => {
                 
                 {/* Summary Panel (replaces the left sidebar) */}
                 {showSummary && (
-                  <div className="overflow-y-auto max-h-[60vh]">
+                  <div className="overflow-y-auto h-full">
                     <SummaryPanel 
-                      isVisible={true} 
+                      isVisible={showSummary}
                       onSeekTo={seekToTimestamp}
+                      summaries={summaries}
+                      setSummaries={setSummaries}
+                      loading={summaryLoading}
+                      generateSummaries={generateSummaries}
                     />
                   </div>
                 )}
