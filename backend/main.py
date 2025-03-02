@@ -342,11 +342,18 @@ def generate_srt(segments: List[Dict], use_translation: bool = False) -> str:
         start_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(segment['start_time'].split(':'))))
         end_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(segment['end_time'].split(':'))))
         
+        # Get text content, ensuring it's properly handled as a string
+        text_content = segment['translation'] if use_translation and segment.get('translation') else segment['text']
+        
+        # Ensure text is properly encoded
+        if isinstance(text_content, bytes):
+            text_content = text_content.decode('utf-8')
+        
         # Format subtitle entry
         srt_content.extend([
             str(i),
             f"{format_srt_timestamp(start_seconds)} --> {format_srt_timestamp(end_seconds)}",
-            segment['translation'] if use_translation else segment['text'],
+            text_content,
             ""  # Empty line between entries
         ])
     
@@ -770,11 +777,11 @@ async def get_subtitles(language: str, request: Request) -> Response:
     
     # Return SRT file with correct content type and headers
     return Response(
-        content=srt_content,
+        content=srt_content.encode('utf-8'),
         media_type="application/x-subrip",
         headers={
             "Content-Disposition": f'attachment; filename="{srt_filename}"',
-            "Content-Type": "application/x-subrip"
+            "Content-Type": "application/x-subrip; charset=utf-8"
         }
     )
 
