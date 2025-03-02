@@ -22,9 +22,81 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from fastapi.staticfiles import StaticFiles
+import sqlite3
+import hashlib
 
 # Global variable to store the last transcription
 last_transcription_data = None
+
+# Database functions
+def init_db():
+    """Initialize the SQLite database for storing transcriptions"""
+    conn = sqlite3.connect('transcriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS transcriptions (
+        video_hash TEXT PRIMARY KEY,
+        filename TEXT,
+        file_path TEXT,
+        transcription_data TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    conn.commit()
+    conn.close()
+    print("Database initialized successfully")
+
+def generate_file_hash(file_path):
+    """Generate a unique hash for a file based on its content"""
+    BUF_SIZE = 65536  # 64kb chunks
+    sha256 = hashlib.sha256()
+    
+    with open(file_path, 'rb') as f:
+        while True:
+            data = f.read(BUF_SIZE)
+            if not data:
+                break
+            sha256.update(data)
+    
+    return sha256.hexdigest()
+
+def store_transcription(video_hash, filename, transcription_data, file_path=None):
+    """Store transcription data in the database"""
+    try:
+        conn = sqlite3.connect('transcriptions.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO transcriptions (video_hash, filename, file_path, transcription_data) VALUES (?, ?, ?, ?)",
+            (video_hash, filename, file_path, json.dumps(transcription_data))
+        )
+        conn.commit()
+        conn.close()
+        print(f"Stored transcription for {filename} with hash {video_hash}")
+        return True
+    except Exception as e:
+        print(f"Error storing transcription: {str(e)}")
+        return False
+
+def get_transcription(video_hash):
+    """Retrieve transcription data from the database by hash"""
+    try:
+        conn = sqlite3.connect('transcriptions.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT transcription_data, file_path FROM transcriptions WHERE video_hash = ?", (video_hash,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            transcription_data = json.loads(result[0])
+            file_path = result[1]
+            # Add file_path to the transcription data
+            if file_path:
+                transcription_data['file_path'] = file_path
+            return transcription_data
+        return None
+    except Exception as e:
+        print(f"Error retrieving transcription: {str(e)}")
+        return None
 
 # Load environment variables
 load_dotenv()
@@ -396,6 +468,11 @@ app = FastAPI(
     title="Video Transcription API"
 )
 
+# Add startup event to initialize database
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -478,7 +555,7 @@ async def get_current_transcription(request: Request) -> Dict:
     return last_transcription_data
 
 @app.post("/transcribe/")
-async def transcribe_video(file: UploadFile, request: Request) -> Dict:
+async def transcribe_video(file: UploadFile, request: Request, file_path: str = None) -> Dict:
     """Handle video upload, extract audio, and transcribe"""
     global last_transcription_data
     
@@ -534,6 +611,20 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                     status_code=400,
                     detail=f"Error uploading file: {str(e)}"
                 )
+            
+            # Generate hash for the file
+            video_hash = generate_file_hash(temp_input_path)
+            print(f"Generated hash for video: {video_hash}")
+            
+            # Check if we already have a transcription for this file
+            existing_transcription = get_transcription(video_hash)
+            if existing_transcription:
+                print(f"Found existing transcription for {file.filename} with hash {video_hash}")
+                # Update the last_transcription_data with the existing data
+                last_transcription_data = existing_transcription
+                return existing_transcription
+            
+            print("No existing transcription found. Processing video...")
             
             print("\nExtracting and compressing audio...")
             try:
@@ -603,6 +694,13 @@ async def transcribe_video(file: UploadFile, request: Request) -> Dict:
                             "processing_time": f"{time.time() - start_time:.1f} seconds"
                         }
                     }
+                    
+                    # Store the transcription in the database
+                    store_transcription(video_hash, file.filename, result, file_path)
+                    
+                    # Add file path to the result
+                    if file_path:
+                        result['file_path'] = file_path
                     
                     # Store in both request state and global variable
                     request.app.state.last_transcription = result
@@ -923,6 +1021,44 @@ async def generate_summary(request: Request) -> Dict:
             })
     
     return {"summaries": summaries}
+
+@app.get("/transcriptions/")
+async def list_transcriptions():
+    """List all saved transcriptions"""
+    try:
+        conn = sqlite3.connect('transcriptions.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT video_hash, filename, created_at, file_path FROM transcriptions ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "transcriptions": [
+                {
+                    "video_hash": row[0],
+                    "filename": row[1],
+                    "created_at": row[2],
+                    "file_path": row[3]
+                }
+                for row in rows
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving transcriptions: {str(e)}")
+
+@app.get("/transcription/{video_hash}")
+async def get_saved_transcription(video_hash: str, request: Request):
+    """Get a specific transcription by hash"""
+    transcription = get_transcription(video_hash)
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+    
+    # Update the last_transcription_data and request state
+    global last_transcription_data
+    last_transcription_data = transcription
+    request.app.state.last_transcription = transcription
+    
+    return transcription
 
 if __name__ == "__main__":
     import uvicorn
