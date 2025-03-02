@@ -13,7 +13,7 @@ function App() {
       <div className="min-h-screen bg-gradient-to-br from-teal-50 to-cyan-50">
         {/* Header */}
         <header className="bg-gradient-to-r from-teal-500 to-cyan-600 text-white py-2">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
             <div className="flex h-12 items-center justify-between">
               {/* Logo & Brand */}
               <div className="flex items-center">
@@ -132,7 +132,7 @@ function App() {
             <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-gradient-to-t from-cyan-500/10 to-transparent"></div>
           </div>
           
-          <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-4 pb-6">
+          <div className="relative mx-auto max-w-8xl px-4 sm:px-6 lg:px-8 pt-4 pb-6">
             <div className="md:flex md:items-center md:justify-between">
               <div className="md:w-1/2 mb-4 md:mb-0">
                 <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl md:text-5xl">
@@ -166,7 +166,7 @@ function App() {
 
         {/* Features Brief */}
         <div className="bg-gradient-to-r from-cyan-50 to-teal-50 py-6">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
                 <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
@@ -209,14 +209,14 @@ function App() {
 
         {/* Upload Area */}
         <div id="upload" className="py-4">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
             <TranscriptionUpload />
           </div>
         </div>
 
         {/* Footer */}
         <footer className="bg-gray-800 text-white">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+          <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8 py-12">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               <div>
                 <h3 className="text-sm font-semibold uppercase tracking-wider">Product</h3>

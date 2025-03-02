@@ -80,6 +80,7 @@ export const TranscriptionUpload = () => {
   const [dragActive, setDragActive] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showSearch, setShowSearch] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
@@ -240,8 +241,8 @@ export const TranscriptionUpload = () => {
         // Actual completion will be triggered by the onSuccess callback
         const interval = setInterval(() => {
           setProcessingStatus(prevStatus => {
-            // Don't update if we've already completed
-            if (prevStatus.stage === 'complete') {
+            // Don't update if we've already completed or if prevStatus is null
+            if (!prevStatus || prevStatus.stage === 'complete') {
               clearInterval(interval);
               return prevStatus;
             }
@@ -254,12 +255,23 @@ export const TranscriptionUpload = () => {
               clearInterval(interval);
               // Create a much slower interval for the final stretch
               const slowInterval = setInterval(() => {
-                setProcessingStatus(ps => ({ ...ps, progress: ps.progress + 0.1 }));
+                setProcessingStatus(ps => {
+                  if (ps === null) return null;
+                  return { 
+                    ...ps, 
+                    progress: ps.progress + 0.1,
+                    stage: ps.stage // Ensure stage is carried over
+                  };
+                });
               }, 2000);
               setProgressSimulation(slowInterval);
             }
             
-            return { ...prevStatus, progress: newProgress };
+            // Return with proper type
+            return {
+              stage: prevStatus.stage,
+              progress: newProgress
+            };
           });
         }, 1000);
         
@@ -372,6 +384,10 @@ export const TranscriptionUpload = () => {
 
   const handleSummaryClick = () => {
     setShowSummary(!showSummary);
+  };
+
+  const handleSearchClick = () => {
+    setShowSearch(!showSearch);
   };
 
   // Generate WebVTT content from transcript segments
@@ -588,26 +604,32 @@ export const TranscriptionUpload = () => {
   // Update the handle functions for processing status to handle null
   const updateUploadProgress = (progress: number) => {
     setUploadProgress(progress);
-    setProcessingStatus(prevStatus => ({
-      ...prevStatus,
-      progress: Math.min(99, progress)
-    }));
+    setProcessingStatus(prevStatus => 
+      prevStatus ? {
+        ...prevStatus,
+        progress: Math.min(99, progress)
+      } : { stage: 'uploading', progress: Math.min(99, progress) }
+    );
   };
 
   const handleExtractingAudio = () => {
-    setProcessingStatus(prevStatus => ({
-      ...prevStatus,
-      stage: 'extracting',
-      progress: 0
-    }));
+    setProcessingStatus(prevStatus => 
+      prevStatus ? {
+        ...prevStatus,
+        stage: 'extracting',
+        progress: 0
+      } : { stage: 'extracting', progress: 0 }
+    );
   };
 
   const handleTranscribing = () => {
-    setProcessingStatus(prevStatus => ({
-      ...prevStatus,
-      stage: 'transcribing',
-      progress: 0
-    }));
+    setProcessingStatus(prevStatus => 
+      prevStatus ? {
+        ...prevStatus,
+        stage: 'transcribing',
+        progress: 0
+      } : { stage: 'transcribing', progress: 0 }
+    );
   };
 
   return (
@@ -811,7 +833,7 @@ export const TranscriptionUpload = () => {
 
       {/* Results Section */}
       {transcription && (
-        <div className="space-y-6 h-screen flex flex-col overflow-hidden">
+        <div className="space-y-6 h-screen flex flex-col overflow-hidden w-full">
           <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-100 flex-shrink-0">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
@@ -847,11 +869,15 @@ export const TranscriptionUpload = () => {
               
               <div className="flex items-center gap-3">
                 <button 
-                  onClick={handleSummaryClick}
-                  className={`px-4 py-2 ${showSummary ? 'bg-teal-600' : 'bg-teal-500'} text-white text-sm rounded-lg hover:bg-teal-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 flex items-center`}
+                  onClick={handleSearchClick}
+                  className={`px-4 py-2 ${showSearch ? 'bg-blue-600' : 'bg-blue-500'} text-white text-sm rounded-lg hover:bg-blue-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 flex items-center space-x-1`}
                 >
-                  {showSummary ? 'Hide Summary' : 'Show Summary'}
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <span>{showSearch ? 'Hide Search' : 'Show Search'}</span>
                 </button>
+                
                 <button 
                   onClick={startNewTranscription}
                   className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 text-white text-sm rounded-lg hover:from-teal-600 hover:to-cyan-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 flex items-center"
@@ -867,176 +893,192 @@ export const TranscriptionUpload = () => {
             </div>
           </div>
 
-          {/* Video Player and Transcript Section - Video fixed at top */}
-          <div className="flex flex-col flex-grow overflow-hidden">
-            {videoUrl && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-shrink-0">
-                <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                  <h3 className="text-sm font-medium text-gray-800">Video</h3>
-                  <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={toggleSubtitles}
-                      className={`px-3 py-1 text-xs rounded-md flex items-center gap-1 ${
-                        showSubtitles 
-                          ? 'bg-teal-100 text-teal-700' 
-                          : 'bg-gray-100 text-gray-700'
-                      }`}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-                      </svg>
-                      {showSubtitles ? 'Subtitles On' : 'Subtitles Off'}
-                    </button>
-                    {showSubtitles && (
+          {/* New Three-Column Layout */}
+          <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full">
+            {/* Main Column: Video and Transcript/Summary */}
+            <div className={`flex-grow flex flex-col overflow-hidden ${
+              showSearch 
+                ? 'lg:w-3/4' 
+                : 'lg:w-full'
+            }`}>
+              {/* Video Player (Top) */}
+              {videoUrl && (
+                <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-shrink-0 mb-4">
+                  <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                    <h3 className="text-sm font-medium text-gray-800">Video</h3>
+                    <div className="flex items-center space-x-2">
                       <button 
-                        onClick={() => setShowTranslation(!showTranslation)}
-                        className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors duration-200 flex items-center gap-1"
-                      >
-                        {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
-                        <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="aspect-video w-full bg-black">
-                  <video
-                    ref={setVideoRef}
-                    src={videoUrl}
-                    controls
-                    className="w-full max-h-[40vh] object-contain"
-                  >
-                    {subtitleTrackUrl && (
-                      <track 
-                        src={subtitleTrackUrl} 
-                        kind="subtitles" 
-                        srcLang={transcription?.transcription.language || 'en'} 
-                        label={transcription?.transcription.language?.toUpperCase() || 'Original'} 
-                        default={showSubtitles && !showTranslation}
-                      />
-                    )}
-                    {translatedSubtitleUrl && (
-                      <track 
-                        src={translatedSubtitleUrl} 
-                        kind="subtitles" 
-                        srcLang="en" 
-                        label="ENGLISH" 
-                        default={showSubtitles && showTranslation}
-                      />
-                    )}
-                  </video>
-                </div>
-              </div>
-            )}
-
-            {/* Change the layout from a vertical flex column to a horizontal flex row with proper spacing */}
-            <div className="flex flex-col lg:flex-row gap-6 mt-4 h-full overflow-hidden">
-              {/* Transcript panel - set to fixed height on small screens and flex height on large screens */}
-              <div className="lg:w-1/2 bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden h-[400px] lg:h-auto flex-grow">
-                <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                  <h3 className="text-sm font-medium text-gray-800">Transcript</h3>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setShowTranslation(!showTranslation)}
-                      className={`px-2 py-1 rounded text-xs 
-                        ${showTranslation ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
-                    >
-                      {showTranslation ? 'Show Original' : 'Show Translation'}
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="p-5 h-full overflow-y-auto">
-                  <div className="space-y-4">
-                    {transcription.transcription.segments.map((segment, index) => (
-                      <div 
-                        key={segment.id} 
-                        className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
-                          activeSegmentId === segment.id ? 'bg-teal-50' : ''
+                        onClick={toggleSubtitles}
+                        className={`px-3 py-1 text-xs rounded-md flex items-center gap-1 ${
+                          showSubtitles 
+                            ? 'bg-teal-100 text-teal-700' 
+                            : 'bg-gray-100 text-gray-700'
                         }`}
                       >
-                        <div className="flex items-start gap-4">
-                          {segment.screenshot_url && (
-                            <div className="flex-shrink-0">
-                              <img 
-                                src={`http://localhost:8000${segment.screenshot_url}`}
-                                alt={`Screenshot at ${segment.start_time}`}
-                                className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
-                                onClick={() => seekToTimestamp(segment.start_time)}
-                                style={{ cursor: 'pointer' }}
-                              />
-                            </div>
-                          )}
-                          <div className="flex-grow">
-                            <div 
-                              className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
-                              onClick={() => seekToTimestamp(segment.start_time)}
-                            >
-                              <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <polyline points="12 6 12 12 16 14"></polyline>
-                              </svg>
-                              {segment.start_time} - {segment.end_time}
-                              <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
-                            </div>
-                            <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
-                              {showTranslation && segment.translation ? segment.translation : segment.text}
-                            </p>
-                            {/* Show both when a translation is available */}
-                            {showTranslation && segment.translation && segment.translation !== segment.text && (
-                              <p className="text-xs text-gray-500 mt-1 italic">
-                                Original: {segment.text}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                        </svg>
+                        {showSubtitles ? 'Subtitles On' : 'Subtitles Off'}
+                      </button>
+                      {showSubtitles && (
+                        <button 
+                          onClick={() => setShowTranslation(!showTranslation)}
+                          className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors duration-200 flex items-center gap-1"
+                        >
+                          {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
+                          <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="w-full bg-black flex justify-center">
+                    <video
+                      ref={setVideoRef}
+                      src={videoUrl}
+                      controls
+                      className="w-full max-h-[50vh] object-contain"
+                    >
+                      {subtitleTrackUrl && (
+                        <track 
+                          src={subtitleTrackUrl} 
+                          kind="subtitles" 
+                          srcLang={transcription?.transcription.language || 'en'} 
+                          label={transcription?.transcription.language?.toUpperCase() || 'Original'} 
+                          default={showSubtitles && !showTranslation}
+                        />
+                      )}
+                      {translatedSubtitleUrl && (
+                        <track 
+                          src={translatedSubtitleUrl} 
+                          kind="subtitles" 
+                          srcLang="en" 
+                          label="ENGLISH" 
+                          default={showSubtitles && showTranslation}
+                        />
+                      )}
+                    </video>
                   </div>
                 </div>
-              </div>
+              )}
               
-              {/* Search and Analytics panel - place to the right on large screens */}
-              <div className="lg:w-1/2 space-y-6 h-[400px] lg:h-auto flex-grow overflow-hidden flex flex-col">
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-y-auto flex-grow">
-                  <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-gray-800">Search & Analysis</h3>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 overflow-y-auto h-full">
-                    <SearchPanel />
-                    <div className="mt-4">
-                      <AnalyticsPanel />
-                    </div>
-                  </div>
+              {/* Tabs for Transcript and Summary */}
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-grow">
+                <div className="flex border-b border-gray-200">
+                  <button
+                    onClick={() => setShowSummary(false)}
+                    className={`px-5 py-3 text-sm font-medium ${!showSummary ? 'text-teal-600 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Transcript
+                  </button>
+                  <button
+                    onClick={() => setShowSummary(true)}
+                    className={`px-5 py-3 text-sm font-medium ${showSummary ? 'text-teal-600 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Summary
+                  </button>
                 </div>
                 
+                {/* Transcript Panel */}
+                {!showSummary && (
+                  <div className="overflow-y-auto max-h-[60vh]">
+                    <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setShowTranslation(!showTranslation)}
+                          className={`px-2 py-1 rounded text-xs 
+                            ${showTranslation ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+                        >
+                          {showTranslation ? 'Show Original' : 'Show Translation'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-2">
+                      {transcription.transcription.segments.map((segment) => (
+                        <div 
+                          key={segment.id} 
+                          className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
+                            activeSegmentId === segment.id ? 'bg-teal-50' : ''
+                          }`}
+                        >
+                          <div className="flex items-start gap-4">
+                            {segment.screenshot_url && (
+                              <div className="flex-shrink-0">
+                                <img 
+                                  src={`http://localhost:8000${segment.screenshot_url}`}
+                                  alt={`Screenshot at ${segment.start_time}`}
+                                  className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
+                                  onClick={() => seekToTimestamp(segment.start_time)}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                              </div>
+                            )}
+                            <div className="flex-grow">
+                              <div 
+                                className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
+                                onClick={() => seekToTimestamp(segment.start_time)}
+                              >
+                                <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <circle cx="12" cy="12" r="10"></circle>
+                                  <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                {segment.start_time} - {segment.end_time}
+                                <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
+                              </div>
+                              <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
+                                {showTranslation && segment.translation ? segment.translation : segment.text}
+                              </p>
+                              {/* Show both when a translation is available */}
+                              {showTranslation && segment.translation && segment.translation !== segment.text && (
+                                <p className="text-xs text-gray-500 mt-1 italic">
+                                  Original: {segment.text}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Summary Panel (replaces the left sidebar) */}
                 {showSummary && (
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-y-auto">
+                  <div className="overflow-y-auto max-h-[60vh]">
                     <SummaryPanel 
-                      isVisible={showSummary} 
+                      isVisible={true} 
                       onSeekTo={seekToTimestamp}
                     />
                   </div>
                 )}
               </div>
             </div>
+            
+            {/* Right Column: Search & Analysis Panels */}
+            {showSearch && (
+              <div className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4">
+                <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <h3 className="text-sm font-medium text-gray-800">Search & Analysis</h3>
+                  </div>
+                </div>
+                
+                <div className="p-4 overflow-y-auto h-full">
+                  <SearchPanel />
+                  <div className="mt-4">
+                    <AnalyticsPanel />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* Remove this div since we've incorporated these components above */}
-          {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-shrink-0 mt-6 max-h-[600px] overflow-y-auto">
-            <SearchPanel />
-            <AnalyticsPanel />
-          </div> */}
         </div>
       )}
 
       {/* Error Display */}
       {error && (
-        <div className="mt-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-md mx-auto max-w-4xl">
+        <div className="mt-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-md w-full">
           <div className="flex">
             <div className="flex-shrink-0">
               <svg className="h-5 w-5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

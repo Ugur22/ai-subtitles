@@ -31,18 +31,18 @@ export const AnalyticsPanel = () => {
 
       <div className="card-body p-4">
         <div className="mb-4">
-          <div className="flex gap-2 mb-2">
+          <div className="flex flex-col gap-2 mb-2">
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Enter search term or topic..."
-              className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               onClick={handleSearch}
               disabled={searchMutation.isPending || !searchTerm.trim()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              className="w-full py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             >
               {searchMutation.isPending ? 'Searching...' : 'Search'}
             </button>
