@@ -497,9 +497,9 @@ app.add_middleware(
 class LargeUploadMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method == 'POST' and request.url.path == '/transcribe/':
-            # Set a 5GB limit for /transcribe/ endpoint
-            request._body_size_limit = 5 * 1024 * 1024 * 1024  # 5GB
-            request.scope["max_content_size"] = 5 * 1024 * 1024 * 1024  # 5GB
+            # Set a 10GB limit for /transcribe/ endpoint
+            request._body_size_limit = 10 * 1024 * 1024 * 1024  # 10GB
+            request.scope["max_content_size"] = 10 * 1024 * 1024 * 1024  # 10GB
         return await call_next(request)
 
 app.add_middleware(LargeUploadMiddleware)
@@ -603,10 +603,10 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                 with open(temp_input_path, "wb") as buffer:
                     while chunk := await file.read(CHUNK_SIZE):
                         total_size += len(chunk)
-                        if total_size > 5 * 1024 * 1024 * 1024:  # 5GB limit
+                        if total_size > 10 * 1024 * 1024 * 1024:  # 10GB limit
                             raise HTTPException(
                                 status_code=413,
-                                detail="File too large. Maximum size is 5GB."
+                                detail="File too large. Maximum size is 10GB."
                             )
                         buffer.write(chunk)
                         print(f"Uploaded: {total_size / (1024*1024):.1f} MB", end="\r")
