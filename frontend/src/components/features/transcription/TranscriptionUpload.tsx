@@ -397,15 +397,34 @@ export const TranscriptionUpload = () => {
   };
 
   const seekToTimestamp = (timeString: string) => {
-    if (!videoRef) return;
+    if (!videoRef || !timeString) return;
     
-    // Convert HH:MM:SS to seconds
-    const [hours, minutes, seconds] = timeString.split(':').map(Number);
-    const timeInSeconds = hours * 3600 + minutes * 60 + seconds;
+    const seconds = timeToSeconds(timeString);
+    videoRef.currentTime = seconds;
+    videoRef.play().catch((err: Error) => console.error("Error playing video:", err));
     
-    // Set video current time
-    videoRef.currentTime = timeInSeconds;
-    videoRef.play();
+    // Find the corresponding segment in the transcript
+    if (transcription && transcription.transcription.segments) {
+      const segments = transcription.transcription.segments;
+      const matchingSegmentId = segments.findIndex(segment => {
+        const segmentStartSeconds = timeToSeconds(segment.start_time);
+        const segmentEndSeconds = timeToSeconds(segment.end_time);
+        return seconds >= segmentStartSeconds && seconds <= segmentEndSeconds;
+      });
+      
+      // If a matching segment is found, scroll to it
+      if (matchingSegmentId !== -1) {
+        setActiveSegmentId(matchingSegmentId);
+        
+        // Use setTimeout to ensure the DOM has updated with the active segment
+        setTimeout(() => {
+          const segmentElement = document.getElementById(`transcript-segment-${matchingSegmentId}`);
+          if (segmentElement) {
+            segmentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      }
+    }
   };
 
   const handleSummaryClick = () => {
@@ -1255,9 +1274,10 @@ export const TranscriptionUpload = () => {
                       </div>
                     </div>
                     <div className="p-4 space-y-2">
-                      {transcription.transcription.segments.map((segment) => (
+                      {transcription.transcription.segments.map((segment, index) => (
                         <div 
-                          key={segment.id} 
+                          key={segment.id}
+                          id={`transcript-segment-${segment.id}`}
                           className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
                             activeSegmentId === segment.id ? 'bg-teal-50' : ''
                           }`}
