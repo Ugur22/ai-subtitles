@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
-import { getSavedTranscriptions, loadSavedTranscription, SavedTranscription } from '../../../services/api';
+import { useState, useEffect, useRef } from 'react';
+import { getSavedTranscriptions, loadSavedTranscription, deleteTranscription, SavedTranscription } from '../../../services/api';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface SavedTranscriptionsPanelProps {
-  onTranscriptionLoaded?: () => void;
+  onTranscriptionLoaded?: (videoHash?: string) => void;
 }
 
 export const SavedTranscriptionsPanel = ({ onTranscriptionLoaded }: SavedTranscriptionsPanelProps) => {
@@ -11,6 +11,9 @@ export const SavedTranscriptionsPanel = ({ onTranscriptionLoaded }: SavedTranscr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingTranscription, setLoadingTranscription] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState<string | null>(null);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -39,14 +42,97 @@ export const SavedTranscriptionsPanel = ({ onTranscriptionLoaded }: SavedTranscr
       // Reset any cached data in react-query
       queryClient.invalidateQueries();
       
-      // Callback to notify parent component
+      // Callback to notify parent component with the video hash
       if (onTranscriptionLoaded) {
-        onTranscriptionLoaded();
+        onTranscriptionLoaded(hash);
       }
     } catch (err) {
       console.error('Failed to load transcription:', err);
       setLoadingTranscription(false);
       setError('Failed to load transcription. Please try again.');
+    }
+  };
+
+  const handleUploadVideo = async (hash: string, file: File) => {
+    try {
+      setUploadingFile(hash);
+      
+      // Create a form data object
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Send the request
+      const response = await fetch(`http://localhost:8000/update_file_path/${hash}`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to upload video: ${response.statusText}`);
+      }
+      
+      // Get the updated file data
+      const data = await response.json();
+      console.log('Video uploaded successfully:', data);
+      
+      // Refresh the list
+      await fetchTranscriptions();
+      
+      // Load the transcription if needed
+      if (onTranscriptionLoaded) {
+        onTranscriptionLoaded(hash);
+      }
+      
+    } catch (error) {
+      console.error('Error uploading video:', error);
+      setError('Failed to upload video. Please try again.');
+    } finally {
+      setUploadingFile(null);
+    }
+  };
+  
+  const handleUploadClick = (hash: string) => {
+    if (fileInputRef.current) {
+      // Set a data attribute to keep track of which hash we're uploading for
+      fileInputRef.current.dataset.hash = hash;
+      fileInputRef.current.click();
+    }
+  };
+  
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const hash = event.target.dataset.hash;
+    const file = event.target.files?.[0];
+    
+    if (hash && file) {
+      handleUploadVideo(hash, file);
+    }
+    
+    // Reset the input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteTranscription = async (hash: string) => {
+    try {
+      if (!confirm("Are you sure you want to delete this transcription? This action cannot be undone.")) {
+        return;
+      }
+      
+      setDeletingFile(hash);
+      
+      // Send the delete request
+      const response = await deleteTranscription(hash);
+      console.log('Transcription deleted successfully:', response);
+      
+      // Refresh the list
+      await fetchTranscriptions();
+      
+    } catch (error) {
+      console.error('Error deleting transcription:', error);
+      setError('Failed to delete transcription. Please try again.');
+    } finally {
+      setDeletingFile(null);
     }
   };
 
@@ -61,6 +147,15 @@ export const SavedTranscriptionsPanel = ({ onTranscriptionLoaded }: SavedTranscr
 
   return (
     <div className="card border rounded-lg overflow-hidden shadow-sm bg-white">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept="video/*,audio/*"
+        onChange={handleFileChange}
+      />
+
       <div className="card-header p-4 border-b">
         <h3 className="text-lg font-medium text-gray-900">Saved Transcriptions</h3>
         <p className="text-sm text-gray-500 mt-1">
@@ -100,18 +195,48 @@ export const SavedTranscriptionsPanel = ({ onTranscriptionLoaded }: SavedTranscr
                     <div className="ml-2">
                       <h4 className="font-medium text-gray-900 truncate max-w-[200px]">{t.filename}</h4>
                       <p className="text-xs text-gray-500">{formatDate(t.created_at)}</p>
+                      {!t.file_path && (
+                        <span className="text-2xs text-amber-600">Missing video file</span>
+                      )}
                     </div>
-                    <button
-                      onClick={() => handleLoadTranscription(t.video_hash)}
-                      disabled={loadingTranscription}
-                      className={`ml-4 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                        loadingTranscription 
-                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      }`}
-                    >
-                      {loadingTranscription ? 'Loading...' : 'Load'}
-                    </button>
+                    <div className="flex space-x-2">
+                      {!t.file_path && (
+                        <button
+                          onClick={() => handleUploadClick(t.video_hash)}
+                          disabled={uploadingFile === t.video_hash}
+                          className={`px-2 py-1.5 text-xs rounded-md transition-colors ${
+                            uploadingFile === t.video_hash
+                              ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
+                              : 'bg-amber-500 text-white hover:bg-amber-600'
+                          }`}
+                        >
+                          {uploadingFile === t.video_hash ? 'Uploading...' : 'Upload Video'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleLoadTranscription(t.video_hash)}
+                        disabled={loadingTranscription}
+                        className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                          loadingTranscription 
+                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        {loadingTranscription ? 'Loading...' : 'Load'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTranscription(t.video_hash)}
+                        disabled={deletingFile === t.video_hash}
+                        className={`px-2 py-1.5 text-xs rounded-md transition-colors ${
+                          deletingFile === t.video_hash
+                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
+                            : 'bg-red-600 text-white hover:bg-red-700'
+                        }`}
+                        title="Delete this transcription"
+                      >
+                        {deletingFile === t.video_hash ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
                   </div>
                 </li>
               ))}

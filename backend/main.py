@@ -24,6 +24,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from fastapi.staticfiles import StaticFiles
 import sqlite3
 import hashlib
+from fastapi.responses import FileResponse
 
 # Global variable to store the last transcription
 last_transcription_data = None
@@ -472,6 +473,11 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    
+    # Ensure static directories exist
+    os.makedirs(os.path.join("static", "videos"), exist_ok=True)
+    os.makedirs(os.path.join("static", "screenshots"), exist_ok=True)
+    print("Static directories initialized")
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -626,6 +632,13 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
             
             print("No existing transcription found. Processing video...")
             
+            # Save a permanent copy of the video file
+            permanent_storage_dir = os.path.join("static", "videos")
+            os.makedirs(permanent_storage_dir, exist_ok=True)
+            permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{file_extension}")
+            shutil.copy2(temp_input_path, permanent_file_path)
+            print(f"Saved permanent copy of video to: {permanent_file_path}")
+            
             print("\nExtracting and compressing audio...")
             try:
                 process_video_with_ffmpeg(temp_input_path, temp_output_path)
@@ -695,12 +708,11 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                         }
                     }
                     
-                    # Store the transcription in the database
-                    store_transcription(video_hash, file.filename, result, file_path)
+                    # Store the transcription in the database with the permanent file path
+                    store_transcription(video_hash, file.filename, result, permanent_file_path)
                     
                     # Add file path to the result
-                    if file_path:
-                        result['file_path'] = file_path
+                    result['file_path'] = permanent_file_path
                     
                     # Store in both request state and global variable
                     request.app.state.last_transcription = result
@@ -1059,6 +1071,152 @@ async def get_saved_transcription(video_hash: str, request: Request):
     request.app.state.last_transcription = transcription
     
     return transcription
+
+@app.get("/video/{video_hash}")
+async def get_video_file(video_hash: str):
+    """Serve the video file for a specific transcription by hash"""
+    try:
+        print(f"Attempting to serve video with hash: {video_hash}")
+        transcription = get_transcription(video_hash)
+        
+        if not transcription:
+            print(f"Transcription not found for hash: {video_hash}")
+            raise HTTPException(status_code=404, detail="Transcription not found")
+            
+        if 'file_path' not in transcription or not transcription['file_path']:
+            print(f"No file_path in transcription with hash: {video_hash}")
+            raise HTTPException(status_code=404, detail="Video file path not found in transcription data")
+        
+        file_path = transcription['file_path']
+        print(f"File path from transcription: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"File does not exist at path: {file_path}")
+            
+            # Try to find the file in the static/videos directory
+            video_dir = os.path.join("static", "videos")
+            possible_files = [
+                os.path.join(video_dir, f"{video_hash}.mp4"),
+                os.path.join(video_dir, f"{video_hash}.webm"),
+                os.path.join(video_dir, f"{video_hash}.mov"),
+                os.path.join(video_dir, f"{video_hash}.mp3")
+            ]
+            
+            found_file = None
+            for p in possible_files:
+                if os.path.exists(p):
+                    found_file = p
+                    break
+                    
+            if found_file:
+                print(f"Found alternative file: {found_file}")
+                file_path = found_file
+                
+                # Update the database with the correct file path
+                conn = sqlite3.connect('transcriptions.db')
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE transcriptions SET file_path = ? WHERE video_hash = ?",
+                    (file_path, video_hash)
+                )
+                conn.commit()
+                conn.close()
+                print(f"Updated database with correct file path: {file_path}")
+            else:
+                raise HTTPException(status_code=404, detail=f"Video file does not exist: {file_path}")
+        
+        # Get file extension to determine mime type
+        extension = file_path.split('.')[-1].lower()
+        media_type = "video/mp4"  # Default
+        if extension == "webm":
+            media_type = "video/webm"
+        elif extension == "mov":
+            media_type = "video/quicktime"
+        elif extension == "mp3":
+            media_type = "audio/mpeg"
+            
+        print(f"Serving file {file_path} with media type {media_type}")
+        return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error in get_video_file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving video: {str(e)}")
+
+@app.post("/update_file_path/{video_hash}")
+async def update_file_path(video_hash: str, file: UploadFile):
+    """Update an existing transcription with a new file"""
+    try:
+        # Check if transcription exists
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+        
+        # Validate file type
+        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3'}
+        file_extension = Path(file.filename).suffix.lower()
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
+            )
+        
+        # Save the file to the permanent storage
+        permanent_storage_dir = os.path.join("static", "videos")
+        os.makedirs(permanent_storage_dir, exist_ok=True)
+        permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{file_extension}")
+        
+        # Save file in chunks
+        with open(permanent_file_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                buffer.write(chunk)
+        
+        # Update the transcription in the database with the new file path
+        conn = sqlite3.connect('transcriptions.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE transcriptions SET file_path = ? WHERE video_hash = ?",
+            (permanent_file_path, video_hash)
+        )
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "File path updated successfully", "file_path": permanent_file_path}
+    except Exception as e:
+        print(f"Error updating file path: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating file path: {str(e)}")
+
+@app.delete("/transcription/{video_hash}")
+async def delete_transcription(video_hash: str):
+    """Delete a transcription from the database by hash"""
+    try:
+        # Check if transcription exists
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+        
+        # Delete the file if it exists
+        if 'file_path' in transcription and transcription['file_path']:
+            file_path = transcription['file_path']
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted file: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting file {file_path}: {str(e)}")
+        
+        # Delete from database
+        conn = sqlite3.connect('transcriptions.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM transcriptions WHERE video_hash = ?", (video_hash,))
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Transcription deleted successfully"}
+    except Exception as e:
+        print(f"Error deleting transcription: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting transcription: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
