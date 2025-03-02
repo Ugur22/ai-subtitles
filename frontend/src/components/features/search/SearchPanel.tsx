@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { searchTranscription } from '../../../services/api';
 
-export const SearchPanel = () => {
+export const SearchPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (timestamp: string) => void }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [useSemanticSearch, setUseSemanticSearch] = useState(true);
 
@@ -18,6 +18,13 @@ export const SearchPanel = () => {
     e.preventDefault();
     if (searchQuery.trim()) {
       searchMutation.mutate(searchQuery);
+    }
+  };
+
+  // Add a handler for timestamp clicks
+  const handleTimestampClick = (timestamp: string) => {
+    if (onSeekToTimestamp) {
+      onSeekToTimestamp(timestamp);
     }
   };
 
@@ -96,7 +103,10 @@ export const SearchPanel = () => {
                 {searchMutation.data.matches.map((match, index) => (
                   <div key={index} className="border rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition">
                     <div className="flex justify-between items-start mb-2">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      <span 
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${onSeekToTimestamp ? 'bg-blue-100 text-blue-800 cursor-pointer hover:bg-blue-200' : 'bg-gray-100 text-gray-800'}`}
+                        onClick={() => handleTimestampClick(match.timestamp.start)}
+                      >
                         <svg className="w-3 h-3 mr-1" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                         </svg>

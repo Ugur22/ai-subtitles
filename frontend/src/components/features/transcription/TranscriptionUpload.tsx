@@ -1065,9 +1065,9 @@ export const TranscriptionUpload = () => {
                 </div>
                 
                 <div className="p-4 overflow-y-auto h-full">
-                  <SearchPanel />
+                  <SearchPanel onSeekToTimestamp={seekToTimestamp} />
                   <div className="mt-4">
-                    <AnalyticsPanel />
+                    <AnalyticsPanel onSeekToTimestamp={seekToTimestamp} />
                   </div>
                 </div>
               </div>

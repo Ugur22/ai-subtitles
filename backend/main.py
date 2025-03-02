@@ -765,9 +765,15 @@ Important: Return the complete sentences containing the matches, not just the ma
         topic_lower = topic.lower()
         
         for i, segment in enumerate(segments):
-            if (topic_lower in segment['text'].lower() or 
-                topic_lower in segment['translation'].lower()):
+            # Check if segment text contains the topic
+            text_match = topic_lower in segment['text'].lower()
+            
+            # Check for translation match only if translation exists
+            translation_match = False
+            if segment['translation'] is not None:
+                translation_match = topic_lower in segment['translation'].lower()
                 
+            if text_match or translation_match:
                 # Add the match with context
                 context_start = max(0, i - context_window)
                 context_end = min(len(segments), i + context_window + 1)

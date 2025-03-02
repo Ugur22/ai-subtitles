@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { searchTranscription, SearchResponse } from '../../../services/api';
 
-export const AnalyticsPanel = () => {
+export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (timestamp: string) => void }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(null);
   const [semanticSearch, setSemanticSearch] = useState(true);
@@ -18,6 +18,12 @@ export const AnalyticsPanel = () => {
   const handleSearch = () => {
     if (!searchTerm.trim()) return;
     searchMutation.mutate({ topic: searchTerm, semantic: semanticSearch });
+  };
+
+  const handleTimestampClick = (timestamp: string) => {
+    if (onSeekToTimestamp) {
+      onSeekToTimestamp(timestamp);
+    }
   };
 
   return (
@@ -89,7 +95,10 @@ export const AnalyticsPanel = () => {
                 {searchResults.matches.map((match, index) => (
                   <div key={index} className="border rounded-md p-3 bg-gray-50">
                     <div className="flex justify-between mb-1">
-                      <span className="text-sm text-gray-500">
+                      <span 
+                        className={`text-sm ${onSeekToTimestamp ? 'text-blue-600 cursor-pointer hover:underline' : 'text-gray-500'}`}
+                        onClick={() => handleTimestampClick(match.timestamp.start)}
+                      >
                         {match.timestamp.start} - {match.timestamp.end}
                       </span>
                     </div>
