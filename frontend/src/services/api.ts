@@ -28,6 +28,7 @@ api.interceptors.response.use(
 
 export interface TranscriptionResponse {
   filename: string;
+  file_path?: string; // Optional file path to the original video
   transcription: {
     text: string;
     translated_text: string;
@@ -66,6 +67,19 @@ export interface SearchResponse {
 export const transcribeVideo = async (file: File): Promise<TranscriptionResponse> => {
   const formData = new FormData();
   formData.append('file', file);
+  
+  // Add a best-guess path based on downloaded files location
+  // Since the standard File API doesn't have path info, we'll use a best guess
+  try {
+    // For macOS, common Downloads path
+    const isMac = window.navigator.userAgent.includes('Mac');
+    const bestGuessPath = isMac 
+      ? `/Users/ugurertas/Downloads/${file.name}`
+      : `/home/user/Downloads/${file.name}`;
+    formData.append('file_path', bestGuessPath);
+  } catch (error) {
+    console.warn('Could not determine file path for video:', error);
+  }
 
   try {
     const response = await api.post<TranscriptionResponse>('/transcribe/', formData, {
@@ -103,5 +117,21 @@ export const getSubtitles = async (language: 'original' | 'english'): Promise<Bl
     responseType: 'blob',
   });
 
+  return response.data;
+};
+
+export interface SavedTranscription {
+  video_hash: string;
+  filename: string;
+  created_at: string;
+}
+
+export const getSavedTranscriptions = async (): Promise<{ transcriptions: SavedTranscription[] }> => {
+  const response = await api.get('/transcriptions/');
+  return response.data;
+};
+
+export const loadSavedTranscription = async (videoHash: string): Promise<TranscriptionResponse> => {
+  const response = await api.get<TranscriptionResponse>(`/transcription/${videoHash}`);
   return response.data;
 }; 

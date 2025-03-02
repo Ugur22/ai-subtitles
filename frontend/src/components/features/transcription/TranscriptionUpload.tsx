@@ -6,6 +6,7 @@ import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
 import ReactPlayer from 'react-player';
 import { SummaryPanel } from '../summary/SummaryPanel';
+import { SavedTranscriptionsPanel } from './SavedTranscriptionsPanel';
 import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
 import axios from 'axios';
 
@@ -74,6 +75,19 @@ const formatProcessingTime = (timeStr: string): string => {
   return timeStr;
 };
 
+// Function to check if a file exists using the Fetch API
+const checkFileExists = async (path: string): Promise<boolean> => {
+  try {
+    // For local file system access, we need to use the file:// protocol
+    const fileUrl = path.startsWith('/') ? `file://${path}` : path;
+    const response = await fetch(fileUrl, { method: 'HEAD' });
+    return response.ok;
+  } catch (error) {
+    console.warn('Error checking if file exists:', error);
+    return false;
+  }
+};
+
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
@@ -99,6 +113,7 @@ export const TranscriptionUpload = () => {
   const [processingTimer, setProcessingTimer] = useState<NodeJS.Timeout | null>(null);
   const [showProgressBar, setShowProgressBar] = useState(false);
   const [isNewTranscription, setIsNewTranscription] = useState(false);
+  const [showSavedTranscriptions, setShowSavedTranscriptions] = useState(false);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -390,6 +405,61 @@ export const TranscriptionUpload = () => {
     setShowSearch(!showSearch);
   };
 
+  const handleSavedTranscriptionsClick = () => {
+    setShowSavedTranscriptions(!showSavedTranscriptions);
+  };
+
+  // Handle when a saved transcription is loaded
+  const handleTranscriptionLoaded = async () => {
+    try {
+      // Fetch the current transcription
+      const result = await fetchCurrentTranscription();
+      
+      if (result && result.file_path) {
+        try {
+          console.log('Attempting to load video from:', result.file_path);
+          
+          // Create a video source element
+          const source = document.createElement('source');
+          source.src = `file://${result.file_path}`;
+          source.type = 'video/mp4'; // Assume MP4 as default
+          
+          // Get file extension to determine type
+          const extension = result.file_path.split('.').pop()?.toLowerCase();
+          if (extension === 'mp4') {
+            source.type = 'video/mp4';
+          } else if (extension === 'webm') {
+            source.type = 'video/webm';
+          } else if (extension === 'mov') {
+            source.type = 'video/quicktime';
+          }
+          
+          // Get the video element from state
+          if (videoRef) {
+            // Remove all child nodes (existing sources)
+            while (videoRef.firstChild) {
+              videoRef.removeChild(videoRef.firstChild);
+            }
+            
+            // Add the new source
+            videoRef.appendChild(source);
+            videoRef.load();
+            console.log('Video source loaded:', result.file_path);
+          } else {
+            console.warn('Video element not found in state');
+          }
+        } catch (error) {
+          console.error('Failed to load video from path:', error);
+        }
+      }
+      
+      // Don't need to set transcription here again since fetchCurrentTranscription already does it
+      setShowSavedTranscriptions(false);
+    } catch (error) {
+      console.error('Error loading transcription:', error);
+    }
+  };
+
   // Generate WebVTT content from transcript segments
   const generateWebVTT = (segments: any[], useTranslation: boolean = false): string => {
     let vttContent = 'WEBVTT\n\n';
@@ -632,6 +702,26 @@ export const TranscriptionUpload = () => {
     );
   };
 
+  // Function to fetch the current transcription data from the backend
+  const fetchCurrentTranscription = async (): Promise<TranscriptionResponse | null> => {
+    try {
+      const response = await fetch('http://localhost:8000/current_transcription/');
+      
+      if (!response.ok) {
+        console.error('Failed to fetch current transcription', response.statusText);
+        return null;
+      }
+      
+      const data = await response.json();
+      setTranscription(data);
+      setProcessingStatus({ stage: 'complete', progress: 100 });
+      return data;
+    } catch (error) {
+      console.error('Error fetching current transcription:', error);
+      return null;
+    }
+  };
+
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -700,6 +790,27 @@ export const TranscriptionUpload = () => {
                   disabled={transcribeMutation.isPending}
                 />
               </div>
+
+              {/* Load Saved Button */}
+              <div className="mt-3 text-center">
+                <button
+                  onClick={handleSavedTranscriptionsClick}
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center justify-center mx-auto"
+                  disabled={transcribeMutation.isPending}
+                >
+                  <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                  </svg>
+                  {showSavedTranscriptions ? 'Hide Saved' : 'Load Saved Transcription'}
+                </button>
+              </div>
+
+              {/* Saved Transcriptions Panel */}
+              {showSavedTranscriptions && (
+                <div className="mt-4 max-w-lg mx-auto">
+                  <SavedTranscriptionsPanel onTranscriptionLoaded={handleTranscriptionLoaded} />
+                </div>
+              )}
 
               {/* File Format Info */}
               <div className="mt-4 flex justify-center gap-3">
