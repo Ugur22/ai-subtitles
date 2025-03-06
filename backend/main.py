@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 import sqlite3
 import hashlib
 from fastapi.responses import FileResponse
+import uuid
 
 # Global variable to store the last transcription
 last_transcription_data = None
@@ -252,24 +253,54 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
     
     return segments
 
-def compress_audio(input_path: str, output_path: str) -> str:
+def compress_audio(input_path: str, output_path: str, file_size_check: bool = True) -> str:
     """Compress audio file to reduce size while maintaining quality"""
     try:
         # Check if ffmpeg is available
         if not shutil.which('ffmpeg'):
             raise Exception("ffmpeg is not installed. Please install ffmpeg first.")
 
+        # Default compression settings - good quality
+        bitrate = '32k'  # Default bitrate
+        sample_rate = '16000'  # Default sample rate
+        
+        # For larger files, check if we need stronger compression
+        if file_size_check:
+            file_size = os.path.getsize(input_path)
+            # If file is close to or above 25MB (OpenAI's limit)
+            if file_size > 20 * 1024 * 1024:  # 20MB threshold
+                bitrate = '24k'  # Lower bitrate
+                
+            # If file is still very large
+            if file_size > 30 * 1024 * 1024:  # 30MB threshold
+                bitrate = '16k'  # Even lower bitrate
+        
         # Convert to mono, reduce quality, and compress
         command = [
             'ffmpeg', '-i', input_path,
             '-ac', '1',  # Convert to mono
-            '-ar', '16000',  # Sample rate 16kHz
-            '-b:a', '32k',  # Bitrate 32k
+            '-ar', sample_rate,  # Sample rate 16kHz
+            '-b:a', bitrate,  # Bitrate (adaptive based on size)
             output_path,
             '-y'  # Overwrite output file if it exists
         ]
         
         subprocess.run(command, check=True, capture_output=True)
+        
+        # If file is still too large for OpenAI (25MB limit), compress more aggressively
+        if file_size_check and os.path.getsize(output_path) > 25 * 1024 * 1024:
+            print(f"Audio still too large ({os.path.getsize(output_path) / (1024 * 1024):.1f} MB). Applying stronger compression...")
+            # Try again with more aggressive settings
+            command = [
+                'ffmpeg', '-i', input_path,
+                '-ac', '1',  # Convert to mono
+                '-ar', '12000',  # Lower sample rate
+                '-b:a', '10k',  # Much lower bitrate
+                output_path,
+                '-y'  # Overwrite output file if it exists
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+            
         return output_path
     except subprocess.CalledProcessError as e:
         raise Exception(f"Error compressing audio: {e.stderr.decode()}")
@@ -427,7 +458,7 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
         if not shutil.which('ffmpeg'):
             raise Exception("ffmpeg is not installed")
 
-        # Extract audio with compression settings
+        # First extract audio with standard compression settings
         command = [
             'ffmpeg',
             '-i', input_path,
@@ -440,6 +471,44 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
         ]
         
         subprocess.run(command, check=True, capture_output=True)
+        
+        # Check if the resulting file is too large for OpenAI's Whisper API (25MB limit)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 25 * 1024 * 1024:
+            print(f"Audio file too large: {os.path.getsize(output_path) / (1024 * 1024):.1f} MB. Applying stronger compression...")
+            # Try again with more aggressive settings
+            command = [
+                'ffmpeg',
+                '-i', input_path,
+                '-vn',  # Skip video
+                '-ac', '1',  # Convert to mono
+                '-ar', '12000',  # Lower sample rate
+                '-b:a', '16k',  # Much lower bitrate
+                output_path,
+                '-y'  # Overwrite output file if it exists
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+            
+            # If still too large, compress even more aggressively
+            if os.path.getsize(output_path) > 25 * 1024 * 1024:
+                print(f"Audio still too large: {os.path.getsize(output_path) / (1024 * 1024):.1f} MB. Applying maximum compression...")
+                command = [
+                    'ffmpeg',
+                    '-i', input_path,
+                    '-vn',  # Skip video
+                    '-ac', '1',  # Convert to mono
+                    '-ar', '8000',  # Very low sample rate
+                    '-b:a', '10k',  # Very low bitrate
+                    output_path,
+                    '-y'  # Overwrite output file if it exists
+                ]
+                subprocess.run(command, check=True, capture_output=True)
+                
+                # Log final size
+                final_size = os.path.getsize(output_path) / (1024 * 1024)
+                print(f"Final audio size after maximum compression: {final_size:.1f} MB")
+                
+                if final_size > 25:
+                    print("WARNING: Audio still exceeds OpenAI's 25MB limit. Transcription might fail.")
     except subprocess.CalledProcessError as e:
         raise Exception(f"Error processing video: {e.stderr.decode()}")
 
@@ -648,87 +717,85 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
             
             print("\nExtracting and compressing audio...")
             try:
+                # First try processing the whole video
                 process_video_with_ffmpeg(temp_input_path, temp_output_path)
                 print("Audio extraction completed successfully")
+                
+                # Check if the file is too large for OpenAI API
+                if os.path.getsize(temp_output_path) > 25 * 1024 * 1024:
+                    print("\nAudio file is still too large for OpenAI. Will try splitting it into chunks.")
+                    
+                    # Split video into chunks and transcribe each chunk
+                    audio_chunks = extract_audio(temp_input_path, chunk_duration=300)  # 5-minute chunks
+                    
+                    if not audio_chunks:
+                        raise Exception("Failed to split audio into chunks")
+                    
+                    print(f"Split audio into {len(audio_chunks)} chunks")
+                    
+                    # Transcribe each chunk and combine results
+                    all_segments = []
+                    audio_language = None
+                    full_text = []
+                    
+                    for i, chunk_path in enumerate(audio_chunks):
+                        print(f"\nTranscribing chunk {i+1}/{len(audio_chunks)}...")
+                        
+                        chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
+                        print(f"Chunk size: {chunk_size:.2f} MB")
+                        
+                        # If chunk is still too large, skip it with warning
+                        if chunk_size > 25:
+                            print(f"WARNING: Chunk {i+1} is too large ({chunk_size:.2f} MB). Skipping this chunk.")
+                            continue
+                        
+                        with open(chunk_path, "rb") as chunk_file:
+                            # Transcribe with Whisper API
+                            chunk_response = client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=chunk_file,
+                                response_format="verbose_json"
+                            )
+                            
+                            # Store language from first chunk
+                            if audio_language is None:
+                                audio_language = chunk_response.language
+                            
+                            # Collect text and segments
+                            full_text.append(chunk_response.text)
+                            
+                            # Adjust segment timings based on chunk position
+                            chunk_start_time = i * 300  # 5-minute chunks
+                            for segment in chunk_response.segments:
+                                # Adjust start and end times based on chunk position
+                                segment.start += chunk_start_time
+                                segment.end += chunk_start_time
+                                all_segments.append(segment)
+                    
+                    # Create a synthetic response with combined segments
+                    class SyntheticResponse:
+                        pass
+                    
+                    response = SyntheticResponse()
+                    response.text = " ".join(full_text)
+                    response.segments = all_segments
+                    response.language = audio_language or "en"
+                    
+                    print(f"Successfully transcribed {len(all_segments)} segments across all chunks")
+                else:
+                    # Transcribe audio normally if file size is acceptable
+                    print("\nTranscribing audio...")
+                    with open(temp_output_path, "rb") as audio_file:
+                        # Transcribe with Whisper API
+                        print("Calling Whisper API...")
+                        response = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=audio_file,
+                            response_format="verbose_json"
+                        )
+                        print("Transcription completed successfully")
             except Exception as e:
-                print(f"Audio extraction error: {str(e)}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error processing video: {str(e)}"
-                )
-            
-            print("\nTranscribing audio...")
-            try:
-                with open(temp_output_path, "rb") as audio_file:
-                    # Transcribe with Whisper API
-                    print("Calling Whisper API...")
-                    response = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        response_format="verbose_json"
-                    )
-                    print("Transcription completed successfully")
-                    
-                    # Translate if not in English
-                    if response.language.lower() not in ['en', 'english']:
-                        print("\nTranslating segments to English...")
-                        response.segments = translate_segments(client, response.segments, response.language)
-                        print("Translation completed successfully")
-                    
-                    # Extract screenshots for each segment if it's a video file
-                    if file_extension in {'.mp4', '.mpeg', '.webm'}:
-                        print("\nExtracting screenshots for video segments...")
-                        for i, segment in enumerate(response.segments):
-                            print(f"\nProcessing segment {i+1}/{len(response.segments)}")
-                            screenshot_filename = f"{Path(file.filename).stem}_{segment.start:.2f}.jpg"
-                            screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-                            success = extract_screenshot(temp_input_path, segment.start, screenshot_path)
-                            if success:
-                                # Add screenshot URL to segment
-                                screenshot_url = f"/static/screenshots/{screenshot_filename}"
-                                segment.screenshot_url = screenshot_url
-                                print(f"Added screenshot URL: {screenshot_url}")
-                            else:
-                                segment.screenshot_url = None
-                                print("Failed to add screenshot")
-                    
-                    # Process transcription result
-                    print("\nProcessing transcription result...")
-                    result = {
-                        "filename": file.filename,
-                        "transcription": {
-                            "text": response.text,
-                            "language": response.language,
-                            "duration": str(timedelta(seconds=int(float(response.duration)))),
-                            "segments": [
-                                {
-                                    "id": i,
-                                    "start_time": str(timedelta(seconds=int(float(s.start)))),
-                                    "end_time": str(timedelta(seconds=int(float(s.end)))),
-                                    "text": s.text,
-                                    "translation": s.translation if hasattr(s, 'translation') else None,
-                                    "screenshot_url": getattr(s, 'screenshot_url', None)
-                                }
-                                for i, s in enumerate(response.segments)
-                            ],
-                            "processing_time": f"{time.time() - start_time:.1f} seconds"
-                        }
-                    }
-                    
-                    # Store the transcription in the database with the permanent file path
-                    store_transcription(video_hash, file.filename, result, permanent_file_path)
-                    
-                    # Add file path to the result
-                    result['file_path'] = permanent_file_path
-                    
-                    # Store in both request state and global variable
-                    request.app.state.last_transcription = result
-                    last_transcription_data = result
-                    
-                    print("\nTranscription processing completed successfully")
-                    return result
-            except Exception as e:
-                print(f"Transcription error: {str(e)}")
+                print(f"Audio extraction or transcription error: {str(e)}")
                 if hasattr(e, '__dict__'):
                     print(f"Error details: {e.__dict__}")
                 raise HTTPException(
@@ -736,6 +803,81 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                     detail=f"Error transcribing audio: {str(e)}"
                 )
             
+            # Translate if not in English
+            try:
+                if response.language.lower() not in ['en', 'english']:
+                    print("\nTranslating segments to English...")
+                    response.segments = translate_segments(client, response.segments, response.language)
+                    print("Translation completed successfully")
+            except Exception as e:
+                print(f"Translation error: {str(e)}")
+                # Continue even if translation fails
+            
+            # Continue with the rest of the function
+            # Extract screenshots for each segment if it's a video file
+            if file_extension in {'.mp4', '.mpeg', '.webm'}:
+                print("\nExtracting screenshots for video segments...")
+                for i, segment in enumerate(response.segments):
+                    print(f"\nProcessing segment {i+1}/{len(response.segments)}")
+                    screenshot_filename = f"{Path(file.filename).stem}_{segment.start:.2f}.jpg"
+                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                    success = extract_screenshot(temp_input_path, segment.start, screenshot_path)
+                    if success:
+                        # Add screenshot URL to segment
+                        screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                        segment.screenshot_url = screenshot_url
+                        print(f"Added screenshot URL: {screenshot_url}")
+                    else:
+                        segment.screenshot_url = None
+                        print("Failed to add screenshot")
+            
+            # Process transcription result
+            print("\nProcessing transcription result...")
+            result = {
+                "filename": file.filename,
+                "transcription": {
+                    "text": response.text,
+                    "language": response.language,
+                    "segments": []
+                }
+            }
+            
+            # Convert segments to dictionary format
+            for segment in response.segments:
+                segment_dict = {
+                    "id": segment.id if hasattr(segment, 'id') else str(uuid.uuid4()),
+                    "start": segment.start,
+                    "end": segment.end,
+                    "start_time": format_timestamp(segment.start),
+                    "end_time": format_timestamp(segment.end),
+                    "text": segment.text
+                }
+                
+                # Add translation if available
+                if hasattr(segment, 'translation') and segment.translation:
+                    segment_dict["translation"] = segment.translation
+                
+                # Add screenshot URL if available
+                if hasattr(segment, 'screenshot_url'):
+                    segment_dict["screenshot_url"] = segment.screenshot_url
+                
+                result["transcription"]["segments"].append(segment_dict)
+            
+            # Store the transcription data
+            store_transcription(video_hash, file.filename, result, permanent_file_path)
+            
+            # Store as last transcription
+            last_transcription_data = result
+            request.app.state.last_transcription = result
+            
+            total_duration = time.time() - start_time
+            result["processing_time"] = format_eta(int(total_duration))
+            
+            # Add video path to the result
+            result["video_url"] = f"/video/{video_hash}"
+            
+            print("\nTranscription processing completed successfully")
+            return result
     except HTTPException as e:
         print(f"HTTP Exception: {e.detail}")
         raise e

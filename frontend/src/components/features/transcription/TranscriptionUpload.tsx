@@ -31,7 +31,12 @@ interface ProcessingStatus {
 }
 
 // Helper to format processing time for better readability
-const formatProcessingTime = (timeStr: string): string => {
+const formatProcessingTime = (timeStr?: string | null): string => {
+  // Return a default value if timeStr is undefined or null
+  if (!timeStr) {
+    return "Unknown";
+  }
+  
   // Try to extract a numeric value from the time string
   let seconds = 0;
   
