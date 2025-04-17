@@ -751,15 +751,22 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                         
                         with open(chunk_path, "rb") as chunk_file:
                             # Transcribe with Whisper API
+                            print(f"Calling Whisper API for chunk {i+1} with detected audio language...")
                             chunk_response = client.audio.transcriptions.create(
                                 model="whisper-1",
                                 file=chunk_file,
-                                response_format="verbose_json"
+                                response_format="verbose_json",
+                                language=audio_language if audio_language else None  # Use detected language if available
                             )
+                            
+                            # Log response information for debugging
+                            print(f"Chunk {i+1} language detected: {chunk_response.language}")
+                            print(f"Chunk {i+1} has {len(chunk_response.segments)} segments")
                             
                             # Store language from first chunk
                             if audio_language is None:
                                 audio_language = chunk_response.language
+                                print(f"Source language detected as: {audio_language}")
                             
                             # Collect text and segments
                             full_text.append(chunk_response.text)
@@ -785,15 +792,49 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                 else:
                     # Transcribe audio normally if file size is acceptable
                     print("\nTranscribing audio...")
+                    
+                    # Try to detect language from filename
+                    detected_language = None
+                    filename_lower = file.filename.lower()
+                    language_keywords = {
+                        "spanish": "es", "español": "es", "espanol": "es",
+                        "french": "fr", "français": "fr", "francais": "fr",
+                        "german": "de", "deutsch": "de",
+                        "italian": "it", "italiano": "it",
+                        "japanese": "ja", "日本語": "ja",
+                        "korean": "ko", "한국어": "ko",
+                        "chinese": "zh", "中文": "zh",
+                        "russian": "ru", "русский": "ru",
+                        "portuguese": "pt", "português": "pt", "portugues": "pt",
+                        "english": "en"
+                    }
+                    
+                    # Check if any language keywords are in the filename
+                    for keyword, lang_code in language_keywords.items():
+                        if keyword in filename_lower:
+                            detected_language = lang_code
+                            print(f"Language detected from filename: {keyword} -> {lang_code}")
+                            break
+                    
                     with open(temp_output_path, "rb") as audio_file:
                         # Transcribe with Whisper API
                         print("Calling Whisper API...")
-                        response = client.audio.transcriptions.create(
-                            model="whisper-1",
-                            file=audio_file,
-                            response_format="verbose_json"
-                        )
-                        print("Transcription completed successfully")
+                        api_params = {
+                            "model": "whisper-1",
+                            "file": audio_file,
+                            "response_format": "verbose_json"
+                        }
+                        
+                        # Add language parameter if detected
+                        if detected_language:
+                            api_params["language"] = detected_language
+                            print(f"Setting language parameter to: {detected_language}")
+                        
+                        response = client.audio.transcriptions.create(**api_params)
+                        print(f"Transcription completed successfully")
+                        print(f"Detected language: {response.language}")
+                        print(f"Number of segments: {len(response.segments)}")
+                        print(f"First few words: {response.text[:50]}...")
             except Exception as e:
                 print(f"Audio extraction or transcription error: {str(e)}")
                 if hasattr(e, '__dict__'):
@@ -838,6 +879,7 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                 "transcription": {
                     "text": response.text,
                     "language": response.language,
+                    "source_language": response.language,  # Store the actual source language
                     "segments": []
                 }
             }
@@ -862,6 +904,10 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
                     segment_dict["screenshot_url"] = segment.screenshot_url
                 
                 result["transcription"]["segments"].append(segment_dict)
+            
+            # Add a flag to indicate if content needs translation (non-English source)
+            result["needs_translation"] = response.language.lower() not in ["en", "english"]
+            print(f"Needs translation: {result['needs_translation']}")
             
             # Store the transcription data
             store_transcription(video_hash, file.filename, result, permanent_file_path)
@@ -904,18 +950,42 @@ async def get_subtitles(language: str, request: Request) -> Response:
     if not transcription['transcription']['segments']:
         raise HTTPException(status_code=500, detail="No segments found in transcription")
     
-    # For English subtitles, verify we have translations when needed
-    if language == 'english' and transcription['transcription']['language'] != 'english':
-        if not all('translation' in segment and segment['translation'] for segment in transcription['transcription']['segments']):
-            raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
+    # Get the original language
+    original_language = transcription['transcription']['language']
+    print(f"Original language detected: {original_language}")
     
-    use_translation = (language == 'english' and transcription['transcription']['language'] != 'english')
+    # Determine subtitle type based on language request and source language
+    is_translation_needed = original_language.lower() not in ['en', 'english'] and language == 'english'
+    print(f"Translation needed: {is_translation_needed}")
+    
+    # For English subtitles, verify we have translations when needed
+    if is_translation_needed:
+        if not all('translation' in segment and segment['translation'] for segment in transcription['transcription']['segments']):
+            print("Warning: Requesting English translation but translations are not available for all segments")
+            # Try to translate on-the-fly if needed
+            try:
+                print("Attempting to translate segments to English...")
+                segments = translate_segments(client, transcription['transcription']['segments'], original_language)
+                # Update segments with translations
+                for i, segment in enumerate(segments):
+                    if hasattr(segment, 'translation') and segment.translation:
+                        transcription['transcription']['segments'][i]['translation'] = segment.translation
+                print("Translation completed")
+            except Exception as e:
+                print(f"Translation error: {str(e)}")
+                raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
+    
+    # Generate SRT content
+    use_translation = is_translation_needed
     srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
     
     # Create filename based on original video and language
     original_filename = transcription['filename']
     base_name = os.path.splitext(original_filename)[0]
-    srt_filename = f"{base_name}_{language}.srt"
+    subtitle_language = 'english' if language == 'english' else original_language
+    srt_filename = f"{base_name}_{subtitle_language}.srt"
+    
+    print(f"Returning SRT file: {srt_filename}, using translation: {use_translation}")
     
     # Return SRT file with correct content type and headers
     return Response(
