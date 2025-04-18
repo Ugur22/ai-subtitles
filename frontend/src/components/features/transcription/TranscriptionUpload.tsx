@@ -102,6 +102,46 @@ interface SummarySection {
   screenshot_url?: string | null;
 }
 
+// Simple Image Modal Component
+interface ImageModalProps {
+  imageUrl: string;
+  onClose: () => void;
+}
+
+const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
+  // Prevent closing modal when clicking on the image itself
+  const handleImageClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+      onClick={onClose} // Close when clicking backdrop
+    >
+      <div 
+        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh]"
+        onClick={handleImageClick} // Prevent closing on image container click
+      >
+        <img 
+          src={imageUrl}
+          alt="Enlarged screenshot" 
+          className="block w-[900px] max-h-[85vh] object-contain rounded-xl"
+        />
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 bg-white rounded-full p-1 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          aria-label="Close image modal"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
@@ -130,6 +170,9 @@ export const TranscriptionUpload = () => {
   const [showSavedTranscriptions, setShowSavedTranscriptions] = useState(false);
   const [summaries, setSummaries] = useState<SummarySection[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -241,18 +284,33 @@ export const TranscriptionUpload = () => {
     return hours * 3600 + minutes * 60 + seconds;
   };
 
+  const handleLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedLanguage(event.target.value);
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setFile(file);
-      // Create URL for video preview
-      const url = URL.createObjectURL(file);
-      setVideoUrl(url);
-      await processFile(file);
+    const selectedFile = event.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      // Create URL for video preview if it's a video file
+      if (selectedFile.type.startsWith('video/')) {
+        const url = URL.createObjectURL(selectedFile);
+        setVideoUrl(url);
+      } else {
+        setVideoUrl(null); // Clear video URL for non-video files
+      }
+      // Don't start processing immediately
+      // await processFile(file);
+      // Reset any previous errors or results
+      setError(null);
+      setTranscription(null);
+      setProcessingStatus(null);
+      setElapsedTime(0);
+      if (processingTimer) clearInterval(processingTimer);
     }
   };
 
-  const processFile = async (file: File) => {
+  const processFile = async (fileToProcess: File) => {
     try {
       // Set initial extraction stage
       setProcessingStatus({ stage: 'extracting', progress: 0 });
@@ -311,10 +369,10 @@ export const TranscriptionUpload = () => {
       
       // Create FormData and append the file
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', fileToProcess);
       
-      // Upload file directly to backend
-      transcribeMutation.mutate(file);
+      // Call mutate with an object containing file and selected language
+      transcribeMutation.mutate({ file: fileToProcess, language: selectedLanguage });
       
       // Clean up timer
       return () => {
@@ -346,26 +404,43 @@ export const TranscriptionUpload = () => {
     setDragActive(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
+      const droppedFile = e.dataTransfer.files[0];
+      setFile(droppedFile);
       
-      // Create and store video URL for dropped file
-      if (file.type.includes('video')) {
-        const objectUrl = URL.createObjectURL(file);
+      // Create and store video URL for dropped file if it's a video
+      if (droppedFile.type.startsWith('video/')) {
+        const objectUrl = URL.createObjectURL(droppedFile);
         setVideoUrl(objectUrl);
       } else {
         setVideoUrl(null);
       }
       
-      try {
-        await processFile(file);
-      } catch (error) {
-        console.error('Processing failed:', error);
-      }
+      // Don't start processing immediately
+      // try {
+      //   await processFile(file);
+      // } catch (error) {
+      //   console.error('Processing failed:', error);
+      // }
+      // Reset any previous errors or results
+      setError(null);
+      setTranscription(null);
+      setProcessingStatus(null);
+      setElapsedTime(0);
+      if (processingTimer) clearInterval(processingTimer);
     }
   };
 
   const handleButtonClick = () => {
     fileInputRef.current?.click();
+  };
+
+  // New handler to start the transcription process
+  const handleStartTranscriptionClick = () => {
+    if (file) {
+      processFile(file); // Pass the file from state
+    } else {
+      setError("No file selected to transcribe.");
+    }
   };
 
   const startNewTranscription = () => {
@@ -379,6 +454,7 @@ export const TranscriptionUpload = () => {
     setShowSubtitles(false);
     setUploadProgress(0);
     setElapsedTime(0);
+    setSelectedLanguage('');
     
     if (processingTimer) {
       clearInterval(processingTimer);
@@ -930,6 +1006,30 @@ export const TranscriptionUpload = () => {
     }
   };
 
+  // Language options (ISO 639-1 codes)
+  const languageOptions = [
+    { value: '', label: 'Auto-detect Language' },
+    { value: 'en', label: 'English' },
+    { value: 'es', label: 'Spanish' },
+    { value: 'fr', label: 'French' },
+    { value: 'de', label: 'German' },
+    { value: 'it', label: 'Italian' },
+    { value: 'ja', label: 'Japanese' },
+    { value: 'ko', label: 'Korean' },
+    { value: 'pt', label: 'Portuguese' },
+    { value: 'ru', label: 'Russian' },
+    { value: 'zh', label: 'Chinese' },
+    // Add more languages as needed
+  ];
+
+  // Function to open the modal
+  const openImageModal = (imageUrl: string | undefined) => {
+    if (imageUrl) {
+      setModalImageUrl(imageUrl);
+      setIsModalOpen(true);
+    }
+  };
+
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -986,7 +1086,7 @@ export const TranscriptionUpload = () => {
                     or click to browse files
                   </p>
                   <p className="text-2xs text-gray-400 mt-1">
-                    Supports MP4, MP3, WAV files up to 5GB
+                    Supports MP4, MP3, WAV files up to 10GB
                   </p>
                 </div>
                 <input
@@ -998,6 +1098,50 @@ export const TranscriptionUpload = () => {
                   disabled={transcribeMutation.isPending}
                 />
               </div>
+
+              {/* Show selected file info if a file is staged */}
+              {file && !transcription && (
+                <div className="mt-4 max-w-lg mx-auto text-center p-3 bg-gray-50 rounded border border-gray-200">
+                  <p className="text-sm font-medium text-gray-700">Selected file:</p>
+                  <p className="text-xs text-gray-600 truncate">{file.name} ({(file.size / (1024 * 1024)).toFixed(2)} MB)</p>
+                </div>
+              )}
+
+              {/* --> Add Language Selection Here <-- */}
+              <div className="mt-4 max-w-lg mx-auto">
+                <label htmlFor="language-select" className="block text-sm font-medium text-gray-700 mb-1">
+                  Source Language (Optional)
+                </label>
+                <select 
+                  id="language-select"
+                  value={selectedLanguage}
+                  onChange={handleLanguageChange}
+                  disabled={transcribeMutation.isPending} // Disable when processing
+                  className={`mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm ${transcribeMutation.isPending ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                >
+                  {languageOptions.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Select the primary language spoken in the file. Leave as 'Auto-detect' if unsure.
+                </p>
+              </div>
+              {/* --- End Language Selection --- */}
+
+              {/* Add Start Transcription Button - visible only when a file is selected and not processing */}            
+              {file && !transcribeMutation.isPending && !transcription && (
+                  <div className="mt-6 max-w-lg mx-auto text-center">
+                      <button 
+                          onClick={handleStartTranscriptionClick}
+                          className="px-6 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white font-semibold rounded-lg shadow-md hover:from-teal-600 hover:to-cyan-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition duration-300 ease-in-out"
+                      >
+                          Start Transcription
+                      </button>
+                  </div>
+              )}
 
               {/* Load Saved Button */}
               <div className="mt-3 text-center">
@@ -1329,9 +1473,8 @@ export const TranscriptionUpload = () => {
                                   <img 
                                     src={`http://localhost:8000${segment.screenshot_url}`}
                                     alt={`Screenshot at ${segment.start_time}`}
-                                    className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow"
-                                    onClick={() => seekToTimestamp(segment.start_time)}
-                                    style={{ cursor: 'pointer' }}
+                                    className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow hover:scale-105 cursor-pointer"
+                                    onClick={() => openImageModal(`http://localhost:8000${segment.screenshot_url}`)}
                                   />
                                 </div>
                               )}
@@ -1429,6 +1572,14 @@ export const TranscriptionUpload = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Image Modal */} 
+      {isModalOpen && modalImageUrl && (
+        <ImageModal 
+          imageUrl={modalImageUrl} 
+          onClose={() => setIsModalOpen(false)} 
+        />
       )}
     </div>
   );

@@ -64,9 +64,20 @@ export interface SearchResponse {
   }>;
 }
 
-export const transcribeVideo = async (file: File): Promise<TranscriptionResponse> => {
+export const transcribeVideo = async (
+  variables: { file: File, language?: string } 
+): Promise<TranscriptionResponse> => {
+  const { file, language } = variables;
   const formData = new FormData();
   formData.append('file', file);
+  
+  // Append language if provided
+  if (language) {
+    formData.append('language', language);
+    console.log(`API: Sending transcription request with language: ${language}`);
+  } else {
+    console.log('API: Sending transcription request with auto-detect language');
+  }
   
   // Add a best-guess path based on downloaded files location
   // Since the standard File API doesn't have path info, we'll use a best guess
