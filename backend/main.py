@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, UploadFile, HTTPException, Request, Response
+from fastapi import FastAPI, UploadFile, HTTPException, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -370,21 +370,39 @@ def generate_srt(segments: List[Dict], use_translation: bool = False) -> str:
     srt_content = []
     for i, segment in enumerate(segments, 1):
         # Convert timestamps to SRT format
-        start_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(segment['start_time'].split(':'))))
-        end_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(segment['end_time'].split(':'))))
+        start_seconds = segment.get('start', 0.0) # Use .get for safety
+        end_seconds = segment.get('end', 0.0)     # Use .get for safety
         
-        # Get text content, ensuring it's properly handled as a string
-        text_content = segment['translation'] if use_translation and segment.get('translation') else segment['text']
-        
-        # Ensure text is properly encoded
+        # Get text content, handling missing translation more gracefully
+        text_content = ""
+        if use_translation:
+            # Use translation if available, otherwise fallback to original text
+            text_content = segment.get('translation') 
+            if not text_content: # If translation is None or empty
+                print(f"Warning: Missing translation for segment {i}. Falling back to original text.")
+                text_content = segment.get('text', '[No Text Available]') # Fallback to original or placeholder
+        else:
+            # Use original text
+            text_content = segment.get('text', '[No Text Available]') # Fallback to placeholder if text is missing
+            
+        # Ensure text is properly encoded if it happens to be bytes (though unlikely here)
         if isinstance(text_content, bytes):
-            text_content = text_content.decode('utf-8')
-        
+            try:
+                text_content = text_content.decode('utf-8')
+            except UnicodeDecodeError:
+                 print(f"Warning: Could not decode segment {i} text. Using placeholder.")
+                 text_content = '[Encoding Error]'
+
+        # Ensure text_content is a string before proceeding
+        if not isinstance(text_content, str):
+             print(f"Warning: Segment {i} content is not a string ({type(text_content)}). Converting.")
+             text_content = str(text_content)
+
         # Format subtitle entry
         srt_content.extend([
             str(i),
             f"{format_srt_timestamp(start_seconds)} --> {format_srt_timestamp(end_seconds)}",
-            text_content,
+            text_content.strip(), # Ensure no leading/trailing whitespace
             ""  # Empty line between entries
         ])
     
@@ -458,14 +476,18 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
         if not shutil.which('ffmpeg'):
             raise Exception("ffmpeg is not installed")
 
+        initial_bitrate = '32k'
+        initial_sample_rate = '16000'
+        print(f"Attempting initial audio extraction with bitrate={initial_bitrate}, sample_rate={initial_sample_rate}")
+
         # First extract audio with standard compression settings
         command = [
             'ffmpeg',
             '-i', input_path,
             '-vn',  # Skip video
             '-ac', '1',  # Convert to mono
-            '-ar', '16000',  # Sample rate 16kHz
-            '-b:a', '32k',  # Bitrate 32k
+            '-ar', initial_sample_rate,
+            '-b:a', initial_bitrate,
             output_path,
             '-y'  # Overwrite output file if it exists
         ]
@@ -473,44 +495,59 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
         subprocess.run(command, check=True, capture_output=True)
         
         # Check if the resulting file is too large for OpenAI's Whisper API (25MB limit)
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 25 * 1024 * 1024:
-            print(f"Audio file too large: {os.path.getsize(output_path) / (1024 * 1024):.1f} MB. Applying stronger compression...")
-            # Try again with more aggressive settings
-            command = [
-                'ffmpeg',
-                '-i', input_path,
-                '-vn',  # Skip video
-                '-ac', '1',  # Convert to mono
-                '-ar', '12000',  # Lower sample rate
-                '-b:a', '16k',  # Much lower bitrate
-                output_path,
-                '-y'  # Overwrite output file if it exists
-            ]
-            subprocess.run(command, check=True, capture_output=True)
+        if os.path.exists(output_path):
+            output_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"Audio extracted. Size: {output_size_mb:.1f} MB")
             
-            # If still too large, compress even more aggressively
-            if os.path.getsize(output_path) > 25 * 1024 * 1024:
-                print(f"Audio still too large: {os.path.getsize(output_path) / (1024 * 1024):.1f} MB. Applying maximum compression...")
+            if output_size_mb > 25:
+                print(f"Audio file too large ({output_size_mb:.1f} MB). Applying stronger compression...")
+                stronger_bitrate = '16k'
+                stronger_sample_rate = '12000'
+                print(f"Applying stronger compression: bitrate={stronger_bitrate}, sample_rate={stronger_sample_rate}")
+                # Try again with more aggressive settings
                 command = [
                     'ffmpeg',
                     '-i', input_path,
                     '-vn',  # Skip video
                     '-ac', '1',  # Convert to mono
-                    '-ar', '8000',  # Very low sample rate
-                    '-b:a', '10k',  # Very low bitrate
+                    '-ar', stronger_sample_rate,
+                    '-b:a', stronger_bitrate,
                     output_path,
                     '-y'  # Overwrite output file if it exists
                 ]
                 subprocess.run(command, check=True, capture_output=True)
-                
-                # Log final size
-                final_size = os.path.getsize(output_path) / (1024 * 1024)
-                print(f"Final audio size after maximum compression: {final_size:.1f} MB")
-                
-                if final_size > 25:
-                    print("WARNING: Audio still exceeds OpenAI's 25MB limit. Transcription might fail.")
+                output_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                print(f"Audio size after stronger compression: {output_size_mb:.1f} MB")
+            
+                # If still too large, compress even more aggressively
+                if output_size_mb > 25:
+                    print(f"Audio still too large ({output_size_mb:.1f} MB). Applying maximum compression...")
+                    max_bitrate = '10k'
+                    max_sample_rate = '8000'
+                    print(f"Applying maximum compression: bitrate={max_bitrate}, sample_rate={max_sample_rate}")
+                    command = [
+                        'ffmpeg',
+                        '-i', input_path,
+                        '-vn',  # Skip video
+                        '-ac', '1',  # Convert to mono
+                        '-ar', max_sample_rate,
+                        '-b:a', max_bitrate,
+                        output_path,
+                        '-y'  # Overwrite output file if it exists
+                    ]
+                    subprocess.run(command, check=True, capture_output=True)
+                    
+                    # Log final size
+                    final_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                    print(f"Final audio size after maximum compression: {final_size_mb:.1f} MB")
+                    
+                    if final_size_mb > 25:
+                        print("WARNING: Audio still exceeds OpenAI's 25MB limit after maximum compression. Transcription might fail or be inaccurate.")
+        else:
+             print("WARNING: Output audio file does not exist after initial extraction attempt.")
+             
     except subprocess.CalledProcessError as e:
-        raise Exception(f"Error processing video: {e.stderr.decode()}")
+        raise Exception(f"Error processing video with ffmpeg: {e.stderr.decode()}")
 
 def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> None:
     """Extract a screenshot from a video at a specific timestamp."""
@@ -525,7 +562,7 @@ def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> N
             '-i', input_path,
             '-vframes', '1',
             '-q:v', '2',  # High quality
-            '-vf', 'scale=320:-1',  # Resize to 320px width, maintain aspect ratio
+            '-vf', 'scale=1280:-1',  # Scale to a larger width (e.g., 1280px) instead of 320px
             output_path,
             '-y'  # Overwrite if exists
         ]
@@ -637,7 +674,12 @@ async def get_current_transcription(request: Request) -> Dict:
     return last_transcription_data
 
 @app.post("/transcribe/")
-async def transcribe_video(file: UploadFile, request: Request, file_path: str = None) -> Dict:
+async def transcribe_video(
+    file: UploadFile, 
+    request: Request, 
+    file_path: str = None,
+    language: str = Form(None)  # Added language parameter
+) -> Dict:
     """Handle video upload, extract audio, and transcribe"""
     global last_transcription_data
     
@@ -655,6 +697,12 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
             )
             
         print(f"\nProcessing video: {file.filename}")
+        # Print language if provided
+        if language:
+            print(f"Language specified: {language}")
+        else:
+            print("Language: Auto-detect")
+            
         start_time = time.time()
         
         # Create a temporary directory for processing
@@ -712,204 +760,241 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
             permanent_storage_dir = os.path.join("static", "videos")
             os.makedirs(permanent_storage_dir, exist_ok=True)
             permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{file_extension}")
-            shutil.copy2(temp_input_path, permanent_file_path)
-            print(f"Saved permanent copy of video to: {permanent_file_path}")
+            # Check if file already exists to avoid unnecessary copy
+            if not os.path.exists(permanent_file_path):
+                 shutil.copy2(temp_input_path, permanent_file_path)
+                 print(f"Saved permanent copy of video to: {permanent_file_path}")
+            else:
+                 print(f"Permanent copy already exists at: {permanent_file_path}")
             
             print("\nExtracting and compressing audio...")
+            audio_processed = False
             try:
-                # First try processing the whole video
-                process_video_with_ffmpeg(temp_input_path, temp_output_path)
-                print("Audio extraction completed successfully")
+                # --- Force Chunking --- 
+                # We will now always chunk the audio using extract_audio, regardless of initial size,
+                # as this seems to help Whisper with long files.
+                # The old single-file processing path will be removed.
                 
-                # Check if the file is too large for OpenAI API
-                if os.path.getsize(temp_output_path) > 25 * 1024 * 1024:
-                    print("\nAudio file is still too large for OpenAI. Will try splitting it into chunks.")
+                print("Forcing audio splitting into chunks using moviepy...")
+                chunk_duration_seconds = 300 # 5-minute chunks
+                print(f"Using moviepy to extract audio chunks ({chunk_duration_seconds}s duration)...")
+                
+                # Ensure extract_audio handles compression for each chunk
+                # Assuming extract_audio compresses each chunk and returns paths
+                audio_chunks = extract_audio(temp_input_path, chunk_duration=chunk_duration_seconds)  
+                
+                if not audio_chunks:
+                    raise Exception("Failed to split audio into chunks using moviepy")
+                
+                print(f"Split audio into {len(audio_chunks)} chunks.")
+                
+                # Transcribe each chunk and combine results
+                all_segments = []
+                audio_language = language # Use provided language initially
+                full_text = []
+                
+                total_chunks = len(audio_chunks)
+                for i, chunk_path in enumerate(audio_chunks):
+                    print(f"\nProcessing chunk {i+1}/{total_chunks}: {os.path.basename(chunk_path)}")
                     
-                    # Split video into chunks and transcribe each chunk
-                    audio_chunks = extract_audio(temp_input_path, chunk_duration=300)  # 5-minute chunks
+                    chunk_size_mb = 0
+                    if os.path.exists(chunk_path):
+                        chunk_size_mb = os.path.getsize(chunk_path) / (1024 * 1024)
+                        print(f"Chunk size: {chunk_size_mb:.2f} MB")
+                    else:
+                         print(f"WARNING: Chunk file not found: {chunk_path}. Skipping.")
+                         continue
+
+                    # If chunk is still too large (shouldn't happen often with 5min chunks, but check anyway)
+                    if chunk_size_mb > 25:
+                        print(f"WARNING: Chunk {i+1} ({chunk_size_mb:.2f} MB) exceeds 25MB limit. Skipping this chunk.")
+                        continue
                     
-                    if not audio_chunks:
-                        raise Exception("Failed to split audio into chunks")
-                    
-                    print(f"Split audio into {len(audio_chunks)} chunks")
-                    
-                    # Transcribe each chunk and combine results
-                    all_segments = []
-                    audio_language = None
-                    full_text = []
-                    
-                    for i, chunk_path in enumerate(audio_chunks):
-                        print(f"\nTranscribing chunk {i+1}/{len(audio_chunks)}...")
-                        
-                        chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
-                        print(f"Chunk size: {chunk_size:.2f} MB")
-                        
-                        # If chunk is still too large, skip it with warning
-                        if chunk_size > 25:
-                            print(f"WARNING: Chunk {i+1} is too large ({chunk_size:.2f} MB). Skipping this chunk.")
-                            continue
-                        
-                        with open(chunk_path, "rb") as chunk_file:
-                            # Transcribe with Whisper API
-                            print(f"Calling Whisper API for chunk {i+1} with detected audio language...")
-                            chunk_response = client.audio.transcriptions.create(
-                                model="whisper-1",
-                                file=chunk_file,
-                                response_format="verbose_json",
-                                language=audio_language if audio_language else None  # Use detected language if available
-                            )
-                            
-                            # Log response information for debugging
-                            print(f"Chunk {i+1} language detected: {chunk_response.language}")
-                            print(f"Chunk {i+1} has {len(chunk_response.segments)} segments")
-                            
-                            # Store language from first chunk
-                            if audio_language is None:
-                                audio_language = chunk_response.language
-                                print(f"Source language detected as: {audio_language}")
-                            
-                            # Collect text and segments
-                            full_text.append(chunk_response.text)
-                            
-                            # Adjust segment timings based on chunk position
-                            chunk_start_time = i * 300  # 5-minute chunks
-                            for segment in chunk_response.segments:
-                                # Adjust start and end times based on chunk position
-                                segment.start += chunk_start_time
-                                segment.end += chunk_start_time
-                                all_segments.append(segment)
-                    
-                    # Create a synthetic response with combined segments
-                    class SyntheticResponse:
-                        pass
-                    
-                    response = SyntheticResponse()
-                    response.text = " ".join(full_text)
-                    response.segments = all_segments
-                    response.language = audio_language or "en"
-                    
-                    print(f"Successfully transcribed {len(all_segments)} segments across all chunks")
-                else:
-                    # Transcribe audio normally if file size is acceptable
-                    print("\nTranscribing audio...")
-                    
-                    # Try to detect language from filename
-                    detected_language = None
-                    filename_lower = file.filename.lower()
-                    language_keywords = {
-                        "spanish": "es", "español": "es", "espanol": "es",
-                        "french": "fr", "français": "fr", "francais": "fr",
-                        "german": "de", "deutsch": "de",
-                        "italian": "it", "italiano": "it",
-                        "japanese": "ja", "日本語": "ja",
-                        "korean": "ko", "한국어": "ko",
-                        "chinese": "zh", "中文": "zh",
-                        "russian": "ru", "русский": "ru",
-                        "portuguese": "pt", "português": "pt", "portugues": "pt",
-                        "english": "en"
-                    }
-                    
-                    # Check if any language keywords are in the filename
-                    for keyword, lang_code in language_keywords.items():
-                        if keyword in filename_lower:
-                            detected_language = lang_code
-                            print(f"Language detected from filename: {keyword} -> {lang_code}")
-                            break
-                    
-                    with open(temp_output_path, "rb") as audio_file:
-                        # Transcribe with Whisper API
-                        print("Calling Whisper API...")
-                        api_params = {
+                    with open(chunk_path, "rb") as chunk_file:
+                        # Transcribe with Whisper API, passing language if provided
+                        transcription_args = {
                             "model": "whisper-1",
-                            "file": audio_file,
-                            "response_format": "verbose_json"
+                            "file": chunk_file,
+                            "response_format": "verbose_json",
+                            "timestamp_granularities": ["segment"] # Request segment timestamps
                         }
+                        # Only add language parameter if it's explicitly provided by user
+                        if language: 
+                            transcription_args["language"] = language
+                            print(f"Transcribing chunk {i+1} with specified language: {language}")
+                        else:
+                            print(f"Transcribing chunk {i+1} with auto-detected language.")
+
+                        print(f"Calling Whisper API for chunk {i+1}...")
+                        chunk_response = client.audio.transcriptions.create(**transcription_args)
+                        print(f"Transcription received for chunk {i+1}.")
+
+                        # Store language (use detected language if none provided)
+                        detected_language = chunk_response.language
+                        print(f"Detected language for chunk {i+1}: {detected_language}")
+                        if audio_language is None: # Set language on first chunk if not provided
+                            audio_language = detected_language
+                            print(f"Overall audio language set to: {audio_language}")
                         
-                        # Add language parameter if detected
-                        if detected_language:
-                            api_params["language"] = detected_language
-                            print(f"Setting language parameter to: {detected_language}")
+                        # Collect text and segments
+                        full_text.append(chunk_response.text)
                         
-                        response = client.audio.transcriptions.create(**api_params)
-                        print(f"Transcription completed successfully")
-                        print(f"Detected language: {response.language}")
-                        print(f"Number of segments: {len(response.segments)}")
-                        print(f"First few words: {response.text[:50]}...")
+                        # Adjust segment timings based on chunk position
+                        chunk_start_offset_seconds = i * chunk_duration_seconds 
+                        print(f"Adjusting segment times for chunk {i+1} with offset: {chunk_start_offset_seconds}s")
+                        if hasattr(chunk_response, 'segments') and chunk_response.segments:
+                            for segment in chunk_response.segments:
+                                # Ensure start and end attributes exist and are floats
+                                segment_start = getattr(segment, 'start', 0.0)
+                                segment_end = getattr(segment, 'end', 0.0)
+                                
+                                # Adjust start and end times based on chunk position
+                                segment.start = segment_start + chunk_start_offset_seconds
+                                segment.end = segment_end + chunk_start_offset_seconds
+                                all_segments.append(segment)
+                        else:
+                             print(f"Warning: No segments found in response for chunk {i+1}")
+                
+                # Create a synthetic response object to hold the combined results
+                class SyntheticResponse:
+                    def __init__(self):
+                        self.text = ""
+                        self.segments = []
+                        self.language = "en" # Default language
+
+                response = SyntheticResponse()
+                response.text = " ".join(full_text)
+                response.segments = all_segments
+                # Use the determined language (provided or detected from first chunk)
+                response.language = audio_language or "en" 
+                print(f"\nCombined transcription from chunks. Total segments: {len(all_segments)}, Language: {response.language}")
+                audio_processed = True # Mark as processed via chunks
+
+                # --- Removed the old single-file transcription block --- 
+                # elif audio_processed: 
+                #     # ... (code that transcribed temp_output_path directly) ...
+                
+                if not audio_processed: 
+                    # This case should not be reached anymore with forced chunking
+                    raise Exception("Audio processing failed. Chunk processing did not succeed.")
+
             except Exception as e:
-                print(f"Audio extraction or transcription error: {str(e)}")
+                print(f"Audio processing or transcription error: {str(e)}")
+                # Log traceback for detailed debugging
+                import traceback
+                traceback.print_exc() 
                 if hasattr(e, '__dict__'):
                     print(f"Error details: {e.__dict__}")
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Error transcribing audio: {str(e)}"
+                    detail=f"Error during audio processing or transcription: {str(e)}"
                 )
-            
+
             # Translate if not in English
             try:
-                if response.language.lower() not in ['en', 'english']:
-                    print("\nTranslating segments to English...")
-                    response.segments = translate_segments(client, response.segments, response.language)
-                    print("Translation completed successfully")
+                # Use the determined language for translation check
+                source_language_for_translation = response.language
+                print(f"\nChecking language for translation: {source_language_for_translation}")
+                if source_language_for_translation and source_language_for_translation.lower() not in ['en', 'english']:
+                    print(f"Language is not English. Translating segments from '{source_language_for_translation}'...")
+                    # Ensure segments exist before attempting translation
+                    if hasattr(response, 'segments') and response.segments:
+                        response.segments = translate_segments(client, response.segments, source_language_for_translation)
+                        print("Translation completed successfully")
+                    else:
+                         print("No segments found to translate.")
+                else:
+                    print("Language is English or undetermined. No translation needed.")
             except Exception as e:
                 print(f"Translation error: {str(e)}")
-                # Continue even if translation fails
-            
+                import traceback
+                traceback.print_exc()
+                # Continue even if translation fails, but log it
+
             # Continue with the rest of the function
             # Extract screenshots for each segment if it's a video file
-            if file_extension in {'.mp4', '.mpeg', '.webm'}:
-                print("\nExtracting screenshots for video segments...")
-                for i, segment in enumerate(response.segments):
-                    print(f"\nProcessing segment {i+1}/{len(response.segments)}")
-                    screenshot_filename = f"{Path(file.filename).stem}_{segment.start:.2f}.jpg"
-                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-                    success = extract_screenshot(temp_input_path, segment.start, screenshot_path)
-                    if success:
-                        # Add screenshot URL to segment
-                        screenshot_url = f"/static/screenshots/{screenshot_filename}"
-                        segment.screenshot_url = screenshot_url
-                        print(f"Added screenshot URL: {screenshot_url}")
-                    else:
-                        segment.screenshot_url = None
-                        print("Failed to add screenshot")
-            
+            screenshot_count = 0
+            if file_extension in {'.mp4', '.mpeg', '.webm', '.mov'}: # Added .mov
+                 print("\nExtracting screenshots for video segments...")
+                 # Ensure response.segments exists and is iterable
+                 if hasattr(response, 'segments') and response.segments:
+                    total_segments_for_screenshots = len(response.segments)
+                    print(f"Attempting to extract screenshots for {total_segments_for_screenshots} segments.")
+                    for i, segment in enumerate(response.segments):
+                        #print(f"Processing segment {i+1}/{total_segments_for_screenshots} for screenshot (Start: {segment.start:.2f})")
+                        screenshot_filename = f"{video_hash}_{segment.start:.2f}.jpg" # Use hash to ensure uniqueness
+                        screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                        
+                        # Ensure segment.start is a valid number
+                        segment_start_time = getattr(segment, 'start', None)
+                        if segment_start_time is None or not isinstance(segment_start_time, (int, float)):
+                             print(f"Warning: Invalid start time for segment {i+1}. Skipping screenshot.")
+                             segment.screenshot_url = None
+                             continue
+
+                        success = extract_screenshot(temp_input_path, segment_start_time, screenshot_path)
+                        if success and os.path.exists(screenshot_path):
+                            # Add screenshot URL to segment
+                            screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                            segment.screenshot_url = screenshot_url
+                            screenshot_count += 1
+                            #print(f"Segment {i+1}: Screenshot added - {screenshot_url}")
+                        else:
+                            segment.screenshot_url = None
+                            #print(f"Segment {i+1}: Failed to add screenshot.")
+                    print(f"\nFinished screenshot extraction. Successfully added {screenshot_count} screenshots.")
+                 else:
+                      print("No segments available to extract screenshots from.")
+            else:
+                 print("\nFile is not a video format. Skipping screenshot extraction.")
+
             # Process transcription result
-            print("\nProcessing transcription result...")
+            print("\nProcessing final transcription result...")
             result = {
                 "filename": file.filename,
+                "video_hash": video_hash, # Include hash in response
                 "transcription": {
-                    "text": response.text,
-                    "language": response.language,
-                    "source_language": response.language,  # Store the actual source language
+                    "text": getattr(response, 'text', ''), # Safely get text
+                    # Store the determined language (provided or detected)
+                    "language": getattr(response, 'language', 'unknown'), # Safely get language
                     "segments": []
                 }
             }
-            
+
             # Convert segments to dictionary format
-            for segment in response.segments:
-                segment_dict = {
-                    "id": segment.id if hasattr(segment, 'id') else str(uuid.uuid4()),
-                    "start": segment.start,
-                    "end": segment.end,
-                    "start_time": format_timestamp(segment.start),
-                    "end_time": format_timestamp(segment.end),
-                    "text": segment.text
-                }
-                
-                # Add translation if available
-                if hasattr(segment, 'translation') and segment.translation:
-                    segment_dict["translation"] = segment.translation
-                
-                # Add screenshot URL if available
-                if hasattr(segment, 'screenshot_url'):
-                    segment_dict["screenshot_url"] = segment.screenshot_url
-                
-                result["transcription"]["segments"].append(segment_dict)
-            
-            # Add a flag to indicate if content needs translation (non-English source)
-            result["needs_translation"] = response.language.lower() not in ["en", "english"]
-            print(f"Needs translation: {result['needs_translation']}")
-            
-            # Store the transcription data
+            if hasattr(response, 'segments') and response.segments:
+                for segment in response.segments:
+                    # Ensure segment attributes exist before accessing using getattr with defaults
+                    segment_id = getattr(segment, 'id', str(uuid.uuid4())) 
+                    segment_start = getattr(segment, 'start', 0.0)
+                    segment_end = getattr(segment, 'end', 0.0)
+                    segment_text = getattr(segment, 'text', '')
+                    segment_translation = getattr(segment, 'translation', None)
+                    segment_screenshot_url = getattr(segment, 'screenshot_url', None)
+                    
+                    segment_dict = {
+                        "id": segment_id,
+                        "start": segment_start,
+                        "end": segment_end,
+                        "start_time": format_timestamp(segment_start),
+                        "end_time": format_timestamp(segment_end),
+                        "text": segment_text
+                    }
+                    
+                    # Add translation if available
+                    if segment_translation:
+                        segment_dict["translation"] = segment_translation
+                    
+                    # Add screenshot URL if available
+                    if segment_screenshot_url:
+                        segment_dict["screenshot_url"] = segment_screenshot_url
+                    
+                    result["transcription"]["segments"].append(segment_dict)
+            else:
+                print("Warning: No segments found in the final response object.")
+
+            # Store the transcription data, including the permanent file path
+            print(f"\nStoring transcription in database with hash: {video_hash}")
             store_transcription(video_hash, file.filename, result, permanent_file_path)
             
             # Store as last transcription
@@ -919,10 +1004,11 @@ async def transcribe_video(file: UploadFile, request: Request, file_path: str = 
             total_duration = time.time() - start_time
             result["processing_time"] = format_eta(int(total_duration))
             
-            # Add video path to the result
+            # Add video URL to the result using the hash
             result["video_url"] = f"/video/{video_hash}"
             
-            print("\nTranscription processing completed successfully")
+            print(f"\nTranscription processing completed successfully in {result['processing_time']}.")
+            print(f"Returning result for {result['filename']} (Hash: {result['video_hash']})")
             return result
     except HTTPException as e:
         print(f"HTTP Exception: {e.detail}")
@@ -950,42 +1036,18 @@ async def get_subtitles(language: str, request: Request) -> Response:
     if not transcription['transcription']['segments']:
         raise HTTPException(status_code=500, detail="No segments found in transcription")
     
-    # Get the original language
-    original_language = transcription['transcription']['language']
-    print(f"Original language detected: {original_language}")
-    
-    # Determine subtitle type based on language request and source language
-    is_translation_needed = original_language.lower() not in ['en', 'english'] and language == 'english'
-    print(f"Translation needed: {is_translation_needed}")
-    
     # For English subtitles, verify we have translations when needed
-    if is_translation_needed:
+    if language == 'english' and transcription['transcription']['language'] != 'english':
         if not all('translation' in segment and segment['translation'] for segment in transcription['transcription']['segments']):
-            print("Warning: Requesting English translation but translations are not available for all segments")
-            # Try to translate on-the-fly if needed
-            try:
-                print("Attempting to translate segments to English...")
-                segments = translate_segments(client, transcription['transcription']['segments'], original_language)
-                # Update segments with translations
-                for i, segment in enumerate(segments):
-                    if hasattr(segment, 'translation') and segment.translation:
-                        transcription['transcription']['segments'][i]['translation'] = segment.translation
-                print("Translation completed")
-            except Exception as e:
-                print(f"Translation error: {str(e)}")
-                raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
+            raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
     
-    # Generate SRT content
-    use_translation = is_translation_needed
+    use_translation = (language == 'english' and transcription['transcription']['language'] != 'english')
     srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
     
     # Create filename based on original video and language
     original_filename = transcription['filename']
     base_name = os.path.splitext(original_filename)[0]
-    subtitle_language = 'english' if language == 'english' else original_language
-    srt_filename = f"{base_name}_{subtitle_language}.srt"
-    
-    print(f"Returning SRT file: {srt_filename}, using translation: {use_translation}")
+    srt_filename = f"{base_name}_{language}.srt"
     
     # Return SRT file with correct content type and headers
     return Response(
