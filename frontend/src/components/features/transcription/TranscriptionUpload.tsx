@@ -560,6 +560,16 @@ export const TranscriptionUpload = () => {
       
       console.log("Loaded transcription data:", data);
       
+      // Check if translations are needed
+      if (data.transcription.language.toLowerCase() !== 'en') {
+        // Check if any segments are missing translations
+        const needsTranslation = data.transcription.segments.some((segment: { translation: string | null }) => !segment.translation);
+        if (needsTranslation) {
+          console.log("Some segments are missing translations, translating...");
+          data = await translateTranscription(data);
+        }
+      }
+      
       // Reset state for new transcription
       setTranscription(data);
       setFile(null);
@@ -1035,63 +1045,6 @@ export const TranscriptionUpload = () => {
     }
   };
 
-  // Add transcription method toggle UI
-  const renderTranscriptionMethodToggle = () => (
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        Transcription Method
-      </label>
-      <div className="flex space-x-4">
-        <label className="inline-flex items-center">
-          <input
-            type="radio"
-            className="form-radio"
-            name="transcriptionMethod"
-            value="local"
-            checked={transcriptionMethod === 'local'}
-            onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
-          />
-          <span className="ml-2">Local (Faster, Free)</span>
-        </label>
-        <label className="inline-flex items-center">
-          <input
-            type="radio"
-            className="form-radio"
-            name="transcriptionMethod"
-            value="openai"
-            checked={transcriptionMethod === 'openai'}
-            onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
-          />
-          <span className="ml-2">OpenAI (More Accurate)</span>
-        </label>
-      </div>
-    </div>
-  );
-
-  const renderProcessingStatus = () => {
-    if (!processingStatus) return null;
-
-    return (
-      <div className="mt-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-700">
-            {processingStatus.stage === 'uploading' ? 'Uploading file...' : 
-             processingStatus.stage === 'transcribing' ? 'Transcribing...' :
-             processingStatus.stage === 'translating' ? 'Translating...' :
-             'Processing complete'}
-          </span>
-          <span className="text-sm text-gray-500">{processingStatus.progress}%</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2.5">
-          <div
-            className="bg-blue-600 h-2.5 rounded-full"
-            style={{ width: `${processingStatus.progress}%` }}
-          ></div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -1202,6 +1155,37 @@ export const TranscriptionUpload = () => {
                       >
                           Start Transcription
                       </button>
+                      
+                      {/* Move transcription method toggle here */}
+                      <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Transcription Method
+                        </label>
+                        <div className="flex justify-center space-x-4">
+                          <label className="inline-flex items-center">
+                            <input
+                              type="radio"
+                              className="form-radio"
+                              name="transcriptionMethod"
+                              value="local"
+                              checked={transcriptionMethod === 'local'}
+                              onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+                            />
+                            <span className="ml-2">Local (Faster, Free)</span>
+                          </label>
+                          <label className="inline-flex items-center">
+                            <input
+                              type="radio"
+                              className="form-radio"
+                              name="transcriptionMethod"
+                              value="openai"
+                              checked={transcriptionMethod === 'openai'}
+                              onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+                            />
+                            <span className="ml-2">OpenAI (More Accurate)</span>
+                          </label>
+                        </div>
+                      </div>
                   </div>
               )}
 
@@ -1249,7 +1233,7 @@ export const TranscriptionUpload = () => {
                 </div>
               </div>
 
-              {/* Processing Status */}
+              {/* Processing Status - Keep only this one */}
               {!isNewTranscription && processingStatus && (
                 <div className="w-full max-w-lg mx-auto mt-6 p-4 rounded-lg border border-gray-100">
                   <div className="flex justify-between items-center mb-2">
@@ -1643,9 +1627,6 @@ export const TranscriptionUpload = () => {
           onClose={() => setIsModalOpen(false)} 
         />
       )}
-
-      {renderTranscriptionMethodToggle()}
-      {renderProcessingStatus()}
     </div>
   );
 }; 
