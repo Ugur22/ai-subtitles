@@ -965,7 +965,8 @@ async def transcribe_video(
             if hasattr(response, 'segments') and response.segments:
                 for segment in response.segments:
                     # Ensure segment attributes exist before accessing using getattr with defaults
-                    segment_id = getattr(segment, 'id', str(uuid.uuid4())) 
+                    # Keep original Whisper ID if available for now, will overwrite later if needed
+                    segment_id = getattr(segment, 'id', None) # Don't generate UUID here yet
                     segment_start = getattr(segment, 'start', 0.0)
                     segment_end = getattr(segment, 'end', 0.0)
                     segment_text = getattr(segment, 'text', '')
@@ -973,7 +974,8 @@ async def transcribe_video(
                     segment_screenshot_url = getattr(segment, 'screenshot_url', None)
                     
                     segment_dict = {
-                        "id": segment_id,
+                        # Initialize id, might be None
+                        "id": segment_id, 
                         "start": segment_start,
                         "end": segment_end,
                         "start_time": format_timestamp(segment_start),
@@ -992,6 +994,26 @@ async def transcribe_video(
                     result["transcription"]["segments"].append(segment_dict)
             else:
                 print("Warning: No segments found in the final response object.")
+
+            # --- Ensure unique IDs for all segments --- 
+            print("\nEnsuring unique IDs for all segments before storing...")
+            assigned_ids = set()
+            final_segments = []
+            for segment_dict in result["transcription"]["segments"]:
+                # Always generate a new UUID to guarantee uniqueness across chunks
+                new_id = str(uuid.uuid4())
+                # Ensure the generated UUID is truly unique (highly unlikely collision, but safe)
+                while new_id in assigned_ids:
+                    new_id = str(uuid.uuid4())
+                
+                segment_dict["id"] = new_id # Assign the guaranteed unique ID
+                assigned_ids.add(new_id)
+                final_segments.append(segment_dict) # Add to the final list
+            
+            # Replace the segments list with the one containing guaranteed unique IDs
+            result["transcription"]["segments"] = final_segments
+            print(f"Assigned unique UUIDs to {len(result['transcription']['segments'])} segments.")
+            # --- End of unique ID assignment --- 
 
             # Store the transcription data, including the permanent file path
             print(f"\nStoring transcription in database with hash: {video_hash}")
