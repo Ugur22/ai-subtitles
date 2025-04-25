@@ -114,6 +114,31 @@ export const transcribeVideo = async (
   }
 };
 
+export const transcribeLocal = async (file: File): Promise<TranscriptionResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const response = await api.post<TranscriptionResponse>('/transcribe_local/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        const percentage = (progressEvent.loaded / (progressEvent.total ?? 0)) * 100;
+        console.log(`Upload Progress: ${percentage}%`);
+      },
+      timeout: 3600000, // 1 hour
+    });
+
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
+      throw new Error('Request timed out. The file might be too large or the server is busy.');
+    }
+    throw error;
+  }
+};
+
 export const searchTranscription = async (
   topic: string,
   semanticSearch: boolean = true

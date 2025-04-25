@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { transcribeVideo, TranscriptionResponse } from '../../../services/api';
+import { transcribeVideo, TranscriptionResponse, transcribeLocal } from '../../../services/api';
 import { SubtitleControls } from './SubtitleControls';
 import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
@@ -8,7 +8,8 @@ import ReactPlayer from 'react-player';
 import { SummaryPanel } from '../summary/SummaryPanel';
 import { SavedTranscriptionsPanel } from './SavedTranscriptionsPanel';
 import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
-import axios from 'axios';
+import axios, { AxiosProgressEvent } from 'axios';
+import * as apiService from '../../../services/api';
 
 // Add custom subtitle styles
 const subtitleStyles = `
@@ -25,8 +26,10 @@ const subtitleStyles = `
 }
 `;
 
+type ProcessingStage = 'uploading' | 'transcribing' | 'translating' | 'extracting' | 'complete';
+
 interface ProcessingStatus {
-  stage: 'uploading' | 'extracting' | 'transcribing' | 'complete';
+  stage: ProcessingStage;
   progress: number;
 }
 
@@ -142,6 +145,63 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
   );
 };
 
+// Add transcription method type
+type TranscriptionMethod = 'local' | 'openai';
+
+// Add translation function
+const translateTranscription = async (transcriptionResult: TranscriptionResponse) => {
+  try {
+    // Only translate if not in English
+    if (transcriptionResult.transcription.language.toLowerCase() !== 'en') {
+      const batchSize = 5; // Process 5 segments at a time
+      const segments = transcriptionResult.transcription.segments;
+      const translatedSegments = [...segments]; // Create a copy to modify
+      
+      // Process segments in batches
+      for (let i = 0; i < segments.length; i += batchSize) {
+        const batch = segments.slice(i, i + batchSize);
+        const batchText = batch.map(s => s.text).join('\n[SEP]\n');
+        
+        try {
+          // Use OpenAI for translation
+          const response = await axios.post('http://localhost:8000/translate/', {
+            text: batchText,
+            source_lang: transcriptionResult.transcription.language
+          });
+
+          // Split the translated text back into segments
+          const translations = response.data.translation.split('[SEP]').map((t: string) => t.trim());
+          
+          // Update the segments with their translations
+          translations.forEach((translation: string, index: number) => {
+            if (i + index < translatedSegments.length) {
+              translatedSegments[i + index] = {
+                ...translatedSegments[i + index],
+                translation: translation
+              };
+            }
+          });
+        } catch (error) {
+          console.error(`Translation failed for batch ${i}:`, error);
+          // Continue with next batch even if this one failed
+        }
+      }
+
+      return {
+        ...transcriptionResult,
+        transcription: {
+          ...transcriptionResult.transcription,
+          segments: translatedSegments
+        }
+      };
+    }
+    return transcriptionResult;
+  } catch (error) {
+    console.error('Translation failed:', error);
+    return transcriptionResult;
+  }
+};
+
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
@@ -173,6 +233,7 @@ export const TranscriptionUpload = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
+  const [transcriptionMethod, setTranscriptionMethod] = useState<TranscriptionMethod>('local');
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -312,79 +373,23 @@ export const TranscriptionUpload = () => {
 
   const processFile = async (fileToProcess: File) => {
     try {
-      // Set initial extraction stage
-      setProcessingStatus({ stage: 'extracting', progress: 0 });
+      setProcessingStatus({ stage: 'uploading', progress: 0 });
+      setError(null);
       
-      // Clear any existing simulation
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-        setProgressSimulation(null);
-      }
+      // Choose transcription method based on user selection
+      const transcriptionResult = await (transcriptionMethod === 'local' 
+        ? transcribeLocal(fileToProcess)
+        : transcribeVideo({ file: fileToProcess, language: selectedLanguage }));
       
-      // Start a timer to simulate progress in the extraction phase
-      const extractionTimer = setTimeout(() => {
-        // After 2 seconds, move to transcribing stage and start simulating progress
-        setProcessingStatus({ stage: 'transcribing', progress: 30 });
-        
-        // Simulate gradual progress for transcription phase (from 30% to 90%)
-        // Actual completion will be triggered by the onSuccess callback
-        const interval = setInterval(() => {
-          setProcessingStatus(prevStatus => {
-            // Don't update if we've already completed or if prevStatus is null
-            if (!prevStatus || prevStatus.stage === 'complete') {
-              clearInterval(interval);
-              return prevStatus;
-            }
-            
-            // Gradually increase progress, capping at 90%
-            const newProgress = Math.min(90, prevStatus.progress + 1);
-            
-            // If we've hit our cap, slow down the updates
-            if (newProgress === 90) {
-              clearInterval(interval);
-              // Create a much slower interval for the final stretch
-              const slowInterval = setInterval(() => {
-                setProcessingStatus(ps => {
-                  if (ps === null) return null;
-                  return { 
-                    ...ps, 
-                    progress: ps.progress + 0.1,
-                    stage: ps.stage // Ensure stage is carried over
-                  };
-                });
-              }, 2000);
-              setProgressSimulation(slowInterval);
-            }
-            
-            // Return with proper type
-            return {
-              stage: prevStatus.stage,
-              progress: newProgress
-            };
-          });
-        }, 1000);
-        
-        setProgressSimulation(interval);
-      }, 2000);
+      // Translate if needed
+      const translatedResult = await translateTranscription(transcriptionResult);
       
-      // Create FormData and append the file
-      const formData = new FormData();
-      formData.append('file', fileToProcess);
+      setTranscription(translatedResult);
+      setProcessingStatus({ stage: 'complete', progress: 100 });
       
-      // Call mutate with an object containing file and selected language
-      transcribeMutation.mutate({ file: fileToProcess, language: selectedLanguage });
-      
-      // Clean up timer
-      return () => {
-        clearTimeout(extractionTimer);
-        if (progressSimulation) {
-          clearInterval(progressSimulation);
-        }
-      };
     } catch (error) {
-      console.error('File processing failed:', error);
-      setError('Failed to process the file. Please try again.');
-      throw error;
+      setError(error instanceof Error ? error.message : 'An error occurred during transcription');
+      setProcessingStatus({ stage: 'complete', progress: 0 });
     }
   };
 
@@ -1030,6 +1035,63 @@ export const TranscriptionUpload = () => {
     }
   };
 
+  // Add transcription method toggle UI
+  const renderTranscriptionMethodToggle = () => (
+    <div className="mb-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Transcription Method
+      </label>
+      <div className="flex space-x-4">
+        <label className="inline-flex items-center">
+          <input
+            type="radio"
+            className="form-radio"
+            name="transcriptionMethod"
+            value="local"
+            checked={transcriptionMethod === 'local'}
+            onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+          />
+          <span className="ml-2">Local (Faster, Free)</span>
+        </label>
+        <label className="inline-flex items-center">
+          <input
+            type="radio"
+            className="form-radio"
+            name="transcriptionMethod"
+            value="openai"
+            checked={transcriptionMethod === 'openai'}
+            onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+          />
+          <span className="ml-2">OpenAI (More Accurate)</span>
+        </label>
+      </div>
+    </div>
+  );
+
+  const renderProcessingStatus = () => {
+    if (!processingStatus) return null;
+
+    return (
+      <div className="mt-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">
+            {processingStatus.stage === 'uploading' ? 'Uploading file...' : 
+             processingStatus.stage === 'transcribing' ? 'Transcribing...' :
+             processingStatus.stage === 'translating' ? 'Translating...' :
+             'Processing complete'}
+          </span>
+          <span className="text-sm text-gray-500">{processingStatus.progress}%</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
+          <div
+            className="bg-blue-600 h-2.5 rounded-full"
+            style={{ width: `${processingStatus.progress}%` }}
+          ></div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -1581,6 +1643,9 @@ export const TranscriptionUpload = () => {
           onClose={() => setIsModalOpen(false)} 
         />
       )}
+
+      {renderTranscriptionMethodToggle()}
+      {renderProcessingStatus()}
     </div>
   );
 }; 
