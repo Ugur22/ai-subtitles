@@ -26,6 +26,7 @@ import sqlite3
 import hashlib
 from fastapi.responses import FileResponse
 import uuid
+from faster_whisper import WhisperModel
 
 # Global variable to store the last transcription
 last_transcription_data = None
@@ -623,6 +624,11 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     http_client=http_client
 )
+
+# Initialize faster-whisper model for local transcription
+whisper_model_size = os.getenv("FASTWHISPER_MODEL", "small")
+whisper_model_device = os.getenv("FASTWHISPER_DEVICE", "cpu")
+local_whisper_model = WhisperModel(whisper_model_size, device=whisper_model_device)
 
 @app.post("/cleanup_screenshots/")
 async def cleanup_screenshots() -> Dict:
@@ -1536,6 +1542,117 @@ async def delete_transcription(video_hash: str):
     except Exception as e:
         print(f"Error deleting transcription: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting transcription: {str(e)}")
+
+# Endpoint for local transcription using faster-whisper
+@app.post("/transcribe_local/")
+async def transcribe_local(file: UploadFile) -> Dict:
+    """Transcribe uploaded audio/video file locally using faster-whisper."""
+    try:
+        suffix = Path(file.filename).suffix
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            temp_path = tmp.name
+
+        # Get audio duration
+        try:
+            duration = get_audio_duration(temp_path)
+            duration_str = str(timedelta(seconds=int(duration)))
+        except Exception as e:
+            print(f"Error getting duration: {e}")
+            duration_str = "Unknown"
+
+        start_time = time.time()
+        segments, info = local_whisper_model.transcribe(temp_path, beam_size=5)
+        processing_time = time.time() - start_time
+
+        # Format segments to match expected structure
+        formatted_segments = []
+        for i, seg in enumerate(segments):
+            formatted_segments.append({
+                "id": i,
+                "start_time": format_timestamp(seg.start),
+                "end_time": format_timestamp(seg.end),
+                "text": seg.text,
+                "translation": None  # Initialize translation as None
+            })
+
+        response = {
+            "filename": file.filename,
+            "transcription": {
+                "text": "".join([seg.text for seg in segments]),
+                "translated_text": "",  # Initialize as empty
+                "language": info.language,
+                "duration": duration_str,
+                "segments": formatted_segments,
+                "processing_time": format_eta(int(processing_time))
+            }
+        }
+
+        # Clean up temporary file
+        try:
+            os.unlink(temp_path)
+        except Exception as e:
+            print(f"Error cleaning up temp file: {e}")
+
+        return response
+    except Exception as e:
+        print(f"Error in local transcription: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def get_audio_duration(file_path: str) -> float:
+    """Get the duration of an audio/video file using ffmpeg."""
+    try:
+        probe = ffmpeg.probe(file_path)
+        duration = float(probe['format']['duration'])
+        return duration
+    except Exception as e:
+        print(f"Error probing file duration: {e}")
+        return 0.0
+
+@app.post("/translate/")
+async def translate_text_endpoint(request: Request) -> Dict:
+    """Translate text using OpenAI's API"""
+    try:
+        body = await request.json()
+        text = body.get('text')
+        source_lang = body.get('source_lang')
+        
+        if not text or not source_lang:
+            raise HTTPException(status_code=400, detail="Missing text or source language")
+            
+        # Use OpenAI for translation
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
+Translate the following text segments accurately while maintaining the original meaning and tone.
+Important guidelines:
+- Maintain natural language flow and avoid word-for-word translation
+- Consider the context when translating repeated phrases
+- Keep the same format with [SEP] markers between segments
+- Only return the translations, nothing else
+- Each segment should be followed by [SEP] except for the last one
+- Ensure each segment flows naturally with adjacent segments"""},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.3,  # Lower temperature for more consistent translations
+            max_tokens=2000
+        )
+        
+        translated_text = response.choices[0].message.content.strip()
+        
+        return {
+            "translation": translated_text,
+            "source_language": source_lang,
+            "target_language": "en"
+        }
+    except Exception as e:
+        print(f"Translation error: {str(e)}")
+        # Log the full error details for debugging
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
