@@ -370,42 +370,56 @@ def generate_srt(segments: List[Dict], use_translation: bool = False) -> str:
     """Generate SRT format subtitles from segments"""
     srt_content = []
     for i, segment in enumerate(segments, 1):
-        # Convert timestamps to SRT format
-        start_seconds = segment.get('start', 0.0) # Use .get for safety
-        end_seconds = segment.get('end', 0.0)     # Use .get for safety
-        
-        # Get text content, handling missing translation more gracefully
-        text_content = ""
-        if use_translation:
-            # Use translation if available, otherwise fallback to original text
-            text_content = segment.get('translation') 
-            if not text_content: # If translation is None or empty
-                print(f"Warning: Missing translation for segment {i}. Falling back to original text.")
-                text_content = segment.get('text', '[No Text Available]') # Fallback to original or placeholder
-        else:
-            # Use original text
-            text_content = segment.get('text', '[No Text Available]') # Fallback to placeholder if text is missing
+        try:
+            # Convert timestamps to SRT format
+            start_seconds = float(segment.get('start', 0.0))
+            end_seconds = float(segment.get('end', 0.0))
             
-        # Ensure text is properly encoded if it happens to be bytes (though unlikely here)
-        if isinstance(text_content, bytes):
-            try:
-                text_content = text_content.decode('utf-8')
-            except UnicodeDecodeError:
-                 print(f"Warning: Could not decode segment {i} text. Using placeholder.")
-                 text_content = '[Encoding Error]'
-
-        # Ensure text_content is a string before proceeding
-        if not isinstance(text_content, str):
-             print(f"Warning: Segment {i} content is not a string ({type(text_content)}). Converting.")
-             text_content = str(text_content)
-
-        # Format subtitle entry
-        srt_content.extend([
-            str(i),
-            f"{format_srt_timestamp(start_seconds)} --> {format_srt_timestamp(end_seconds)}",
-            text_content.strip(), # Ensure no leading/trailing whitespace
-            ""  # Empty line between entries
-        ])
+            # Get text content, handling missing translation more gracefully
+            text_content = None
+            if use_translation:
+                # Use translation if available and not empty
+                text_content = segment.get('translation')
+                if not text_content or text_content.isspace():
+                    print(f"Warning: Missing or empty translation for segment {i}, text: {segment.get('text', '[No Text]')}")
+                    # Don't fall back to original text for missing translations
+                    text_content = '[Translation Missing]'
+            else:
+                # Use original text
+                text_content = segment.get('text')
+                if not text_content or text_content.isspace():
+                    print(f"Warning: Missing or empty text for segment {i}")
+                    text_content = '[No Text Available]'
+            
+            # Ensure text is properly encoded if it happens to be bytes
+            if isinstance(text_content, bytes):
+                try:
+                    text_content = text_content.decode('utf-8')
+                except UnicodeDecodeError:
+                    print(f"Warning: Could not decode segment {i} text. Using placeholder.")
+                    text_content = '[Encoding Error]'
+            
+            # Ensure text_content is a string before proceeding
+            if not isinstance(text_content, str):
+                print(f"Warning: Segment {i} content is not a string ({type(text_content)}). Converting.")
+                text_content = str(text_content)
+            
+            # Format subtitle entry
+            srt_content.extend([
+                str(i),
+                f"{format_srt_timestamp(start_seconds)} --> {format_srt_timestamp(end_seconds)}",
+                text_content.strip(),  # Ensure no leading/trailing whitespace
+                ""  # Empty line between entries
+            ])
+        except Exception as e:
+            print(f"Error processing segment {i}: {str(e)}")
+            # Add an error placeholder for this segment
+            srt_content.extend([
+                str(i),
+                "00:00:00,000 --> 00:00:00,001",
+                f"[Error: Failed to process segment {i}]",
+                ""
+            ])
     
     return "\n".join(srt_content)
 
@@ -1064,28 +1078,78 @@ async def get_subtitles(language: str, request: Request) -> Response:
     if not transcription['transcription']['segments']:
         raise HTTPException(status_code=500, detail="No segments found in transcription")
     
-    # For English subtitles, verify we have translations when needed
-    if language == 'english' and transcription['transcription']['language'] != 'english':
-        if not all('translation' in segment and segment['translation'] for segment in transcription['transcription']['segments']):
-            raise HTTPException(status_code=500, detail="English translation is not available. Please try transcribing the video again.")
+    # Get source language and normalize it
+    source_lang = transcription['transcription']['language'].lower()
     
-    use_translation = (language == 'english' and transcription['transcription']['language'] != 'english')
-    srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
+    # For English subtitles, check if we need translations
+    use_translation = False
+    if language == 'english' and source_lang not in ['en', 'english']:
+        # First, try to translate any missing translations
+        segments_to_translate = []
+        for segment in transcription['transcription']['segments']:
+            if 'translation' not in segment or not segment['translation']:
+                segments_to_translate.append(segment)
+        
+        if segments_to_translate:
+            print(f"Found {len(segments_to_translate)} segments without translation. Attempting to translate...")
+            try:
+                # Combine all untranslated texts with [SEP] separator
+                texts_to_translate = "\n[SEP]\n".join(segment['text'] for segment in segments_to_translate)
+                
+                # Call translation endpoint
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
+Translate the following text segments accurately while maintaining the original meaning and tone.
+Important guidelines:
+- Maintain natural language flow and avoid word-for-word translation
+- Consider the context when translating repeated phrases
+- Keep the same format with [SEP] markers between segments
+- Only return the translations, nothing else
+- Each segment should be followed by [SEP] except for the last one"""},
+                        {"role": "user", "content": texts_to_translate}
+                    ],
+                    temperature=0.3
+                )
+                
+                # Split translations and update segments
+                translations = response.choices[0].message.content.strip().split('[SEP]')
+                for segment, translation in zip(segments_to_translate, translations):
+                    segment['translation'] = translation.strip()
+                
+                print("Successfully translated missing segments")
+            except Exception as e:
+                print(f"Error translating missing segments: {str(e)}")
+                # If translation fails, set placeholder translations
+                for segment in segments_to_translate:
+                    segment['translation'] = f"[Translation pending for: {segment['text']}]"
+        
+        use_translation = True
     
-    # Create filename based on original video and language
-    original_filename = transcription['filename']
-    base_name = os.path.splitext(original_filename)[0]
-    srt_filename = f"{base_name}_{language}.srt"
-    
-    # Return SRT file with correct content type and headers
-    return Response(
-        content=srt_content.encode('utf-8'),
-        media_type="application/x-subrip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{srt_filename}"',
-            "Content-Type": "application/x-subrip; charset=utf-8"
-        }
-    )
+    try:
+        srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
+        
+        # Create filename based on original video and language
+        original_filename = transcription['filename']
+        base_name = os.path.splitext(original_filename)[0]
+        srt_filename = f"{base_name}_{language}.srt"
+        
+        # Return SRT file with correct content type and headers
+        return Response(
+            content=srt_content.encode('utf-8'),
+            media_type="application/x-subrip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{srt_filename}"',
+                "Content-Type": "application/x-subrip; charset=utf-8"
+            }
+        )
+    except Exception as e:
+        print(f"Error generating subtitles: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate subtitles: {str(e)}"
+        )
 
 @app.post("/search/")
 async def search_content(
@@ -1545,14 +1609,38 @@ async def delete_transcription(video_hash: str):
 
 # Endpoint for local transcription using faster-whisper
 @app.post("/transcribe_local/")
-async def transcribe_local(file: UploadFile) -> Dict:
+async def transcribe_local(file: UploadFile, request: Request) -> Dict:
     """Transcribe uploaded audio/video file locally using faster-whisper."""
+    global last_transcription_data
+    
     try:
         suffix = Path(file.filename).suffix
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             content = await file.read()
             tmp.write(content)
             temp_path = tmp.name
+
+        # Generate hash for the file
+        video_hash = generate_file_hash(temp_path)
+        print(f"Generated hash for video: {video_hash}")
+        
+        # Check if we already have a transcription for this file
+        existing_transcription = get_transcription(video_hash)
+        if existing_transcription:
+            print(f"Found existing transcription for {file.filename} with hash {video_hash}")
+            last_transcription_data = existing_transcription
+            request.app.state.last_transcription = existing_transcription
+            return existing_transcription
+
+        # Save a permanent copy of the video file
+        permanent_storage_dir = os.path.join("static", "videos")
+        os.makedirs(permanent_storage_dir, exist_ok=True)
+        permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
+        if not os.path.exists(permanent_file_path):
+            shutil.copy2(temp_path, permanent_file_path)
+            print(f"Saved permanent copy of video to: {permanent_file_path}")
+        else:
+            print(f"Permanent copy already exists at: {permanent_file_path}")
 
         # Get audio duration
         try:
@@ -1570,18 +1658,41 @@ async def transcribe_local(file: UploadFile) -> Dict:
         formatted_segments = []
         for i, seg in enumerate(segments):
             formatted_segments.append({
-                "id": i,
+                "id": str(uuid.uuid4()),  # Use UUID for consistency
+                "start": seg.start,
+                "end": seg.end,
                 "start_time": format_timestamp(seg.start),
                 "end_time": format_timestamp(seg.end),
                 "text": seg.text,
                 "translation": None  # Initialize translation as None
             })
 
-        response = {
+        # Extract screenshots if it's a video file
+        screenshots_dir = os.path.join("static", "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
+        screenshot_count = 0
+        
+        if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov'}:
+            print("\nExtracting screenshots for video segments...")
+            for segment in formatted_segments:
+                screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
+                screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                
+                success = extract_screenshot(temp_path, segment['start'], screenshot_path)
+                if success and os.path.exists(screenshot_path):
+                    screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                    segment["screenshot_url"] = screenshot_url
+                    screenshot_count += 1
+                else:
+                    segment["screenshot_url"] = None
+            
+            print(f"\nFinished screenshot extraction. Successfully added {screenshot_count} screenshots.")
+
+        result = {
             "filename": file.filename,
+            "video_hash": video_hash,
             "transcription": {
                 "text": "".join([seg.text for seg in segments]),
-                "translated_text": "",  # Initialize as empty
                 "language": info.language,
                 "duration": duration_str,
                 "segments": formatted_segments,
@@ -1589,13 +1700,23 @@ async def transcribe_local(file: UploadFile) -> Dict:
             }
         }
 
+        # Store the transcription data
+        store_transcription(video_hash, file.filename, result, permanent_file_path)
+        
+        # Store as last transcription in both global variable and request state
+        last_transcription_data = result
+        request.app.state.last_transcription = result
+        
+        # Add video URL to the result
+        result["video_url"] = f"/video/{video_hash}"
+
         # Clean up temporary file
         try:
             os.unlink(temp_path)
         except Exception as e:
             print(f"Error cleaning up temp file: {e}")
 
-        return response
+        return result
     except Exception as e:
         print(f"Error in local transcription: {e}")
         raise HTTPException(status_code=500, detail=str(e))
