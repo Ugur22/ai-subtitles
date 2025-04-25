@@ -234,6 +234,7 @@ export const TranscriptionUpload = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [transcriptionMethod, setTranscriptionMethod] = useState<TranscriptionMethod>('local');
+  const [isVideoSeeking, setIsVideoSeeking] = useState(false);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -1045,6 +1046,57 @@ export const TranscriptionUpload = () => {
     }
   };
 
+  // Add this after the useEffect hooks
+  useEffect(() => {
+    if (videoRef) {
+      // Add seeking event listeners
+      const handleSeeking = () => {
+        setIsVideoSeeking(true);
+      };
+
+      const handleSeeked = () => {
+        setIsVideoSeeking(false);
+        // Update active segment based on current time
+        if (transcription?.transcription.segments) {
+          const currentTime = videoRef.currentTime;
+          const segments = transcription.transcription.segments;
+          const matchingSegment = segments.find(segment => {
+            const segmentStartSeconds = timeToSeconds(segment.start_time);
+            const segmentEndSeconds = timeToSeconds(segment.end_time);
+            return currentTime >= segmentStartSeconds && currentTime <= segmentEndSeconds;
+          });
+          
+          if (matchingSegment) {
+            setActiveSegmentId(matchingSegment.id);
+            // Scroll to the active segment
+            const segmentElement = document.getElementById(`transcript-segment-${matchingSegment.id}`);
+            if (segmentElement) {
+              const transcriptContainer = document.querySelector('.flex-grow.overflow-auto');
+              if (transcriptContainer) {
+                const containerRect = transcriptContainer.getBoundingClientRect();
+                const elementRect = segmentElement.getBoundingClientRect();
+                const relativeTop = elementRect.top - containerRect.top;
+                
+                transcriptContainer.scrollTo({
+                  top: transcriptContainer.scrollTop + relativeTop - 100,
+                  behavior: 'smooth'
+                });
+              }
+            }
+          }
+        }
+      };
+
+      videoRef.addEventListener('seeking', handleSeeking);
+      videoRef.addEventListener('seeked', handleSeeked);
+
+      return () => {
+        videoRef.removeEventListener('seeking', handleSeeking);
+        videoRef.removeEventListener('seeked', handleSeeked);
+      };
+    }
+  }, [videoRef, transcription]);
+
   return (
     <div className="h-full text-gray-900">
       {/* Upload Section */}
@@ -1448,6 +1500,24 @@ export const TranscriptionUpload = () => {
                       src={videoUrl}
                       controls
                       className="w-full max-h-[50vh] object-contain"
+                      onTimeUpdate={() => {
+                        if (!isVideoSeeking && videoRef) {
+                          const currentTime = videoRef.currentTime;
+                          // Update active segment based on current time
+                          if (transcription?.transcription.segments) {
+                            const segments = transcription.transcription.segments;
+                            const matchingSegment = segments.find(segment => {
+                              const segmentStartSeconds = timeToSeconds(segment.start_time);
+                              const segmentEndSeconds = timeToSeconds(segment.end_time);
+                              return currentTime >= segmentStartSeconds && currentTime <= segmentEndSeconds;
+                            });
+                            
+                            if (matchingSegment) {
+                              setActiveSegmentId(matchingSegment.id);
+                            }
+                          }
+                        }
+                      }}
                     >
                       {subtitleTrackUrl && (
                         <track 
