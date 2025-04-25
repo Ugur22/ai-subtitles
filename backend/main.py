@@ -640,7 +640,7 @@ client = OpenAI(
 )
 
 # Initialize faster-whisper model for local transcription
-whisper_model_size = os.getenv("FASTWHISPER_MODEL", "small")
+whisper_model_size = os.getenv("FASTWHISPER_MODEL", "medium")
 whisper_model_device = os.getenv("FASTWHISPER_DEVICE", "cpu")
 local_whisper_model = WhisperModel(whisper_model_size, device=whisper_model_device)
 
@@ -1462,7 +1462,7 @@ async def get_saved_transcription(video_hash: str, request: Request):
     return transcription
 
 @app.get("/video/{video_hash}")
-async def get_video_file(video_hash: str):
+async def get_video_file(video_hash: str, request: Request):
     """Serve the video file for a specific transcription by hash"""
     try:
         print(f"Attempting to serve video with hash: {video_hash}")
@@ -1524,8 +1524,44 @@ async def get_video_file(video_hash: str):
         elif extension == "mp3":
             media_type = "audio/mpeg"
             
-        print(f"Serving file {file_path} with media type {media_type}")
-        return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
+        # Get file size
+        file_size = os.path.getsize(file_path)
+        
+        # Handle range requests
+        range_header = request.headers.get("range")
+        
+        if range_header:
+            try:
+                # Parse range header
+                start_b = range_header.replace("bytes=", "").split("-")[0]
+                start = int(start_b) if start_b else 0
+                end = min(start + 1024*1024, file_size - 1)  # Stream in 1MB chunks
+                
+                # Create response with partial content
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(end - start + 1),
+                    "Content-Type": media_type
+                }
+                
+                return Response(
+                    content=open(file_path, "rb").read()[start:end+1],
+                    status_code=206,
+                    headers=headers
+                )
+            except Exception as e:
+                print(f"Error handling range request: {str(e)}")
+                # Fall back to full file response
+                pass
+            
+        print(f"Serving full file {file_path} with media type {media_type}")
+        return FileResponse(
+            file_path,
+            media_type=media_type,
+            filename=os.path.basename(file_path),
+            headers={"Accept-Ranges": "bytes"}
+        )
         
     except HTTPException:
         raise
