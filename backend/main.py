@@ -146,118 +146,96 @@ Important guidelines:
 
 def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -> List[Dict]:
     """Translate a batch of segments to reduce API calls"""
-    # Process segments in smaller batches for better reliability
-    BATCH_SIZE = 10  # Reduced batch size for better context handling
-    
-    # Split into smaller batches with context overlap
+    BATCH_SIZE = 10
     for i in range(0, len(segments), BATCH_SIZE):
-        # Get current batch
         batch = segments[i:i + BATCH_SIZE]
-        
-        # Add context from previous and next segments if available
+        # Only translate segments with non-empty text
+        batch_to_translate = [s for s in batch if s.get('text') and not s.get('text').isspace()]
+        if not batch_to_translate:
+            for segment in batch:
+                segment['translation'] = '[No speech detected]'
+            continue
         context_before = ""
         context_after = ""
         if i > 0:
-            context_before = f"Context before: {segments[i-1].text}\n"
+            context_before = f"Context before: {segments[i-1].get('text', '')}\n"
         if i + BATCH_SIZE < len(segments):
-            context_after = f"\nContext after: {segments[i+BATCH_SIZE].text}"
-        
-        # Combine text with context
-        combined_text = context_before + "\n---\n".join([f"[{j}] {segment.text}" for j, segment in enumerate(batch)]) + context_after
-        
+            context_after = f"\nContext after: {segments[i+BATCH_SIZE].get('text', '')}"
+        combined_text = context_before + "\n---\n".join([f"[{j}] {segment.get('text', '')}" for j, segment in enumerate(batch_to_translate)]) + context_after
         try:
             translated_text = translate_text(client, combined_text, source_lang)
-            
-            # Split translations and map back to segments
             translations = {}
             current_index = None
             current_text = []
-            
             for line in translated_text.split('\n'):
                 line = line.strip()
                 if not line:
                     continue
-                
-                # Skip context lines
                 if line.startswith("Context "):
                     continue
-                    
                 if line.startswith('[') and ']' in line:
-                    # Save previous segment if exists
                     if current_index is not None:
                         translations[current_index] = ' '.join(current_text).strip()
-                    
-                    # Start new segment
                     try:
                         current_index = int(line[line.find('[')+1:line.find(']')])
                         current_text = [line[line.find(']')+1:].strip()]
                     except ValueError:
-                        # If index parsing fails, append to current segment
                         if current_index is not None:
                             current_text.append(line)
                 else:
                     if current_index is not None:
                         current_text.append(line)
-            
-            # Save the last segment
             if current_index is not None:
                 translations[current_index] = ' '.join(current_text).strip()
-            
-            # Map translations back to segments
             for j, segment in enumerate(batch):
-                translation = translations.get(j)
-                if not translation:  # If translation is empty or None
-                    # Try to translate this segment individually with context
+                if not segment.get('text') or segment.get('text').isspace():
+                    segment['translation'] = '[No speech detected]'
+                else:
+                    translation = translations.get(j)
+                    if not translation:
+                        try:
+                            context = ""
+                            if j > 0:
+                                context += f"Previous: {batch[j-1].get('text', '')}\n"
+                            if j < len(batch) - 1:
+                                context += f"\nNext: {batch[j+1].get('text', '')}"
+                            single_translation = translate_text(
+                                client,
+                                f"{context}\n---\n{segment.get('text', '')}",
+                                source_lang
+                            )
+                            single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
+                            segment['translation'] = single_translation
+                        except Exception as e:
+                            print(f"Individual translation error for segment {j}: {str(e)}")
+                            segment['translation'] = '[No speech detected]'
+                    else:
+                        segment['translation'] = translation
+        except Exception as e:
+            print(f"Batch translation error: {str(e)}")
+            for j, segment in enumerate(batch):
+                if not segment.get('text') or segment.get('text').isspace():
+                    segment['translation'] = '[No speech detected]'
+                else:
                     try:
                         context = ""
                         if j > 0:
-                            context += f"Previous: {batch[j-1].text}\n"
+                            context += f"Previous: {batch[j-1].get('text', '')}\n"
                         if j < len(batch) - 1:
-                            context += f"\nNext: {batch[j+1].text}"
-                        
+                            context += f"\nNext: {batch[j+1].get('text', '')}"
                         single_translation = translate_text(
                             client,
-                            f"{context}\n---\n{segment.text}",
+                            f"{context}\n---\n{segment.get('text', '')}",
                             source_lang
                         )
-                        # Remove any context markers from the translation
                         single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                        segment.translation = single_translation
+                        segment['translation'] = single_translation
                     except Exception as e:
                         print(f"Individual translation error for segment {j}: {str(e)}")
-                        segment.translation = None
-                else:
-                    segment.translation = translation
-                
-        except Exception as e:
-            print(f"Batch translation error: {str(e)}")
-            # Try to translate each segment individually with context
-            for j, segment in enumerate(batch):
-                try:
-                    context = ""
-                    if j > 0:
-                        context += f"Previous: {batch[j-1].text}\n"
-                    if j < len(batch) - 1:
-                        context += f"\nNext: {batch[j+1].text}"
-                    
-                    single_translation = translate_text(
-                        client,
-                        f"{context}\n---\n{segment.text}",
-                        source_lang
-                    )
-                    # Remove any context markers from the translation
-                    single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                    segment.translation = single_translation
-                except Exception as e:
-                    print(f"Individual translation error for segment {j}: {str(e)}")
-                    segment.translation = None
-    
-    # Ensure every segment has a non-empty translation
+                        segment['translation'] = '[No speech detected]'
     for segment in segments:
-        if not getattr(segment, 'translation', None):
-            # Fallback: copy original text or set a placeholder
-            segment.translation = getattr(segment, 'text', '[Translation missing]')
-
+        if not segment.get('translation'):
+            segment['translation'] = '[No speech detected]'
     return segments
 
 def compress_audio(input_path: str, output_path: str, file_size_check: bool = True) -> str:
@@ -869,15 +847,27 @@ async def transcribe_video(
                         chunk_start_offset_seconds = i * chunk_duration_seconds 
                         print(f"Adjusting segment times for chunk {i+1} with offset: {chunk_start_offset_seconds}s")
                         if hasattr(chunk_response, 'segments') and chunk_response.segments:
+                            print(f"Raw Whisper API response for chunk {i+1}: {chunk_response}")
+                            non_empty_count = 0
                             for segment in chunk_response.segments:
-                                # Ensure start and end attributes exist and are floats
-                                segment_start = getattr(segment, 'start', 0.0)
-                                segment_end = getattr(segment, 'end', 0.0)
-                                
-                                # Adjust start and end times based on chunk position
-                                segment.start = segment_start + chunk_start_offset_seconds
-                                segment.end = segment_end + chunk_start_offset_seconds
-                                all_segments.append(segment)
+                                segment_start = segment.get('start', 0.0)
+                                segment_end = segment.get('end', 0.0)
+                                segment_text = segment.get('text', '')
+                                print(f"  Segment: start={segment_start}, end={segment_end}, text={repr(segment_text)}")
+                                if segment_text and not segment_text.isspace():
+                                    segment['start'] = segment_start + chunk_start_offset_seconds
+                                    segment['end'] = segment_end + chunk_start_offset_seconds
+                                    all_segments.append(segment)
+                                    non_empty_count += 1
+                                else:
+                                    print(f"  -> Marked as [No speech detected]")
+                                    all_segments.append({
+                                        'start': segment_start + chunk_start_offset_seconds,
+                                        'end': segment_end + chunk_start_offset_seconds,
+                                        'text': '[No speech detected]',
+                                        'translation': '[No speech detected]'
+                                    })
+                            print(f"Chunk {i+1}: Detected language: {chunk_response.language}, Non-empty segments: {non_empty_count}, Total segments: {len(chunk_response.segments)}")
                         else:
                              print(f"Warning: No segments found in response for chunk {i+1}")
                 
@@ -948,25 +938,25 @@ async def transcribe_video(
                     print(f"Attempting to extract screenshots for {total_segments_for_screenshots} segments.")
                     for i, segment in enumerate(response.segments):
                         #print(f"Processing segment {i+1}/{total_segments_for_screenshots} for screenshot (Start: {segment.start:.2f})")
-                        screenshot_filename = f"{video_hash}_{segment.start:.2f}.jpg" # Use hash to ensure uniqueness
+                        screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg" # Use hash to ensure uniqueness
                         screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
                         
                         # Ensure segment.start is a valid number
-                        segment_start_time = getattr(segment, 'start', None)
+                        segment_start_time = segment.get('start', None)
                         if segment_start_time is None or not isinstance(segment_start_time, (int, float)):
                              print(f"Warning: Invalid start time for segment {i+1}. Skipping screenshot.")
-                             segment.screenshot_url = None
+                             segment['screenshot_url'] = None
                              continue
 
                         success = extract_screenshot(temp_input_path, segment_start_time, screenshot_path)
                         if success and os.path.exists(screenshot_path):
                             # Add screenshot URL to segment
                             screenshot_url = f"/static/screenshots/{screenshot_filename}"
-                            segment.screenshot_url = screenshot_url
+                            segment['screenshot_url'] = screenshot_url
                             screenshot_count += 1
                             #print(f"Segment {i+1}: Screenshot added - {screenshot_url}")
                         else:
-                            segment.screenshot_url = None
+                            segment['screenshot_url'] = None
                             #print(f"Segment {i+1}: Failed to add screenshot.")
                     print(f"\nFinished screenshot extraction. Successfully added {screenshot_count} screenshots.")
                  else:
@@ -990,33 +980,25 @@ async def transcribe_video(
             # Convert segments to dictionary format
             if hasattr(response, 'segments') and response.segments:
                 for segment in response.segments:
-                    # Ensure segment attributes exist before accessing using getattr with defaults
-                    # Keep original Whisper ID if available for now, will overwrite later if needed
-                    segment_id = getattr(segment, 'id', None) # Don't generate UUID here yet
-                    segment_start = getattr(segment, 'start', 0.0)
-                    segment_end = getattr(segment, 'end', 0.0)
-                    segment_text = getattr(segment, 'text', '')
-                    segment_translation = getattr(segment, 'translation', None)
-                    segment_screenshot_url = getattr(segment, 'screenshot_url', None)
-                    
+                    # Use dict access for all fields
+                    segment_id = segment.get('id', None)
+                    segment_start = segment.get('start', 0.0)
+                    segment_end = segment.get('end', 0.0)
+                    segment_text = segment.get('text', '')
+                    segment_translation = segment.get('translation', None)
+                    segment_screenshot_url = segment.get('screenshot_url', None)
                     segment_dict = {
-                        # Initialize id, might be None
-                        "id": segment_id, 
+                        "id": segment_id,
                         "start": segment_start,
                         "end": segment_end,
                         "start_time": format_timestamp(segment_start),
                         "end_time": format_timestamp(segment_end),
                         "text": segment_text
                     }
-                    
-                    # Add translation if available
                     if segment_translation:
                         segment_dict["translation"] = segment_translation
-                    
-                    # Add screenshot URL if available
                     if segment_screenshot_url:
                         segment_dict["screenshot_url"] = segment_screenshot_url
-                    
                     result["transcription"]["segments"].append(segment_dict)
             else:
                 print("Warning: No segments found in the final response object.")
@@ -1459,7 +1441,23 @@ async def get_saved_transcription(video_hash: str, request: Request):
     transcription = get_transcription(video_hash)
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found")
-    
+
+    # Ensure all translations are present if language is not English
+    try:
+        lang = transcription.get('transcription', {}).get('language', '').lower()
+        segments = transcription.get('transcription', {}).get('segments', [])
+        if lang and lang not in ['en', 'english']:
+            missing = [s for s in segments if not s.get('translation')]
+            if missing:
+                print(f"Translating {len(missing)} missing segments for video_hash={video_hash}...")
+                translated_segments = translate_segments(client, segments, lang)
+                for i, seg in enumerate(segments):
+                    seg['translation'] = translated_segments[i].get('translation', seg.get('text', '[Translation missing]'))
+                store_transcription(video_hash, transcription.get('filename', ''), transcription, transcription.get('file_path'))
+                print(f"Translation complete and saved for video_hash={video_hash}.")
+    except Exception as e:
+        print(f"Error ensuring translations in /transcription/{{video_hash}}: {e}")
+
     # Log all segment details for debugging
     try:
         segments = transcription.get('transcription', {}).get('segments', [])
