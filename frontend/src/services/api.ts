@@ -28,6 +28,7 @@ api.interceptors.response.use(
 
 export interface TranscriptionResponse {
   filename: string;
+  video_hash: string;
   file_path?: string; // Optional file path to the original video
   transcription: {
     text: string;
