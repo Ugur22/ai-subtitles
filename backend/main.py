@@ -252,6 +252,12 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
                     print(f"Individual translation error for segment {j}: {str(e)}")
                     segment.translation = None
     
+    # Ensure every segment has a non-empty translation
+    for segment in segments:
+        if not getattr(segment, 'translation', None):
+            # Fallback: copy original text or set a placeholder
+            segment.translation = getattr(segment, 'text', '[Translation missing]')
+
     return segments
 
 def compress_audio(input_path: str, output_path: str, file_size_check: bool = True) -> str:
@@ -1453,6 +1459,16 @@ async def get_saved_transcription(video_hash: str, request: Request):
     transcription = get_transcription(video_hash)
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found")
+    
+    # Log all segment details for debugging
+    try:
+        segments = transcription.get('transcription', {}).get('segments', [])
+        print(f"\n--- SEGMENTS for video_hash={video_hash} ---")
+        for idx, seg in enumerate(segments):
+            print(f"Segment {idx}: id={seg.get('id')}, start={seg.get('start_time')}, text={repr(seg.get('text'))}, translation={repr(seg.get('translation'))}")
+        print(f"--- END SEGMENTS ({len(segments)} total) ---\n")
+    except Exception as e:
+        print(f"Error logging segments: {e}")
     
     # Update the last_transcription_data and request state
     global last_transcription_data
