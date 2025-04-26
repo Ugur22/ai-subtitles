@@ -118,7 +118,7 @@ def translate_text(client: OpenAI, text: str, source_lang: str) -> str:
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
 Translate the following text accurately while maintaining the original meaning and tone.
@@ -131,7 +131,7 @@ Important guidelines:
                     {"role": "user", "content": text}
                 ],
                 temperature=0.7,  # Increased for more natural variations
-                max_tokens=2000,
+                max_tokens=300,
                 timeout=30
             )
             translated = response.choices[0].message.content.strip()
@@ -1086,7 +1086,7 @@ async def get_subtitles(language: str, request: Request) -> Response:
                 
                 # Call translation endpoint
                 response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o",
                     messages=[
                         {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
 Translate the following text segments accurately while maintaining the original meaning and tone.
@@ -1163,7 +1163,7 @@ async def search_content(
         try:
             # Analyze the complete text at once
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": """You are an expert at analyzing text content and finding semantic matches. 
 Your task is to identify parts of the text that are semantically related to the given topic, including:
@@ -1368,7 +1368,7 @@ async def generate_summary(request: Request) -> Dict:
         try:
             # Generate concise summary
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are an expert at summarizing content. Create a concise summary (2-3 sentences) that captures the key points from this transcript section."},
                     {"role": "user", "content": f"Section from {section['start']} to {section['end']}:\n\n{text_to_summarize}"}
@@ -1378,7 +1378,7 @@ async def generate_summary(request: Request) -> Dict:
             
             # Generate descriptive title
             title_response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "Create a short, descriptive title (3-5 words) for this transcript section."},
                     {"role": "user", "content": text_to_summarize}
@@ -1794,7 +1794,7 @@ async def translate_text_endpoint(request: Request) -> Dict:
             
         # Use OpenAI for translation
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
 Translate the following text segments accurately while maintaining the original meaning and tone.
@@ -1808,7 +1808,7 @@ Important guidelines:
                 {"role": "user", "content": text}
             ],
             temperature=0.3,  # Lower temperature for more consistent translations
-            max_tokens=2000
+            max_tokens=300
         )
         
         translated_text = response.choices[0].message.content.strip()
