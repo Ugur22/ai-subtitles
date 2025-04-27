@@ -177,4 +177,20 @@ export const loadSavedTranscription = async (videoHash: string): Promise<Transcr
 export const deleteTranscription = async (videoHash: string): Promise<{ success: boolean; message: string }> => {
   const response = await api.delete(`/transcription/${videoHash}`);
   return response.data;
+};
+
+export const translateLocalText = async (text: string, sourceLang: string): Promise<string> => {
+  const response = await api.post('/translate_local/', {
+    text,
+    source_lang: sourceLang,
+  });
+  return response.data.translation;
+};
+
+export const translateOpenAI = async (text: string, sourceLang: string): Promise<string> => {
+  const response = await api.post('/translate/', {
+    text,
+    source_lang: sourceLang,
+  });
+  return response.data.translation;
 }; 
