@@ -626,9 +626,14 @@ client = OpenAI(
 )
 
 # Initialize faster-whisper model for local transcription
-whisper_model_size = os.getenv("FASTWHISPER_MODEL", "medium")
-whisper_model_device = os.getenv("FASTWHISPER_DEVICE", "cpu")
-local_whisper_model = WhisperModel(whisper_model_size, device=whisper_model_device)
+whisper_model_size = os.getenv("FASTWHISPER_MODEL", "small")  # Default to 'small' for speed
+whisper_model_device = os.getenv("FASTWHISPER_DEVICE", "cpu") # Default to 'cpu' for compatibility
+whisper_compute_type = os.getenv("FASTWHISPER_COMPUTE_TYPE", "int8")  # Use 'int8' for CPU compatibility
+local_whisper_model = WhisperModel(
+    whisper_model_size,
+    device=whisper_model_device,
+    compute_type=whisper_compute_type
+)
 
 # Cache for loaded MarianMT models
 marian_models = {}
@@ -1672,7 +1677,7 @@ async def delete_transcription(video_hash: str):
 # Endpoint for local transcription using faster-whisper
 @app.post("/transcribe_local/")
 async def transcribe_local(file: UploadFile, request: Request) -> Dict:
-    """Transcribe uploaded audio/video file locally using faster-whisper."""
+    """Transcribe uploaded audio/video file locally using faster-whisper (optimized for speed, direct English output)."""
     global last_transcription_data
     
     print("[INFO] Using local faster-whisper for transcription (via /transcribe_local/ endpoint)")
@@ -1714,20 +1719,25 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             duration_str = "Unknown"
 
         start_time = time.time()
-        segments, info = local_whisper_model.transcribe(temp_path, beam_size=5)
+        # --- KEY: Fast, direct translation, beam_size=1 ---
+        segments, info = local_whisper_model.transcribe(
+            temp_path,
+            task="translate",   # Translates to English in one step
+            beam_size=1         # Much faster, tiny accuracy drop
+        )
         processing_time = time.time() - start_time
 
         # Format segments to match expected structure
         formatted_segments = []
         for i, seg in enumerate(segments):
             formatted_segments.append({
-                "id": str(uuid.uuid4()),  # Use UUID for consistency
+                "id": str(uuid.uuid4()),
                 "start": seg.start,
                 "end": seg.end,
                 "start_time": format_timestamp(seg.start),
                 "end_time": format_timestamp(seg.end),
-                "text": seg.text,
-                "translation": None  # Initialize translation as None
+                "text": seg.text,    # Now always English if non-English input!
+                # Remove manual 'translation' field: text is the translation.
             })
 
         # Extract screenshots if it's a video file

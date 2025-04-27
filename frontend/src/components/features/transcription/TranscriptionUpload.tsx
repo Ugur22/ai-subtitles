@@ -12,6 +12,7 @@ import axios, { AxiosProgressEvent } from 'axios';
 import * as apiService from '../../../services/api';
 import { FaSpinner } from 'react-icons/fa';
 import CustomProgressBar from './CustomProgressBar';
+import React from 'react';
 
 // Add custom subtitle styles
 const subtitleStyles = `
@@ -237,7 +238,11 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJu
   );
 };
 
-export const TranscriptionUpload = () => {
+type TranscriptionUploadProps = {
+  onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
+};
+
+export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTranscriptionChange }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -1234,6 +1239,14 @@ export const TranscriptionUpload = () => {
       videoRef.removeEventListener('pause', handlePause);
     };
   }, [videoRef]);
+
+  // Notify parent when transcription changes
+  useEffect(() => {
+    if (onTranscriptionChange) {
+      onTranscriptionChange(transcription);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcription]);
 
   return (
     <div className="relative">
