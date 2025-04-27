@@ -7,6 +7,11 @@ const queryClient = new QueryClient();
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isMovieView, setIsMovieView] = useState(false);
+
+  const handleTranscriptionChange = (transcription) => {
+    setIsMovieView(!!transcription);
+  };
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -125,92 +130,86 @@ function App() {
           )}
         </header>
 
-        {/* Hero Section */}
-        <div className="relative overflow-hidden py-4">
-          <div className="absolute inset-0">
-            <div className="absolute inset-y-0 left-0 w-3/4 bg-gradient-to-r from-teal-500/10 to-transparent"></div>
-            <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-gradient-to-t from-cyan-500/10 to-transparent"></div>
-          </div>
-          
-          <div className="relative mx-auto max-w-8xl px-4 sm:px-6 lg:px-8 pt-4 pb-6">
-            <div className="md:flex md:items-center md:justify-between">
-              <div className="md:w-1/2 mb-4 md:mb-0">
-                <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl md:text-5xl">
-                  <span className="block">Instant Audio to Text</span>
-                  <span className="block text-teal-600">Powered by AI</span>
-                </h1>
-                <p className="mt-2 max-w-md text-base text-gray-500">
-                  Transform any audio or video into accurate transcripts with timestamps, translations, and search capabilities.
-                </p>
-                <div className="mt-4">
-                  <div className="rounded-md shadow inline-flex">
-                    <a href="#upload" className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700">
-                      Get Started
-                    </a>
-                  </div>
-                  <div className="inline-flex ml-3">
-                    <a href="#" className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-teal-700 bg-teal-100 hover:bg-teal-200">
-                      Watch Demo
-                    </a>
+        {/* Only show hero and features if not in movie view */}
+        {!isMovieView && (
+          <>
+            <div className="relative mx-auto max-w-8xl px-4 sm:px-6 lg:px-8 pt-4 pb-6">
+              <div className="md:flex md:items-center md:justify-between">
+                <div className="md:w-1/2 mb-4 md:mb-0">
+                  <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl md:text-5xl">
+                    <span className="block">Instant Audio to Text</span>
+                    <span className="block text-teal-600">Powered by AI</span>
+                  </h1>
+                  <p className="mt-2 max-w-md text-base text-gray-500">
+                    Transform any audio or video into accurate transcripts with timestamps, translations, and search capabilities.
+                  </p>
+                  <div className="mt-4">
+                    <div className="rounded-md shadow inline-flex">
+                      <a href="#upload" className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700">
+                        Get Started
+                      </a>
+                    </div>
+                    <div className="inline-flex ml-3">
+                      <a href="#" className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-teal-700 bg-teal-100 hover:bg-teal-200">
+                        Watch Demo
+                      </a>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="md:w-1/2 relative">
-                <div className="w-full flex justify-center">
-                  <img className="h-40 sm:h-48 md:h-56 lg:h-64" src="https://img.freepik.com/free-vector/voice-message-concept-illustration_114360-4233.jpg" alt="Audio to Text Illustration" />
+                <div className="md:w-1/2 relative">
+                  <div className="w-full flex justify-center">
+                    <img className="h-40 sm:h-48 md:h-56 lg:h-64" src="https://img.freepik.com/free-vector/voice-message-concept-illustration_114360-4233.jpg" alt="Audio to Text Illustration" />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Features Brief */}
-        <div className="bg-gradient-to-r from-cyan-50 to-teal-50 py-6">
-          <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-base font-medium text-gray-900">Precise Timestamps</h3>
-                  <p className="mt-1 text-xs text-gray-500">Every word precisely timed for perfect subtitle synchronization.</p>
-                </div>
-              </div>
-              
-              <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-base font-medium text-gray-900">Multi-language Support</h3>
-                  <p className="mt-1 text-xs text-gray-500">Automatic language detection with translation capabilities.</p>
-                </div>
-              </div>
-              
-              <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-base font-medium text-gray-900">Smart Search</h3>
-                  <p className="mt-1 text-xs text-gray-500">Find exactly what you need with powerful semantic search.</p>
+            {/* Features Brief */}
+            <div className="bg-gradient-to-r from-cyan-50 to-teal-50 py-6">
+              <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-medium text-gray-900">Precise Timestamps</h3>
+                      <p className="mt-1 text-xs text-gray-500">Every word precisely timed for perfect subtitle synchronization.</p>
+                    </div>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-medium text-gray-900">Multi-language Support</h3>
+                      <p className="mt-1 text-xs text-gray-500">Automatic language detection with translation capabilities.</p>
+                    </div>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-medium text-gray-900">Smart Search</h3>
+                      <p className="mt-1 text-xs text-gray-500">Find exactly what you need with powerful semantic search.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
 
         {/* Upload Area */}
         <div id="upload" className="py-4">
           <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
-            <TranscriptionUpload />
+            <TranscriptionUpload onTranscriptionChange={handleTranscriptionChange} />
           </div>
         </div>
 
