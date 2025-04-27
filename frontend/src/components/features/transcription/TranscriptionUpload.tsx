@@ -1831,7 +1831,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
               
               {/* Right Column: Search & Analysis Panels */}
               {showSearch && (
-                <div className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4">
+                <div className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4" style={{display: 'none'}}>
                   <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
                     <div className="px-4 py-3 flex items-center justify-between">
                       <h3 className="text-sm font-medium text-gray-800">Search & Analysis</h3>
