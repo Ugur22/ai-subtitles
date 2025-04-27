@@ -215,6 +215,7 @@ function App() {
         </div>
 
         {/* Footer */}
+        {false && (
         <footer className="bg-gray-800 text-white">
           <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8 py-12">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
@@ -258,6 +259,7 @@ function App() {
             </div>
           </div>
         </footer>
+        )}
       </div>
     </QueryClientProvider>
   );

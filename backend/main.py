@@ -27,6 +27,8 @@ import hashlib
 from fastapi.responses import FileResponse
 import uuid
 from faster_whisper import WhisperModel
+# MarianMT for local translation
+from transformers import MarianMTModel, MarianTokenizer
 
 # Global variable to store the last transcription
 last_transcription_data = None
@@ -627,6 +629,16 @@ client = OpenAI(
 whisper_model_size = os.getenv("FASTWHISPER_MODEL", "medium")
 whisper_model_device = os.getenv("FASTWHISPER_DEVICE", "cpu")
 local_whisper_model = WhisperModel(whisper_model_size, device=whisper_model_device)
+
+# Cache for loaded MarianMT models
+marian_models = {}
+def get_marian_model(source_lang):
+    model_name = f"Helsinki-NLP/opus-mt-{source_lang}-en"
+    if model_name not in marian_models:
+        tokenizer = MarianTokenizer.from_pretrained(model_name)
+        model = MarianMTModel.from_pretrained(model_name)
+        marian_models[model_name] = (tokenizer, model)
+    return marian_models[model_name]
 
 @app.post("/cleanup_screenshots/")
 async def cleanup_screenshots() -> Dict:
@@ -1663,6 +1675,7 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
     """Transcribe uploaded audio/video file locally using faster-whisper."""
     global last_transcription_data
     
+    print("[INFO] Using local faster-whisper for transcription (via /transcribe_local/ endpoint)")
     try:
         suffix = Path(file.filename).suffix
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -1824,6 +1837,40 @@ Important guidelines:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+
+@app.post("/translate_local/")
+async def translate_local_endpoint(request: Request) -> Dict:
+    """Translate text to English locally using MarianMT."""
+    try:
+        body = await request.json()
+        text = body.get('text')
+        source_lang = body.get('source_lang')
+        if not text or not source_lang:
+            raise HTTPException(status_code=400, detail="Missing text or source language")
+        try:
+            tokenizer, model = get_marian_model(source_lang)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Unsupported or unavailable language model: {source_lang}")
+        # MarianMT expects a list of sentences
+        if isinstance(text, str):
+            text_list = [text]
+        else:
+            text_list = text
+        inputs = tokenizer(text_list, return_tensors="pt", padding=True)
+        translated = model.generate(**inputs)
+        translations = [tokenizer.decode(t, skip_special_tokens=True) for t in translated]
+        # Return single string if input was string
+        result = translations[0] if isinstance(text, str) else translations
+        return {
+            "translation": result,
+            "source_language": source_lang,
+            "target_language": "en"
+        }
+    except Exception as e:
+        print(f"Local translation error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Local translation failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

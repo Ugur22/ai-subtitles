@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { transcribeVideo, TranscriptionResponse, transcribeLocal } from '../../../services/api';
+import { transcribeVideo, TranscriptionResponse, transcribeLocal, translateLocalText } from '../../../services/api';
 import { SubtitleControls } from './SubtitleControls';
 import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
@@ -11,6 +11,7 @@ import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpe
 import axios, { AxiosProgressEvent } from 'axios';
 import * as apiService from '../../../services/api';
 import { FaSpinner } from 'react-icons/fa';
+import CustomProgressBar from './CustomProgressBar';
 
 // Add custom subtitle styles
 const subtitleStyles = `
@@ -148,6 +149,93 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
 
 // Add transcription method type
 type TranscriptionMethod = 'local' | 'openai';
+type TranslationMethod = 'none' | 'openai' | 'marianmt';
+
+// --- Add JumpToTimeModal component ---
+interface JumpToTimeModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onJump: (seconds: number) => void;
+  duration: number;
+}
+
+const parseTimeInput = (input: string): number | null => {
+  // Accepts hh:mm:ss(.ms), mm:ss(.ms), or ss(.ms)
+  const parts = input.trim().split(':').map(p => p.trim());
+  if (parts.length === 0) return null;
+  let seconds = 0;
+  if (parts.length === 3) {
+    seconds = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  } else if (parts.length === 2) {
+    seconds = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+  } else if (parts.length === 1) {
+    seconds = parseFloat(parts[0]);
+  } else {
+    return null;
+  }
+  return isNaN(seconds) ? null : seconds;
+};
+
+const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJump, duration }) => {
+  const [input, setInput] = useState('');
+  const [error, setError] = useState('');
+
+  const handleOk = () => {
+    const seconds = parseTimeInput(input);
+    if (seconds === null || seconds < 0 || seconds > duration) {
+      setError('Invalid time. Please enter a value between 0 and the video duration.');
+      return;
+    }
+    setError('');
+    onJump(seconds);
+    onClose();
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      setInput('');
+      setError('');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-xs flex flex-col items-center">
+        <div className="mb-4 flex flex-col items-center">
+          <svg className="w-12 h-12 mb-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9V5a1 1 0 011-1h2a1 1 0 011 1v4m-1 4h.01M12 17h.01" />
+            <polygon points="8,17 16,12 8,7" fill="currentColor" />
+          </svg>
+          <h2 className="text-lg font-bold mb-1">Jump to</h2>
+          <p className="text-sm text-gray-700 text-center">Please enter the time you want to jump to.<br />Example: 20:35</p>
+        </div>
+        <input
+          className="w-full border border-gray-300 rounded px-3 py-2 mb-2 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+          placeholder="mm:ss or hh:mm:ss"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          autoFocus
+        />
+        {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
+        <div className="flex w-full gap-2 mt-2">
+          <button
+            className="flex-1 py-2 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            className="flex-1 py-2 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700"
+            onClick={handleOk}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const TranscriptionUpload = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -184,6 +272,10 @@ export const TranscriptionUpload = () => {
   const [isVideoSeeking, setIsVideoSeeking] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [translationMethod, setTranslationMethod] = useState<TranslationMethod>('none');
+  const [jumpModalOpen, setJumpModalOpen] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isVideoHovered, setIsVideoHovered] = useState(false);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -427,8 +519,14 @@ export const TranscriptionUpload = () => {
       setProcessingStatus({ stage: 'transcribing', progress: 0 });
       setError(null);
       try {
-        // Start the transcription process (upload)
-        const result = await transcribeVideo({ file, language: selectedLanguage });
+        let result;
+        if (transcriptionMethod === 'local') {
+          console.log('Calling transcribeLocal()');
+          result = await transcribeLocal(file);
+        } else {
+          console.log('Calling transcribeVideo()');
+          result = await transcribeVideo({ file, language: selectedLanguage });
+        }
         // Start polling for completion using video_hash
         if (result && result.video_hash) {
           startPollingForTranscription(result.video_hash);
@@ -1072,6 +1170,71 @@ export const TranscriptionUpload = () => {
   // --- Spinner/modal overlay ---
   const isTranscribing = processingStatus && ['uploading', 'transcribing', 'extracting'].includes(processingStatus.stage);
 
+  // When translation is requested, translate all segments using the selected translation method
+  useEffect(() => {
+    if (
+      transcription &&
+      transcription.transcription.language &&
+      transcription.transcription.language.toLowerCase() !== 'en' &&
+      translationMethod !== 'none' &&
+      transcription.transcription.segments.some(seg => !seg.translation)
+    ) {
+      const doTranslation = async () => {
+        const sourceLang = transcription.transcription.language.toLowerCase();
+        const updatedSegments = await Promise.all(
+          transcription.transcription.segments.map(async (seg) => {
+            if (!seg.translation && seg.text) {
+              try {
+                if (translationMethod === 'marianmt') {
+                  const translation = await translateLocalText(seg.text, sourceLang);
+                  return { ...seg, translation };
+                } else if (translationMethod === 'openai') {
+                  // You need to implement translateOpenAI in your api service
+                  const translation = await apiService.translateOpenAI(seg.text, sourceLang);
+                  return { ...seg, translation };
+                }
+              } catch (e) {
+                return { ...seg, translation: '[Translation failed]' };
+              }
+            }
+            return seg;
+          })
+        );
+        setTranscription({
+          ...transcription,
+          transcription: {
+            ...transcription.transcription,
+            segments: updatedSegments,
+          },
+        });
+      };
+      doTranslation();
+    }
+  }, [transcription, translationMethod]);
+
+  // Play/pause handlers
+  const handlePlayPause = () => {
+    if (videoRef) {
+      if (videoRef.paused) {
+        videoRef.play();
+      } else {
+        videoRef.pause();
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!videoRef) return;
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+    videoRef.addEventListener('play', handlePlay);
+    videoRef.addEventListener('pause', handlePause);
+    return () => {
+      videoRef.removeEventListener('play', handlePlay);
+      videoRef.removeEventListener('pause', handlePause);
+    };
+  }, [videoRef]);
+
   return (
     <div className="relative">
       {/* Spinner overlay when transcribing */}
@@ -1204,7 +1367,10 @@ export const TranscriptionUpload = () => {
                                 name="transcriptionMethod"
                                 value="local"
                                 checked={transcriptionMethod === 'local'}
-                                onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+                                onChange={(e) => {
+                                  setTranscriptionMethod(e.target.value as TranscriptionMethod);
+                                  console.log('Transcription method selected: local');
+                                }}
                               />
                               <span className="ml-2">Local (Faster, Free)</span>
                             </label>
@@ -1215,7 +1381,10 @@ export const TranscriptionUpload = () => {
                                 name="transcriptionMethod"
                                 value="openai"
                                 checked={transcriptionMethod === 'openai'}
-                                onChange={(e) => setTranscriptionMethod(e.target.value as TranscriptionMethod)}
+                                onChange={(e) => {
+                                  setTranscriptionMethod(e.target.value as TranscriptionMethod);
+                                  console.log('Transcription method selected: openai');
+                                }}
                               />
                               <span className="ml-2">OpenAI (More Accurate)</span>
                             </label>
@@ -1448,40 +1617,15 @@ export const TranscriptionUpload = () => {
                 {/* Video Player (Top) */}
                 {videoUrl && (
                   <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-shrink-0 mb-4">
-                    <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                      <h3 className="text-sm font-medium text-gray-800">Video</h3>
-                      <div className="flex items-center space-x-2">
-                        <button 
-                          onClick={toggleSubtitles}
-                          className={`px-3 py-1 text-xs rounded-md flex items-center gap-1 ${
-                            showSubtitles 
-                              ? 'bg-teal-100 text-teal-700' 
-                              : 'bg-gray-100 text-gray-700'
-                          }`}
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-                          </svg>
-                          {showSubtitles ? 'Subtitles On' : 'Subtitles Off'}
-                        </button>
-                        {showSubtitles && (
-                          <button 
-                            onClick={() => setShowTranslation(!showTranslation)}
-                            className="px-2 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors duration-200 flex items-center gap-1"
-                          >
-                            {showTranslation ? 'ENGLISH' : transcription?.transcription.language.toUpperCase()}
-                            <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="w-full bg-black flex justify-center">
+                    <div
+                      className="w-full bg-black flex justify-center relative"
+                      onMouseEnter={() => setIsVideoHovered(true)}
+                      onMouseLeave={() => setIsVideoHovered(false)}
+                    >
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
-                        controls
+                        // controls removed to hide native controls
                         className="w-full max-h-[50vh] object-contain"
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
@@ -1521,7 +1665,77 @@ export const TranscriptionUpload = () => {
                           />
                         )}
                       </video>
+                      {/* Custom Play/Pause Button Overlay */}
+                      <button
+                        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200
+                          ${(!isPlaying || isVideoHovered) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+                        onClick={handlePlayPause}
+                        style={{ zIndex: 10 }}
+                        aria-label={isPlaying ? 'Pause' : 'Play'}
+                      >
+                        <span className="bg-white bg-opacity-80 rounded-full p-6 shadow-lg hover:bg-opacity-100 transition">
+                          {isPlaying ? (
+                            // Pause icon
+                            <svg className="w-16 h-16 text-gray-800" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+                              <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+                            </svg>
+                          ) : (
+                            // Play icon
+                            <svg className="w-16 h-16 text-gray-800" fill="currentColor" viewBox="0 0 24 24">
+                              <polygon points="8,5 19,12 8,19" />
+                            </svg>
+                          )}
+                        </span>
+                      </button>
                     </div>
+                    {/* Custom Progress Bar with Tooltip and Screenshot Preview */}
+                    {videoRef && (
+                      <>
+                        <CustomProgressBar
+                          videoRef={videoRef}
+                          duration={videoRef.duration || 0}
+                          currentTime={videoRef.currentTime || 0}
+                          segments={transcription.transcription.segments}
+                          getScreenshotUrlForTime={(time) => {
+                            // Find the segment whose start_time is closest to the hovered time
+                            if (!transcription.transcription.segments) return null;
+                            let closest = null;
+                            let minDiff = Infinity;
+                            for (const seg of transcription.transcription.segments) {
+                              const segTime = timeToSeconds(seg.start_time);
+                              const diff = Math.abs(segTime - time);
+                              if (diff < minDiff) {
+                                minDiff = diff;
+                                closest = seg;
+                              }
+                            }
+                            return closest && closest.screenshot_url
+                              ? `http://localhost:8000${closest.screenshot_url}`
+                              : null;
+                          }}
+                          onSeek={(time: number) => {
+                            videoRef.currentTime = time;
+                          }}
+                        />
+                        <div className="flex justify-end px-4 pb-2">
+                          <button
+                            className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow"
+                            onClick={() => setJumpModalOpen(true)}
+                          >
+                            Jump to Time
+                          </button>
+                        </div>
+                        <JumpToTimeModal
+                          isOpen={jumpModalOpen}
+                          onClose={() => setJumpModalOpen(false)}
+                          onJump={seconds => {
+                            if (videoRef) videoRef.currentTime = seconds;
+                          }}
+                          duration={videoRef.duration || 0}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
                 
@@ -1590,14 +1804,13 @@ export const TranscriptionUpload = () => {
                                     <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">Speaker 1</span>
                                   </div>
                                   <p className={`text-gray-800 ${activeSegmentId === segment.id ? 'font-medium' : ''}`}>
-                                    {showTranslation && segment.translation ? segment.translation : segment.text}
+                                    {translationMethod !== 'none' && segment.translation ? (
+                                      <>
+                                        {segment.translation}
+                                        <span className="block text-xs text-gray-500 italic">Original: {segment.text}</span>
+                                      </>
+                                    ) : segment.text}
                                   </p>
-                                  {/* Show both when a translation is available */}
-                                  {showTranslation && segment.translation && segment.translation !== segment.text && (
-                                    <p className="text-xs text-gray-500 mt-1 italic">
-                                      Original: {segment.text}
-                                    </p>
-                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1686,6 +1899,50 @@ export const TranscriptionUpload = () => {
           <div className="flex flex-col items-center justify-center mt-8">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mb-4"></div>
             <p className="text-teal-700 font-medium">Transcribing, please wait…</p>
+          </div>
+        )}
+
+        {/* Translation Method Selector (only if transcript is not English) */}
+        {transcription && transcription.transcription.language.toLowerCase() !== 'en' && (
+          <div className="mt-4 max-w-lg mx-auto">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Translation Method
+            </label>
+            <div className="flex justify-center space-x-4">
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  className="form-radio"
+                  name="translationMethod"
+                  value="none"
+                  checked={translationMethod === 'none'}
+                  onChange={() => setTranslationMethod('none')}
+                />
+                <span className="ml-2">None (Show Original)</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  className="form-radio"
+                  name="translationMethod"
+                  value="openai"
+                  checked={translationMethod === 'openai'}
+                  onChange={() => setTranslationMethod('openai')}
+                />
+                <span className="ml-2">OpenAI (Cloud)</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  className="form-radio"
+                  name="translationMethod"
+                  value="marianmt"
+                  checked={translationMethod === 'marianmt'}
+                  onChange={() => setTranslationMethod('marianmt')}
+                />
+                <span className="ml-2">MarianMT (Local)</span>
+              </label>
+            </div>
           </div>
         )}
       </div>
