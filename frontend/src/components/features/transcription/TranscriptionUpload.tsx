@@ -149,8 +149,8 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
 };
 
 // Add transcription method type
-type TranscriptionMethod = 'local' | 'openai';
-type TranslationMethod = 'none' | 'openai' | 'marianmt';
+type TranscriptionMethod = 'local';
+type TranslationMethod = 'none' | 'marianmt';
 
 // --- Add JumpToTimeModal component ---
 interface JumpToTimeModalProps {
@@ -1181,7 +1181,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
       transcription &&
       transcription.transcription.language &&
       transcription.transcription.language.toLowerCase() !== 'en' &&
-      translationMethod !== 'none' &&
+      translationMethod === 'marianmt' &&
       transcription.transcription.segments.some(seg => !seg.translation)
     ) {
       const doTranslation = async () => {
@@ -1190,14 +1190,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
           transcription.transcription.segments.map(async (seg) => {
             if (!seg.translation && seg.text) {
               try {
-                if (translationMethod === 'marianmt') {
-                  const translation = await translateLocalText(seg.text, sourceLang);
-                  return { ...seg, translation };
-                } else if (translationMethod === 'openai') {
-                  // You need to implement translateOpenAI in your api service
-                  const translation = await apiService.translateOpenAI(seg.text, sourceLang);
-                  return { ...seg, translation };
-                }
+                const translation = await translateLocalText(seg.text, sourceLang);
+                return { ...seg, translation };
               } catch (e) {
                 return { ...seg, translation: '[Translation failed]' };
               }
@@ -1386,20 +1380,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
                                 }}
                               />
                               <span className="ml-2">Local (Faster, Free)</span>
-                            </label>
-                            <label className="inline-flex items-center">
-                              <input
-                                type="radio"
-                                className="form-radio"
-                                name="transcriptionMethod"
-                                value="openai"
-                                checked={transcriptionMethod === 'openai'}
-                                onChange={(e) => {
-                                  setTranscriptionMethod(e.target.value as TranscriptionMethod);
-                                  console.log('Transcription method selected: openai');
-                                }}
-                              />
-                              <span className="ml-2">OpenAI (More Accurate)</span>
                             </label>
                           </div>
                         </div>
@@ -1932,17 +1912,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
                   onChange={() => setTranslationMethod('none')}
                 />
                 <span className="ml-2">None (Show Original)</span>
-              </label>
-              <label className="inline-flex items-center">
-                <input
-                  type="radio"
-                  className="form-radio"
-                  name="translationMethod"
-                  value="openai"
-                  checked={translationMethod === 'openai'}
-                  onChange={() => setTranslationMethod('openai')}
-                />
-                <span className="ml-2">OpenAI (Cloud)</span>
               </label>
               <label className="inline-flex items-center">
                 <input

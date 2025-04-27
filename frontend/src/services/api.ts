@@ -185,12 +185,4 @@ export const translateLocalText = async (text: string, sourceLang: string): Prom
     source_lang: sourceLang,
   });
   return response.data.translation;
-};
-
-export const translateOpenAI = async (text: string, sourceLang: string): Promise<string> => {
-  const response = await api.post('/translate/', {
-    text,
-    source_lang: sourceLang,
-  });
-  return response.data.translation;
 }; 

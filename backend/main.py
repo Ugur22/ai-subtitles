@@ -2,7 +2,6 @@ import os
 from fastapi import FastAPI, UploadFile, HTTPException, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from openai import OpenAI
 from pathlib import Path
 import tempfile
 from typing import Dict, List
@@ -114,40 +113,8 @@ def format_timestamp(seconds: float) -> str:
     seconds = td.seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def translate_text(client: OpenAI, text: str, source_lang: str) -> str:
-    """Translate text to English using OpenAI's API"""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
-Translate the following text accurately while maintaining the original meaning and tone.
-Important guidelines:
-- Maintain natural language flow and avoid word-for-word translation
-- Consider the context when translating repeated phrases
-- Keep the same format with [index] markers
-- Only return the translation, nothing else
-- Ensure each segment flows naturally with adjacent segments"""},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.7,  # Increased for more natural variations
-                max_tokens=300,
-                timeout=30
-            )
-            translated = response.choices[0].message.content.strip()
-            if not translated:
-                raise Exception("Empty translation received")
-            return translated
-        except Exception as e:
-            if attempt == max_retries - 1:  # Last attempt
-                raise Exception(f"Translation failed after {max_retries} attempts: {str(e)}")
-            print(f"Translation attempt {attempt + 1} failed: {str(e)}. Retrying...")
-            time.sleep(1)  # Wait before retrying
-
-def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -> List[Dict]:
-    """Translate a batch of segments to reduce API calls"""
+def translate_segments(segments: List[Dict], source_lang: str) -> List[Dict]:
+    """Translate a batch of segments using local MarianMT model"""
     BATCH_SIZE = 10
     for i in range(0, len(segments), BATCH_SIZE):
         batch = segments[i:i + BATCH_SIZE]
@@ -165,76 +132,38 @@ def translate_segments(client: OpenAI, segments: List[Dict], source_lang: str) -
             context_after = f"\nContext after: {segments[i+BATCH_SIZE].get('text', '')}"
         combined_text = context_before + "\n---\n".join([f"[{j}] {segment.get('text', '')}" for j, segment in enumerate(batch_to_translate)]) + context_after
         try:
-            translated_text = translate_text(client, combined_text, source_lang)
-            translations = {}
-            current_index = None
-            current_text = []
-            for line in translated_text.split('\n'):
-                line = line.strip()
-                if not line:
+            # Use local translation model instead of OpenAI
+            tokenizer, model = get_marian_model(source_lang)
+            
+            # Split texts by [SEP] and translate each segment
+            texts = combined_text.split("[SEP]")
+            translations = []
+            
+            for text in texts:
+                text = text.strip()
+                if not text:
                     continue
-                if line.startswith("Context "):
-                    continue
-                if line.startswith('[') and ']' in line:
-                    if current_index is not None:
-                        translations[current_index] = ' '.join(current_text).strip()
-                    try:
-                        current_index = int(line[line.find('[')+1:line.find(']')])
-                        current_text = [line[line.find(']')+1:].strip()]
-                    except ValueError:
-                        if current_index is not None:
-                            current_text.append(line)
-                else:
-                    if current_index is not None:
-                        current_text.append(line)
-            if current_index is not None:
-                translations[current_index] = ' '.join(current_text).strip()
-            for j, segment in enumerate(batch):
-                if not segment.get('text') or segment.get('text').isspace():
-                    segment['translation'] = '[No speech detected]'
-                else:
-                    translation = translations.get(j)
-                    if not translation:
-                        try:
-                            context = ""
-                            if j > 0:
-                                context += f"Previous: {batch[j-1].get('text', '')}\n"
-                            if j < len(batch) - 1:
-                                context += f"\nNext: {batch[j+1].get('text', '')}"
-                            single_translation = translate_text(
-                                client,
-                                f"{context}\n---\n{segment.get('text', '')}",
-                                source_lang
-                            )
-                            single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                            segment['translation'] = single_translation
-                        except Exception as e:
-                            print(f"Individual translation error for segment {j}: {str(e)}")
-                            segment['translation'] = '[No speech detected]'
-                    else:
-                        segment['translation'] = translation
+                    
+                # Translate using MarianMT
+                inputs = tokenizer(text, return_tensors="pt", padding=True)
+                translated = model.generate(**inputs)
+                translation = tokenizer.decode(translated[0], skip_special_tokens=True)
+                translations.append(translation)
+            
+            # Join translations with [SEP]
+            translated_text = "\n[SEP]\n".join(translations)
+            
+            # Split translations and update segments
+            translations = translated_text.split('[SEP]')
+            for segment, translation in zip(batch_to_translate, translations):
+                segment['translation'] = translation.strip()
+            
+            print("Successfully translated segments using local model")
         except Exception as e:
-            print(f"Batch translation error: {str(e)}")
-            for j, segment in enumerate(batch):
-                if not segment.get('text') or segment.get('text').isspace():
-                    segment['translation'] = '[No speech detected]'
-                else:
-                    try:
-                        context = ""
-                        if j > 0:
-                            context += f"Previous: {batch[j-1].get('text', '')}\n"
-                        if j < len(batch) - 1:
-                            context += f"\nNext: {batch[j+1].get('text', '')}"
-                        single_translation = translate_text(
-                            client,
-                            f"{context}\n---\n{segment.get('text', '')}",
-                            source_lang
-                        )
-                        single_translation = single_translation.replace("Previous:", "").replace("Next:", "").strip()
-                        segment['translation'] = single_translation
-                    except Exception as e:
-                        print(f"Individual translation error for segment {j}: {str(e)}")
-                        segment['translation'] = '[No speech detected]'
+            print(f"Error in translation process: {str(e)}")
+            # If translation fails, set placeholder translations
+            for segment in batch_to_translate:
+                segment['translation'] = f"[Translation pending for: {segment['text']}]"
     for segment in segments:
         if not segment.get('translation'):
             segment['translation'] = '[No speech detected]'
@@ -409,57 +338,6 @@ def generate_srt(segments: List[Dict], use_translation: bool = False) -> str:
     
     return "\n".join(srt_content)
 
-def analyze_content(client: OpenAI, text: str, topic: str) -> bool:
-    """Analyze if a text segment is related to a specific topic using GPT-4"""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an expert at analyzing text content. Respond with 'true' if the text discusses the given topic, even indirectly. Respond with 'false' if it doesn't. Only respond with 'true' or 'false'."},
-                {"role": "user", "content": f"Topic to check: {topic}\n\nText: {text}"}
-            ],
-            temperature=0.1
-        )
-        result = response.choices[0].message.content.strip().lower()
-        return result == "true"
-    except Exception as e:
-        return False
-
-def analyze_content_batch(client: OpenAI, segments: List[Dict], topic: str, max_segments: int = 50) -> List[bool]:
-    """Analyze multiple segments at once for a topic using GPT-4"""
-    try:
-        # Limit the number of segments to analyze
-        segments = segments[:max_segments]
-        
-        # Combine segments with markers
-        combined_text = "\n---\n".join([f"[{i}] {segment['text']}" for i, segment in enumerate(segments)])
-        
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an expert at analyzing text content. For each numbered segment, respond with the segment number and either 'true' or 'false' indicating if it's related to the topic. Format: [number]:true/false"},
-                {"role": "user", "content": f"Topic to check: {topic}\n\nText segments:\n{combined_text}"}
-            ],
-            temperature=0.1,
-            timeout=30  # 30 second timeout
-        )
-        
-        # Parse results
-        results = {}
-        for line in response.choices[0].message.content.strip().split('\n'):
-            if ':' in line:
-                try:
-                    idx, result = line.split(':')
-                    idx = int(idx.strip('[]'))
-                    results[idx] = result.strip().lower() == 'true'
-                except:
-                    continue
-        
-        return [results.get(i, False) for i in range(len(segments))]
-    except Exception as e:
-        print(f"Batch analysis error: {str(e)}")
-        return [False] * len(segments)
-
 def format_eta(seconds: int) -> str:
     """Format estimated time remaining"""
     minutes, secs = divmod(seconds, 60)
@@ -620,10 +498,7 @@ app.add_middleware(LargeUploadMiddleware)
 
 # Configure OpenAI with a custom httpx client
 http_client = httpx.Client()
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    http_client=http_client
-)
+client = None  # Initialize as None since we're not using OpenAI anymore
 
 # Initialize faster-whisper model for local transcription
 whisper_model_size = os.getenv("FASTWHISPER_MODEL", "small")  # Default to 'small' for speed
@@ -833,21 +708,26 @@ async def transcribe_video(
                     
                     with open(chunk_path, "rb") as chunk_file:
                         # Transcribe with Whisper API, passing language if provided
-                        transcription_args = {
-                            "model": "whisper-1",
-                            "file": chunk_file,
-                            "response_format": "verbose_json",
-                            "timestamp_granularities": ["segment"] # Request segment timestamps
-                        }
-                        # Only add language parameter if it's explicitly provided by user
-                        if language: 
-                            transcription_args["language"] = language
-                            print(f"Transcribing chunk {i+1} with specified language: {language}")
-                        else:
-                            print(f"Transcribing chunk {i+1} with auto-detected language.")
-
                         print(f"Calling Whisper API for chunk {i+1}...")
-                        chunk_response = client.audio.transcriptions.create(**transcription_args)
+                        # Use local whisper model instead of OpenAI
+                        segments, info = local_whisper_model.transcribe(
+                            chunk_path,
+                            task="translate" if language and language.lower() != "en" else "transcribe",
+                            language=language if language else None,
+                            beam_size=1  # Faster processing
+                        )
+                        
+                        # Create a synthetic response object to match OpenAI's format
+                        chunk_response = type('obj', (object,), {
+                            'text': " ".join([seg.text for seg in segments]),
+                            'language': info.language,
+                            'segments': [{
+                                'start': seg.start,
+                                'end': seg.end,
+                                'text': seg.text
+                            } for seg in segments]
+                        })
+                        
                         print(f"Transcription received for chunk {i+1}.")
 
                         # Store language (use detected language if none provided)
@@ -932,7 +812,7 @@ async def transcribe_video(
                     print(f"Language is not English. Translating segments from '{source_language_for_translation}'...")
                     # Ensure segments exist before attempting translation
                     if hasattr(response, 'segments') and response.segments:
-                        response.segments = translate_segments(client, response.segments, source_language_for_translation)
+                        response.segments = translate_segments(response.segments, source_language_for_translation)
                         print("Translation completed successfully")
                     else:
                          print("No segments found to translate.")
@@ -1098,39 +978,29 @@ async def get_subtitles(language: str, request: Request) -> Response:
         if segments_to_translate:
             print(f"Found {len(segments_to_translate)} segments without translation. Attempting to translate...")
             try:
-                # Combine all untranslated texts with [SEP] separator
-                texts_to_translate = "\n[SEP]\n".join(segment['text'] for segment in segments_to_translate)
+                # Use local translation model
+                tokenizer, model = get_marian_model(source_lang)
                 
-                # Call translation endpoint
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
-Translate the following text segments accurately while maintaining the original meaning and tone.
-Important guidelines:
-- Maintain natural language flow and avoid word-for-word translation
-- Consider the context when translating repeated phrases
-- Keep the same format with [SEP] markers between segments
-- Only return the translations, nothing else
-- Each segment should be followed by [SEP] except for the last one"""},
-                        {"role": "user", "content": texts_to_translate}
-                    ],
-                    temperature=0.3
-                )
-                
-                # Split translations and update segments
-                translations = response.choices[0].message.content.strip().split('[SEP]')
-                for segment, translation in zip(segments_to_translate, translations):
+                # Translate each segment individually
+                for segment in segments_to_translate:
+                    text = segment['text'].strip()
+                    if not text:
+                        continue
+                    
+                    # Translate using MarianMT
+                    inputs = tokenizer(text, return_tensors="pt", padding=True)
+                    translated = model.generate(**inputs)
+                    translation = tokenizer.decode(translated[0], skip_special_tokens=True)
                     segment['translation'] = translation.strip()
                 
-                print("Successfully translated missing segments")
+                print("Successfully translated missing segments using local model")
+                use_translation = True
             except Exception as e:
-                print(f"Error translating missing segments: {str(e)}")
+                print(f"Error in translation process: {str(e)}")
                 # If translation fails, set placeholder translations
                 for segment in segments_to_translate:
                     segment['translation'] = f"[Translation pending for: {segment['text']}]"
-        
-        use_translation = True
+                use_translation = False
     
     try:
         srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
@@ -1155,145 +1025,6 @@ Important guidelines:
             status_code=500,
             detail=f"Failed to generate subtitles: {str(e)}"
         )
-
-@app.post("/search/")
-async def search_content(
-    request: Request, 
-    topic: str, 
-    semantic_search: bool = True,
-    context_window: int = 2  # Number of segments before/after for context
-) -> Dict:
-    """
-    Search through the last transcription for specific topics or keywords.
-    Use semantic_search=true for topic analysis, false for direct keyword matching.
-    """
-    if not hasattr(request.app.state, 'last_transcription'):
-        raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
-    
-    transcription = request.app.state.last_transcription
-    segments = transcription['transcription']['segments']
-    full_text = transcription['transcription']['text']
-    
-    matches = []
-    
-    if semantic_search:
-        try:
-            # Analyze the complete text at once
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": """You are an expert at analyzing text content and finding semantic matches. 
-Your task is to identify parts of the text that are semantically related to the given topic, including:
-- Exact matches of the word
-- Different forms of the word (e.g., 'work', 'worked', 'working')
-- Synonyms and related concepts
-- Contextual references to the topic
-- Implicit mentions or discussions of the topic
-
-Return the exact quotes from the text that are relevant, one per line. If no relevant parts are found, return 'NO_MATCHES'.
-Be thorough in your analysis and err on the side of including relevant content rather than excluding it.
-Important: Return the complete sentences containing the matches, not just the matching words."""},
-                    {"role": "user", "content": f"Topic to find: {topic}\n\nText to analyze:\n{full_text}"}
-                ],
-                temperature=0.3,
-                max_tokens=1000
-            )
-            
-            relevant_quotes = response.choices[0].message.content.strip().split('\n')
-            
-            if relevant_quotes[0] != 'NO_MATCHES':
-                # Find matching segments for each quote
-                for quote in relevant_quotes:
-                    quote = quote.strip('" ')
-                    if not quote:
-                        continue
-                        
-                    # Find segments containing this quote using fuzzy matching
-                    for i, segment in enumerate(segments):
-                        # More lenient matching - check if the core topic or its variations appear
-                        segment_text = segment['text'].lower()
-                        quote_lower = quote.lower()
-                        
-                        # Check for direct matches or word variations
-                        if (topic.lower() in segment_text or  # Direct match
-                            any(variation in segment_text     # Check variations
-                                for variation in [f"{topic}s", f"{topic}ed", f"{topic}ing", 
-                                               f"{topic}es", f"{topic}'s"]) or
-                            quote_lower in segment_text):     # Full quote match
-                            
-                            # Add the match with context
-                            context_start = max(0, i - context_window)
-                            context_end = min(len(segments), i + context_window + 1)
-                            
-                            match_entry = {
-                                "timestamp": {
-                                    "start": segment['start_time'],
-                                    "end": segment['end_time']
-                                },
-                                "original_text": segment['text'],
-                                "translated_text": segment['translation'],
-                                "context": {
-                                    "before": [s['text'] for s in segments[context_start:i]],
-                                    "after": [s['text'] for s in segments[i+1:context_end]]
-                                }
-                            }
-                            
-                            # Only add if not already in matches
-                            if not any(m['original_text'] == segment['text'] for m in matches):
-                                matches.append(match_entry)
-                            break  # Found the segment for this quote
-                            
-        except Exception as e:
-            print(f"Semantic search error: {str(e)}")
-            # Fall back to keyword search if semantic search fails
-            semantic_search = False
-    
-    if not semantic_search:
-        # Simple keyword search in complete text
-        topic_lower = topic.lower()
-        
-        for i, segment in enumerate(segments):
-            # Check if segment text contains the topic
-            text_match = topic_lower in segment['text'].lower()
-            
-            # Check for translation match only if translation exists
-            translation_match = False
-            if segment['translation'] is not None:
-                translation_match = topic_lower in segment['translation'].lower()
-                
-            if text_match or translation_match:
-                # Add the match with context
-                context_start = max(0, i - context_window)
-                context_end = min(len(segments), i + context_window + 1)
-                
-                matches.append({
-                    "timestamp": {
-                        "start": segment['start_time'],
-                        "end": segment['end_time']
-                    },
-                    "original_text": segment['text'],
-                    "translated_text": segment['translation'],
-                    "context": {
-                        "before": [s['text'] for s in segments[context_start:i]],
-                        "after": [s['text'] for s in segments[i+1:context_end]]
-                    }
-                })
-    
-    return {
-        "topic": topic,
-        "total_matches": len(matches),
-        "semantic_search_used": semantic_search,
-        "matches": matches
-    }
-
-def _time_to_seconds(time_str: str) -> float:
-    """Convert HH:MM:SS format to seconds"""
-    h, m, s = map(int, time_str.split(':'))
-    return h * 3600 + m * 60 + s
-
-def _time_diff_minutes(time1: str, time2: str) -> float:
-    """Calculate difference between two timestamps in minutes"""
-    return (_time_to_seconds(time2) - _time_to_seconds(time1)) / 60
 
 @app.post("/generate_summary/")
 async def generate_summary(request: Request) -> Dict:
@@ -1383,31 +1114,20 @@ async def generate_summary(request: Request) -> Dict:
             continue
         
         try:
-            # Generate concise summary
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are an expert at summarizing content. Create a concise summary (2-3 sentences) that captures the key points from this transcript section."},
-                    {"role": "user", "content": f"Section from {section['start']} to {section['end']}:\n\n{text_to_summarize}"}
-                ],
-                temperature=0.3
-            )
+            # Generate concise summary using local model
+            # For now, just use a simple approach since we don't have a local summarization model
+            # In a real implementation, you would use a local LLM here
+            summary = f"Summary of section from {section['start']} to {section['end']}: {text_to_summarize[:200]}..."
             
             # Generate descriptive title
-            title_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "Create a short, descriptive title (3-5 words) for this transcript section."},
-                    {"role": "user", "content": text_to_summarize}
-                ],
-                temperature=0.3
-            )
+            # For now, just use a simple approach
+            title = f"Section {section['start']}-{section['end']}"
             
             summaries.append({
-                "title": title_response.choices[0].message.content.strip(),
+                "title": title,
                 "start": section["start"],
                 "end": section["end"],
-                "summary": response.choices[0].message.content.strip()
+                "summary": summary
             })
         except Exception as e:
             print(f"Error generating summary for section {section['start']}-{section['end']}: {e}")
@@ -1467,7 +1187,7 @@ async def get_saved_transcription(video_hash: str, request: Request):
             missing = [s for s in segments if not s.get('translation')]
             if missing:
                 print(f"Translating {len(missing)} missing segments for video_hash={video_hash}...")
-                translated_segments = translate_segments(client, segments, lang)
+                translated_segments = translate_segments(segments, lang)
                 for i, seg in enumerate(segments):
                     seg['translation'] = translated_segments[i].get('translation', seg.get('text', '[Translation missing]'))
                 store_transcription(video_hash, transcription.get('filename', ''), transcription, transcription.get('file_path'))
@@ -1803,50 +1523,6 @@ def get_audio_duration(file_path: str) -> float:
     except Exception as e:
         print(f"Error probing file duration: {e}")
         return 0.0
-
-@app.post("/translate/")
-async def translate_text_endpoint(request: Request) -> Dict:
-    """Translate text using OpenAI's API"""
-    try:
-        body = await request.json()
-        text = body.get('text')
-        source_lang = body.get('source_lang')
-        
-        if not text or not source_lang:
-            raise HTTPException(status_code=400, detail="Missing text or source language")
-            
-        # Use OpenAI for translation
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": f"""You are a professional translator from {source_lang} to English. 
-Translate the following text segments accurately while maintaining the original meaning and tone.
-Important guidelines:
-- Maintain natural language flow and avoid word-for-word translation
-- Consider the context when translating repeated phrases
-- Keep the same format with [SEP] markers between segments
-- Only return the translations, nothing else
-- Each segment should be followed by [SEP] except for the last one
-- Ensure each segment flows naturally with adjacent segments"""},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.3,  # Lower temperature for more consistent translations
-            max_tokens=300
-        )
-        
-        translated_text = response.choices[0].message.content.strip()
-        
-        return {
-            "translation": translated_text,
-            "source_language": source_lang,
-            "target_language": "en"
-        }
-    except Exception as e:
-        print(f"Translation error: {str(e)}")
-        # Log the full error details for debugging
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
 @app.post("/translate_local/")
 async def translate_local_endpoint(request: Request) -> Dict:
