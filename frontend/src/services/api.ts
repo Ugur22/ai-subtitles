@@ -29,21 +29,23 @@ api.interceptors.response.use(
 export interface TranscriptionResponse {
   filename: string;
   video_hash: string;
+  video_url?: string; // Added for direct video access
   file_path?: string; // Optional file path to the original video
   transcription: {
     text: string;
-    translated_text: string;
     language: string;
-    duration: string;
+    duration?: string;
     segments: Array<{
-      id: number;
+      id: string; // Changed to string since we're using UUIDs now
+      start: number; // Added raw number values
+      end: number;
       start_time: string;
       end_time: string;
       text: string;
-      translation: string | null;
+      translation?: string | null;
       screenshot_url?: string;  // Optional since it's only present for video files
     }>;
-    processing_time: string;
+    processing_time?: string;
   };
 }
 

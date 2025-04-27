@@ -28,9 +28,60 @@ import uuid
 from faster_whisper import WhisperModel
 # MarianMT for local translation
 from transformers import MarianMTModel, MarianTokenizer
+# Import the necessary libraries for local summarization
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 
 # Global variable to store the last transcription
 last_transcription_data = None
+
+# Initialize the summarization model
+def get_summarization_model():
+    """Get or initialize the summarization model"""
+    model_name = "facebook/bart-large-cnn"  # Good for general summarization
+    try:
+        # Try to load the model from cache first
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        return tokenizer, model
+    except Exception as e:
+        print(f"Error loading summarization model: {str(e)}")
+        return None, None
+
+# Global variable to store the model
+summarization_tokenizer = None
+summarization_model = None
+
+def generate_local_summary(text, max_length=150, min_length=50):
+    """Generate a summary using the local model"""
+    global summarization_tokenizer, summarization_model
+    
+    # Initialize the model if not already done
+    if summarization_tokenizer is None or summarization_model is None:
+        summarization_tokenizer, summarization_model = get_summarization_model()
+        if summarization_tokenizer is None or summarization_model is None:
+            return "Summary generation failed: Model could not be loaded."
+    
+    try:
+        # Tokenize the input text
+        inputs = summarization_tokenizer(text, return_tensors="pt", max_length=1024, truncation=True)
+        
+        # Generate summary
+        summary_ids = summarization_model.generate(
+            inputs["input_ids"],
+            max_length=max_length,
+            min_length=min_length,
+            length_penalty=2.0,
+            num_beams=4,
+            early_stopping=True
+        )
+        
+        # Decode the summary
+        summary = summarization_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+        return summary
+    except Exception as e:
+        print(f"Error generating summary: {str(e)}")
+        return f"Summary generation failed: {str(e)}"
 
 # Database functions
 def init_db():
@@ -1026,9 +1077,28 @@ async def get_subtitles(language: str, request: Request) -> Response:
             detail=f"Failed to generate subtitles: {str(e)}"
         )
 
+def _time_to_seconds(time_str: str) -> float:
+    """Convert HH:MM:SS time string to seconds"""
+    try:
+        h, m, s = time_str.split(':')
+        return int(h) * 3600 + int(m) * 60 + int(s)
+    except Exception as e:
+        print(f"Error converting time to seconds: {str(e)}")
+        return 0.0
+
+def _time_diff_minutes(start_time: str, end_time: str) -> float:
+    """Calculate the difference between two timestamps in minutes"""
+    try:
+        start_seconds = _time_to_seconds(start_time)
+        end_seconds = _time_to_seconds(end_time)
+        return (end_seconds - start_seconds) / 60
+    except Exception as e:
+        print(f"Error calculating time difference: {str(e)}")
+        return 0.0
+
 @app.post("/generate_summary/")
 async def generate_summary(request: Request) -> Dict:
-    """Generate section summaries from transcription"""
+    """Generate section summaries from transcription using local model"""
     if not hasattr(request.app.state, 'last_transcription'):
         raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
     
@@ -1115,9 +1185,7 @@ async def generate_summary(request: Request) -> Dict:
         
         try:
             # Generate concise summary using local model
-            # For now, just use a simple approach since we don't have a local summarization model
-            # In a real implementation, you would use a local LLM here
-            summary = f"Summary of section from {section['start']} to {section['end']}: {text_to_summarize[:200]}..."
+            summary = generate_local_summary(text_to_summarize)
             
             # Generate descriptive title
             # For now, just use a simple approach
