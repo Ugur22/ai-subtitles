@@ -408,7 +408,7 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
 
         initial_bitrate = '32k'
         initial_sample_rate = '16000'
-        print(f"Attempting initial audio extraction with bitrate={initial_bitrate}, sample_rate={initial_sample_rate}")
+        # print(f"Attempting initial audio extraction with bitrate={initial_bitrate}, sample_rate={initial_sample_rate}")
 
         # First extract audio with standard compression settings
         command = [
@@ -1284,7 +1284,7 @@ async def get_saved_transcription(video_hash: str, request: Request):
 async def get_video_file(video_hash: str, request: Request):
     """Serve the video file for a specific transcription by hash"""
     try:
-        print(f"Attempting to serve video with hash: {video_hash}")
+       # print(f"Attempting to serve video with hash: {video_hash}")
         transcription = get_transcription(video_hash)
         
         if not transcription:
@@ -1296,7 +1296,7 @@ async def get_video_file(video_hash: str, request: Request):
             raise HTTPException(status_code=404, detail="Video file path not found in transcription data")
         
         file_path = transcription['file_path']
-        print(f"File path from transcription: {file_path}")
+        # print(f"File path from transcription: {file_path}")
         
         if not os.path.exists(file_path):
             print(f"File does not exist at path: {file_path}")
