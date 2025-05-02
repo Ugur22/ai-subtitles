@@ -272,55 +272,34 @@ def compress_audio(input_path: str, output_path: str, file_size_check: bool = Tr
     except subprocess.CalledProcessError as e:
         raise Exception(f"Error compressing audio: {e.stderr.decode()}")
 
-def extract_audio(video_path: str, chunk_duration: int = 600) -> list:
+def extract_audio(video_path: str, chunk_duration: int = 600, overlap: int = 5) -> list:
     """
-    Extract audio from video and split into chunks if needed
+    Extract audio from video and split into chunks if needed, with overlap
     Returns list of paths to compressed audio chunks
     """
     audio_chunks = []
-    
     with VideoFileClip(video_path) as video:
-        # Get total duration in seconds
         duration = video.duration
-        
-        # If duration is less than chunk_duration, just extract the whole audio
         if duration <= chunk_duration:
             temp_audio_path = video_path + "_temp.wav"
             compressed_audio_path = video_path + ".wav"
-            
-            # Extract audio
             video.audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
-            
-            # Compress the audio
             compress_audio(temp_audio_path, compressed_audio_path)
-            
-            # Clean up temporary file
             os.unlink(temp_audio_path)
-            
             audio_chunks.append(compressed_audio_path)
         else:
-            # Split into chunks
             num_chunks = math.ceil(duration / chunk_duration)
             for i in range(num_chunks):
-                start_time = i * chunk_duration
-                end_time = min((i + 1) * chunk_duration, duration)
-                
-                # Extract chunk
+                # Add overlap: previous chunk ends at (i * chunk_duration), next chunk starts overlap seconds before
+                start_time = max(0, i * chunk_duration - (overlap if i > 0 else 0))
+                end_time = min((i + 1) * chunk_duration + (overlap if i < num_chunks - 1 else 0), duration)
                 chunk = video.subclip(start_time, end_time)
                 temp_chunk_path = f"{video_path}_chunk_{i}_temp.wav"
                 compressed_chunk_path = f"{video_path}_chunk_{i}.wav"
-                
-                # Extract audio for this chunk
                 chunk.audio.write_audiofile(temp_chunk_path, codec='pcm_s16le')
-                
-                # Compress the audio chunk
                 compress_audio(temp_chunk_path, compressed_chunk_path)
-                
-                # Clean up temporary file
                 os.unlink(temp_chunk_path)
-                
                 audio_chunks.append(compressed_chunk_path)
-                
     return audio_chunks
 
 def format_srt_timestamp(seconds: float) -> str:
@@ -724,12 +703,13 @@ async def transcribe_video(
                 
                 print("Forcing audio splitting into chunks using moviepy...")
                 chunk_duration_seconds = 300 # 5-minute chunks
-                print(f"Using moviepy to extract audio chunks ({chunk_duration_seconds}s duration)...")
+                chunk_overlap = 5  # seconds, must match extract_audio
+                print(f"Using moviepy to extract audio chunks ({chunk_duration_seconds}s duration, {chunk_overlap}s overlap)...")
                 
                 # Ensure extract_audio handles compression for each chunk
                 # Assuming extract_audio compresses each chunk and returns paths
-                audio_chunks = extract_audio(temp_input_path, chunk_duration=chunk_duration_seconds)  
-                
+                audio_chunks = extract_audio(temp_input_path, chunk_duration=chunk_duration_seconds, overlap=chunk_overlap)
+
                 if not audio_chunks:
                     raise Exception("Failed to split audio into chunks using moviepy")
                 
@@ -743,7 +723,6 @@ async def transcribe_video(
                 total_chunks = len(audio_chunks)
                 for i, chunk_path in enumerate(audio_chunks):
                     print(f"\nProcessing chunk {i+1}/{total_chunks}: {os.path.basename(chunk_path)}")
-                    
                     chunk_size_mb = 0
                     if os.path.exists(chunk_path):
                         chunk_size_mb = os.path.getsize(chunk_path) / (1024 * 1024)
@@ -751,24 +730,17 @@ async def transcribe_video(
                     else:
                          print(f"WARNING: Chunk file not found: {chunk_path}. Skipping.")
                          continue
-
-                    # If chunk is still too large (shouldn't happen often with 5min chunks, but check anyway)
                     if chunk_size_mb > 25:
                         print(f"WARNING: Chunk {i+1} ({chunk_size_mb:.2f} MB) exceeds 25MB limit. Skipping this chunk.")
                         continue
-                    
                     with open(chunk_path, "rb") as chunk_file:
-                        # Transcribe with Whisper API, passing language if provided
                         print(f"Calling Whisper API for chunk {i+1}...")
-                        # Use local whisper model instead of OpenAI
                         segments, info = local_whisper_model.transcribe(
                             chunk_path,
                             task="translate" if language and language.lower() != "en" else "transcribe",
                             language=language if language else None,
                             beam_size=1  # Faster processing
                         )
-                        
-                        # Create a synthetic response object to match OpenAI's format
                         chunk_response = type('obj', (object,), {
                             'text': " ".join([seg.text for seg in segments]),
                             'language': info.language,
@@ -778,46 +750,39 @@ async def transcribe_video(
                                 'text': seg.text
                             } for seg in segments]
                         })
-                        
                         print(f"Transcription received for chunk {i+1}.")
-
-                        # Store language (use detected language if none provided)
                         detected_language = chunk_response.language
                         print(f"Detected language for chunk {i+1}: {detected_language}")
-                        if audio_language is None: # Set language on first chunk if not provided
+                        if audio_language is None:
                             audio_language = detected_language
                             print(f"Overall audio language set to: {audio_language}")
-                        
-                        # Collect text and segments
                         full_text.append(chunk_response.text)
-                        
-                        # Adjust segment timings based on chunk position
-                        chunk_start_offset_seconds = i * chunk_duration_seconds 
-                        print(f"Adjusting segment times for chunk {i+1} with offset: {chunk_start_offset_seconds}s")
-                        if hasattr(chunk_response, 'segments') and chunk_response.segments:
-                            print(f"Raw Whisper API response for chunk {i+1}: {chunk_response}")
-                            non_empty_count = 0
-                            for segment in chunk_response.segments:
-                                segment_start = segment.get('start', 0.0)
-                                segment_end = segment.get('end', 0.0)
-                                segment_text = segment.get('text', '')
-                                print(f"  Segment: start={segment_start}, end={segment_end}, text={repr(segment_text)}")
-                                if segment_text and not segment_text.isspace():
-                                    segment['start'] = segment_start + chunk_start_offset_seconds
-                                    segment['end'] = segment_end + chunk_start_offset_seconds
-                                    all_segments.append(segment)
-                                    non_empty_count += 1
-                                else:
-                                    print(f"  -> Marked as [No speech detected]")
-                                    all_segments.append({
-                                        'start': segment_start + chunk_start_offset_seconds,
-                                        'end': segment_end + chunk_start_offset_seconds,
-                                        'text': '[No speech detected]',
-                                        'translation': '[No speech detected]'
-                                    })
-                            print(f"Chunk {i+1}: Detected language: {chunk_response.language}, Non-empty segments: {non_empty_count}, Total segments: {len(chunk_response.segments)}")
-                        else:
-                             print(f"Warning: No segments found in response for chunk {i+1}")
+                        # --- Overlap segment discarding logic ---
+                        chunk_offset = i * chunk_duration_seconds
+                        chunk_length = chunk_duration_seconds + (chunk_overlap if i < total_chunks - 1 else 0) + (chunk_overlap if i > 0 else 0)
+                        segments = chunk_response.segments
+                        # Discard first segment if not the first chunk and it starts within overlap
+                        if i > 0 and segments and segments[0]['start'] < chunk_overlap:
+                            segments = segments[1:]
+                        # Discard last segment if not the last chunk and it ends after chunk_length - overlap
+                        if i < total_chunks - 1 and segments and segments[-1]['end'] > (chunk_length - chunk_overlap):
+                            segments = segments[:-1]
+                        # Adjust segment times by chunk offset (minus overlap for all but first chunk)
+                        for segment in segments:
+                            segment['start'] += chunk_offset - (chunk_overlap if i > 0 else 0)
+                            segment['end'] += chunk_offset - (chunk_overlap if i > 0 else 0)
+                        # Append to all_segments
+                        for segment in segments:
+                            segment_text = segment.get('text', '')
+                            if segment_text and not segment_text.isspace():
+                                all_segments.append(segment)
+                            else:
+                                all_segments.append({
+                                    'start': segment['start'],
+                                    'end': segment['end'],
+                                    'text': '[No speech detected]',
+                                    'translation': '[No speech detected]'
+                                })
                 
                 # Create a synthetic response object to hold the combined results
                 class SyntheticResponse:

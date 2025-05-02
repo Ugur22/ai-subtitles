@@ -281,6 +281,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isVideoHovered, setIsVideoHovered] = useState(false);
+  const [volume, setVolume] = useState(1);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -1242,6 +1243,40 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcription]);
 
+  // Add keyboard event handler for seeking and play/pause
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!videoRef) return;
+      
+      switch (e.key) {
+        case 'ArrowRight':
+          e.preventDefault();
+          videoRef.currentTime = Math.min(videoRef.duration, videoRef.currentTime + 5);
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          videoRef.currentTime = Math.max(0, videoRef.currentTime - 5);
+          break;
+        case ' ': // Spacebar
+          e.preventDefault();
+          handlePlayPause();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [videoRef]);
+
+  // Add volume change handler
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVolume = parseFloat(e.target.value);
+    setVolume(newVolume);
+    if (videoRef) {
+      videoRef.volume = newVolume;
+    }
+  };
+
   return (
     <div className="relative">
       {/* Spinner overlay when transcribing */}
@@ -1618,12 +1653,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
-                        // controls removed to hide native controls
                         className="w-full max-h-[50vh] object-contain"
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
-                            // Update active segment based on current time
                             if (transcription?.transcription.segments) {
                               const segments = transcription.transcription.segments;
                               const matchingSegment = segments.find(segment => {
@@ -1658,33 +1691,61 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
                           />
                         )}
                       </video>
-                      {/* Custom Play/Pause Button Overlay */}
-                      <button
-                        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200
-                          ${(!isPlaying || isVideoHovered) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-                        onClick={handlePlayPause}
-                        style={{ zIndex: 10 }}
-                        aria-label={isPlaying ? 'Pause' : 'Play'}
-                      >
-                        <span className="bg-white bg-opacity-80 rounded-full p-6 shadow-lg hover:bg-opacity-100 transition">
-                          {isPlaying ? (
-                            // Pause icon
-                            <svg className="w-16 h-16 text-gray-800" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
-                              <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
-                            </svg>
-                          ) : (
-                            // Play icon
-                            <svg className="w-16 h-16 text-gray-800" fill="currentColor" viewBox="0 0 24 24">
-                              <polygon points="8,5 19,12 8,19" />
-                            </svg>
-                          )}
-                        </span>
-                      </button>
                     </div>
                     {/* Custom Progress Bar with Tooltip and Screenshot Preview */}
                     {videoRef && (
                       <>
+                        <div className="flex items-center px-4 py-2 gap-4">
+                          {/* Play/Pause Button */}
+                          <button
+                            onClick={handlePlayPause}
+                            className="flex items-center justify-center"
+                            aria-label={isPlaying ? 'Pause' : 'Play'}
+                          >
+                            {isPlaying ? (
+                              <svg className="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 24 24">
+                                <rect x="6" y="4" width="4" height="16" rx="1" />
+                                <rect x="14" y="4" width="4" height="16" rx="1" />
+                              </svg>
+                            ) : (
+                              <svg className="w-6 h-6 text-gray-700" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            )}
+                          </button>
+
+                          {/* Volume Control */}
+                          <div className="flex items-center space-x-2">
+                            <svg 
+                              className="w-5 h-5 text-gray-600 cursor-pointer" 
+                              fill="none" 
+                              viewBox="0 0 24 24" 
+                              stroke="currentColor"
+                              onClick={() => {
+                                if (videoRef) {
+                                  const newVolume = volume === 0 ? 1 : 0;
+                                  setVolume(newVolume);
+                                  videoRef.volume = newVolume;
+                                }
+                              }}
+                            >
+                              {volume === 0 ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                              )}
+                            </svg>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.1"
+                              value={volume}
+                              onChange={handleVolumeChange}
+                              className="w-20 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                            />
+                          </div>
+                        </div>
                         <CustomProgressBar
                           videoRef={videoRef}
                           duration={videoRef.duration || 0}
@@ -1895,38 +1956,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
           </div>
         )}
 
-        {/* Translation Method Selector (only if transcript is not English) */}
-        {transcription && transcription.transcription.language.toLowerCase() !== 'en' && (
-          <div className="mt-4 max-w-lg mx-auto">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Translation Method
-            </label>
-            <div className="flex justify-center space-x-4">
-              <label className="inline-flex items-center">
-                <input
-                  type="radio"
-                  className="form-radio"
-                  name="translationMethod"
-                  value="none"
-                  checked={translationMethod === 'none'}
-                  onChange={() => setTranslationMethod('none')}
-                />
-                <span className="ml-2">None (Show Original)</span>
-              </label>
-              <label className="inline-flex items-center">
-                <input
-                  type="radio"
-                  className="form-radio"
-                  name="translationMethod"
-                  value="marianmt"
-                  checked={translationMethod === 'marianmt'}
-                  onChange={() => setTranslationMethod('marianmt')}
-                />
-                <span className="ml-2">MarianMT (Local)</span>
-              </label>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

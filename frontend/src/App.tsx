@@ -17,7 +17,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <div className="min-h-screen bg-gradient-to-br from-teal-50 to-cyan-50">
         {/* Header */}
-        <header className="bg-gradient-to-r from-teal-500 to-cyan-600 text-white py-2">
+        <header className="hidden bg-gradient-to-r from-teal-500 to-cyan-600 text-white py-2">
           <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
             <div className="flex h-12 items-center justify-between">
               {/* Logo & Brand */}
