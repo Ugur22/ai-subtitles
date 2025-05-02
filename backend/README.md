@@ -26,7 +26,7 @@ OPENAI_API_KEY=your_api_key_here
 3. Run the server:
 
 ```bash
-python main.py
+source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The server will start at `http://localhost:8000`
