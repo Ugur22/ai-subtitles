@@ -4,12 +4,9 @@ import { transcribeVideo, TranscriptionResponse, transcribeLocal, translateLocal
 import { SubtitleControls } from './SubtitleControls';
 import { SearchPanel } from '../search/SearchPanel';
 import { AnalyticsPanel } from '../analytics/AnalyticsPanel';
-import ReactPlayer from 'react-player';
 import { SummaryPanel } from '../summary/SummaryPanel';
 import { SavedTranscriptionsPanel } from './SavedTranscriptionsPanel';
-import { extractAudio, getAudioDuration, initFFmpeg } from '../../../utils/ffmpeg';
-import axios, { AxiosProgressEvent } from 'axios';
-import * as apiService from '../../../services/api';
+import axios from 'axios';
 import { FaSpinner } from 'react-icons/fa';
 import CustomProgressBar from './CustomProgressBar';
 import React from 'react';
@@ -158,28 +155,53 @@ interface JumpToTimeModalProps {
   onClose: () => void;
   onJump: (seconds: number) => void;
   duration: number;
+  currentTime: number;
+  inputRef?: React.RefObject<HTMLInputElement>; // new prop
 }
 
-const parseTimeInput = (input: string): number | null => {
-  // Accepts hh:mm:ss(.ms), mm:ss(.ms), or ss(.ms)
-  const parts = input.trim().split(':').map(p => p.trim());
-  if (parts.length === 0) return null;
-  let seconds = 0;
-  if (parts.length === 3) {
-    seconds = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-  } else if (parts.length === 2) {
-    seconds = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
-  } else if (parts.length === 1) {
-    seconds = parseFloat(parts[0]);
+const secondsToTimeString = (seconds: number): string => {
+  if (isNaN(seconds) || seconds < 0) return '';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   } else {
-    return null;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
-  return isNaN(seconds) ? null : seconds;
 };
 
-const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJump, duration }) => {
+const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJump, duration, currentTime, inputRef }) => {
+  const localInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
+
+  // Correctly place parseTimeInput here
+  const parseTimeInput = (input: string): number | null => {
+    const parts = input.trim().split(':').map(p => p.trim());
+    if (parts.length === 0) return null;
+    let seconds = 0;
+    if (parts.length === 3) {
+      seconds = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+    } else if (parts.length === 2) {
+      seconds = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+    } else if (parts.length === 1) {
+      seconds = parseFloat(parts[0]);
+    } else {
+      return null;
+    }
+    return isNaN(seconds) ? null : seconds;
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      setInput(secondsToTimeString(currentTime));
+      setError('');
+      setTimeout(() => {
+        (inputRef?.current || localInputRef.current)?.focus();
+      }, 0);
+    }
+  }, [isOpen, currentTime, inputRef]);
 
   const handleOk = () => {
     const seconds = parseTimeInput(input);
@@ -191,13 +213,6 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJu
     onJump(seconds);
     onClose();
   };
-
-  useEffect(() => {
-    if (isOpen) {
-      setInput('');
-      setError('');
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
   return (
@@ -212,6 +227,7 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({ isOpen, onClose, onJu
           <p className="text-sm text-gray-700 text-center">Please enter the time you want to jump to.<br />Example: 20:35</p>
         </div>
         <input
+          ref={inputRef || localInputRef}
           className="w-full border border-gray-300 rounded px-3 py-2 mb-2 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
           placeholder="mm:ss or hh:mm:ss"
           value={input}
@@ -1247,7 +1263,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!videoRef) return;
-      
+      // Ctrl+J to open Jump to Time
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setJumpModalOpen(true);
+        return;
+      }
       switch (e.key) {
         case 'ArrowRight':
           e.preventDefault();
@@ -1263,7 +1284,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
           break;
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [videoRef]);
@@ -1787,6 +1807,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({ onTran
                             if (videoRef) videoRef.currentTime = seconds;
                           }}
                           duration={videoRef.duration || 0}
+                          currentTime={videoRef.currentTime || 0}
                         />
                       </>
                     )}
