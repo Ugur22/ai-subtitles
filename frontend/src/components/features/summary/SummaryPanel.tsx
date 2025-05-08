@@ -29,6 +29,46 @@ interface SummaryPanelProps {
   generateSummaries: () => Promise<void>;
 }
 
+// Simple Image Modal Component
+interface ImageModalProps {
+  imageUrl: string;
+  onClose: () => void;
+}
+
+const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
+  // Prevent closing modal when clicking on the image itself
+  const handleImageClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+      onClick={onClose} // Close when clicking backdrop
+    >
+      <div 
+        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh]"
+        onClick={handleImageClick} // Prevent closing on image container click
+      >
+        <img 
+          src={imageUrl}
+          alt="Enlarged screenshot" 
+          className="block w-[900px] max-h-[85vh] object-contain rounded-xl"
+        />
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 bg-white rounded-full p-1 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          aria-label="Close image modal"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const SummaryPanel = ({ 
   isVisible, 
   onSeekTo, 
@@ -39,6 +79,8 @@ export const SummaryPanel = ({
 }: SummaryPanelProps) => {
   const [expandedSection, setExpandedSection] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   
   const handleSeekTo = (time: string) => {
     if (onSeekTo) {
@@ -56,6 +98,13 @@ export const SummaryPanel = ({
     
     // Otherwise, prepend the API server URL
     return `http://localhost:8000${url}`;
+  };
+
+  const openImageModal = (imageUrl: string | undefined) => {
+    if (imageUrl) {
+      setModalImageUrl(imageUrl);
+      setIsModalOpen(true);
+    }
   };
   
   if (!isVisible) return null;
@@ -110,7 +159,7 @@ export const SummaryPanel = ({
                       className="w-32 h-32 object-cover rounded-md shadow-sm hover:shadow-md transition-shadow cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleSeekTo(section.start);
+                        openImageModal(formatScreenshotUrl(section.screenshot_url));
                       }}
                     />
                   </div>
@@ -131,7 +180,15 @@ export const SummaryPanel = ({
                       )}
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">{section.start} - {section.end}</p>
+                  <p 
+                    className="mt-1 text-xs text-gray-500 cursor-pointer hover:text-teal-600 hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSeekTo(section.start);
+                    }}
+                  >
+                    {section.start} - {section.end}
+                  </p>
                   {expandedSection !== index && (
                     <p className="mt-1 text-sm text-gray-700 line-clamp-2">{section.summary}</p>
                   )}
@@ -152,6 +209,14 @@ export const SummaryPanel = ({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Image Modal */}
+      {isModalOpen && modalImageUrl && (
+        <ImageModal 
+          imageUrl={modalImageUrl} 
+          onClose={() => setIsModalOpen(false)} 
+        />
       )}
     </div>
   );
