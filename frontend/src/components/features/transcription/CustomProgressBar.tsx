@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState } from "react";
 
 interface Segment {
   id: string | number;
@@ -17,18 +17,24 @@ interface CustomProgressBarProps {
 }
 
 function formatTime(seconds: number) {
-  if (isNaN(seconds)) return '00:00';
+  if (isNaN(seconds)) return "00:00";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   if (h > 0) {
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
   } else {
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, "0")}`;
   }
 }
 
-const CustomProgressBar: React.FC<CustomProgressBarProps> = ({ videoRef, duration, currentTime, onSeek, getScreenshotUrlForTime }) => {
+const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
+  videoRef,
+  duration,
+  currentTime,
+  onSeek,
+  getScreenshotUrlForTime,
+}) => {
   const barRef = useRef<HTMLDivElement>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
@@ -68,14 +74,18 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({ videoRef, duratio
   const handleMouseDown = () => setDragging(true);
   const handleMouseUp = () => setDragging(false);
 
-  const percent = duration ? (currentTime / duration) : 0;
+  const percent = duration ? currentTime / duration : 0;
 
   return (
     <div className="w-full px-4 pb-2 select-none">
       <div className="flex items-center text-xs font-mono mb-1">
-        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">{formatTime(currentTime)}</span>
+        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">
+          {formatTime(currentTime)}
+        </span>
         <div className="flex-1" />
-        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">{formatTime(duration)}</span>
+        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">
+          {formatTime(duration)}
+        </span>
       </div>
       <div
         ref={barRef}
@@ -85,30 +95,36 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({ videoRef, duratio
         onClick={handleClick}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
-        style={{ userSelect: 'none' }}
+        style={{ userSelect: "none" }}
       >
         {/* Progress fill */}
         <div
-          className="absolute top-0 left-0 h-3 bg-teal-400 rounded"
+          className="absolute top-0 left-0 h-3 bg-gradient-to-r from-orange-400 to-rose-500 rounded"
           style={{ width: `${percent * 100}%` }}
         />
         {/* Thumb */}
         <div
-          className="absolute top-0 h-3 w-3 bg-white rounded-full shadow -translate-x-1/2 border border-teal-500"
+          className="absolute top-0 h-3 w-3 bg-white rounded-full shadow -translate-x-1/2 border border-orange-500"
           style={{ left: `calc(${percent * 100}% )` }}
         />
         {/* Tooltip and Screenshot Preview */}
         {hoverX !== null && hoverTime !== null && (
           <div
             className="absolute z-20 flex flex-col items-center pointer-events-none"
-            style={{ left: Math.max(0, Math.min(hoverX, (barRef.current?.offsetWidth || 0) - 80)), top: '-7.5rem' }}
+            style={{
+              left: Math.max(
+                0,
+                Math.min(hoverX, (barRef.current?.offsetWidth || 0) - 80)
+              ),
+              top: "-7.5rem",
+            }}
           >
             {screenshotUrl && (
               <img
                 src={screenshotUrl}
                 alt="Preview"
                 className="mb-1 w-40 h-24 object-cover rounded shadow border border-gray-300 bg-black"
-                style={{ background: '#222' }}
+                style={{ background: "#222" }}
               />
             )}
             <div
@@ -124,4 +140,4 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({ videoRef, duratio
   );
 };
 
-export default CustomProgressBar; 
+export default CustomProgressBar;

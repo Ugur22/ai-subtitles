@@ -18,9 +18,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <StagewiseToolbar config={{ plugins: [ReactPlugin] }} />
-      <div className="min-h-screen bg-gradient-to-br from-teal-50 to-cyan-50">
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-pink-50 to-purple-100">
         {/* Header */}
-        <header className="hidden bg-gradient-to-r from-teal-500 to-cyan-600 text-white py-2">
+        <header className="hidden bg-gradient-to-r from-purple-600 to-violet-700 text-white py-2">
           <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
             <div className="flex h-12 items-center justify-between">
               {/* Logo & Brand */}
@@ -90,25 +90,25 @@ function App() {
               <nav className="hidden md:flex space-x-8">
                 <a
                   href="#"
-                  className="text-white hover:text-teal-100 px-3 py-2 font-medium"
+                  className="text-gray-900 hover:text-purple-100 px-3 py-2 font-medium"
                 >
                   Home
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:text-teal-100 px-3 py-2 font-medium"
+                  className="text-gray-900 hover:text-purple-100 px-3 py-2 font-medium"
                 >
                   Features
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:text-teal-100 px-3 py-2 font-medium"
+                  className="text-gray-900 hover:text-purple-100 px-3 py-2 font-medium"
                 >
                   Pricing
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:text-teal-100 px-3 py-2 font-medium"
+                  className="text-gray-900 hover:text-purple-100 px-3 py-2 font-medium"
                 >
                   Support
                 </a>
@@ -116,7 +116,7 @@ function App() {
 
               {/* User & Menu */}
               <div className="flex items-center space-x-4">
-                <button className="hidden md:flex items-center space-x-1 bg-teal-400 bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded-full text-sm">
+                <button className="hidden md:flex items-center space-x-1 bg-purple-400 bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded-full text-sm">
                   <span>Start Free Trial</span>
                   <svg
                     className="w-4 h-4"
@@ -130,7 +130,7 @@ function App() {
                     <path d="M5 12h14M12 5l7 7-7 7" />
                   </svg>
                 </button>
-                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-teal-400 bg-opacity-20">
+                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-purple-400 bg-opacity-20">
                   <svg
                     className="w-4 h-4"
                     viewBox="0 0 24 24"
@@ -144,7 +144,7 @@ function App() {
                 </div>
                 <button
                   onClick={() => setMenuOpen(!menuOpen)}
-                  className="md:hidden rounded-md p-2 hover:bg-teal-400 hover:bg-opacity-20 focus:outline-none"
+                  className="md:hidden rounded-md p-2 hover:bg-purple-400 hover:bg-opacity-20 focus:outline-none"
                 >
                   <svg
                     className="h-6 w-6"
@@ -174,25 +174,25 @@ function App() {
               <div className="space-y-0.5 px-2 pt-1 pb-2">
                 <a
                   href="#"
-                  className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
+                  className="text-gray-900 hover:bg-purple-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
                 >
                   Home
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
+                  className="text-gray-900 hover:bg-purple-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
                 >
                   Features
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
+                  className="text-gray-900 hover:bg-purple-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
                 >
                   Pricing
                 </a>
                 <a
                   href="#"
-                  className="text-white hover:bg-teal-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
+                  className="text-gray-900 hover:bg-purple-400 hover:bg-opacity-20 block px-3 py-1 rounded-md text-sm"
                 >
                   Support
                 </a>
@@ -209,27 +209,33 @@ function App() {
                 <div className="md:w-1/2 mb-4 md:mb-0">
                   <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl md:text-5xl">
                     <span className="block">Instant Audio to Text</span>
-                    <span className="block text-teal-600">Powered by AI</span>
+                    <span className="block bg-gradient-to-r from-purple-600 to-violet-700 bg-clip-text text-transparent">
+                      Powered by AI
+                    </span>
                   </h1>
                   <p className="mt-2 max-w-md text-base text-gray-500">
                     Transform any audio or video into accurate transcripts with
                     timestamps, translations, and search capabilities.
                   </p>
                   <div className="mt-4">
-                    <div className="rounded-md shadow inline-flex">
+                    <div className="rounded-xl shadow-lg inline-flex">
                       <a
                         href="#upload"
-                        className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700"
+                        className="flex items-center justify-center px-6 py-3 border border-transparent text-sm font-semibold rounded-xl text-gray-900 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
                       >
-                        Get Started
+                        <span className="text-gray-900 font-semibold">
+                          Get Started
+                        </span>
                       </a>
                     </div>
                     <div className="inline-flex ml-3">
                       <a
                         href="#"
-                        className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-teal-700 bg-teal-100 hover:bg-teal-200"
+                        className="flex items-center justify-center px-6 py-3 border border-gray-300 text-sm font-semibold rounded-xl text-gray-900 bg-white hover:bg-gray-50 transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
                       >
-                        Watch Demo
+                        <span className="text-gray-900 font-semibold">
+                          Watch Demo
+                        </span>
                       </a>
                     </div>
                   </div>
@@ -246,11 +252,11 @@ function App() {
               </div>
             </div>
             {/* Features Brief */}
-            <div className="bg-gradient-to-r from-cyan-50 to-teal-50 py-6">
+            <div className="bg-gradient-to-r from-pink-50 to-purple-100 py-6">
               <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-purple-500 to-violet-600 text-gray-900">
                       <svg
                         className="h-5 w-5"
                         fill="none"
@@ -276,7 +282,7 @@ function App() {
                     </div>
                   </div>
                   <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-orange-400 to-rose-500 text-gray-900">
                       <svg
                         className="h-5 w-5"
                         fill="none"
@@ -302,7 +308,7 @@ function App() {
                     </div>
                   </div>
                   <div className="bg-white p-4 rounded-xl shadow-sm flex items-start space-x-3">
-                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-teal-500 to-cyan-600 text-white">
+                    <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-md bg-gradient-to-r from-rose-400 to-pink-500 text-gray-900">
                       <svg
                         className="h-5 w-5"
                         fill="none"

@@ -129,11 +129,11 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
       onClick={onClose} // Close when clicking backdrop
     >
       <div
-        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh]"
+        className="relative bg-white p-3 rounded-2xl shadow-2xl max-w-6xl max-h-[90vh] animate-in zoom-in duration-200"
         onClick={handleImageClick} // Prevent closing on image container click
       >
         <img
@@ -143,7 +143,7 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
         />
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 bg-white rounded-full p-1 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          className="absolute -top-2 -right-2 bg-white rounded-full p-2 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg transition-all duration-200 hover:scale-110"
           aria-label="Close image modal"
         >
           <svg
@@ -253,51 +253,61 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
 
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-xs flex flex-col items-center">
-        <div className="mb-4 flex flex-col items-center">
-          <svg
-            className="w-12 h-12 mb-2 text-blue-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10 9V5a1 1 0 011-1h2a1 1 0 011 1v4m-1 4h.01M12 17h.01"
-            />
-            <polygon points="8,17 16,12 8,7" fill="currentColor" />
-          </svg>
-          <h2 className="text-lg font-bold mb-1">Jump to</h2>
-          <p className="text-sm text-gray-700 text-center">
-            Please enter the time you want to jump to.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md flex flex-col items-center animate-in zoom-in duration-200">
+        <div className="mb-6 flex flex-col items-center">
+          <div className="w-16 h-16 mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+            <svg
+              className="w-8 h-8 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10 9V5a1 1 0 011-1h2a1 1 0 011 1v4m-1 4h.01M12 17h.01"
+              />
+              <polygon points="8,17 16,12 8,7" fill="currentColor" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2 text-gray-900">
+            Jump to Time
+          </h2>
+          <p className="text-sm text-gray-600 text-center leading-relaxed">
+            Enter the time you want to jump to in the video.
             <br />
-            Example: 20:35
+            <span className="text-indigo-600 font-medium">
+              Example: 20:35 or 1:30:45
+            </span>
           </p>
         </div>
         <input
           ref={inputRef || localInputRef}
-          className="w-full border border-gray-300 rounded px-3 py-2 mb-2 text-center text-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 mb-3 text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
           placeholder="mm:ss or hh:mm:ss"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           autoFocus
         />
-        {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
-        <div className="flex w-full gap-2 mt-2">
+        {error && (
+          <div className="text-sm text-red-500 mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
+            {error}
+          </div>
+        )}
+        <div className="flex w-full gap-3 mt-4">
           <button
-            className="flex-1 py-2 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300"
+            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-all duration-200 hover:scale-105"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="flex-1 py-2 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700"
+            className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-all duration-200 hover:scale-105"
             onClick={handleOk}
           >
-            OK
+            Jump
           </button>
         </div>
       </div>
@@ -335,7 +345,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   >(null);
   const [progressSimulation, setProgressSimulation] =
     useState<NodeJS.Timeout | null>(null);
-  const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null);
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [processingTimer, setProcessingTimer] = useState<NodeJS.Timeout | null>(
@@ -695,20 +705,21 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     // Find the corresponding segment in the transcript
     if (transcription && transcription.transcription.segments) {
       const segments = transcription.transcription.segments;
-      const matchingSegmentId = segments.findIndex((segment) => {
+      const matchingSegmentIndex = segments.findIndex((segment) => {
         const segmentStartSeconds = timeToSeconds(segment.start_time);
         const segmentEndSeconds = timeToSeconds(segment.end_time);
         return seconds >= segmentStartSeconds && seconds <= segmentEndSeconds;
       });
 
       // If a matching segment is found, scroll to it
-      if (matchingSegmentId !== -1) {
-        setActiveSegmentId(matchingSegmentId);
+      if (matchingSegmentIndex !== -1) {
+        const matchingSegment = segments[matchingSegmentIndex];
+        setActiveSegmentId(matchingSegment.id);
 
         // Use setTimeout to ensure the DOM has updated with the active segment
         setTimeout(() => {
           const segmentElement = document.getElementById(
-            `transcript-segment-${matchingSegmentId}`
+            `transcript-segment-${matchingSegment.id}`
           );
           if (segmentElement) {
             // Find the scrollable container instead of scrolling the whole page
@@ -1469,7 +1480,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           e.preventDefault();
           videoRef.currentTime = Math.max(0, videoRef.currentTime - 5);
           break;
-        case " ": // Spacebar
+        case "p": // P key
+        case "P": // P key (uppercase)
           e.preventDefault();
           handlePlayPause();
           break;
@@ -1489,31 +1501,40 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   return (
-    <div className="relative">
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
       {/* Spinner overlay when transcribing */}
       {isTranscribing && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black bg-opacity-40">
-          <FaSpinner className="animate-spin text-4xl text-blue-500 mb-4" />
-          <div className="text-white text-lg font-semibold">
-            Transcribing, please wait...
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl animate-pulse">
+            <div className="flex justify-center mb-4">
+              <div className="animate-spin">
+                <FaSpinner size={48} color="#6366f1" />
+              </div>
+            </div>
+            <div className="text-gray-800 text-xl font-semibold text-center">
+              Transcribing, please wait...
+            </div>
+            <div className="text-gray-600 text-sm text-center mt-2">
+              This may take a few minutes
+            </div>
           </div>
         </div>
       )}
-      <div className="h-full text-gray-900">
+      <div className="h-full text-gray-900 p-6">
         {/* Upload Section */}
         {!transcription && (
-          <div className="mx-auto max-w-4xl">
-            <div className="bg-white rounded-xl shadow-md overflow-hidden">
-              <div className="p-5">
-                <div className="text-center mb-4">
-                  <h2 className="text-xl font-bold text-gray-900 mb-1">
+          <div className="mx-auto max-w-5xl">
+            <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl border border-white/20 overflow-hidden">
+              <div className="p-8">
+                <div className="text-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
                     Upload Your File
                   </h2>
-                  <p className="text-xs text-gray-600 max-w-lg mx-auto">
+                  <p className="text-gray-600 max-w-2xl mx-auto leading-relaxed">
                     Upload your video or audio file and our AI will transcribe
                     it with timestamps.
                     <br />
-                    <span className="text-2xs text-teal-600">
+                    <span className="text-indigo-600 font-medium">
                       Now supports large video files - we'll automatically
                       extract the audio!
                     </span>
@@ -1523,12 +1544,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 <div
                   className={`
                     relative flex flex-col items-center justify-center
-                    w-full max-w-lg mx-auto h-48 border-2 border-dashed rounded-lg
-                    transition-all duration-300 ease-in-out
+                    w-full max-w-2xl mx-auto h-64 border-2 border-dashed rounded-2xl
+                    transition-all duration-300 ease-in-out cursor-pointer
                     ${
                       dragActive
-                        ? "border-teal-500 bg-teal-50"
-                        : "border-gray-300 bg-white hover:bg-teal-50 hover:border-teal-300"
+                        ? "border-indigo-400 bg-indigo-50 scale-105"
+                        : "border-gray-300 bg-white hover:bg-indigo-50/50 hover:border-indigo-300 hover:scale-102"
                     }
                     ${
                       transcribeMutation.isPending
@@ -1542,29 +1563,35 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   onDrop={handleDrop}
                   onClick={handleButtonClick}
                 >
-                  <div className="flex flex-col items-center justify-center pt-3 pb-4 px-4 text-center">
-                    <div className="mb-2">
-                      <svg
-                        className={`w-10 h-10 ${
-                          dragActive ? "text-teal-500" : "text-teal-400"
+                  <div className="flex flex-col items-center justify-center pt-6 pb-6 px-8 text-center">
+                    <div className="mb-4">
+                      <div
+                        className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${
+                          dragActive ? "bg-indigo-500" : "bg-indigo-100"
                         }`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        strokeWidth="1.5"
                       >
-                        <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
+                        <svg
+                          className={`w-8 h-8 ${
+                            dragActive ? "text-white" : "text-indigo-500"
+                          }`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          strokeWidth="2"
+                        >
+                          <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                      </div>
                     </div>
-                    <h3 className="text-base font-medium text-gray-700">
+                    <h3 className="text-xl font-semibold text-gray-800 mb-2">
                       {dragActive
                         ? "Drop to upload"
                         : "Drag & drop your file here"}
                     </h3>
-                    <p className="text-2xs text-gray-500">
+                    <p className="text-sm text-gray-500 mb-1">
                       or click to browse files
                     </p>
-                    <p className="text-2xs text-gray-400 mt-1">
+                    <p className="text-xs text-gray-400">
                       Supports MP4, MP3, WAV files up to 10GB
                     </p>
                   </div>
@@ -1580,13 +1607,31 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                 {/* Show selected file info if a file is staged */}
                 {file && !transcription && (
-                  <div className="mt-4 max-w-lg mx-auto text-center p-3 bg-gray-50 rounded border border-gray-200">
-                    <p className="text-sm font-medium text-gray-700">
-                      Selected file:
-                    </p>
-                    <p className="text-xs text-gray-600 truncate">
-                      {file.name} ({(file.size / (1024 * 1024)).toFixed(2)} MB)
-                    </p>
+                  <div className="mt-6 max-w-2xl mx-auto text-center p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-200">
+                    <div className="flex items-center justify-center space-x-3">
+                      <div className="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center">
+                        <svg
+                          className="w-5 h-5 text-white"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                          <path
+                            fillRule="evenodd"
+                            d="M4 5a2 2 0 012-2v1a1 1 0 001 1h6a1 1 0 001-1V3a2 2 0 012 2v6.5a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </div>
+                      <div className="text-left">
+                        <p className="text-sm font-semibold text-gray-800">
+                          {file.name}
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          {(file.size / (1024 * 1024)).toFixed(2)} MB
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1627,7 +1672,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   <div className="mt-6 max-w-lg mx-auto text-center">
                     <button
                       onClick={handleStartTranscriptionClick}
-                      className="px-6 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white font-semibold rounded-lg shadow-md hover:from-teal-600 hover:to-cyan-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition duration-300 ease-in-out"
+                      className="px-6 py-3 bg-gradient-to-r from-violet-500 to-purple-600 font-semibold rounded-lg shadow-md hover:from-violet-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 transition duration-300 ease-in-out"
                     >
                       Start Transcription
                     </button>
@@ -1800,10 +1845,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     </div>
                     <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
                       {processingStatus.stage === "extracting" ? (
-                        <div className="h-full w-full bg-teal-400 rounded-full animate-pulse opacity-60"></div>
+                        <div className="h-full w-full bg-orange-400 rounded-full animate-pulse opacity-60"></div>
                       ) : (
                         <div
-                          className="h-full bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-orange-400 to-rose-500 rounded-full transition-all duration-300"
                           style={{ width: `${processingStatus.progress}%` }}
                         />
                       )}
@@ -1832,9 +1877,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center mr-3">
+                  <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center mr-3">
                     <svg
-                      className="w-4 h-4 text-teal-600"
+                      className="w-4 h-4 text-violet-600"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1856,9 +1901,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center mr-3">
+                  <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center mr-3">
                     <svg
-                      className="w-4 h-4 text-teal-600"
+                      className="w-4 h-4 text-orange-600"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1879,9 +1924,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center mr-3">
+                  <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center mr-3">
                     <svg
-                      className="w-4 h-4 text-teal-600"
+                      className="w-4 h-4 text-rose-600"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1906,86 +1951,81 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {/* Results Section */}
         {transcription && (
-          <div className="space-y-6 h-screen flex flex-col overflow-hidden w-full">
-            <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-100 flex-shrink-0">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center mr-3">
-                      <svg
-                        className="w-4 h-4 text-teal-600"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>
-                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                      </svg>
+          <div className="space-y-8 h-screen flex flex-col overflow-hidden w-full">
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20 flex-shrink-0">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+                <div className="flex-grow">
+                  <div className="flex items-center mb-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900 mb-1">
+                        Transcription Complete
+                      </h2>
+                      <p className="text-sm text-emerald-600 font-medium">
+                        ✨ Ready to explore your content
+                      </p>
                     </div>
-                    <h2 className="text-lg font-semibold text-gray-900">
-                      Transcription Complete
-                    </h2>
                   </div>
-                  <div className="mt-2 ml-11 grid grid-cols-2 gap-x-4 gap-y-1">
-                    <div className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">File:</span>{" "}
-                      {transcription.filename}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-gray-50 rounded-xl p-4">
+                      <div className="text-xs text-gray-500 mb-1">File</div>
+                      <div className="text-sm font-semibold text-gray-800 truncate">
+                        {transcription.filename}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        Duration:
-                      </span>{" "}
-                      {transcription.transcription.duration}
+                    <div className="bg-gray-50 rounded-xl p-4">
+                      <div className="text-xs text-gray-500 mb-1">Duration</div>
+                      <div className="text-sm font-semibold text-gray-800">
+                        {transcription.transcription.duration}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        Language:
-                      </span>{" "}
-                      {transcription.transcription.language}
+                    <div className="bg-gray-50 rounded-xl p-4">
+                      <div className="text-xs text-gray-500 mb-1">Language</div>
+                      <div className="text-sm font-semibold text-gray-800 uppercase">
+                        {transcription.transcription.language}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        Processing Time:
-                      </span>
-                      <span className="ml-1 px-1.5 py-0.5 bg-teal-50 text-teal-700 rounded-md font-medium">
+                    <div className="bg-gradient-to-r from-orange-50 to-rose-100 rounded-xl p-4">
+                      <div className="text-xs text-emerald-600 mb-1">
+                        Processing Time
+                      </div>
+                      <div className="text-sm font-bold text-emerald-700">
                         {formatProcessingTime(
                           transcription.transcription.processing_time
                         )}
-                      </span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={handleSearchClick}
-                    className={`px-4 py-2 ${
-                      showSearch ? "bg-blue-600" : "bg-blue-500"
-                    } text-white text-sm rounded-lg hover:bg-blue-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 flex items-center space-x-1`}
+                    className={`px-6 py-3 ${
+                      showSearch
+                        ? "bg-gray-800 hover:bg-gray-900"
+                        : "bg-gray-700 hover:bg-gray-800"
+                    } text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center space-x-2`}
                   >
                     <svg
-                      className="w-4 h-4 mr-1"
+                      className="w-4 h-4 text-white"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
+                      strokeWidth="2"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                      />
+                      <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
-                    <span>{showSearch ? "Hide Search" : "Show Search"}</span>
+                    <span className="text-white">
+                      {showSearch ? "Hide Search" : "Show Search"}
+                    </span>
                   </button>
 
                   <button
                     onClick={startNewTranscription}
-                    className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 text-white text-sm rounded-lg hover:from-teal-600 hover:to-cyan-600 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 flex items-center"
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center space-x-2"
                   >
                     <svg
-                      className="w-4 h-4 mr-2"
+                      className="w-4 h-4 text-white"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1994,7 +2034,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       <polyline points="23 4 23 10 17 10"></polyline>
                       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
                     </svg>
-                    New Transcription
+                    <span className="text-white">New Transcription</span>
                   </button>
                   <SubtitleControls filename={transcription.filename} />
                 </div>
@@ -2188,7 +2228,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         />
                         <div className="flex justify-end px-4 pb-2">
                           <button
-                            className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow"
+                            className="px-3 py-1 rounded bg-gray-600 text-white text-xs font-semibold hover:bg-gray-700 shadow"
                             onClick={() => setJumpModalOpen(true)}
                           >
                             Jump to Time
@@ -2231,16 +2271,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     >
                       Summary
                     </button>
-                    <button
-                      onClick={() => setShowScreenshots(!showScreenshots)}
-                      className={`px-5 py-3 text-sm font-medium ${
-                        showScreenshots
-                          ? "text-teal-600 border-b-2 border-teal-500"
-                          : "text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      Screenshots
-                    </button>
                   </div>
 
                   <div className="flex-grow overflow-auto">
@@ -2274,7 +2304,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 id={`transcript-segment-${segment.id}`}
                                 className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
                                   activeSegmentId === segment.id
-                                    ? "bg-teal-50"
+                                    ? "bg-blue-50"
                                     : ""
                                 }`}
                               >
@@ -2311,7 +2341,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                         <polyline points="12 6 12 12 16 14"></polyline>
                                       </svg>
                                       {segment.start_time} - {segment.end_time}
-                                      <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-teal-50">
+                                      <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-blue-50">
                                         Speaker 1
                                       </span>
                                     </div>
