@@ -1183,27 +1183,43 @@ async def generate_summary(request: Request) -> Dict:
 
 @app.get("/transcriptions/")
 async def list_transcriptions():
-    """List all saved transcriptions"""
+    """List all saved transcriptions with additional metadata"""
     try:
         conn = sqlite3.connect('transcriptions.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT video_hash, filename, created_at, file_path FROM transcriptions ORDER BY created_at DESC")
-        rows = cursor.fetchall()
+        cursor.execute("SELECT video_hash, filename, created_at, file_path, transcription_data FROM transcriptions ORDER BY created_at DESC")
+        
+        transcriptions = []
+        for row in cursor.fetchall():
+            video_hash, filename, created_at, file_path, transcription_data_json = row
+            
+            thumbnail_url = None
+            if transcription_data_json:
+                try:
+                    transcription_data = json.loads(transcription_data_json)
+                    # Find the first segment with a screenshot URL
+                    segments = transcription_data.get("transcription", {}).get("segments", [])
+                    for segment in segments:
+                        if segment.get("screenshot_url"):
+                            thumbnail_url = segment["screenshot_url"]
+                            break
+                except (json.JSONDecodeError, KeyError):
+                    pass  # Ignore if data is not valid JSON or keys are missing
+
+            transcriptions.append({
+                "video_hash": video_hash,
+                "filename": filename,
+                "created_at": created_at,
+                "file_path": file_path,
+                "thumbnail_url": thumbnail_url
+            })
+            
         conn.close()
         
-        return {
-            "transcriptions": [
-                {
-                    "video_hash": row[0],
-                    "filename": row[1],
-                    "created_at": row[2],
-                    "file_path": row[3]
-                }
-                for row in rows
-            ]
-        }
+        return {"transcriptions": transcriptions}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving transcriptions: {str(e)}")
+        print(f"Error listing transcriptions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list transcriptions")
 
 @app.get("/transcription/{video_hash}")
 async def get_saved_transcription(video_hash: str, request: Request):

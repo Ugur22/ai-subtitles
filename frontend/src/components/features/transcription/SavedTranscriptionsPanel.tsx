@@ -225,18 +225,27 @@ export const SavedTranscriptionsPanel = ({
                   className="py-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="ml-2">
-                      <h4 className="font-medium text-gray-900 truncate max-w-[200px]">
-                        {t.filename}
-                      </h4>
-                      <p className="text-xs text-gray-500">
-                        {formatDate(t.created_at)}
-                      </p>
-                      {!t.file_path && (
-                        <span className="text-2xs text-amber-600">
-                          Missing video file
-                        </span>
+                    <div className="flex items-center">
+                      {t.thumbnail_url && (
+                        <img
+                          src={`http://localhost:8000${t.thumbnail_url}`}
+                          alt={`Thumbnail for ${t.filename}`}
+                          className="w-16 h-10 object-cover rounded-md mr-4"
+                        />
                       )}
+                      <div className="ml-2">
+                        <h4 className="font-medium text-gray-900 truncate max-w-[200px]">
+                          {t.filename}
+                        </h4>
+                        <p className="text-xs text-gray-500">
+                          {formatDate(t.created_at)}
+                        </p>
+                        {!t.file_path && (
+                          <span className="text-2xs text-amber-600">
+                            Missing video file
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center space-x-2">
                       {!t.file_path && (

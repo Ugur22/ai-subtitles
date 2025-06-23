@@ -126,13 +126,23 @@ export const SummaryPanel = ({
       <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
         <h3 className="text-sm font-medium text-gray-800">Content Summary</h3>
         {(!summaries.length || summaries.length > 0) && !loading && (
-          <button
-            onClick={generateSummaries}
-            className="px-3 py-1 text-xs bg-rose-500 text-gray-900 rounded hover:bg-rose-600 transition-colors"
-            disabled={loading}
-          >
-            {!summaries.length ? "Generate Summary" : "Regenerate Summary"}
-          </button>
+          <div>
+            {!summaries.length ? (
+              <button
+                onClick={generateSummaries}
+                className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+              >
+                Generate Summary
+              </button>
+            ) : (
+              <button
+                onClick={generateSummaries}
+                className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+              >
+                Regenerate Summary
+              </button>
+            )}
+          </div>
         )}
       </div>
 

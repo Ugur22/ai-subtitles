@@ -164,6 +164,7 @@ export interface SavedTranscription {
   filename: string;
   created_at: string;
   file_path: string | null;
+  thumbnail_url?: string | null;
 }
 
 export const getSavedTranscriptions = async (): Promise<{ transcriptions: SavedTranscription[] }> => {
