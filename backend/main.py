@@ -1197,12 +1197,15 @@ async def list_transcriptions():
             if transcription_data_json:
                 try:
                     transcription_data = json.loads(transcription_data_json)
-                    # Find the first segment with a screenshot URL
+                    # Find a segment from the middle with a screenshot URL
                     segments = transcription_data.get("transcription", {}).get("segments", [])
-                    for segment in segments:
-                        if segment.get("screenshot_url"):
-                            thumbnail_url = segment["screenshot_url"]
-                            break
+                    segments_with_screenshots = [s for s in segments if s.get("screenshot_url")]
+                    
+                    if segments_with_screenshots:
+                        # Get the middle segment's screenshot
+                        middle_index = len(segments_with_screenshots) // 2
+                        thumbnail_url = segments_with_screenshots[middle_index].get("screenshot_url")
+
                 except (json.JSONDecodeError, KeyError):
                     pass  # Ignore if data is not valid JSON or keys are missing
 
