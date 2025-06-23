@@ -9,10 +9,12 @@ import { useQueryClient } from "@tanstack/react-query";
 
 interface SavedTranscriptionsPanelProps {
   onTranscriptionLoaded?: (videoHash?: string) => void;
+  onImageClick?: (imageUrl: string) => void;
 }
 
 export const SavedTranscriptionsPanel = ({
   onTranscriptionLoaded,
+  onImageClick,
 }: SavedTranscriptionsPanelProps) => {
   const [transcriptions, setTranscriptions] = useState<SavedTranscription[]>(
     []
@@ -230,7 +232,14 @@ export const SavedTranscriptionsPanel = ({
                         <img
                           src={`http://localhost:8000${t.thumbnail_url}`}
                           alt={`Thumbnail for ${t.filename}`}
-                          className="w-16 h-10 object-cover rounded-md mr-4"
+                          className="w-32 h-20 object-cover rounded-md mr-4 cursor-pointer transition-all duration-300 hover:scale-110 hover:shadow-xl"
+                          onClick={() => {
+                            if (onImageClick && t.thumbnail_url) {
+                              onImageClick(
+                                `http://localhost:8000${t.thumbnail_url}`
+                              );
+                            }
+                          }}
                         />
                       )}
                       <div className="ml-2">

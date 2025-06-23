@@ -1733,6 +1733,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   <div className="mt-4 max-w-lg mx-auto">
                     <SavedTranscriptionsPanel
                       onTranscriptionLoaded={handleTranscriptionLoaded}
+                      onImageClick={openImageModal}
                     />
                   </div>
                 )}
