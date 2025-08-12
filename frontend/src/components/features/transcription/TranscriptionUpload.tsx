@@ -2311,7 +2311,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               >
                                 <div className="flex items-start gap-4">
                                   {segment.screenshot_url && (
-                                    <div className="flex-shrink-0 ">
+                                    <div className="flex-shrink-0  ">
                                       <img
                                         src={`http://localhost:8000${segment.screenshot_url}`}
                                         alt={`Screenshot at ${segment.start_time}`}

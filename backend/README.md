@@ -25,9 +25,9 @@ OPENAI_API_KEY=your_api_key_here
 
 3. Run the server:
 
-```bash
+````bash
 source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+```l
 
 The server will start at `http://localhost:8000`
 
@@ -61,7 +61,7 @@ Upload a video/audio file for transcription.
         ]
     }
 }
-```
+````
 
 ## Error Handling
 
