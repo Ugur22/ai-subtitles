@@ -165,7 +165,7 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 def translate_segments(segments: List[Dict], source_lang: str) -> List[Dict]:
-    """Translate a batch of segments using local MarianMT model"""
+    """Translate a batch of segments using local MarianMT model, preserving original text"""
     BATCH_SIZE = 10
     for i in range(0, len(segments), BATCH_SIZE):
         batch = segments[i:i + BATCH_SIZE]
@@ -175,49 +175,36 @@ def translate_segments(segments: List[Dict], source_lang: str) -> List[Dict]:
             for segment in batch:
                 segment['translation'] = '[No speech detected]'
             continue
-        context_before = ""
-        context_after = ""
-        if i > 0:
-            context_before = f"Context before: {segments[i-1].get('text', '')}\n"
-        if i + BATCH_SIZE < len(segments):
-            context_after = f"\nContext after: {segments[i+BATCH_SIZE].get('text', '')}"
-        combined_text = context_before + "\n---\n".join([f"[{j}] {segment.get('text', '')}" for j, segment in enumerate(batch_to_translate)]) + context_after
+        
         try:
             # Use local translation model instead of OpenAI
             tokenizer, model = get_marian_model(source_lang)
             
-            # Split texts by [SEP] and translate each segment
-            texts = combined_text.split("[SEP]")
-            translations = []
-            
-            for text in texts:
-                text = text.strip()
+            # Translate each segment individually to preserve accuracy
+            for segment in batch_to_translate:
+                text = segment.get('text', '').strip()
                 if not text:
+                    segment['translation'] = '[No speech detected]'
                     continue
-                    
+                
                 # Translate using MarianMT
                 inputs = tokenizer(text, return_tensors="pt", padding=True)
                 translated = model.generate(**inputs)
                 translation = tokenizer.decode(translated[0], skip_special_tokens=True)
-                translations.append(translation)
-            
-            # Join translations with [SEP]
-            translated_text = "\n[SEP]\n".join(translations)
-            
-            # Split translations and update segments
-            translations = translated_text.split('[SEP]')
-            for segment, translation in zip(batch_to_translate, translations):
                 segment['translation'] = translation.strip()
             
-            print("Successfully translated segments using local model")
+            print(f"Successfully translated {len(batch_to_translate)} segments using local model")
         except Exception as e:
             print(f"Error in translation process: {str(e)}")
             # If translation fails, set placeholder translations
             for segment in batch_to_translate:
                 segment['translation'] = f"[Translation pending for: {segment['text']}]"
+    
+    # Ensure all segments have a translation field
     for segment in segments:
         if not segment.get('translation'):
             segment['translation'] = '[No speech detected]'
+    
     return segments
 
 def compress_audio(input_path: str, output_path: str, file_size_check: bool = True) -> str:
@@ -735,9 +722,10 @@ async def transcribe_video(
                         continue
                     with open(chunk_path, "rb") as chunk_file:
                         print(f"Calling Whisper API for chunk {i+1}...")
+                        # Always use task="transcribe" to get original language text
                         segments, info = local_whisper_model.transcribe(
                             chunk_path,
-                            task="translate" if language and language.lower() != "en" else "transcribe",
+                            task="transcribe",
                             language=language if language else None,
                             beam_size=1  # Faster processing
                         )
@@ -906,10 +894,9 @@ async def transcribe_video(
                         "end": segment_end,
                         "start_time": format_timestamp(segment_start),
                         "end_time": format_timestamp(segment_end),
-                        "text": segment_text
+                        "text": segment_text,
+                        "translation": segment_translation  # Always include translation field
                     }
-                    if segment_translation:
-                        segment_dict["translation"] = segment_translation
                     if segment_screenshot_url:
                         segment_dict["screenshot_url"] = segment_screenshot_url
                     result["transcription"]["segments"].append(segment_dict)
@@ -966,6 +953,8 @@ async def transcribe_video(
 async def get_subtitles(language: str, request: Request) -> Response:
     """
     Get subtitles in SRT format. Language can be 'original' or 'english'.
+    - 'original': Returns subtitles in the original language (stored in 'text' field)
+    - 'english': Returns subtitles in English (stored in 'translation' field)
     """
     if not hasattr(request.app.state, 'last_transcription'):
         raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
@@ -982,41 +971,55 @@ async def get_subtitles(language: str, request: Request) -> Response:
     # Get source language and normalize it
     source_lang = transcription['transcription']['language'].lower()
     
-    # For English subtitles, check if we need translations
+    # Determine if we should use the translation field
+    # For 'original' request: always use 'text' field (original language)
+    # For 'english' request: use 'translation' field if source is not English, otherwise use 'text'
     use_translation = False
-    if language == 'english' and source_lang not in ['en', 'english']:
-        # First, try to translate any missing translations
-        segments_to_translate = []
-        for segment in transcription['transcription']['segments']:
-            if 'translation' not in segment or not segment['translation']:
-                segments_to_translate.append(segment)
-        
-        if segments_to_translate:
-            print(f"Found {len(segments_to_translate)} segments without translation. Attempting to translate...")
-            try:
-                # Use local translation model
-                tokenizer, model = get_marian_model(source_lang)
-                
-                # Translate each segment individually
-                for segment in segments_to_translate:
-                    text = segment['text'].strip()
-                    if not text:
-                        continue
+    
+    if language == 'english':
+        # For English subtitles
+        if source_lang not in ['en', 'english']:
+            # Source is not English, so we need to use translations
+            use_translation = True
+            
+            # First, try to translate any missing translations
+            segments_to_translate = []
+            for segment in transcription['transcription']['segments']:
+                if 'translation' not in segment or not segment['translation']:
+                    segments_to_translate.append(segment)
+            
+            if segments_to_translate:
+                print(f"Found {len(segments_to_translate)} segments without translation. Attempting to translate...")
+                try:
+                    # Use local translation model
+                    tokenizer, model = get_marian_model(source_lang)
                     
-                    # Translate using MarianMT
-                    inputs = tokenizer(text, return_tensors="pt", padding=True)
-                    translated = model.generate(**inputs)
-                    translation = tokenizer.decode(translated[0], skip_special_tokens=True)
-                    segment['translation'] = translation.strip()
-                
-                print("Successfully translated missing segments using local model")
-                use_translation = True
-            except Exception as e:
-                print(f"Error in translation process: {str(e)}")
-                # If translation fails, set placeholder translations
-                for segment in segments_to_translate:
-                    segment['translation'] = f"[Translation pending for: {segment['text']}]"
-                use_translation = False
+                    # Translate each segment individually
+                    for segment in segments_to_translate:
+                        text = segment['text'].strip()
+                        if not text:
+                            segment['translation'] = '[No speech detected]'
+                            continue
+                        
+                        # Translate using MarianMT
+                        inputs = tokenizer(text, return_tensors="pt", padding=True)
+                        translated = model.generate(**inputs)
+                        translation = tokenizer.decode(translated[0], skip_special_tokens=True)
+                        segment['translation'] = translation.strip()
+                    
+                    print("Successfully translated missing segments using local model")
+                except Exception as e:
+                    print(f"Error in translation process: {str(e)}")
+                    # If translation fails, set placeholder translations
+                    for segment in segments_to_translate:
+                        segment['translation'] = f"[Translation pending for: {segment['text']}]"
+        else:
+            # Source is already English, use text field
+            use_translation = False
+    else:
+        # For 'original' request: always use text field (original language)
+        use_translation = False
+        print(f"Generating subtitles in original language ({source_lang})")
     
     try:
         srt_content = generate_srt(transcription['transcription']['segments'], use_translation)
@@ -1244,6 +1247,11 @@ async def get_saved_transcription(video_hash: str, request: Request):
                     seg['translation'] = translated_segments[i].get('translation', seg.get('text', '[Translation missing]'))
                 store_transcription(video_hash, transcription.get('filename', ''), transcription, transcription.get('file_path'))
                 print(f"Translation complete and saved for video_hash={video_hash}.")
+        else:
+            # If English source, ensure all segments have a translation field (set to text for consistency)
+            for seg in segments:
+                if 'translation' not in seg or not seg.get('translation'):
+                    seg['translation'] = seg.get('text', '')
     except Exception as e:
         print(f"Error ensuring translations in /transcription/{{video_hash}}: {e}")
 
@@ -1491,15 +1499,18 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             duration_str = "Unknown"
 
         start_time = time.time()
-        # --- KEY: Fast, direct translation, beam_size=1 ---
+        # --- KEY: Transcribe to original language, then translate if needed ---
         segments, info = local_whisper_model.transcribe(
             temp_path,
-            task="translate",   # Translates to English in one step
-            beam_size=1         # Much faster, tiny accuracy drop
+            task="transcribe",  # Always transcribe to original language
+            beam_size=1         # Fast processing
         )
         processing_time = time.time() - start_time
 
-        # Format segments to match expected structure
+        # Detect language from transcription
+        detected_language = info.language
+        
+        # Format segments to match expected structure and preserve original language
         formatted_segments = []
         for i, seg in enumerate(segments):
             formatted_segments.append({
@@ -1508,9 +1519,21 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
                 "end": seg.end,
                 "start_time": format_timestamp(seg.start),
                 "end_time": format_timestamp(seg.end),
-                "text": seg.text,    # Now always English if non-English input!
-                # Remove manual 'translation' field: text is the translation.
+                "text": seg.text,    # Original language text
+                "translation": None,  # Will be populated by translate_segments if needed
             })
+        
+        # Translate if source language is not English
+        if detected_language and detected_language.lower() not in ['en', 'english']:
+            print(f"Detected language: {detected_language}. Translating segments...")
+            try:
+                formatted_segments = translate_segments(formatted_segments, detected_language)
+                print("Translation completed successfully")
+            except Exception as e:
+                print(f"Translation failed: {str(e)}. Continuing with original language only...")
+                # Continue without translation if it fails
+        else:
+            print("Language is English. No translation needed.")
 
         # Extract screenshots if it's a video file
         screenshots_dir = os.path.join("static", "screenshots")
