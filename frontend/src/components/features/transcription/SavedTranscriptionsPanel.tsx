@@ -227,7 +227,7 @@ export const SavedTranscriptionsPanel = ({
                   className="py-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center">
+                    <div className="flex items-center ">
                       {t.thumbnail_url && (
                         <img
                           src={`http://localhost:8000${t.thumbnail_url}`}

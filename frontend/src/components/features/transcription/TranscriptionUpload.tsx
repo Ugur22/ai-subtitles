@@ -2274,11 +2274,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     </button>
                   </div>
 
-                  <div className="flex-grow overflow-auto">
+                  <div className="flex-grow overflow-auto relative">
                     {!showSummary && (
-                      <div className="h-full">
-                        {/* Transcript content */}
-                        <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                      <>
+                        {/* Sticky Show Translation button */}
+                        <div className="sticky top-0 bg-white z-10 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
                           <div className="flex items-center space-x-2">
                             <button
                               onClick={() =>
@@ -2297,6 +2297,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             </button>
                           </div>
                         </div>
+                        {/* Transcript content */}
                         <div className="p-4 space-y-2">
                           {transcription.transcription.segments.map(
                             (segment) => (
@@ -2311,7 +2312,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               >
                                 <div className="flex items-start gap-4">
                                   {segment.screenshot_url && (
-                                    <div className="flex-shrink-0  ">
+                                    <div className="flex-shrink-0 ">
                                       <img
                                         src={`http://localhost:8000${segment.screenshot_url}`}
                                         alt={`Screenshot at ${segment.start_time}`}
@@ -2353,7 +2354,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                           : ""
                                       }`}
                                     >
-                                      {translationMethod !== "none" &&
+                                      {showTranslation &&
                                       segment.translation ? (
                                         <>
                                           {segment.translation}
@@ -2371,7 +2372,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             )
                           )}
                         </div>
-                      </div>
+                      </>
                     )}
 
                     {/* Summary Panel */}
