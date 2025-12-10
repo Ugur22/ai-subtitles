@@ -1475,10 +1475,26 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
         # Check if we already have a transcription for this file
         existing_transcription = get_transcription(video_hash)
         if existing_transcription:
-            print(f"Found existing transcription for {file.filename} with hash {video_hash}")
-            last_transcription_data = existing_transcription
-            request.app.state.last_transcription = existing_transcription
-            return existing_transcription
+            # Check if the cached transcription is valid (has segments)
+            segments_count = len(existing_transcription.get('transcription', {}).get('segments', []))
+            if segments_count == 0:
+                print(f"⚠ WARNING: Found cached transcription with 0 segments. Deleting and re-transcribing...")
+                # Delete the invalid cached transcription
+                try:
+                    conn = sqlite3.connect('transcriptions.db')
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM transcriptions WHERE video_hash = ?", (video_hash,))
+                    conn.commit()
+                    conn.close()
+                    print(f"Deleted invalid cached transcription for {video_hash}")
+                except Exception as e:
+                    print(f"Error deleting invalid transcription: {str(e)}")
+                # Continue with new transcription (don't return, fall through)
+            else:
+                print(f"Found existing transcription for {file.filename} with hash {video_hash} ({segments_count} segments)")
+                last_transcription_data = existing_transcription
+                request.app.state.last_transcription = existing_transcription
+                return existing_transcription
 
         # Save a permanent copy of the video file
         permanent_storage_dir = os.path.join("static", "videos")
@@ -1511,8 +1527,12 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
         detected_language = info.language
         
         # Format segments to match expected structure and preserve original language
+        # IMPORTANT: Convert generator to list first, as generators can only be consumed once
+        segments_list = list(segments)
+        print(f"Total segments from Whisper: {len(segments_list)}")
+        
         formatted_segments = []
-        for i, seg in enumerate(segments):
+        for i, seg in enumerate(segments_list):
             formatted_segments.append({
                 "id": str(uuid.uuid4()),
                 "start": seg.start,
@@ -1523,14 +1543,18 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
                 "translation": None,  # Will be populated by translate_segments if needed
             })
         
+        print(f"Formatted {len(formatted_segments)} segments")
+        
         # Translate if source language is not English
         if detected_language and detected_language.lower() not in ['en', 'english']:
-            print(f"Detected language: {detected_language}. Translating segments...")
+            print(f"Detected language: {detected_language}. Translating {len(formatted_segments)} segments...")
             try:
                 formatted_segments = translate_segments(formatted_segments, detected_language)
-                print("Translation completed successfully")
+                print(f"Translation completed successfully. {len(formatted_segments)} segments translated.")
             except Exception as e:
                 print(f"Translation failed: {str(e)}. Continuing with original language only...")
+                import traceback
+                traceback.print_exc()
                 # Continue without translation if it fails
         else:
             print("Language is English. No translation needed.")
@@ -1560,7 +1584,7 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             "filename": file.filename,
             "video_hash": video_hash,
             "transcription": {
-                "text": "".join([seg.text for seg in segments]),
+                "text": "".join([seg.text for seg in segments_list]),
                 "language": info.language,
                 "duration": duration_str,
                 "segments": formatted_segments,
