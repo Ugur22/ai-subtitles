@@ -1501,21 +1501,27 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   return (
-    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
       {/* Spinner overlay when transcribing */}
       {isTranscribing && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-8 shadow-2xl animate-pulse">
-            <div className="flex justify-center mb-4">
-              <div className="animate-spin">
-                <FaSpinner size={48} color="#6366f1" />
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md">
+          <div className="bg-white rounded-3xl p-12 shadow-2xl max-w-md">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center animate-pulse">
+                <div className="animate-spin">
+                  <FaSpinner size={32} color="white" />
+                </div>
               </div>
             </div>
-            <div className="text-gray-800 text-xl font-semibold text-center">
-              Transcribing, please wait...
+            <div className="text-gray-900 text-xl font-bold text-center mb-2">
+              Transcribing your file...
             </div>
-            <div className="text-gray-600 text-sm text-center mt-2">
-              This may take a few minutes
+            <div className="text-gray-600 text-sm text-center leading-relaxed">
+              Our AI is processing your content. This may take a few minutes
+              depending on the file size.
+            </div>
+            <div className="mt-6 w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full w-1/3 bg-gradient-to-r from-indigo-500 to-purple-600 animate-pulse"></div>
             </div>
           </div>
         </div>
@@ -1524,19 +1530,44 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         {/* Upload Section */}
         {!transcription && (
           <div className="mx-auto max-w-5xl">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl border border-white/20 overflow-hidden">
-              <div className="p-8">
-                <div className="text-center mb-8">
-                  <h2 className="text-3xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-                    Upload Your File
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center">
+                  <svg
+                    className="w-6 h-6 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h1 className="text-4xl font-bold text-gray-900">AI Subs</h1>
+                  <p className="text-sm text-gray-500">
+                    Intelligent Transcription & Subtitle Generation
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+              <div className="p-8 md:p-10">
+                <div className="text-center mb-10">
+                  <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3">
+                    Transform Your Media Into Text
                   </h2>
                   <p className="text-gray-600 max-w-2xl mx-auto leading-relaxed">
-                    Upload your video or audio file and our AI will transcribe
-                    it with timestamps.
+                    Upload a video or audio file and our advanced AI will
+                    automatically transcribe it with accurate timestamps.
                     <br />
-                    <span className="text-indigo-600 font-medium">
-                      Now supports large video files - we'll automatically
-                      extract the audio!
+                    <span className="inline-block mt-2 text-indigo-600 font-semibold">
+                      ⚡ Supports large files • 30+ languages • Instant results
                     </span>
                   </p>
                 </div>
@@ -1544,16 +1575,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 <div
                   className={`
                     relative flex flex-col items-center justify-center
-                    w-full max-w-2xl mx-auto h-64 border-2 border-dashed rounded-2xl
+                    w-full max-w-2xl mx-auto h-72 border-3 border-dashed rounded-3xl
                     transition-all duration-300 ease-in-out cursor-pointer
                     ${
                       dragActive
-                        ? "border-indigo-400 bg-indigo-50 scale-105"
-                        : "border-gray-300 bg-white hover:bg-indigo-50/50 hover:border-indigo-300 hover:scale-102"
+                        ? "border-indigo-500 bg-indigo-50 shadow-xl scale-[1.02]"
+                        : "border-gray-300 bg-gray-50 hover:bg-indigo-50/70 hover:border-indigo-400 hover:scale-[1.01]"
                     }
                     ${
                       transcribeMutation.isPending
-                        ? "opacity-70 pointer-events-none"
+                        ? "opacity-60 pointer-events-none"
                         : ""
                     }
                   `}
@@ -1563,36 +1594,38 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   onDrop={handleDrop}
                   onClick={handleButtonClick}
                 >
-                  <div className="flex flex-col items-center justify-center pt-6 pb-6 px-8 text-center">
-                    <div className="mb-4">
+                  <div className="flex flex-col items-center justify-center py-8 px-8 text-center">
+                    <div className="mb-6">
                       <div
-                        className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${
-                          dragActive ? "bg-indigo-500" : "bg-indigo-100"
+                        className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-4 transition-all duration-300 ${
+                          dragActive
+                            ? "bg-gradient-to-br from-indigo-500 to-purple-600 scale-110 shadow-lg"
+                            : "bg-gradient-to-br from-indigo-100 to-purple-100"
                         }`}
                       >
                         <svg
-                          className={`w-8 h-8 ${
-                            dragActive ? "text-white" : "text-indigo-500"
+                          className={`w-10 h-10 transition-colors duration-300 ${
+                            dragActive ? "text-white" : "text-indigo-600"
                           }`}
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
-                          strokeWidth="2"
+                          strokeWidth="1.5"
                         >
                           <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
                       </div>
                     </div>
-                    <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                      {dragActive
-                        ? "Drop to upload"
-                        : "Drag & drop your file here"}
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                      {dragActive ? "Release to upload" : "Drop your file here"}
                     </h3>
-                    <p className="text-sm text-gray-500 mb-1">
-                      or click to browse files
+                    <p className="text-gray-600 mb-1 text-base font-medium">
+                      or{" "}
+                      <span className="text-indigo-600 underline">browse</span>{" "}
+                      your computer
                     </p>
-                    <p className="text-xs text-gray-400">
-                      Supports MP4, MP3, WAV files up to 10GB
+                    <p className="text-xs text-gray-500 mt-2">
+                      MP4 • MP3 • WAV • WebM • AVI • MKV and more (up to 10GB)
                     </p>
                   </div>
                   <input
@@ -1607,102 +1640,148 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                 {/* Show selected file info if a file is staged */}
                 {file && !transcription && (
-                  <div className="mt-6 max-w-2xl mx-auto text-center p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-200">
-                    <div className="flex items-center justify-center space-x-3">
-                      <div className="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center">
-                        <svg
-                          className="w-5 h-5 text-white"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                          <path
-                            fillRule="evenodd"
-                            d="M4 5a2 2 0 012-2v1a1 1 0 001 1h6a1 1 0 001-1V3a2 2 0 012 2v6.5a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
+                  <div className="mt-8 max-w-2xl mx-auto p-6 bg-gradient-to-r from-emerald-50 via-cyan-50 to-blue-50 rounded-2xl border-2 border-emerald-200 shadow-sm">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0">
+                        <div className="flex items-center justify-center h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-500 shadow-md">
+                          {file.type.startsWith("video/") ? (
+                            <svg
+                              className="h-6 w-6 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                              />
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              className="h-6 w-6 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M9 19V6a2 2 0 012-2h4a2 2 0 012 2v13m-6 0a2 2 0 002 2h4a2 2 0 002-2m0 0V9a2 2 0 00-2-2h-4a2 2 0 00-2 2v13"
+                              />
+                            </svg>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-left">
-                        <p className="text-sm font-semibold text-gray-800">
+                      <div className="flex-grow">
+                        <h4 className="text-sm font-bold text-gray-900 truncate">
                           {file.name}
+                        </h4>
+                        <p className="text-sm text-gray-600 mt-1">
+                          📊 Size: {(file.size / (1024 * 1024)).toFixed(2)} MB
                         </p>
-                        <p className="text-xs text-gray-600">
-                          {(file.size / (1024 * 1024)).toFixed(2)} MB
+                        <p className="text-xs text-emerald-700 font-medium mt-2">
+                          ✓ File ready to transcribe
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* --> Add Language Selection Here <-- */}
-                <div className="mt-4 max-w-lg mx-auto">
-                  <label
-                    htmlFor="language-select"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Source Language (Optional)
-                  </label>
-                  <select
-                    id="language-select"
-                    value={selectedLanguage}
-                    onChange={handleLanguageChange}
-                    disabled={transcribeMutation.isPending} // Disable when processing
-                    className={`mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm ${
-                      transcribeMutation.isPending
-                        ? "bg-gray-100 cursor-not-allowed"
-                        : ""
-                    }`}
-                  >
-                    {languageOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Select the primary language spoken in the file. Leave as
-                    'Auto-detect' if unsure.
-                  </p>
-                </div>
-                {/* --- End Language Selection --- */}
+                {/* Language and Method Selection */}
+                <div className="mt-8 max-w-2xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Language Selection */}
+                  <div>
+                    <label
+                      htmlFor="language-select"
+                      className="block text-sm font-semibold text-gray-900 mb-2"
+                    >
+                      🌐 Source Language
+                    </label>
+                    <select
+                      id="language-select"
+                      value={selectedLanguage}
+                      onChange={handleLanguageChange}
+                      disabled={transcribeMutation.isPending}
+                      className="input-base w-full"
+                    >
+                      {languageOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-xs text-gray-500">
+                      Auto-detect if you're not sure
+                    </p>
+                  </div>
 
-                {/* Add Start Transcription Button - visible only when a file is selected and not processing */}
+                  {/* Transcription Method */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-900 mb-2">
+                      ⚡ Processing Method
+                    </label>
+                    <div className="flex items-center h-11 px-4 border-2 border-gray-300 rounded-lg bg-white hover:border-indigo-400 transition-colors">
+                      <input
+                        type="radio"
+                        id="local-method"
+                        className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                        name="transcriptionMethod"
+                        value="local"
+                        checked={transcriptionMethod === "local"}
+                        onChange={(e) => {
+                          setTranscriptionMethod(
+                            e.target.value as TranscriptionMethod
+                          );
+                        }}
+                      />
+                      <label
+                        htmlFor="local-method"
+                        className="ml-3 text-sm font-medium text-gray-700 cursor-pointer flex-grow"
+                      >
+                        Local (Faster, Free)
+                      </label>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">
+                      Processes on your device
+                    </p>
+                  </div>
+                </div>
+
+                {/* Start Transcription Button */}
                 {file && !transcribeMutation.isPending && !transcription && (
-                  <div className="mt-6 max-w-lg mx-auto text-center">
+                  <div className="mt-10 max-w-2xl mx-auto text-center">
                     <button
                       onClick={handleStartTranscriptionClick}
-                      className="px-6 py-3 bg-gradient-to-r from-violet-500 to-purple-600 font-semibold rounded-lg shadow-md hover:from-violet-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 transition duration-300 ease-in-out"
+                      className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold rounded-xl shadow-lg 
+                                 hover:from-indigo-700 hover:to-purple-700 hover:shadow-xl
+                                 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
+                                 transition-all duration-200 active:scale-95
+                                 flex items-center justify-center gap-2 text-lg"
                     >
-                      Start Transcription
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13 10V3L4 14h7v7l9-11h-7z"
+                        />
+                      </svg>
+                      Start Transcribing
                     </button>
-
-                    {/* Move transcription method toggle here */}
-                    <div className="mt-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Transcription Method
-                      </label>
-                      <div className="flex justify-center space-x-4">
-                        <label className="inline-flex items-center">
-                          <input
-                            type="radio"
-                            className="form-radio"
-                            name="transcriptionMethod"
-                            value="local"
-                            checked={transcriptionMethod === "local"}
-                            onChange={(e) => {
-                              setTranscriptionMethod(
-                                e.target.value as TranscriptionMethod
-                              );
-                              console.log(
-                                "Transcription method selected: local"
-                              );
-                            }}
-                          />
-                          <span className="ml-2">Local (Faster, Free)</span>
-                        </label>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -1875,76 +1954,92 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
             </div>
 
             {/* Features Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center mr-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10 pt-2">
+              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-100 to-violet-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
                     <svg
-                      className="w-4 h-4 text-violet-600"
-                      viewBox="0 0 24 24"
+                      className="w-6 h-6 text-violet-600"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      strokeWidth="1.5"
                     >
-                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
-                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                   </div>
-                  <h3 className="text-sm font-medium text-gray-900">
-                    Accurate Transcription
-                  </h3>
+                  <div className="flex-grow">
+                    <h3 className="text-sm font-bold text-gray-900 mb-1">
+                      High Accuracy
+                    </h3>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Advanced AI model trained on diverse speech patterns for
+                      exceptional accuracy
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-600">
-                  Our AI model is trained on diverse speech patterns for high
-                  accuracy.
-                </p>
               </div>
 
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center mr-3">
+              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
                     <svg
-                      className="w-4 h-4 text-orange-600"
-                      viewBox="0 0 24 24"
+                      className="w-6 h-6 text-orange-600"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      strokeWidth="1.5"
                     >
-                      <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"></path>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                   </div>
-                  <h3 className="text-sm font-medium text-gray-900">
-                    Subtitle Export
-                  </h3>
+                  <div className="flex-grow">
+                    <h3 className="text-sm font-bold text-gray-900 mb-1">
+                      Fast Processing
+                    </h3>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Get results in minutes, not hours. Optimized for speed
+                      without sacrificing quality
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-600">
-                  Export to SRT, VTT, and other formats compatible with video
-                  platforms.
-                </p>
               </div>
 
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div className="flex items-center mb-3">
-                  <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center mr-3">
+              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-rose-100 to-rose-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
                     <svg
-                      className="w-4 h-4 text-rose-600"
-                      viewBox="0 0 24 24"
+                      className="w-6 h-6 text-rose-600"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      strokeWidth="1.5"
                     >
-                      <path d="M3 18v-6a9 9 0 0118 0v6"></path>
-                      <path d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"></path>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h0a1.125 1.125 0 001.125 1.125m0 0v1.5a.5.5 0 01-.5.5H5a.5.5 0 01-.5-.5v-1.5m0 0h-1.5a.5.5 0 01-.5-.5V15m0 0a1.125 1.125 0 001.125-1.125m0 0h0a1.125 1.125 0 001.125 1.125m0 0v1.5a.5.5 0 01-.5.5H5a.5.5 0 01-.5-.5v-1.5"
+                      />
                     </svg>
                   </div>
-                  <h3 className="text-sm font-medium text-gray-900">
-                    Multi-language Support
-                  </h3>
+                  <div className="flex-grow">
+                    <h3 className="text-sm font-bold text-gray-900 mb-1">
+                      30+ Languages
+                    </h3>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Automatic language detection with support for languages
+                      worldwide
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-600">
-                  Automatic language detection with support for over 30
-                  languages.
-                </p>
               </div>
             </div>
           </div>
@@ -1953,97 +2048,119 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         {/* Results Section */}
         {transcription && (
           <div className="space-y-8 h-screen flex flex-col overflow-hidden w-full">
-            <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20 flex-shrink-0">
-              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+            <div className="bg-white rounded-2xl p-6 md:p-8 shadow-lg border border-gray-200 flex-shrink-0">
+              <div className="flex items-start gap-4 mb-6">
+                <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                  <svg
+                    className="w-6 h-6 text-white"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
                 <div className="flex-grow">
-                  <div className="flex items-center mb-4">
-                    <div>
-                      <h2 className="text-2xl font-bold text-gray-900 mb-1">
-                        Transcription Complete
-                      </h2>
-                      <p className="text-sm text-emerald-600 font-medium">
-                        ✨ Ready to explore your content
-                      </p>
-                    </div>
+                  <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-1">
+                    Transcription Ready!
+                  </h2>
+                  <p className="text-sm text-gray-600">
+                    ✨ Your content has been successfully transcribed with
+                    timestamps
+                  </p>
+                </div>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 md:p-5 border border-blue-200">
+                  <div className="text-xs font-semibold text-blue-600 mb-1 uppercase tracking-wide">
+                    📄 File
                   </div>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="bg-gray-50 rounded-xl p-4">
-                      <div className="text-xs text-gray-500 mb-1">File</div>
-                      <div className="text-sm font-semibold text-gray-800 truncate">
-                        {transcription.filename}
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 rounded-xl p-4">
-                      <div className="text-xs text-gray-500 mb-1">Duration</div>
-                      <div className="text-sm font-semibold text-gray-800">
-                        {transcription.transcription.duration}
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 rounded-xl p-4">
-                      <div className="text-xs text-gray-500 mb-1">Language</div>
-                      <div className="text-sm font-semibold text-gray-800 uppercase">
-                        {transcription.transcription.language}
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-r from-orange-50 to-rose-100 rounded-xl p-4">
-                      <div className="text-xs text-emerald-600 mb-1">
-                        Processing Time
-                      </div>
-                      <div className="text-sm font-bold text-emerald-700">
-                        {formatProcessingTime(
-                          transcription.transcription.processing_time
-                        )}
-                      </div>
-                    </div>
+                  <div
+                    className="text-sm font-bold text-gray-900 truncate"
+                    title={transcription.filename}
+                  >
+                    {transcription.filename.length > 20
+                      ? transcription.filename.substring(0, 17) + "..."
+                      : transcription.filename}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button
-                    onClick={handleSearchClick}
-                    className={`px-6 py-3 ${
-                      showSearch
-                        ? "bg-gray-800 hover:bg-gray-900"
-                        : "bg-gray-700 hover:bg-gray-800"
-                    } text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center space-x-2`}
-                  >
-                    <svg
-                      className="w-4 h-4 text-white"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <span className="text-white">
-                      {showSearch ? "Hide Search" : "Show Search"}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={startNewTranscription}
-                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center space-x-2"
-                  >
-                    <svg
-                      className="w-4 h-4 text-white"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                    </svg>
-                    <span className="text-white">New Transcription</span>
-                  </button>
-                  <SubtitleControls filename={transcription.filename} />
+                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 md:p-5 border border-purple-200">
+                  <div className="text-xs font-semibold text-purple-600 mb-1 uppercase tracking-wide">
+                    ⏱️ Duration
+                  </div>
+                  <div className="text-sm font-bold text-gray-900">
+                    {transcription.transcription.duration}
+                  </div>
                 </div>
+                <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 md:p-5 border border-cyan-200">
+                  <div className="text-xs font-semibold text-cyan-600 mb-1 uppercase tracking-wide">
+                    🌐 Language
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 uppercase">
+                    {transcription.transcription.language}
+                  </div>
+                </div>
+                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 md:p-5 border border-emerald-200">
+                  <div className="text-xs font-semibold text-emerald-600 mb-1 uppercase tracking-wide">
+                    ⚡ Speed
+                  </div>
+                  <div className="text-sm font-bold text-emerald-900">
+                    {formatProcessingTime(
+                      transcription.transcription.processing_time
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-wrap">
+                <button
+                  onClick={handleSearchClick}
+                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center justify-center gap-2 ${
+                    showSearch
+                      ? "bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white"
+                      : "bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white"
+                  }`}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <span>{showSearch ? "Hide Search" : "Search"}</span>
+                </button>
+
+                <button
+                  onClick={startNewTranscription}
+                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center justify-center gap-2"
+                >
+                  <svg
+                    className="w-4 h-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                  </svg>
+                  <span>New Transcription</span>
+                </button>
+                <SubtitleControls filename={transcription.filename} />
               </div>
             </div>
 
             {/* New Three-Column Layout */}
-            <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full">
+            <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full gap-4 mt-6">
               {/* Main Column: Video and Transcript/Summary */}
               <div
                 className={`flex-grow flex flex-col overflow-hidden ${
@@ -2052,7 +2169,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               >
                 {/* Video Player (Top) */}
                 {videoUrl && (
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-shrink-0 mb-4">
+                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 mb-4 lg:mb-0">
                     <div
                       className="w-full bg-black flex justify-center relative"
                       onMouseEnter={() => setIsVideoHovered(true)}
@@ -2250,27 +2367,63 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 )}
 
                 {/* Tabs for Transcript and Summary */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex-grow flex flex-col">
-                  <div className="flex border-b border-gray-200 sticky top-0 bg-white z-10">
+                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col mt-4 lg:mt-0">
+                  <div className="flex border-b border-gray-200 sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10">
                     <button
                       onClick={() => setShowSummary(false)}
-                      className={`px-5 py-3 text-sm font-medium ${
+                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
                         !showSummary
-                          ? "text-teal-600 border-b-2 border-teal-500"
-                          : "text-gray-500 hover:text-gray-700"
+                          ? "text-indigo-600"
+                          : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      Transcript
+                      <div className="flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                          />
+                        </svg>
+                        Transcript
+                      </div>
+                      {!showSummary && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
+                      )}
                     </button>
                     <button
                       onClick={() => setShowSummary(true)}
-                      className={`px-5 py-3 text-sm font-medium ${
+                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
                         showSummary
-                          ? "text-teal-600 border-b-2 border-teal-500"
-                          : "text-gray-500 hover:text-gray-700"
+                          ? "text-indigo-600"
+                          : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      Summary
+                      <div className="flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v11m-5-5v6m0 0v3m0-3a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                        Summary
+                      </div>
+                      {showSummary && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
+                      )}
                     </button>
                   </div>
 
@@ -2278,19 +2431,31 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     {!showSummary && (
                       <>
                         {/* Sticky Show Translation button */}
-                        <div className="sticky top-0 bg-white z-10 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                          <div className="flex items-center space-x-2">
+                        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center">
+                          <div className="flex items-center gap-2">
                             <button
                               onClick={() =>
                                 setShowTranslation(!showTranslation)
                               }
-                              className={`px-2 py-1 rounded text-xs 
-                                ${
-                                  showTranslation
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-gray-100 text-gray-600"
-                                }`}
+                              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
+                                showTranslation
+                                  ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md hover:shadow-lg"
+                                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              }`}
                             >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                                />
+                              </svg>
                               {showTranslation
                                 ? "Show Original"
                                 : "Show Translation"}
@@ -2298,25 +2463,25 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           </div>
                         </div>
                         {/* Transcript content */}
-                        <div className="p-4 space-y-2">
+                        <div className="p-5 space-y-4">
                           {transcription.transcription.segments.map(
-                            (segment) => (
+                            (segment, index) => (
                               <div
                                 key={segment.id}
                                 id={`transcript-segment-${segment.id}`}
-                                className={`py-2 border-b border-gray-100 last:border-0 transition-colors duration-200 ${
+                                className={`p-4 md:p-5 rounded-xl border-2 transition-all duration-200 ${
                                   activeSegmentId === segment.id
-                                    ? "bg-blue-50"
-                                    : ""
+                                    ? "bg-blue-50 border-blue-400 shadow-md"
+                                    : "bg-white border-gray-200 hover:border-gray-300"
                                 }`}
                               >
                                 <div className="flex items-start gap-4">
                                   {segment.screenshot_url && (
-                                    <div className="flex-shrink-0 ">
+                                    <div className="flex-shrink-0">
                                       <img
                                         src={`http://localhost:8000${segment.screenshot_url}`}
                                         alt={`Screenshot at ${segment.start_time}`}
-                                        className="w-40 rounded-md shadow-sm hover:shadow-md transition-shadow hover:scale-105 cursor-pointer"
+                                        className="w-40 h-24 object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-110 cursor-pointer border border-gray-200"
                                         onClick={() =>
                                           openImageModal(
                                             `http://localhost:8000${segment.screenshot_url}`
@@ -2325,40 +2490,43 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                       />
                                     </div>
                                   )}
-                                  <div className="flex-grow">
-                                    <div
-                                      className="flex items-center mb-1 text-xs text-teal-600 font-medium cursor-pointer hover:underline"
-                                      onClick={() =>
-                                        seekToTimestamp(segment.start_time)
-                                      }
-                                    >
-                                      <svg
-                                        className="w-3 h-3 mr-1"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
+                                  <div className="flex-grow min-w-0">
+                                    <div className="flex items-center flex-wrap gap-2 mb-2 text-xs font-semibold">
+                                      <button
+                                        onClick={() =>
+                                          seekToTimestamp(segment.start_time)
+                                        }
+                                        className="text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1 transition-colors"
                                       >
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <polyline points="12 6 12 12 16 14"></polyline>
-                                      </svg>
-                                      {segment.start_time} - {segment.end_time}
-                                      <span className="ml-auto px-2 py-0.5 rounded-full text-2xs bg-blue-50">
-                                        Speaker 1
+                                        <svg
+                                          className="w-4 h-4"
+                                          viewBox="0 0 24 24"
+                                          fill="currentColor"
+                                        >
+                                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                                        </svg>
+                                        {segment.start_time}
+                                      </button>
+                                      <span className="text-gray-400">→</span>
+                                      <span className="text-gray-600">
+                                        {segment.end_time}
+                                      </span>
+                                      <span className="ml-auto inline-flex items-center px-3 py-1 rounded-full text-2xs font-semibold bg-indigo-100 text-indigo-700">
+                                        Segment {index + 1}
                                       </span>
                                     </div>
                                     <p
-                                      className={`text-gray-800 ${
+                                      className={`text-gray-800 leading-relaxed ${
                                         activeSegmentId === segment.id
-                                          ? "font-medium"
-                                          : ""
+                                          ? "font-semibold text-gray-900"
+                                          : "font-medium"
                                       }`}
                                     >
                                       {showTranslation &&
                                       segment.translation ? (
                                         <>
                                           {segment.translation}
-                                          <span className="block text-xs text-gray-500 italic">
+                                          <span className="block text-xs text-gray-500 italic mt-2">
                                             Original: {segment.text}
                                           </span>
                                         </>
