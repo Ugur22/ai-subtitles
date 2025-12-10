@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useSpring, animated, config as springConfig } from "react-spring";
 import {
   transcribeVideo,
   TranscriptionResponse,
@@ -15,6 +16,7 @@ import axios from "axios";
 import { FaSpinner } from "react-icons/fa";
 import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
+import { animationConfig } from "../../../utils/animations";
 
 // Add custom subtitle styles
 const subtitleStyles = `
@@ -127,13 +129,29 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
     e.stopPropagation();
   };
 
+  // Modal animation
+  const backdropAnimation = useSpring({
+    opacity: 1,
+    config: animationConfig.smooth,
+    from: { opacity: 0 },
+  });
+
+  const modalAnimation = useSpring({
+    transform: "scale(1)",
+    opacity: 1,
+    config: springConfig.wobbly,
+    from: { transform: "scale(0.9)", opacity: 0 },
+  });
+
   return (
-    <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+    <animated.div
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      style={backdropAnimation}
       onClick={onClose} // Close when clicking backdrop
     >
-      <div
-        className="relative bg-white p-3 rounded-2xl shadow-2xl max-w-6xl max-h-[90vh] animate-in zoom-in duration-200"
+      <animated.div
+        className="relative bg-white p-3 rounded-2xl shadow-2xl max-w-6xl max-h-[90vh]"
+        style={modalAnimation}
         onClick={handleImageClick} // Prevent closing on image container click
       >
         <img
@@ -160,8 +178,8 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
             />
           </svg>
         </button>
-      </div>
-    </div>
+      </animated.div>
+    </animated.div>
   );
 };
 
@@ -252,9 +270,30 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
   };
 
   if (!isOpen) return null;
+
+  // Modal animation
+  const backdropAnimation = useSpring({
+    opacity: 1,
+    config: animationConfig.smooth,
+    from: { opacity: 0 },
+  });
+
+  const modalAnimation = useSpring({
+    transform: "scale(1)",
+    opacity: 1,
+    config: springConfig.wobbly,
+    from: { transform: "scale(0.85)", opacity: 0 },
+  });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md flex flex-col items-center animate-in zoom-in duration-200">
+    <animated.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      style={backdropAnimation}
+    >
+      <animated.div
+        className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md flex flex-col items-center"
+        style={modalAnimation}
+      >
         <div className="mb-6 flex flex-col items-center">
           <div className="w-16 h-16 mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
             <svg
@@ -310,8 +349,8 @@ const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
             Jump
           </button>
         </div>
-      </div>
-    </div>
+      </animated.div>
+    </animated.div>
   );
 };
 
@@ -371,6 +410,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [isVideoHovered, setIsVideoHovered] = useState(false);
   const [volume, setVolume] = useState(1);
   const [showScreenshots, setShowScreenshots] = useState(false);
+  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -694,9 +734,18 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   const seekToTimestamp = (timeString: string) => {
-    if (!videoRef || !timeString) return;
+    console.log("Seeking to timestamp:", timeString, "videoRef:", videoRef);
+    if (!videoRef) {
+      console.error("Video reference not available");
+      return;
+    }
+    if (!timeString) {
+      console.error("Time string is empty");
+      return;
+    }
 
     const seconds = timeToSeconds(timeString);
+    console.log("Converted to seconds:", seconds);
     videoRef.currentTime = seconds;
     videoRef
       .play()
@@ -2469,10 +2518,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               <div
                                 key={segment.id}
                                 id={`transcript-segment-${segment.id}`}
-                                className={`p-4 md:p-5 rounded-xl border-2 transition-all duration-200 ${
+                                onClick={() =>
+                                  seekToTimestamp(segment.start_time)
+                                }
+                                className={`p-4 md:p-5 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md hover:cursor-pointer ${
                                   activeSegmentId === segment.id
                                     ? "bg-blue-50 border-blue-400 shadow-md"
-                                    : "bg-white border-gray-200 hover:border-gray-300"
+                                    : "bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50"
                                 }`}
                               >
                                 <div className="flex items-start gap-4">
@@ -2482,21 +2534,24 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                         src={`http://localhost:8000${segment.screenshot_url}`}
                                         alt={`Screenshot at ${segment.start_time}`}
                                         className="w-40 h-24 object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-110 cursor-pointer border border-gray-200"
-                                        onClick={() =>
+                                        onClick={(e) => {
+                                          e.stopPropagation();
                                           openImageModal(
                                             `http://localhost:8000${segment.screenshot_url}`
-                                          )
-                                        }
+                                          );
+                                        }}
                                       />
                                     </div>
                                   )}
                                   <div className="flex-grow min-w-0">
                                     <div className="flex items-center flex-wrap gap-2 mb-2 text-xs font-semibold">
                                       <button
-                                        onClick={() =>
-                                          seekToTimestamp(segment.start_time)
-                                        }
-                                        className="text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1 transition-colors"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          seekToTimestamp(segment.start_time);
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 hover:text-indigo-900 rounded-lg transition-all duration-200 hover:shadow-sm active:scale-95"
+                                        title="Click to jump to this timestamp"
                                       >
                                         <svg
                                           className="w-4 h-4"
