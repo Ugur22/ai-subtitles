@@ -5,6 +5,7 @@ import {
   transcribeVideo,
   TranscriptionResponse,
   transcribeLocal,
+  transcribeLocalStream,
   translateLocalText,
   updateSpeakerName,
 } from "../../../services/api";
@@ -720,27 +721,58 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     };
   }, []);
 
-  // Update handleStartTranscriptionClick to use polling
+  // Update handleStartTranscriptionClick to use SSE streaming for local transcription
   const handleStartTranscriptionClick = async () => {
     if (file) {
-      setProcessingStatus({ stage: "transcribing", progress: 0 });
+      setProcessingStatus({ stage: "uploading", progress: 0 });
       setError(null);
+
+      // Start elapsed time timer
+      if (processingTimer) {
+        clearInterval(processingTimer);
+      }
+      setElapsedTime(0);
+      const timer = setInterval(() => {
+        setElapsedTime((prev) => prev + 1);
+      }, 1000);
+      setProcessingTimer(timer);
+
       try {
         let result;
         if (transcriptionMethod === "local") {
-          console.log("Calling transcribeLocal()");
-          result = await transcribeLocal(file);
+          // Use streaming version with real-time progress
+          result = await transcribeLocalStream(file, (stage, progress, message) => {
+            setProcessingStatus({
+              stage: stage as ProcessingStage,
+              progress: progress,
+            });
+          });
+
+          // Set the result immediately when streaming completes
+          setTranscription(result);
+          setProcessingStatus({ stage: "complete", progress: 100 });
+
+          // Stop the timer
+          if (processingTimer) {
+            clearInterval(processingTimer);
+            setProcessingTimer(null);
+          }
         } else {
-          console.log("Calling transcribeVideo()");
           result = await transcribeVideo({ file, language: selectedLanguage });
-        }
-        // Start polling for completion using video_hash
-        if (result && result.video_hash) {
-          startPollingForTranscription(result.video_hash);
-        } else {
-          setError("Failed to start transcription: Missing video identifier.");
+          // Start polling for completion using video_hash
+          if (result && result.video_hash) {
+            startPollingForTranscription(result.video_hash);
+          } else {
+            setError("Failed to start transcription: Missing video identifier.");
+          }
         }
       } catch (error) {
+        // Stop the timer on error
+        if (processingTimer) {
+          clearInterval(processingTimer);
+          setProcessingTimer(null);
+        }
+
         setError(
           error instanceof Error
             ? error.message
@@ -1645,23 +1677,188 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       {/* Spinner overlay when transcribing */}
       {isTranscribing && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md">
-          <div className="bg-white rounded-3xl p-12 shadow-2xl max-w-md">
-            <div className="flex justify-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center animate-pulse">
-                <div className="animate-spin">
-                  <FaSpinner size={32} color="white" />
+          <div className="bg-white rounded-3xl p-10 shadow-2xl max-w-lg w-full mx-4">
+            {/* File Info Header */}
+            {file && (
+              <div className="mb-6 pb-6 border-b border-gray-200">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+                    <svg
+                      className="w-6 h-6 text-white"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"
+                      />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {file.name}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {(file.size / (1024 * 1024)).toFixed(1)} MB
+                      {videoRef && ` • ${Math.floor(videoRef.duration / 60)}:${String(Math.floor(videoRef.duration % 60)).padStart(2, '0')} duration`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Processing Stages */}
+            <div className="mb-6 space-y-3">
+              {/* Stage 1: Upload */}
+              <div className="flex items-center gap-3">
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                  processingStatus?.stage === "uploading"
+                    ? "bg-indigo-500 text-white"
+                    : "bg-green-500 text-white"
+                }`}>
+                  {processingStatus?.stage === "uploading" ? (
+                    <FaSpinner className="animate-spin" size={14} />
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className={`text-sm font-medium ${
+                    processingStatus?.stage === "uploading" ? "text-indigo-600" : "text-gray-600"
+                  }`}>
+                    {processingStatus?.stage === "uploading" ? "Uploading..." : "Upload complete"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Stage 2: Extracting */}
+              <div className="flex items-center gap-3">
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                  processingStatus?.stage === "extracting"
+                    ? "bg-indigo-500 text-white"
+                    : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage)
+                    ? "bg-green-500 text-white"
+                    : "bg-gray-200 text-gray-400"
+                }`}>
+                  {processingStatus?.stage === "extracting" ? (
+                    <FaSpinner className="animate-spin" size={14} />
+                  ) : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage) ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <span className="text-xs font-semibold">2</span>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className={`text-sm font-medium ${
+                    processingStatus?.stage === "extracting"
+                      ? "text-indigo-600"
+                      : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage)
+                      ? "text-gray-600"
+                      : "text-gray-400"
+                  }`}>
+                    {processingStatus?.stage === "extracting" ? "Extracting audio..." : "Prepare audio"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Stage 3: Transcribing */}
+              <div className="flex items-center gap-3">
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                  processingStatus?.stage === "transcribing"
+                    ? "bg-indigo-500 text-white"
+                    : processingStatus?.stage === "complete"
+                    ? "bg-green-500 text-white"
+                    : "bg-gray-200 text-gray-400"
+                }`}>
+                  {processingStatus?.stage === "transcribing" ? (
+                    <FaSpinner className="animate-spin" size={14} />
+                  ) : processingStatus?.stage === "complete" ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <span className="text-xs font-semibold">3</span>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className={`text-sm font-medium ${
+                    processingStatus?.stage === "transcribing"
+                      ? "text-indigo-600"
+                      : processingStatus?.stage === "complete"
+                      ? "text-gray-600"
+                      : "text-gray-400"
+                  }`}>
+                    {processingStatus?.stage === "transcribing"
+                      ? "Transcribing speech..."
+                      : processingStatus?.stage === "complete"
+                      ? "Transcription complete"
+                      : "Transcribe audio"}
+                  </p>
                 </div>
               </div>
             </div>
-            <div className="text-gray-900 text-xl font-bold text-center mb-2">
-              Transcribing your file...
+
+            {/* Main Message */}
+            <div className="mb-6">
+              <div className="flex items-center justify-center gap-3 mb-3">
+                <div className="animate-spin">
+                  <FaSpinner size={24} className="text-indigo-600" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900">
+                  {processingStatus?.stage === "uploading" && "Uploading your file..."}
+                  {processingStatus?.stage === "extracting" && "Preparing audio..."}
+                  {processingStatus?.stage === "transcribing" && "AI is transcribing..."}
+                  {processingStatus?.stage === "translating" && "Translating content..."}
+                </h3>
+              </div>
+              <p className="text-sm text-center text-gray-600">
+                {processingStatus?.stage === "uploading" && "Sending your file to our servers"}
+                {processingStatus?.stage === "extracting" && "Extracting and optimizing audio for processing"}
+                {processingStatus?.stage === "transcribing" && videoRef && (
+                  `Processing ${Math.floor(videoRef.duration / 60)} minutes of audio. This may take 2-4 minutes.`
+                )}
+                {processingStatus?.stage === "transcribing" && !videoRef && (
+                  "Analyzing speech patterns and converting to text"
+                )}
+                {processingStatus?.stage === "translating" && "Converting text to your preferred language"}
+              </p>
             </div>
-            <div className="text-gray-600 text-sm text-center leading-relaxed">
-              Our AI is processing your content. This may take a few minutes
-              depending on the file size.
+
+            {/* Elapsed Time */}
+            {elapsedTime > 0 && (
+              <div className="mb-6 text-center">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-full">
+                  <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">
+                    {Math.floor(elapsedTime / 60)}:{String(elapsedTime % 60).padStart(2, '0')} elapsed
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300"
+                style={{
+                  width: `${processingStatus?.progress || 0}%`
+                }}
+              />
             </div>
-            <div className="mt-6 w-full h-1 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full w-1/3 bg-gradient-to-r from-indigo-500 to-purple-600 animate-pulse"></div>
+
+            {/* Helpful Tip */}
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <p className="text-xs text-center text-gray-500">
+                💡 Tip: Processing time varies based on audio length and quality
+              </p>
             </div>
           </div>
         </div>

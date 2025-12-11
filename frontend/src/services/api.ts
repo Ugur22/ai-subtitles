@@ -143,6 +143,72 @@ export const transcribeLocal = async (file: File): Promise<TranscriptionResponse
   }
 };
 
+// New SSE-based transcription with real-time progress
+export const transcribeLocalStream = async (
+  file: File,
+  onProgress: (stage: string, progress: number, message?: string) => void
+): Promise<TranscriptionResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return new Promise((resolve, reject) => {
+    fetch('http://localhost:8000/transcribe_local_stream/', {
+      method: 'POST',
+      body: formData,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (!reader) {
+          throw new Error('No response body');
+        }
+
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete SSE messages
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.slice(6));
+
+              // Call progress callback
+              onProgress(data.stage, data.progress, data.message);
+
+              // If we got the final result
+              if (data.result) {
+                resolve(data.result);
+                return;
+              }
+
+              // If there was an error
+              if (data.error) {
+                reject(new Error(data.error));
+                return;
+              }
+            }
+          }
+        }
+      })
+      .catch((error) => {
+        reject(error);
+      });
+  });
+};
+
 export const searchTranscription = async (
   topic: string,
   semanticSearch: boolean = true

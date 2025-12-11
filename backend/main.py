@@ -28,7 +28,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from fastapi.staticfiles import StaticFiles
 import sqlite3
 import hashlib
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import uuid
 from faster_whisper import WhisperModel
 # MarianMT for local translation
@@ -1866,6 +1866,208 @@ async def transcribe_local(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/transcribe_local_stream/")
+async def transcribe_local_stream(
+    file: UploadFile,
+    request: Request,
+    num_speakers: int = Form(None),
+    min_speakers: int = Form(None),
+    max_speakers: int = Form(None)
+):
+    """Transcribe with real-time progress updates via Server-Sent Events."""
+
+    async def generate_progress():
+        global last_transcription_data
+
+        try:
+            # Progress helper
+            def emit(stage: str, progress: int, message: str = ""):
+                return f"data: {json.dumps({'stage': stage, 'progress': progress, 'message': message})}\n\n"
+
+            yield emit("uploading", 10, "Receiving file...")
+
+            # Save uploaded file
+            suffix = Path(file.filename).suffix
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                content = await file.read()
+                tmp.write(content)
+                temp_path = tmp.name
+
+            yield emit("uploading", 20, "File uploaded successfully")
+
+            # Generate hash and check cache
+            video_hash = generate_file_hash(temp_path)
+            existing_transcription = get_transcription(video_hash)
+
+            if existing_transcription:
+                segments_count = len(existing_transcription.get('transcription', {}).get('segments', []))
+                if segments_count > 0:
+                    print(f"Found cached transcription with {segments_count} segments")
+                    yield emit("complete", 100, "Loaded from cache")
+                    yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': existing_transcription})}\n\n"
+                    return
+
+            # Save permanent copy
+            permanent_storage_dir = os.path.join("static", "videos")
+            os.makedirs(permanent_storage_dir, exist_ok=True)
+            permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
+            if not os.path.exists(permanent_file_path):
+                shutil.copy2(temp_path, permanent_file_path)
+
+            # Get duration
+            duration = 0.0
+            try:
+                duration = get_audio_duration(temp_path)
+                duration_str = str(timedelta(seconds=int(duration)))
+            except Exception as e:
+                duration_str = "Unknown"
+
+            # Determine max_speakers
+            computed_max_speakers = max_speakers
+            if computed_max_speakers is None and num_speakers is None:
+                computed_max_speakers = 5 if duration < 300 else 20
+
+            yield emit("extracting", 30, "Converting audio to WAV format...")
+
+            # Convert to WAV
+            wav_suffix = ".wav"
+            temp_wav_path = None
+            with tempfile.NamedTemporaryFile(suffix=wav_suffix, delete=False) as wav_tmp:
+                temp_wav_path = wav_tmp.name
+
+            command = [
+                'ffmpeg', '-i', temp_path,
+                '-vn', '-ac', '1', '-ar', '16000',
+                temp_wav_path, '-y'
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+
+            yield emit("transcribing", 45, "Starting AI transcription...")
+
+            start_time = time.time()
+            segments, info = local_whisper_model.transcribe(
+                temp_wav_path,
+                task="transcribe",
+                beam_size=1
+            )
+
+            yield emit("transcribing", 60, "Processing transcription segments...")
+
+            segments_list = list(segments)
+            detected_language = info.language
+
+            formatted_segments = []
+            total_segments = len(segments_list)
+            for i, seg in enumerate(segments_list):
+                formatted_segments.append({
+                    "id": str(uuid.uuid4()),
+                    "start": seg.start,
+                    "end": seg.end,
+                    "start_time": format_timestamp(seg.start),
+                    "end_time": format_timestamp(seg.end),
+                    "text": seg.text,
+                    "translation": None,
+                })
+
+                # Emit progress every 10 segments
+                if i % 10 == 0:
+                    segment_progress = 60 + int((i / total_segments) * 10)
+                    yield emit("transcribing", segment_progress, f"Processed {i}/{total_segments} segments...")
+
+            processing_time = time.time() - start_time
+
+            yield emit("transcribing", 70, "Translating if needed...")
+
+            # Translate if not English
+            if detected_language and detected_language.lower() not in ['en', 'english']:
+                try:
+                    formatted_segments = translate_segments(formatted_segments, detected_language)
+                except Exception as e:
+                    print(f"Translation failed: {str(e)}")
+
+            yield emit("extracting", 75, "Extracting video screenshots...")
+
+            # Extract screenshots
+            screenshots_dir = os.path.join("static", "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+            screenshot_count = 0
+
+            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov'}:
+                for idx, segment in enumerate(formatted_segments):
+                    screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
+                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+
+                    success = extract_screenshot(temp_path, segment['start'], screenshot_path)
+                    if success and os.path.exists(screenshot_path):
+                        segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
+                        screenshot_count += 1
+                    else:
+                        segment["screenshot_url"] = None
+
+                    # Progress update every 5 screenshots
+                    if idx % 5 == 0:
+                        screenshot_progress = 75 + int((idx / len(formatted_segments)) * 10)
+                        yield emit("extracting", screenshot_progress, f"Screenshots: {idx}/{len(formatted_segments)}")
+
+            yield emit("transcribing", 85, "Identifying speakers...")
+
+            # Speaker diarization
+            try:
+                formatted_segments = add_speaker_labels(
+                    audio_path=temp_path,
+                    segments=formatted_segments,
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=computed_max_speakers
+                )
+            except Exception as e:
+                print(f"Speaker diarization failed: {str(e)}")
+                for seg in formatted_segments:
+                    if 'speaker' not in seg:
+                        seg['speaker'] = "SPEAKER_00"
+
+            yield emit("complete", 95, "Finalizing transcription...")
+
+            # Build result
+            result = {
+                "filename": file.filename,
+                "video_hash": video_hash,
+                "transcription": {
+                    "text": "".join([seg.text for seg in segments_list]),
+                    "language": info.language,
+                    "duration": duration_str,
+                    "segments": formatted_segments,
+                    "processing_time": format_eta(int(processing_time))
+                }
+            }
+
+            # Store transcription
+            store_transcription(video_hash, file.filename, result, permanent_file_path)
+            last_transcription_data = result
+            request.app.state.last_transcription = result
+            result["video_url"] = f"/video/{video_hash}"
+
+            # Clean up
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                if temp_wav_path and os.path.exists(temp_wav_path):
+                    os.unlink(temp_wav_path)
+            except Exception as e:
+                print(f"Error cleaning up: {e}")
+
+            # Send final result
+            yield emit("complete", 100, "Transcription complete!")
+            yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': result})}\n\n"
+
+        except Exception as e:
+            print(f"Error in streaming transcription: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate_progress(), media_type="text/event-stream")
 
 def get_audio_duration(file_path: str) -> float:
     """Get the duration of an audio/video file using ffmpeg."""
