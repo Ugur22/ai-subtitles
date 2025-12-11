@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   type TranscriptionResponse,
   translateLocalText,
@@ -60,6 +60,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showScreenshots] = useState(false); // Unused but kept for future use
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editSpeakerName, setEditSpeakerName] = useState("");
+  const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
+  const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
 
   // Initialize custom hooks
   const transcriptionHook = useTranscription();
@@ -126,6 +128,26 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const isTranscribing =
     processingStatus !== null && processingStatus.stage !== "complete";
 
+  // Filter segments by selected speaker
+  const displayedSegments = useMemo(() => {
+    if (!transcription) return [];
+    if (!filteredSpeaker) return transcription.transcription.segments;
+    return transcription.transcription.segments.filter(
+      (seg) => seg.speaker === filteredSpeaker
+    );
+  }, [transcription, filteredSpeaker]);
+
+  // Get unique speakers
+  const uniqueSpeakers = useMemo(() => {
+    if (!transcription) return [];
+    const speakers = new Set(
+      transcription.transcription.segments
+        .map((seg) => seg.speaker)
+        .filter((speaker): speaker is string => !!speaker)
+    );
+    return Array.from(speakers).sort();
+  }, [transcription]);
+
   // Cleanup function for progress simulation
   useEffect(() => {
     return () => {
@@ -142,9 +164,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         // currentTime is now managed by the useVideoPlayer hook internally
         // We only need to track the active segment here
 
-        // Find the currently active segment based on video time
-        if (transcription) {
-          const currentSegment = transcription.transcription.segments.find(
+        // Find the currently active segment based on video time (only from displayed segments)
+        if (displayedSegments.length > 0) {
+          const currentSegment = displayedSegments.find(
             (segment) => {
               const startSeconds = convertTimeToSeconds(segment.start_time);
               const endSeconds = convertTimeToSeconds(segment.end_time);
@@ -165,7 +187,18 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         videoRef.removeEventListener("timeupdate", handleTimeUpdate);
       };
     }
-  }, [videoRef, transcription]);
+  }, [videoRef, displayedSegments]);
+
+  // Handle Escape key to clear speaker filter
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && filteredSpeaker) {
+        setFilteredSpeaker(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filteredSpeaker]);
 
   const handleLanguageChange = (
     event: React.ChangeEvent<HTMLSelectElement>
@@ -200,6 +233,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     // Reset UI state
     setShowTranslation(false);
     setSelectedLanguage("");
+    setFilteredSpeaker(null);
 
     // Note: showSubtitles is managed by the useSubtitles hook
     // elapsedTime and processingTimer are managed by useTranscription hook
@@ -236,6 +270,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         },
       });
 
+      // Update filtered speaker if it was renamed
+      if (filteredSpeaker === originalSpeaker) {
+        setFilteredSpeaker(editSpeakerName.trim());
+      }
+
       setEditingSpeaker(null);
       setEditSpeakerName("");
     } catch (err) {
@@ -262,9 +301,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       .play()
       .catch((err: Error) => console.error("Error playing video:", err));
 
-    // Find the corresponding segment in the transcript
-    if (transcription && transcription.transcription.segments) {
-      const segments = transcription.transcription.segments;
+    // Find the corresponding segment in the transcript (only from displayed segments)
+    if (displayedSegments.length > 0) {
+      const segments = displayedSegments;
       const matchingSegmentIndex = segments.findIndex((segment) => {
         const segmentStartSeconds = timeToSeconds(segment.start_time);
         const segmentEndSeconds = timeToSeconds(segment.end_time);
@@ -415,10 +454,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       // Seeking state is managed by useVideoPlayer hook
       // This effect only handles active segment updates after seeking
       const handleSeeked = () => {
-        // Update active segment based on current time
-        if (transcription?.transcription.segments) {
+        // Update active segment based on current time (only from displayed segments)
+        if (displayedSegments.length > 0) {
           const currentTime = videoRef.currentTime;
-          const segments = transcription.transcription.segments;
+          const segments = displayedSegments;
           const matchingSegment = segments.find((segment) => {
             const segmentStartSeconds = timeToSeconds(segment.start_time);
             const segmentEndSeconds = timeToSeconds(segment.end_time);
@@ -460,7 +499,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         videoRef.removeEventListener("seeked", handleSeeked);
       };
     }
-  }, [videoRef, transcription]);
+  }, [videoRef, displayedSegments]);
 
   // --- Spinner/modal overlay logic handled by computed isTranscribing value ---
 
@@ -684,9 +723,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
-                            if (transcription?.transcription.segments) {
-                              const segments =
-                                transcription.transcription.segments;
+                            if (displayedSegments.length > 0) {
+                              const segments = displayedSegments;
                               const matchingSegment = segments.find(
                                 (segment) => {
                                   const segmentStartSeconds = timeToSeconds(
@@ -822,7 +860,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           videoRef={videoRef}
                           duration={videoRef.duration || 0}
                           currentTime={videoRef.currentTime || 0}
-                          segments={transcription.transcription.segments}
+                          segments={displayedSegments}
                           getScreenshotUrlForTime={(time) => {
                             // Find the segment whose start_time is closest to the hovered time
                             if (!transcription.transcription.segments)
@@ -962,11 +1000,144 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 ? "Show Original"
                                 : "Show Translation"}
                             </button>
+
+                            {/* Speaker Filter Dropdown */}
+                            <div className="relative">
+                              <button
+                                onClick={() => setSpeakerDropdownOpen(!speakerDropdownOpen)}
+                                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
+                                  filteredSpeaker
+                                    ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-md hover:shadow-lg"
+                                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                }`}
+                              >
+                                <svg
+                                  className="w-4 h-4"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                                  />
+                                </svg>
+                                <span>
+                                  {filteredSpeaker
+                                    ? formatSpeakerLabel(filteredSpeaker)
+                                    : "All Speakers"}
+                                </span>
+                                <span className="text-xs opacity-75">
+                                  ({displayedSegments.length})
+                                </span>
+                                <svg
+                                  className={`w-4 h-4 transition-transform ${
+                                    speakerDropdownOpen ? "rotate-180" : ""
+                                  }`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 9l-7 7-7-7"
+                                  />
+                                </svg>
+                              </button>
+
+                              {/* Dropdown Menu */}
+                              {speakerDropdownOpen && (
+                                <div className="absolute left-0 mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-20 max-h-96 overflow-y-auto">
+                                  {/* Show All option */}
+                                  <button
+                                    onClick={() => {
+                                      setFilteredSpeaker(null);
+                                      setSpeakerDropdownOpen(false);
+                                    }}
+                                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between ${
+                                      !filteredSpeaker ? "bg-blue-50" : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <svg
+                                        className="w-4 h-4 text-gray-600"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                                        />
+                                      </svg>
+                                      <span className="font-medium text-gray-900">
+                                        All Speakers
+                                      </span>
+                                    </div>
+                                    <span className="text-xs text-gray-500">
+                                      {transcription?.transcription.segments.length}
+                                    </span>
+                                  </button>
+
+                                  {/* Individual speakers */}
+                                  {uniqueSpeakers.map((speaker) => {
+                                    const speakerColors = getSpeakerColor(speaker);
+                                    const segmentCount =
+                                      transcription?.transcription.segments.filter(
+                                        (seg) => seg.speaker === speaker
+                                      ).length || 0;
+
+                                    return (
+                                      <button
+                                        key={speaker}
+                                        onClick={() => {
+                                          setFilteredSpeaker(speaker);
+                                          setSpeakerDropdownOpen(false);
+                                        }}
+                                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between border-t border-gray-100 ${
+                                          filteredSpeaker === speaker
+                                            ? "bg-blue-50"
+                                            : ""
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${speakerColors.bg} ${speakerColors.text} ${speakerColors.border}`}
+                                          >
+                                            <svg
+                                              className="w-3.5 h-3.5"
+                                              fill="currentColor"
+                                              viewBox="0 0 20 20"
+                                            >
+                                              <path
+                                                fillRule="evenodd"
+                                                d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                                                clipRule="evenodd"
+                                              />
+                                            </svg>
+                                            {formatSpeakerLabel(speaker)}
+                                          </span>
+                                        </div>
+                                        <span className="text-xs text-gray-500">
+                                          {segmentCount}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                         {/* Transcript content */}
                         <TranscriptSegmentList
-                          segments={transcription.transcription.segments}
+                          segments={displayedSegments}
                           activeSegmentId={activeSegmentId}
                           showTranslation={showTranslation}
                           seekToTimestamp={seekToTimestamp}
