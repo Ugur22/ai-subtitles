@@ -62,6 +62,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [editSpeakerName, setEditSpeakerName] = useState("");
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
 
   // Initialize custom hooks
   const transcriptionHook = useTranscription();
@@ -590,134 +591,176 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {/* Results Section */}
         {transcription && (
-          <div className="space-y-8 h-screen flex flex-col overflow-hidden w-full">
-            <div className="bg-white rounded-2xl p-6 md:p-8 shadow-lg border border-gray-200 flex-shrink-0">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
-                  <svg
-                    className="w-6 h-6 text-white"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-                <div className="flex-grow">
-                  <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-1">
-                    Transcription Ready!
-                  </h2>
-                  <p className="text-sm text-gray-600">
-                    ✨ Your content has been successfully transcribed with
-                    timestamps
-                  </p>
-                </div>
-              </div>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 md:p-5 border border-blue-200">
-                  <div className="text-xs font-semibold text-blue-600 mb-1 uppercase tracking-wide">
-                    📄 File
+          <div className="space-y-4 h-screen flex flex-col overflow-hidden w-full">
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex-shrink-0 transition-all duration-300">
+              {/* Header Top Row (Always Visible) */}
+              <div className="p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+                {/* Left: File Info */}
+                <div className="flex items-center gap-3 w-full md:w-auto overflow-hidden">
+                  <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                    <svg
+                      className="w-5 h-5 text-white"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
                   </div>
-                  <div
-                    className="text-sm font-bold text-gray-900 truncate"
-                    title={transcription.filename}
-                  >
-                    {transcription.filename.length > 20
-                      ? transcription.filename.substring(0, 17) + "..."
-                      : transcription.filename}
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 md:p-5 border border-purple-200">
-                  <div className="text-xs font-semibold text-purple-600 mb-1 uppercase tracking-wide">
-                    ⏱️ Duration
-                  </div>
-                  <div className="text-sm font-bold text-gray-900">
-                    {transcription.transcription.duration}
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 md:p-5 border border-cyan-200">
-                  <div className="text-xs font-semibold text-cyan-600 mb-1 uppercase tracking-wide">
-                    🌐 Language
-                  </div>
-                  <div className="text-sm font-bold text-gray-900 uppercase">
-                    {transcription.transcription.language}
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 md:p-5 border border-emerald-200">
-                  <div className="text-xs font-semibold text-emerald-600 mb-1 uppercase tracking-wide">
-                    ⚡ Speed
-                  </div>
-                  <div className="text-sm font-bold text-emerald-900">
-                    {formatProcessingTime(
-                      transcription.transcription.processing_time
+                  <div className="flex flex-col min-w-0">
+                    <h2
+                      className="text-sm font-bold text-gray-900 truncate max-w-[200px] md:max-w-md"
+                      title={transcription.filename}
+                    >
+                      {transcription.filename}
+                    </h2>
+                    {!isHeaderExpanded && (
+                      <div className="flex items-center gap-3 text-xs text-gray-500">
+                        <span className="font-medium text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
+                          {transcription.transcription.duration}
+                        </span>
+                        <span className="font-medium text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded uppercase">
+                          {transcription.transcription.language}
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
+
+                {/* Right: Actions */}
+                <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                  <button
+                    onClick={handleSearchClick}
+                    className={`p-2 rounded-lg transition-colors ${
+                      showSearch
+                        ? "bg-slate-800 text-white hover:bg-slate-900"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                    title={showSearch ? "Hide Search" : "Show Search"}
+                  >
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                  </button>
+
+                  <button
+                    onClick={startNewTranscription}
+                    className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                    title="New Transcription"
+                  >
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                  </button>
+
+                  <div className="h-6 w-px bg-gray-200 mx-1"></div>
+
+                  <SubtitleControls filename={transcription.filename} />
+
+                  <div className="h-6 w-px bg-gray-200 mx-1"></div>
+
+                  <button
+                    onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
+                    className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
+                  >
+                    <svg
+                      className={`w-5 h-5 transition-transform duration-200 ${
+                        isHeaderExpanded ? "rotate-180" : ""
+                      }`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-wrap">
-                <button
-                  onClick={handleSearchClick}
-                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center justify-center gap-2 ${
-                    showSearch
-                      ? "bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white"
-                      : "bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white"
-                  }`}
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                  >
-                    <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <span>{showSearch ? "Hide Search" : "Search"}</span>
-                </button>
-
-                <button
-                  onClick={startNewTranscription}
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center justify-center gap-2"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                  >
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                  </svg>
-                  <span>New Transcription</span>
-                </button>
-                <SubtitleControls filename={transcription.filename} />
-              </div>
+              {/* Expanded Content */}
+              {isHeaderExpanded && (
+                <div className="px-6 pb-6 border-t border-gray-100 pt-6 animate-fade-in">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
+                      <div className="text-xs font-semibold text-blue-600 mb-1 uppercase tracking-wide">
+                        📄 File
+                      </div>
+                      <div
+                        className="text-sm font-bold text-gray-900 truncate"
+                        title={transcription.filename}
+                      >
+                        {transcription.filename}
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
+                      <div className="text-xs font-semibold text-purple-600 mb-1 uppercase tracking-wide">
+                        ⏱️ Duration
+                      </div>
+                      <div className="text-sm font-bold text-gray-900">
+                        {transcription.transcription.duration}
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 border border-cyan-200">
+                      <div className="text-xs font-semibold text-cyan-600 mb-1 uppercase tracking-wide">
+                        🌐 Language
+                      </div>
+                      <div className="text-sm font-bold text-gray-900 uppercase">
+                        {transcription.transcription.language}
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
+                      <div className="text-xs font-semibold text-emerald-600 mb-1 uppercase tracking-wide">
+                        ⚡ Speed
+                      </div>
+                      <div className="text-sm font-bold text-emerald-900">
+                        {formatProcessingTime(
+                          transcription.transcription.processing_time
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* New Three-Column Layout */}
             <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full gap-4 mt-6">
               {/* Main Column: Video and Transcript/Summary */}
               <div
-                className={`flex-grow flex flex-col overflow-hidden ${
-                  showSearch ? "lg:w-3/4" : "lg:w-full"
-                }`}
+                className={`flex-grow flex flex-col xl:flex-row overflow-hidden gap-4 w-full`}
               >
-                {/* Video Player (Top) */}
+                {/* Video Player (Top/Left) */}
                 {videoUrl && (
-                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 mb-4 lg:mb-0">
-                    <div className="w-full bg-black flex justify-center relative">
+                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 w-full xl:w-3/5 flex flex-col">
+                    <div className="w-full bg-black flex justify-center relative flex-grow items-center">
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
-                        className="w-full max-h-[50vh] object-contain"
+                        className="w-full max-h-[50vh] xl:max-h-full object-contain"
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
@@ -905,7 +948,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 )}
 
                 {/* Tabs for Transcript and Summary */}
-                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col mt-4 lg:mt-0">
+                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col w-full xl:w-2/5">
                   <div className="flex border-b border-gray-200 sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10">
                     <button
                       onClick={() => setShowSummary(false)}
@@ -1204,10 +1247,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
               {/* Right Column: Search & Analysis Panels */}
               {showSearch && (
-                <div
-                  className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4"
-                  style={{ display: "none" }}
-                >
+                <div className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4 hidden">
                   <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
                     <div className="px-4 py-3 flex items-center justify-between">
                       <h3 className="text-sm font-medium text-gray-800">

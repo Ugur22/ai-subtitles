@@ -6,7 +6,7 @@ const queryClient = new QueryClient();
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="mx-auto max-w-8xl px-4 sm:px-6 lg:px-8">
+      <div className="w-full">
         <TranscriptionUpload />
       </div>
     </QueryClientProvider>
