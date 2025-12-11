@@ -79,11 +79,11 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
   return (
     <div className="w-full px-4 pb-2 select-none">
       <div className="flex items-center text-xs font-mono mb-1">
-        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">
+        <span className="text-gray-200 font-semibold drop-shadow-sm p-2">
           {formatTime(currentTime)}
         </span>
         <div className="flex-1" />
-        <span className="text-gray-900 font-semibold drop-shadow-sm p-2">
+        <span className="text-gray-200 font-semibold drop-shadow-sm p-2">
           {formatTime(duration)}
         </span>
       </div>
