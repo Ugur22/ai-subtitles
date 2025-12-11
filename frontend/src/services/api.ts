@@ -44,6 +44,7 @@ export interface TranscriptionResponse {
       text: string;
       translation?: string | null;
       screenshot_url?: string;  // Optional since it's only present for video files
+      speaker?: string;  // Speaker label from diarization
     }>;
     processing_time?: string;
   };
@@ -188,4 +189,26 @@ export const translateLocalText = async (text: string, sourceLang: string): Prom
     source_lang: sourceLang,
   });
   return response.data.translation;
+};
+
+export const updateSpeakerName = async (
+  videoHash: string,
+  originalSpeaker: string,
+  newSpeakerName: string
+): Promise<{
+  success: boolean;
+  message: string;
+  updated_count: number;
+  video_hash: string;
+}> => {
+  const response = await api.post<{
+    success: boolean;
+    message: string;
+    updated_count: number;
+    video_hash: string;
+  }>(`/transcription/${videoHash}/speaker`, {
+    original_speaker: originalSpeaker,
+    new_speaker_name: newSpeakerName,
+  });
+  return response.data;
 }; 

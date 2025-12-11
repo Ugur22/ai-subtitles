@@ -1,7 +1,12 @@
 import os
+import traceback
 from fastapi import FastAPI, UploadFile, HTTPException, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+# Load environment variables immediately
+load_dotenv()
+
 from pathlib import Path
 import tempfile
 from typing import Dict, List
@@ -32,8 +37,19 @@ from transformers import MarianMTModel, MarianTokenizer
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
+# Import speaker diarization module
+try:
+    from speaker_diarization import SpeakerDiarizer, format_speaker_label
+    SPEAKER_DIARIZATION_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Speaker diarization not available: {str(e)}")
+    SPEAKER_DIARIZATION_AVAILABLE = False
+
 # Global variable to store the last transcription
 last_transcription_data = None
+
+# Global variable for speaker diarization
+speaker_diarizer = None
 
 # Initialize the summarization model
 def get_summarization_model():
@@ -82,6 +98,149 @@ def generate_local_summary(text, max_length=150, min_length=50):
     except Exception as e:
         print(f"Error generating summary: {str(e)}")
         return f"Summary generation failed: {str(e)}"
+
+# Speaker Diarization functions
+def get_speaker_diarizer():
+    """Get or initialize the speaker diarization pipeline"""
+    global speaker_diarizer
+
+    if not SPEAKER_DIARIZATION_AVAILABLE:
+        print("Speaker diarization module not available")
+        return None
+
+    # Check if feature is enabled
+    enable_diarization = os.getenv("ENABLE_SPEAKER_DIARIZATION", "true").lower() == "true"
+    if not enable_diarization:
+        print("Speaker diarization is disabled in .env")
+        return None
+
+    if speaker_diarizer is None:
+        try:
+            hf_token = os.getenv("HUGGINGFACE_TOKEN")
+            if not hf_token:
+                print("Warning: HUGGINGFACE_TOKEN not found in .env file")
+                print("Speaker diarization will be disabled")
+                print("Get token from: https://huggingface.co/settings/tokens")
+                print("Accept conditions at: https://huggingface.co/pyannote/speaker-diarization")
+                return None
+
+            speaker_diarizer = SpeakerDiarizer(use_auth_token=hf_token)
+            print("Speaker diarization module initialized successfully")
+        except Exception as e:
+            print(f"Error initializing speaker diarization: {str(e)}")
+            return None
+
+    return speaker_diarizer
+
+def add_speaker_labels(audio_path: str, segments: List[Dict], num_speakers: int = None, min_speakers: int = None, max_speakers: int = None) -> List[Dict]:
+    """
+    Add speaker labels to transcription segments
+
+    Args:
+        audio_path: Path to the audio file
+        segments: List of transcription segments
+        num_speakers: Optional number of speakers (if known)
+        min_speakers: Optional minimum number of speakers
+        max_speakers: Optional maximum number of speakers
+
+    Returns:
+        Segments with speaker labels added
+    """
+    try:
+        diarizer = get_speaker_diarizer()
+
+        if diarizer is None:
+            print("Speaker diarization not available, adding default speaker labels...")
+            # Add default speaker to all segments
+            for seg in segments:
+                seg['speaker'] = "SPEAKER_00"
+            return segments
+
+        print(f"\n{'='*60}")
+        print("🎤 Starting speaker diarization...")
+        print(f"{'='*60}")
+
+        # Get min/max speakers from environment or use defaults
+        # PRIORITIZE function arguments over environment variables
+        env_min = int(os.getenv("MIN_SPEAKERS", "1"))
+        env_max = int(os.getenv("MAX_SPEAKERS", "5")) # Changed default from 10 to 5
+
+        final_min_speakers = min_speakers if min_speakers is not None else env_min
+        final_max_speakers = max_speakers if max_speakers is not None else env_max
+
+        # Prepare audio for diarization
+        # Pyannote prefers WAV files and sometimes fails with MP4/other containers
+        temp_wav_path = None
+        diarization_input_path = audio_path
+
+        try:
+            # Check if conversion is needed (if not .wav or if we just want to be safe)
+            if not audio_path.lower().endswith('.wav'):
+                print("Converting input to WAV for speaker diarization...")
+                # Create a temporary WAV file
+                fd, temp_wav_path = tempfile.mkstemp(suffix='.wav')
+                os.close(fd)
+                
+                # Convert to mono 16kHz WAV using ffmpeg
+                command = [
+                    'ffmpeg', '-i', audio_path,
+                    '-vn', '-ac', '1', '-ar', '16000',
+                    temp_wav_path, '-y'
+                ]
+                subprocess.run(command, check=True, capture_output=True)
+                diarization_input_path = temp_wav_path
+                print(f"Created temporary WAV file for diarization: {temp_wav_path}")
+
+            # Perform diarization
+            speaker_segments = diarizer.diarize(
+                diarization_input_path,
+                num_speakers=num_speakers,
+                min_speakers=final_min_speakers if num_speakers is None else None,
+                max_speakers=final_max_speakers if num_speakers is None else None
+            )
+
+            # Assign speakers to transcription segments
+            segments_with_speakers = diarizer.assign_speakers_to_transcription(
+                segments,
+                speaker_segments
+            )
+
+            # Print statistics
+            unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in segments_with_speakers)
+            speaker_counts = {}
+            for seg in segments_with_speakers:
+                spk = seg.get('speaker', 'UNKNOWN')
+                speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
+
+            print(f"\n{'='*60}")
+            print(f"✅ Speaker diarization complete!")
+            print(f"Found {len(unique_speakers)} unique speakers:")
+            for spk in sorted(unique_speakers):
+                formatted_name = format_speaker_label(spk)
+                print(f"  - {formatted_name}: {speaker_counts.get(spk, 0)} segments")
+            print(f"{'='*60}\n")
+
+            return segments_with_speakers
+
+        finally:
+            # Clean up temporary WAV file
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try:
+                    os.unlink(temp_wav_path)
+                    print(f"Cleaned up temporary diarization file: {temp_wav_path}")
+                except Exception as e:
+                    print(f"Warning: Failed to delete temp file {temp_wav_path}: {e}")
+
+    except Exception as e:
+        print(f"❌ Error in speaker diarization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # If diarization fails, add default speaker to all segments
+        print("⚠️  Falling back to single speaker...")
+        for seg in segments:
+            seg['speaker'] = "SPEAKER_00"
+        return segments
 
 # Database functions
 def init_db():
@@ -865,6 +1024,33 @@ async def transcribe_video(
             else:
                  print("\nFile is not a video format. Skipping screenshot extraction.")
 
+            # Add speaker diarization
+            try:
+                print("\n" + "="*60)
+                print("Adding speaker labels to segments...")
+                print("="*60)
+
+                # Use the original input file for diarization (better quality)
+                all_segments = add_speaker_labels(
+                    audio_path=temp_input_path,
+                    segments=all_segments,
+                    num_speakers=None  # Auto-detect number of speakers
+                )
+
+                # Update response segments with speaker information
+                response.segments = all_segments
+
+                print("Speaker labeling complete!")
+            except Exception as e:
+                print(f"⚠️  Speaker diarization failed: {str(e)}")
+                # Continue without speaker labels
+                import traceback
+                traceback.print_exc()
+                # Ensure all segments have a speaker field
+                for seg in all_segments:
+                    if 'speaker' not in seg:
+                        seg['speaker'] = "SPEAKER_00"
+
             # Process transcription result
             print("\nProcessing final transcription result...")
             result = {
@@ -888,6 +1074,7 @@ async def transcribe_video(
                     segment_text = segment.get('text', '')
                     segment_translation = segment.get('translation', None)
                     segment_screenshot_url = segment.get('screenshot_url', None)
+                    segment_speaker = segment.get('speaker', 'SPEAKER_00')  # Get speaker label
                     segment_dict = {
                         "id": segment_id,
                         "start": segment_start,
@@ -895,7 +1082,8 @@ async def transcribe_video(
                         "start_time": format_timestamp(segment_start),
                         "end_time": format_timestamp(segment_end),
                         "text": segment_text,
-                        "translation": segment_translation  # Always include translation field
+                        "translation": segment_translation,  # Always include translation field
+                        "speaker": segment_speaker  # Add speaker field
                     }
                     if segment_screenshot_url:
                         segment_dict["screenshot_url"] = segment_screenshot_url
@@ -1456,11 +1644,17 @@ async def delete_transcription(video_hash: str):
 
 # Endpoint for local transcription using faster-whisper
 @app.post("/transcribe_local/")
-async def transcribe_local(file: UploadFile, request: Request) -> Dict:
+async def transcribe_local(
+    file: UploadFile, 
+    request: Request,
+    num_speakers: int = Form(None),
+    min_speakers: int = Form(None),
+    max_speakers: int = Form(None)
+) -> Dict:
     """Transcribe uploaded audio/video file locally using faster-whisper (optimized for speed, direct English output)."""
     global last_transcription_data
     
-    print("[INFO] Using local faster-whisper for transcription (via /transcribe_local/ endpoint)")
+    print(f"[INFO] Using local faster-whisper. Params: num_speakers={num_speakers}, min={min_speakers}, max={max_speakers}")
     try:
         suffix = Path(file.filename).suffix
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -1507,6 +1701,7 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             print(f"Permanent copy already exists at: {permanent_file_path}")
 
         # Get audio duration
+        duration = 0.0
         try:
             duration = get_audio_duration(temp_path)
             duration_str = str(timedelta(seconds=int(duration)))
@@ -1514,10 +1709,46 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             print(f"Error getting duration: {e}")
             duration_str = "Unknown"
 
+        # Intelligently determine max_speakers based on duration if not provided
+        if max_speakers is None and num_speakers is None:
+            if duration < 300: # Less than 5 minutes
+                print(f"Short video detected ({duration}s). Setting max_speakers=5.")
+                max_speakers = 5
+            else:
+                print(f"Long video detected ({duration}s). Setting max_speakers=20.")
+                max_speakers = 20
+
         start_time = time.time()
+        
+        # Convert to WAV first to avoid 'av' decoding issues with MP4
+        # Create a temporary WAV file
+        wav_suffix = ".wav"
+        temp_wav_path = None
+        with tempfile.NamedTemporaryFile(suffix=wav_suffix, delete=False) as wav_tmp:
+            temp_wav_path = wav_tmp.name
+            
+        print(f"Converting input to WAV: {temp_wav_path}")
+        try:
+            # Convert to mono 16kHz WAV using ffmpeg
+            command = [
+                'ffmpeg', '-i', temp_path,
+                '-vn', '-ac', '1', '-ar', '16000',
+                temp_wav_path, '-y'
+            ]
+            result = subprocess.run(command, check=True, capture_output=True)
+            print("Conversion to WAV successful")
+            transcribe_input = temp_wav_path
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg conversion failed with exit code {e.returncode}")
+            print(f"FFmpeg stderr: {e.stderr.decode()}")
+            raise HTTPException(status_code=400, detail=f"Failed to process audio: {e.stderr.decode()}")
+        except Exception as e:
+            print(f"Unexpected error during audio conversion: {e}")
+            raise HTTPException(status_code=500, detail=f"Audio conversion error: {str(e)}")
+
         # --- KEY: Transcribe to original language, then translate if needed ---
         segments, info = local_whisper_model.transcribe(
-            temp_path,
+            transcribe_input,
             task="transcribe",  # Always transcribe to original language
             beam_size=1         # Fast processing
         )
@@ -1580,6 +1811,24 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
             
             print(f"\nFinished screenshot extraction. Successfully added {screenshot_count} screenshots.")
 
+        # Add speaker diarization
+        try:
+            print("\nAdding speaker labels...")
+            formatted_segments = add_speaker_labels(
+                audio_path=temp_path,
+                segments=formatted_segments,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers
+            )
+            print("Speaker labeling complete")
+        except Exception as e:
+            print(f"⚠️  Speaker diarization failed: {str(e)}")
+            # Continue without speaker labels - ensure all segments have speaker field
+            for seg in formatted_segments:
+                if 'speaker' not in seg:
+                    seg['speaker'] = "SPEAKER_00"
+
         result = {
             "filename": file.filename,
             "video_hash": video_hash,
@@ -1602,15 +1851,20 @@ async def transcribe_local(file: UploadFile, request: Request) -> Dict:
         # Add video URL to the result
         result["video_url"] = f"/video/{video_hash}"
 
-        # Clean up temporary file
+        # Clean up temporary files
         try:
-            os.unlink(temp_path)
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                os.unlink(temp_wav_path)
         except Exception as e:
             print(f"Error cleaning up temp file: {e}")
 
         return result
     except Exception as e:
         print(f"Error in local transcription: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 def get_audio_duration(file_path: str) -> float:
@@ -1656,6 +1910,69 @@ async def translate_local_endpoint(request: Request) -> Dict:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Local translation failed: {str(e)}")
+
+@app.post("/transcription/{video_hash}/speaker")
+async def update_speaker_name(video_hash: str, request: Request):
+    """Update a speaker's name in a transcription"""
+    try:
+        body = await request.json()
+        original_speaker = body.get("original_speaker")
+        new_speaker_name = body.get("new_speaker_name")
+        
+        if not original_speaker or not new_speaker_name:
+            raise HTTPException(status_code=400, detail="Missing original_speaker or new_speaker_name")
+            
+        # Get existing transcription
+        transcription_data = get_transcription(video_hash)
+        if not transcription_data:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+            
+        # Update segments
+        updated_count = 0
+        segments = transcription_data.get("transcription", {}).get("segments", [])
+        
+        for segment in segments:
+            current_speaker = segment.get("speaker")
+            # Match strictly against the internal label (e.g. SPEAKER_00) or previously renamed name
+            if current_speaker == original_speaker:
+                segment["speaker"] = new_speaker_name
+                updated_count += 1
+                
+        if updated_count == 0:
+            return {
+                "success": False, 
+                "message": f"No segments found for speaker '{original_speaker}'",
+                "updated_count": 0
+            }
+            
+        # Save back to database
+        filename = transcription_data.get("filename", "unknown")
+        file_path = transcription_data.get("file_path")
+        
+        success = store_transcription(video_hash, filename, transcription_data, file_path)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save updates to database")
+            
+        # Update global cache if it matches
+        global last_transcription_data
+        if last_transcription_data and last_transcription_data.get("video_hash") == video_hash:
+            last_transcription_data = transcription_data
+            request.app.state.last_transcription = transcription_data
+            
+        return {
+            "success": True,
+            "message": f"Updated {updated_count} segments from '{original_speaker}' to '{new_speaker_name}'",
+            "updated_count": updated_count,
+            "video_hash": video_hash
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating speaker name: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

@@ -14,5 +14,5 @@ torchaudio==2.7.0
 transformers==4.38.2
 numpy==1.26.4
 pyannote.audio==3.1.1
-faster-whisper
-ffmpeg-python 
+faster-whisper==1.2.1
+av==13.1.0 

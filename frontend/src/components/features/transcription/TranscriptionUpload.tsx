@@ -6,6 +6,7 @@ import {
   TranscriptionResponse,
   transcribeLocal,
   translateLocalText,
+  updateSpeakerName,
 } from "../../../services/api";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
@@ -106,6 +107,57 @@ const checkFileExists = async (path: string): Promise<boolean> => {
     console.warn("Error checking if file exists:", error);
     return false;
   }
+};
+
+// Helper function to format speaker labels
+const formatSpeakerLabel = (speaker: string): string => {
+  if (!speaker) return "Speaker 1";
+
+  // Convert SPEAKER_00 to Speaker 1, SPEAKER_01 to Speaker 2, etc.
+  if (speaker.startsWith("SPEAKER_")) {
+    try {
+      const speakerNum = parseInt(speaker.split("_")[1]) + 1;
+      return `Speaker ${speakerNum}`;
+    } catch {
+      return speaker;
+    }
+  }
+
+  return speaker;
+};
+
+// Helper function to get consistent colors for speakers
+const getSpeakerColor = (
+  speaker: string
+): { bg: string; text: string; border: string } => {
+  const colors = [
+    {
+      bg: "bg-violet-100",
+      text: "text-violet-800",
+      border: "border-violet-300",
+    },
+    { bg: "bg-rose-100", text: "text-rose-800", border: "border-rose-300" },
+    {
+      bg: "bg-emerald-100",
+      text: "text-emerald-800",
+      border: "border-emerald-300",
+    },
+    { bg: "bg-amber-100", text: "text-amber-800", border: "border-amber-300" },
+    { bg: "bg-cyan-100", text: "text-cyan-800", border: "border-cyan-300" },
+    { bg: "bg-pink-100", text: "text-pink-800", border: "border-pink-300" },
+    {
+      bg: "bg-purple-100",
+      text: "text-purple-800",
+      border: "border-purple-300",
+    },
+    { bg: "bg-teal-100", text: "text-teal-800", border: "border-teal-300" },
+  ];
+
+  // Generate a consistent hash for the speaker
+  const hash = speaker
+    .split("")
+    .reduce((acc, char) => char.charCodeAt(0) + acc, 0);
+  return colors[hash % colors.length];
 };
 
 // Define the SummarySection interface that was in SummaryPanel.tsx
@@ -411,6 +463,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [volume, setVolume] = useState(1);
   const [showScreenshots, setShowScreenshots] = useState(false);
   const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
+  const [editSpeakerName, setEditSpeakerName] = useState("");
 
   const transcribeMutation = useMutation({
     mutationFn: transcribeVideo,
@@ -730,6 +784,43 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     } catch (error) {
       console.error("Failed to cleanup screenshots:", error);
       // Non-critical error, don't show to user
+    }
+  };
+
+  const handleSpeakerRename = async (originalSpeaker: string) => {
+    if (!editSpeakerName.trim() || !transcription) return;
+
+    try {
+      // Call API
+      await updateSpeakerName(
+        transcription.video_hash,
+        originalSpeaker,
+        editSpeakerName.trim()
+      );
+
+      // Update local state
+      const updatedSegments = transcription.transcription.segments.map(
+        (seg) => {
+          if (seg.speaker === originalSpeaker) {
+            return { ...seg, speaker: editSpeakerName.trim() };
+          }
+          return seg;
+        }
+      );
+
+      setTranscription({
+        ...transcription,
+        transcription: {
+          ...transcription.transcription,
+          segments: updatedSegments,
+        },
+      });
+
+      setEditingSpeaker(null);
+      setEditSpeakerName("");
+    } catch (err) {
+      console.error("Failed to rename speaker:", err);
+      alert("Failed to rename speaker");
     }
   };
 
@@ -2566,6 +2657,127 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                       <span className="text-gray-600">
                                         {segment.end_time}
                                       </span>
+                                      {segment.speaker &&
+                                        (() => {
+                                          const isEditing =
+                                            editingSpeaker === segment.speaker;
+                                          if (isEditing) {
+                                            return (
+                                              <div
+                                                className="flex items-center gap-2"
+                                                onClick={(e) =>
+                                                  e.stopPropagation()
+                                                }
+                                              >
+                                                <input
+                                                  type="text"
+                                                  value={editSpeakerName}
+                                                  onChange={(e) =>
+                                                    setEditSpeakerName(
+                                                      e.target.value
+                                                    )
+                                                  }
+                                                  className="px-2 py-1 text-xs border rounded shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                  autoFocus
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === "Enter")
+                                                      handleSpeakerRename(
+                                                        segment.speaker!
+                                                      );
+                                                    if (e.key === "Escape")
+                                                      setEditingSpeaker(null);
+                                                    e.stopPropagation();
+                                                  }}
+                                                  onClick={(e) =>
+                                                    e.stopPropagation()
+                                                  }
+                                                />
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSpeakerRename(
+                                                      segment.speaker!
+                                                    );
+                                                  }}
+                                                  className="p-1 text-xs text-green-600 hover:text-green-800 bg-green-50 rounded hover:bg-green-100"
+                                                  title="Save"
+                                                >
+                                                  <svg
+                                                    className="w-4 h-4"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                  >
+                                                    <path
+                                                      strokeLinecap="round"
+                                                      strokeLinejoin="round"
+                                                      strokeWidth="2"
+                                                      d="M5 13l4 4L19 7"
+                                                    ></path>
+                                                  </svg>
+                                                </button>
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setEditingSpeaker(null);
+                                                  }}
+                                                  className="p-1 text-xs text-red-600 hover:text-red-800 bg-red-50 rounded hover:bg-red-100"
+                                                  title="Cancel"
+                                                >
+                                                  <svg
+                                                    className="w-4 h-4"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                  >
+                                                    <path
+                                                      strokeLinecap="round"
+                                                      strokeLinejoin="round"
+                                                      strokeWidth="2"
+                                                      d="M6 18L18 6M6 6l12 12"
+                                                    ></path>
+                                                  </svg>
+                                                </button>
+                                              </div>
+                                            );
+                                          }
+
+                                          const speakerColors = getSpeakerColor(
+                                            segment.speaker
+                                          );
+                                          return (
+                                            <span
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingSpeaker(
+                                                  segment.speaker
+                                                );
+                                                setEditSpeakerName(
+                                                  formatSpeakerLabel(
+                                                    segment.speaker!
+                                                  )
+                                                );
+                                              }}
+                                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${speakerColors.bg} ${speakerColors.text} ${speakerColors.border} cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-300 transition-all`}
+                                              title="Click to rename speaker"
+                                            >
+                                              <svg
+                                                className="w-3.5 h-3.5"
+                                                fill="currentColor"
+                                                viewBox="0 0 20 20"
+                                              >
+                                                <path
+                                                  fillRule="evenodd"
+                                                  d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                                                  clipRule="evenodd"
+                                                />
+                                              </svg>
+                                              {formatSpeakerLabel(
+                                                segment.speaker
+                                              )}
+                                            </span>
+                                          );
+                                        })()}
                                       <span className="ml-auto inline-flex items-center px-3 py-1 rounded-full text-2xs font-semibold bg-indigo-100 text-indigo-700">
                                         Segment {index + 1}
                                       </span>
