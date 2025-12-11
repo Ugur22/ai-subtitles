@@ -166,16 +166,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         // Find the currently active segment based on video time (only from displayed segments)
         if (displayedSegments.length > 0) {
-          const currentSegment = displayedSegments.find(
-            (segment) => {
-              const startSeconds = convertTimeToSeconds(segment.start_time);
-              const endSeconds = convertTimeToSeconds(segment.end_time);
-              return (
-                videoRef.currentTime >= startSeconds &&
-                videoRef.currentTime <= endSeconds
-              );
-            }
-          );
+          const currentSegment = displayedSegments.find((segment) => {
+            const startSeconds = convertTimeToSeconds(segment.start_time);
+            const endSeconds = convertTimeToSeconds(segment.end_time);
+            return (
+              videoRef.currentTime >= startSeconds &&
+              videoRef.currentTime <= endSeconds
+            );
+          });
 
           setActiveSegmentId(currentSegment?.id ?? null);
         }
@@ -192,12 +190,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   // Handle Escape key to clear speaker filter
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && filteredSpeaker) {
+      if (e.key === "Escape" && filteredSpeaker) {
         setFilteredSpeaker(null);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [filteredSpeaker]);
 
   const handleLanguageChange = (
@@ -784,7 +782,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           >
                             {isPlaying ? (
                               <svg
-                                className="w-6 h-6 text-gray-700"
+                                className="w-6 h-6 text-gray-200 hover:text-white transition-colors"
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
                               >
@@ -805,7 +803,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               </svg>
                             ) : (
                               <svg
-                                className="w-6 h-6 text-gray-700"
+                                className="w-6 h-6 text-gray-200 hover:text-white transition-colors"
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
                               >
@@ -817,7 +815,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           {/* Volume Control */}
                           <div className="flex items-center space-x-2">
                             <svg
-                              className="w-5 h-5 text-gray-600 cursor-pointer"
+                              className="w-5 h-5 text-gray-200 hover:text-white cursor-pointer transition-colors"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -1004,7 +1002,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             {/* Speaker Filter Dropdown */}
                             <div className="relative">
                               <button
-                                onClick={() => setSpeakerDropdownOpen(!speakerDropdownOpen)}
+                                onClick={() =>
+                                  setSpeakerDropdownOpen(!speakerDropdownOpen)
+                                }
                                 className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
                                   filteredSpeaker
                                     ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-md hover:shadow-lg"
@@ -1081,13 +1081,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                       </span>
                                     </div>
                                     <span className="text-xs text-gray-500">
-                                      {transcription?.transcription.segments.length}
+                                      {
+                                        transcription?.transcription.segments
+                                          .length
+                                      }
                                     </span>
                                   </button>
 
                                   {/* Individual speakers */}
                                   {uniqueSpeakers.map((speaker) => {
-                                    const speakerColors = getSpeakerColor(speaker);
+                                    const speakerColors =
+                                      getSpeakerColor(speaker);
                                     const segmentCount =
                                       transcription?.transcription.segments.filter(
                                         (seg) => seg.speaker === speaker
