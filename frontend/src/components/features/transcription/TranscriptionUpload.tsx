@@ -1,11 +1,6 @@
-import { useState, useRef, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useSpring, animated, config as springConfig } from "react-spring";
+import { useState, useEffect } from "react";
 import {
-  transcribeVideo,
-  TranscriptionResponse,
-  transcribeLocal,
-  transcribeLocalStream,
+  type TranscriptionResponse,
   translateLocalText,
   updateSpeakerName,
 } from "../../../services/api";
@@ -13,399 +8,31 @@ import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
 import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
-import { SavedTranscriptionsPanel } from "./SavedTranscriptionsPanel";
 import axios from "axios";
-import { FaSpinner } from "react-icons/fa";
 import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
-import { animationConfig } from "../../../utils/animations";
+import {
+  formatProcessingTime,
+  convertTimeToSeconds,
+  timeToSeconds,
+} from "../../../utils/time";
+import { formatSpeakerLabel, getSpeakerColor } from "../../../utils/speaker";
+import { ImageModal } from "../../common/ImageModal";
+import { JumpToTimeModal } from "./JumpToTimeModal";
+import { ProcessingOverlay } from "./ProcessingOverlay";
+import { TranscriptSegmentList } from "./TranscriptSegmentList";
+import { UploadZone } from "./UploadZone";
+import { useFileUpload } from "../../../hooks/useFileUpload";
+import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
+import { useSubtitles } from "../../../hooks/useSubtitles";
+import { useTranscription } from "../../../hooks/useTranscription";
+import { useSummaries } from "../../../hooks/useSummaries";
 
-// Add custom subtitle styles
-const subtitleStyles = `
-::cue {
-  background-color: rgba(0, 0, 0, 0.75);
-  color: white;
-  font-family: sans-serif;
-  font-size: 1em;
-  line-height: 1.4;
-  text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.8);
-  padding: 0.2em 0.5em;
-  border-radius: 0.2em;
-  white-space: pre-line;
-}
-`;
-
-type ProcessingStage =
-  | "uploading"
-  | "transcribing"
-  | "translating"
-  | "extracting"
-  | "complete";
-
-interface ProcessingStatus {
-  stage: ProcessingStage;
-  progress: number;
-}
-
-// Helper to format processing time for better readability
-const formatProcessingTime = (timeStr?: string | null): string => {
-  // Return a default value if timeStr is undefined or null
-  if (!timeStr) {
-    return "Unknown";
-  }
-
-  // Try to extract a numeric value from the time string
-  let seconds = 0;
-
-  // Try to parse seconds from the string
-  if (timeStr.includes("seconds")) {
-    seconds = parseFloat(timeStr.replace(" seconds", "").trim());
-  } else {
-    // If it's a number without units, assume it's seconds
-    const parsed = parseFloat(timeStr);
-    if (!isNaN(parsed)) {
-      seconds = parsed;
-    }
-  }
-
-  // If we've successfully parsed a seconds value
-  if (seconds > 0) {
-    if (seconds < 5) {
-      // Very fast processing
-      return `${seconds.toFixed(1)} seconds (super fast!)`;
-    } else if (seconds < 60) {
-      // Less than a minute, keep as seconds
-      return `${seconds.toFixed(1)} seconds`;
-    } else {
-      // Convert to minutes and seconds
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = Math.round(seconds % 60);
-
-      if (remainingSeconds === 0) {
-        // Even minutes
-        return minutes === 1 ? "1 minute" : `${minutes} minutes`;
-      } else {
-        // Minutes and seconds
-        return minutes === 1
-          ? `1 minute ${remainingSeconds} seconds`
-          : `${minutes} minutes ${remainingSeconds} seconds`;
-      }
-    }
-  }
-
-  // If we couldn't parse it, return the original
-  return timeStr;
-};
-
-// Function to check if a file exists using the Fetch API
-const checkFileExists = async (path: string): Promise<boolean> => {
-  try {
-    // For local file system access, we need to use the file:// protocol
-    const fileUrl = path.startsWith("/") ? `file://${path}` : path;
-    const response = await fetch(fileUrl, { method: "HEAD" });
-    return response.ok;
-  } catch (error) {
-    console.warn("Error checking if file exists:", error);
-    return false;
-  }
-};
-
-// Helper function to format speaker labels
-const formatSpeakerLabel = (speaker: string): string => {
-  if (!speaker) return "Speaker 1";
-
-  // Convert SPEAKER_00 to Speaker 1, SPEAKER_01 to Speaker 2, etc.
-  if (speaker.startsWith("SPEAKER_")) {
-    try {
-      const speakerNum = parseInt(speaker.split("_")[1]) + 1;
-      return `Speaker ${speakerNum}`;
-    } catch {
-      return speaker;
-    }
-  }
-
-  return speaker;
-};
-
-// Helper function to get consistent colors for speakers
-const getSpeakerColor = (
-  speaker: string
-): { bg: string; text: string; border: string } => {
-  const colors = [
-    {
-      bg: "bg-violet-100",
-      text: "text-violet-800",
-      border: "border-violet-300",
-    },
-    { bg: "bg-rose-100", text: "text-rose-800", border: "border-rose-300" },
-    {
-      bg: "bg-emerald-100",
-      text: "text-emerald-800",
-      border: "border-emerald-300",
-    },
-    { bg: "bg-amber-100", text: "text-amber-800", border: "border-amber-300" },
-    { bg: "bg-cyan-100", text: "text-cyan-800", border: "border-cyan-300" },
-    { bg: "bg-pink-100", text: "text-pink-800", border: "border-pink-300" },
-    {
-      bg: "bg-purple-100",
-      text: "text-purple-800",
-      border: "border-purple-300",
-    },
-    { bg: "bg-teal-100", text: "text-teal-800", border: "border-teal-300" },
-  ];
-
-  // Generate a consistent hash for the speaker
-  const hash = speaker
-    .split("")
-    .reduce((acc, char) => char.charCodeAt(0) + acc, 0);
-  return colors[hash % colors.length];
-};
-
-// Define the SummarySection interface that was in SummaryPanel.tsx
-interface SummarySection {
-  title: string;
-  start: string;
-  end: string;
-  summary: string;
-  screenshot_url?: string | null;
-}
-
-// Simple Image Modal Component
-interface ImageModalProps {
-  imageUrl: string;
-  onClose: () => void;
-}
-
-const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
-  // Prevent closing modal when clicking on the image itself
-  const handleImageClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
-
-  // Modal animation
-  const backdropAnimation = useSpring({
-    opacity: 1,
-    config: animationConfig.smooth,
-    from: { opacity: 0 },
-  });
-
-  const modalAnimation = useSpring({
-    transform: "scale(1)",
-    opacity: 1,
-    config: springConfig.wobbly,
-    from: { transform: "scale(0.9)", opacity: 0 },
-  });
-
-  return (
-    <animated.div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      style={backdropAnimation}
-      onClick={onClose} // Close when clicking backdrop
-    >
-      <animated.div
-        className="relative bg-white p-3 rounded-2xl shadow-2xl max-w-6xl max-h-[90vh]"
-        style={modalAnimation}
-        onClick={handleImageClick} // Prevent closing on image container click
-      >
-        <img
-          src={imageUrl}
-          alt="Enlarged screenshot"
-          className="block w-[900px] max-h-[85vh] object-contain rounded-xl"
-        />
-        <button
-          onClick={onClose}
-          className="absolute -top-2 -right-2 bg-white rounded-full p-2 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg transition-all duration-200 hover:scale-110"
-          aria-label="Close image modal"
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
-      </animated.div>
-    </animated.div>
-  );
-};
+// Note: ProcessingStage type moved to useTranscription hook
 
 // Add transcription method type
 type TranscriptionMethod = "local";
 type TranslationMethod = "none" | "marianmt";
-
-// --- Add JumpToTimeModal component ---
-interface JumpToTimeModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onJump: (seconds: number) => void;
-  duration: number;
-  currentTime: number;
-  inputRef?: React.RefObject<HTMLInputElement>; // new prop
-}
-
-const secondsToTimeString = (seconds: number): string => {
-  if (isNaN(seconds) || seconds < 0) return "";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) {
-    return `${h.toString().padStart(2, "0")}:${m
-      .toString()
-      .padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  } else {
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  }
-};
-
-const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
-  isOpen,
-  onClose,
-  onJump,
-  duration,
-  currentTime,
-  inputRef,
-}) => {
-  const localInputRef = useRef<HTMLInputElement>(null);
-  const [input, setInput] = useState("");
-  const [error, setError] = useState("");
-
-  // Correctly place parseTimeInput here
-  const parseTimeInput = (input: string): number | null => {
-    const parts = input
-      .trim()
-      .split(":")
-      .map((p) => p.trim());
-    if (parts.length === 0) return null;
-    let seconds = 0;
-    if (parts.length === 3) {
-      seconds =
-        parseFloat(parts[0]) * 3600 +
-        parseFloat(parts[1]) * 60 +
-        parseFloat(parts[2]);
-    } else if (parts.length === 2) {
-      seconds = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
-    } else if (parts.length === 1) {
-      seconds = parseFloat(parts[0]);
-    } else {
-      return null;
-    }
-    return isNaN(seconds) ? null : seconds;
-  };
-
-  useEffect(() => {
-    if (isOpen) {
-      setInput(secondsToTimeString(currentTime));
-      setError("");
-      setTimeout(() => {
-        (inputRef?.current || localInputRef.current)?.focus();
-      }, 0);
-    }
-  }, [isOpen, currentTime, inputRef]);
-
-  const handleOk = () => {
-    const seconds = parseTimeInput(input);
-    if (seconds === null || seconds < 0 || seconds > duration) {
-      setError(
-        "Invalid time. Please enter a value between 0 and the video duration."
-      );
-      return;
-    }
-    setError("");
-    onJump(seconds);
-    onClose();
-  };
-
-  if (!isOpen) return null;
-
-  // Modal animation
-  const backdropAnimation = useSpring({
-    opacity: 1,
-    config: animationConfig.smooth,
-    from: { opacity: 0 },
-  });
-
-  const modalAnimation = useSpring({
-    transform: "scale(1)",
-    opacity: 1,
-    config: springConfig.wobbly,
-    from: { transform: "scale(0.85)", opacity: 0 },
-  });
-
-  return (
-    <animated.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      style={backdropAnimation}
-    >
-      <animated.div
-        className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md flex flex-col items-center"
-        style={modalAnimation}
-      >
-        <div className="mb-6 flex flex-col items-center">
-          <div className="w-16 h-16 mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-            <svg
-              className="w-8 h-8 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10 9V5a1 1 0 011-1h2a1 1 0 011 1v4m-1 4h.01M12 17h.01"
-              />
-              <polygon points="8,17 16,12 8,7" fill="currentColor" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold mb-2 text-gray-900">
-            Jump to Time
-          </h2>
-          <p className="text-sm text-gray-600 text-center leading-relaxed">
-            Enter the time you want to jump to in the video.
-            <br />
-            <span className="text-indigo-600 font-medium">
-              Example: 20:35 or 1:30:45
-            </span>
-          </p>
-        </div>
-        <input
-          ref={inputRef || localInputRef}
-          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 mb-3 text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
-          placeholder="mm:ss or hh:mm:ss"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          autoFocus
-        />
-        {error && (
-          <div className="text-sm text-red-500 mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
-            {error}
-          </div>
-        )}
-        <div className="flex w-full gap-3 mt-4">
-          <button
-            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-all duration-200 hover:scale-105"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-all duration-200 hover:scale-105"
-            onClick={handleOk}
-          >
-            Jump
-          </button>
-        </div>
-      </animated.div>
-    </animated.div>
-  );
-};
 
 type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
@@ -414,127 +41,90 @@ type TranscriptionUploadProps = {
 export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   onTranscriptionChange,
 }) => {
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [transcription, setTranscription] =
-    useState<TranscriptionResponse | null>(null);
-  const [dragActive, setDragActive] = useState(false);
+  // UI-specific state (keep these)
   const [showTranslation, setShowTranslation] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showSearch, setShowSearch] = useState(true);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [processingStatus, setProcessingStatus] =
-    useState<ProcessingStatus | null>(null);
-  const [hideProgressBar, setHideProgressBar] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const playerRef = useRef<any>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null);
-  const [showSubtitles, setShowSubtitles] = useState(true);
-  const [subtitleTrackUrl, setSubtitleTrackUrl] = useState<string | null>(null);
-  const [translatedSubtitleUrl, setTranslatedSubtitleUrl] = useState<
-    string | null
-  >(null);
-  const [progressSimulation, setProgressSimulation] =
-    useState<NodeJS.Timeout | null>(null);
+  const [progressSimulation] = useState<NodeJS.Timeout | null>(null); // Unused but kept for future use
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [processingTimer, setProcessingTimer] = useState<NodeJS.Timeout | null>(
-    null
-  );
-  const [showProgressBar, setShowProgressBar] = useState(false);
   const [isNewTranscription, setIsNewTranscription] = useState(false);
   const [showSavedTranscriptions, setShowSavedTranscriptions] = useState(false);
-  const [summaries, setSummaries] = useState<SummarySection[]>([]);
-  const [summaryLoading, setSummaryLoading] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [transcriptionMethod, setTranscriptionMethod] =
     useState<TranscriptionMethod>("local");
-  const [isVideoSeeking, setIsVideoSeeking] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [translationMethod, setTranslationMethod] =
-    useState<TranslationMethod>("none");
+  // Note: pollingIntervalRef removed - was unused after hook integration
+  const [translationMethod] = useState<TranslationMethod>("none");
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isVideoHovered, setIsVideoHovered] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [showScreenshots, setShowScreenshots] = useState(false);
-  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  const [showScreenshots] = useState(false); // Unused but kept for future use
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editSpeakerName, setEditSpeakerName] = useState("");
 
-  const transcribeMutation = useMutation({
-    mutationFn: transcribeVideo,
-    onMutate: () => {
-      // Reset the flag when starting a new transcription
-      setIsNewTranscription(false);
+  // Initialize custom hooks
+  const transcriptionHook = useTranscription();
+  const {
+    transcription,
+    setTranscription,
+    processingStatus,
+    setProcessingStatus,
+    elapsedTime,
+    error,
+    setError,
+    isPolling,
+    handleStartTranscription,
+    resetState: resetTranscriptionState,
+  } = transcriptionHook;
 
-      // Show progress bar when starting a new transcription
-      setHideProgressBar(false);
-
-      // Start with uploading status
-      setProcessingStatus({ stage: "uploading", progress: 0 });
-
-      // Start the timer for elapsed time
-      if (processingTimer) {
-        clearInterval(processingTimer);
-      }
-
-      setElapsedTime(0);
-      const timer = setInterval(() => {
-        setElapsedTime((prev) => prev + 1);
-      }, 1000);
-
-      setProcessingTimer(timer);
-    },
-    onSuccess: (data) => {
-      // Clear simulation on success
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-        setProgressSimulation(null);
-      }
-
-      // Clear processing timer
-      if (processingTimer) {
-        clearInterval(processingTimer);
-        setProcessingTimer(null);
-      }
-
-      setTranscription(data);
-      setProcessingStatus({ stage: "complete", progress: 100 });
+  const fileUploadHook = useFileUpload({
+    onFileSelected: () => {
       setError(null);
-    },
-    onError: (error) => {
-      // Clear simulation on error
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-        setProgressSimulation(null);
-      }
-
-      // Clear processing timer
-      if (processingTimer) {
-        clearInterval(processingTimer);
-        setProcessingTimer(null);
-      }
-
-      console.error("Transcription error:", error);
-      setError("Failed to transcribe the file. Please try again.");
-      setProcessingStatus({ stage: "uploading", progress: 0 });
+      setTranscription(null);
+      setProcessingStatus(null);
     },
   });
+  const {
+    file,
+    dragActive,
+    videoUrl,
+    fileInputRef,
+    handleFileChange: fileUploadHandleChange,
+    handleDrag,
+    handleDrop,
+    handleButtonClick,
+    setVideoUrl,
+  } = fileUploadHook;
 
-  // Clean up object URL when component unmounts or videoUrl changes
-  useEffect(() => {
-    return () => {
-      if (videoUrl) {
-        URL.revokeObjectURL(videoUrl);
-      }
-    };
-  }, [videoUrl]);
+  const videoPlayerHook = useVideoPlayer({
+    onJumpToTimeRequest: () => setJumpModalOpen(true),
+  });
+  const {
+    videoRef,
+    setVideoRef,
+    isPlaying,
+    volume,
+    isVideoSeeking,
+    handlePlayPause,
+    handleVolumeChange,
+  } = videoPlayerHook;
+
+  const subtitlesHook = useSubtitles({
+    transcription,
+    videoRef,
+    showTranslation,
+  });
+  const { showSubtitles, subtitleTrackUrl, translatedSubtitleUrl } =
+    subtitlesHook;
+
+  const summariesHook = useSummaries({
+    transcription,
+  });
+  const { summaries, setSummaries, summaryLoading, generateSummaries } =
+    summariesHook;
+
+  // Computed values
+  const isTranscribing =
+    processingStatus !== null && processingStatus.stage !== "complete";
 
   // Cleanup function for progress simulation
   useEffect(() => {
@@ -549,7 +139,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   useEffect(() => {
     if (videoRef) {
       const handleTimeUpdate = () => {
-        setCurrentTime(videoRef.currentTime);
+        // currentTime is now managed by the useVideoPlayer hook internally
+        // We only need to track the active segment here
 
         // Find the currently active segment based on video time
         if (transcription) {
@@ -576,248 +167,45 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     }
   }, [videoRef, transcription]);
 
-  // Helper to convert HH:MM:SS to seconds
-  const convertTimeToSeconds = (timeString: string): number => {
-    const [hours, minutes, seconds] = timeString.split(":").map(Number);
-    return hours * 3600 + minutes * 60 + seconds;
-  };
-
   const handleLanguageChange = (
     event: React.ChangeEvent<HTMLSelectElement>
   ) => {
     setSelectedLanguage(event.target.value);
   };
 
-  const handleFileChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const selectedFile = event.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      // Create URL for video preview if it's a video file
-      if (selectedFile.type.startsWith("video/")) {
-        const url = URL.createObjectURL(selectedFile);
-        setVideoUrl(url);
-      } else {
-        setVideoUrl(null); // Clear video URL for non-video files
-      }
-      // Don't start processing immediately
-      // await processFile(file);
-      // Reset any previous errors or results
-      setError(null);
-      setTranscription(null);
-      setProcessingStatus(null);
-      setElapsedTime(0);
-      if (processingTimer) clearInterval(processingTimer);
-    }
-  };
+  // Note: startPollingForTranscription removed - was unused
+  // Polling logic can be added back if needed for cloud transcription
 
-  const processFile = async (fileToProcess: File) => {
-    try {
-      setProcessingStatus({ stage: "uploading", progress: 0 });
-      setError(null);
-
-      // Choose transcription method based on user selection
-      const transcriptionResult = await (transcriptionMethod === "local"
-        ? transcribeLocal(fileToProcess)
-        : transcribeVideo({ file: fileToProcess, language: selectedLanguage }));
-
-      setTranscription(transcriptionResult);
-      setProcessingStatus({ stage: "complete", progress: 100 });
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "An error occurred during transcription"
-      );
-      setProcessingStatus({ stage: "complete", progress: 0 });
-    }
-  };
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      setFile(droppedFile);
-
-      // Create and store video URL for dropped file if it's a video
-      if (droppedFile.type.startsWith("video/")) {
-        const objectUrl = URL.createObjectURL(droppedFile);
-        setVideoUrl(objectUrl);
-      } else {
-        setVideoUrl(null);
-      }
-
-      // Don't start processing immediately
-      // try {
-      //   await processFile(file);
-      // } catch (error) {
-      //   console.error('Processing failed:', error);
-      // }
-      // Reset any previous errors or results
-      setError(null);
-      setTranscription(null);
-      setProcessingStatus(null);
-      setElapsedTime(0);
-      if (processingTimer) clearInterval(processingTimer);
-    }
-  };
-
-  const handleButtonClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  // Function to start polling for transcription completion
-  const startPollingForTranscription = (videoHash: string) => {
-    setIsPolling(true);
-    setProcessingStatus({ stage: "transcribing", progress: 0 });
-
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await axios.get(
-          `http://localhost:8000/transcription/${videoHash}`
-        );
-        if (
-          response.data &&
-          response.data.transcription &&
-          response.data.transcription.segments.length > 0
-        ) {
-          setTranscription(response.data);
-          setProcessingStatus({ stage: "complete", progress: 100 });
-          setIsPolling(false);
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current);
-          }
-        }
-      } catch (error) {
-        // Optionally handle error or show a message
-      }
-    }, 3000); // Poll every 3 seconds
-  };
-
-  // Clean up polling interval on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    };
-  }, []);
-
-  // Update handleStartTranscriptionClick to use SSE streaming for local transcription
+  // Handle transcription start using the hook
   const handleStartTranscriptionClick = async () => {
-    if (file) {
-      setProcessingStatus({ stage: "uploading", progress: 0 });
-      setError(null);
-
-      // Start elapsed time timer
-      if (processingTimer) {
-        clearInterval(processingTimer);
-      }
-      setElapsedTime(0);
-      const timer = setInterval(() => {
-        setElapsedTime((prev) => prev + 1);
-      }, 1000);
-      setProcessingTimer(timer);
-
-      try {
-        let result;
-        if (transcriptionMethod === "local") {
-          // Use streaming version with real-time progress
-          result = await transcribeLocalStream(file, (stage, progress, message) => {
-            setProcessingStatus({
-              stage: stage as ProcessingStage,
-              progress: progress,
-            });
-          });
-
-          // Set the result immediately when streaming completes
-          setTranscription(result);
-          setProcessingStatus({ stage: "complete", progress: 100 });
-
-          // Stop the timer
-          if (processingTimer) {
-            clearInterval(processingTimer);
-            setProcessingTimer(null);
-          }
-        } else {
-          result = await transcribeVideo({ file, language: selectedLanguage });
-          // Start polling for completion using video_hash
-          if (result && result.video_hash) {
-            startPollingForTranscription(result.video_hash);
-          } else {
-            setError("Failed to start transcription: Missing video identifier.");
-          }
-        }
-      } catch (error) {
-        // Stop the timer on error
-        if (processingTimer) {
-          clearInterval(processingTimer);
-          setProcessingTimer(null);
-        }
-
-        setError(
-          error instanceof Error
-            ? error.message
-            : "An error occurred during transcription"
-        );
-        setProcessingStatus({ stage: "complete", progress: 0 });
-      }
-    } else {
+    if (!file) {
       setError("No file selected to transcribe.");
+      return;
     }
+
+    // Use the hook's handleStartTranscription which manages all state internally
+    await handleStartTranscription(file, transcriptionMethod, selectedLanguage);
   };
 
   const startNewTranscription = () => {
     // Set flag to hide progress bar
     setIsNewTranscription(true);
 
-    setTranscription(null);
+    // Reset transcription state using the hook
+    resetTranscriptionState();
+
+    // Reset video URL (file is managed by the hook)
     setVideoUrl(null);
-    setFile(null);
+
+    // Reset UI state
     setShowTranslation(false);
-    setShowSubtitles(false);
-    setUploadProgress(0);
-    setElapsedTime(0);
     setSelectedLanguage("");
 
-    if (processingTimer) {
-      clearInterval(processingTimer);
-      setProcessingTimer(null);
-    }
-
-    setTimeout(() => {
-      setShowSubtitles(true);
-    }, 500);
+    // Note: showSubtitles is managed by the useSubtitles hook
+    // elapsedTime and processingTimer are managed by useTranscription hook
   };
 
-  // Function to delete previous screenshots
-  const cleanupPreviousScreenshots = async () => {
-    try {
-      await axios.post("http://localhost:8000/cleanup_screenshots/");
-      console.log("Previous screenshots cleaned up successfully");
-    } catch (error) {
-      console.error("Failed to cleanup screenshots:", error);
-      // Non-critical error, don't show to user
-    }
-  };
+  // Note: cleanupPreviousScreenshots removed - was unused
 
   const handleSpeakerRename = async (originalSpeaker: string) => {
     if (!editSpeakerName.trim() || !transcription) return;
@@ -922,11 +310,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     }
   };
 
-  const handleSummaryClick = () => {
-    setShowSearch(false);
-    setShowSavedTranscriptions(false);
-    setShowSummary(!showSummary);
-  };
+  // Note: handleSummaryClick removed - was unused
 
   const handleSearchClick = () => {
     setShowSearch(!showSearch);
@@ -956,7 +340,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       console.log("Loaded transcription data:", data);
       // No translation logic needed, just set the transcription
       setTranscription(data);
-      setFile(null);
+      // Note: file is managed by useFileUpload hook, no need to clear it
       setProcessingStatus({ stage: "complete", progress: 100 });
       setShowSavedTranscriptions(false);
       setSummaries([]);
@@ -983,233 +367,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     }
   };
 
-  // Generate WebVTT content from transcript segments
-  const generateWebVTT = (
-    segments: any[],
-    useTranslation: boolean = false
-  ): string => {
-    let vttContent = "WEBVTT\n\n";
-
-    // Get language to optimize chunking
-    const language = transcription?.transcription.language || "en";
-
-    // Determine optimal chunk size based on language complexity
-    // Some languages are more information-dense and need fewer words per line
-    const getOptimalChunkSize = (lang: string): number => {
-      const langSettings: { [key: string]: number } = {
-        en: 7, // English - standard
-        de: 5, // German - longer words
-        ja: 12, // Japanese - character-based
-        zh: 12, // Chinese - character-based
-        ko: 10, // Korean - character-based
-        it: 6, // Italian
-        fr: 6, // French
-        es: 6, // Spanish
-        ru: 5, // Russian - longer words
-      };
-
-      return langSettings[lang.toLowerCase()] || 6; // Default to 6 words
-    };
-
-    // Base chunk size on language
-    const maxWordsPerChunk = getOptimalChunkSize(language);
-
-    segments.forEach((segment, index) => {
-      // Convert HH:MM:SS format to HH:MM:SS.000 (WebVTT requires milliseconds)
-      const startTime = segment.start_time.includes(".")
-        ? segment.start_time
-        : `${segment.start_time}.000`;
-
-      const endTime = segment.end_time.includes(".")
-        ? segment.end_time
-        : `${segment.end_time}.000`;
-
-      // Use translation if available and requested
-      const text =
-        useTranslation && segment.translation
-          ? segment.translation
-          : segment.text;
-
-      // Smart chunking based on:
-      // 1. Respect sentence boundaries (., ?, !)
-      // 2. Respect clause boundaries (,, :, ;)
-      // 3. Keep important phrases together
-
-      // Split into natural language chunks
-      const breakText = (text: string): string[] => {
-        if (text.length <= 42) {
-          // Short text - no need to break
-          return [text];
-        }
-
-        // Try to break at sentence boundaries first
-        const sentenceBreaks = text.match(/[.!?]+(?=\s|$)/g);
-        if (sentenceBreaks && sentenceBreaks.length > 1) {
-          // Multiple sentences - break at sentence boundaries
-          return text
-            .split(/(?<=[.!?])\s+/g)
-            .filter((s) => s.trim().length > 0);
-        }
-
-        // Try to break at clause boundaries
-        const clauseMatches = text.match(/[,;:]+(?=\s|$)/g);
-        if (clauseMatches && clauseMatches.length > 0) {
-          // Break at clauses
-          return text
-            .split(/(?<=[,;:])\s+/g)
-            .filter((s) => s.trim().length > 0);
-        }
-
-        // Last resort: break by word count
-        const words = text.split(" ");
-        const chunks = [];
-
-        for (let i = 0; i < words.length; i += maxWordsPerChunk) {
-          chunks.push(words.slice(i, i + maxWordsPerChunk).join(" "));
-        }
-
-        return chunks;
-      };
-
-      const textChunks = breakText(text);
-
-      // If only one chunk, display as is
-      if (textChunks.length === 1) {
-        vttContent += `${index + 1}\n`;
-        vttContent += `${startTime} --> ${endTime}\n`;
-        vttContent += `${text}\n\n`;
-      } else {
-        // Multiple chunks - distribute timing
-        const segmentDurationMs = timeToMs(endTime) - timeToMs(startTime);
-        const msPerChunk = segmentDurationMs / textChunks.length;
-
-        textChunks.forEach((chunk, chunkIndex) => {
-          const chunkStartMs = timeToMs(startTime) + chunkIndex * msPerChunk;
-          const chunkEndMs =
-            chunkIndex === textChunks.length - 1
-              ? timeToMs(endTime) // Last chunk ends at segment end
-              : chunkStartMs + msPerChunk;
-
-          vttContent += `${index + 1}.${chunkIndex + 1}\n`;
-          vttContent += `${msToTime(chunkStartMs)} --> ${msToTime(
-            chunkEndMs
-          )}\n`;
-          vttContent += `${chunk}\n\n`;
-        });
-      }
-    });
-
-    return vttContent;
-  };
-
-  // Helper function to convert HH:MM:SS.mmm to milliseconds
-  const timeToMs = (timeString: string): number => {
-    const [time, ms = "0"] = timeString.split(".");
-    const [hours, minutes, seconds] = time.split(":").map(Number);
-
-    return (
-      (hours * 3600 + minutes * 60 + seconds) * 1000 +
-      parseInt(ms.padEnd(3, "0").substring(0, 3))
-    );
-  };
-
-  // Helper function to convert milliseconds to HH:MM:SS.mmm format
-  const msToTime = (ms: number): string => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    const milliseconds = ms % 1000;
-
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
-      2,
-      "0"
-    )}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(
-      3,
-      "0"
-    )}`;
-  };
-
   // Create and add subtitles to video
-  const createSubtitleTracks = () => {
-    if (!transcription) return;
-
-    try {
-      // Generate original language WebVTT
-      const vttContent = generateWebVTT(transcription.transcription.segments);
-      const vttBlob = new Blob([vttContent], { type: "text/vtt" });
-      const vttUrl = URL.createObjectURL(vttBlob);
-      setSubtitleTrackUrl(vttUrl);
-
-      // Generate translated WebVTT if translations are available
-      const hasTranslations = transcription.transcription.segments.some(
-        (segment) => segment.translation
-      );
-
-      if (hasTranslations) {
-        const translatedVttContent = generateWebVTT(
-          transcription.transcription.segments,
-          true
-        );
-        const translatedVttBlob = new Blob([translatedVttContent], {
-          type: "text/vtt",
-        });
-        const translatedVttUrl = URL.createObjectURL(translatedVttBlob);
-        setTranslatedSubtitleUrl(translatedVttUrl);
-      }
-    } catch (error) {
-      console.error("Error creating subtitles:", error);
-    }
-  };
-
-  // Create subtitles when transcription is available
-  useEffect(() => {
-    if (transcription) {
-      createSubtitleTracks();
-
-      // Add custom subtitle styles to document head
-      const styleElement = document.createElement("style");
-      styleElement.innerHTML = subtitleStyles;
-      document.head.appendChild(styleElement);
-
-      return () => {
-        if (subtitleTrackUrl) {
-          URL.revokeObjectURL(subtitleTrackUrl);
-        }
-        if (translatedSubtitleUrl) {
-          URL.revokeObjectURL(translatedSubtitleUrl);
-        }
-        // Remove custom styles when component unmounts
-        document.head.removeChild(styleElement);
-      };
-    }
-  }, [transcription]);
-
-  // Update subtitles when translation toggle changes
-  useEffect(() => {
-    if (videoRef) {
-      const trackElements = videoRef.textTracks;
-
-      if (trackElements.length > 0) {
-        // Hide all tracks first
-        for (let i = 0; i < trackElements.length; i++) {
-          trackElements[i].mode = "hidden";
-        }
-
-        // Show the active track if subtitles are enabled
-        if (showSubtitles) {
-          const trackIndex =
-            showTranslation && trackElements.length > 1 ? 1 : 0;
-          trackElements[trackIndex].mode = "showing";
-        }
-      }
-    }
-  }, [showTranslation, showSubtitles, videoRef]);
-
-  // Toggle subtitles visibility
-  const toggleSubtitles = () => {
-    setShowSubtitles(!showSubtitles);
-  };
+  // Subtitle-related logic now handled by useSubtitles hook
 
   // Cleanup function for timers when component unmounts
   useEffect(() => {
@@ -1217,258 +376,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       if (progressSimulation) {
         clearInterval(progressSimulation);
       }
-      if (processingTimer) {
-        clearInterval(processingTimer);
-      }
+      // processingTimer is now managed by useTranscription hook
     };
-  }, [progressSimulation, processingTimer]);
+  }, [progressSimulation]);
 
-  // Update the handle functions for processing status to handle null
-  const updateUploadProgress = (progress: number) => {
-    setUploadProgress(progress);
-    setProcessingStatus((prevStatus) =>
-      prevStatus
-        ? {
-            ...prevStatus,
-            progress: Math.min(99, progress),
-          }
-        : { stage: "uploading", progress: Math.min(99, progress) }
-    );
-  };
+  // Note: Removed unused functions: updateUploadProgress, handleExtractingAudio,
+  // handleTranscribing, fetchCurrentTranscription - all were unused
 
-  const handleExtractingAudio = () => {
-    setProcessingStatus((prevStatus) =>
-      prevStatus
-        ? {
-            ...prevStatus,
-            stage: "extracting",
-            progress: 0,
-          }
-        : { stage: "extracting", progress: 0 }
-    );
-  };
-
-  const handleTranscribing = () => {
-    setProcessingStatus((prevStatus) =>
-      prevStatus
-        ? {
-            ...prevStatus,
-            stage: "transcribing",
-            progress: 0,
-          }
-        : { stage: "transcribing", progress: 0 }
-    );
-  };
-
-  // Function to fetch the current transcription data from the backend
-  const fetchCurrentTranscription =
-    async (): Promise<TranscriptionResponse | null> => {
-      try {
-        const response = await fetch(
-          "http://localhost:8000/current_transcription/"
-        );
-
-        if (!response.ok) {
-          console.error(
-            "Failed to fetch current transcription",
-            response.statusText
-          );
-          return null;
-        }
-
-        const data = await response.json();
-        setTranscription(data);
-        // Reset summaries when loading a new transcription to prevent showing summaries from previous videos
-        setSummaries([]);
-        setProcessingStatus({ stage: "complete", progress: 100 });
-
-        // Set video URL if video_hash is available
-        if (data.video_hash) {
-          const videoPath = `http://localhost:8000/video/${data.video_hash}`;
-          console.log(
-            "Setting video URL from current transcription:",
-            videoPath
-          );
-          setVideoUrl(videoPath);
-        }
-
-        return data;
-      } catch (error) {
-        console.error("Error fetching current transcription:", error);
-        return null;
-      }
-    };
-
-  // Add a function to generate summaries here (moved from SummaryPanel)
-  const generateSummaries = async () => {
-    setSummaryLoading(true);
-    try {
-      console.log("Generating summaries...");
-      const response = await axios.post(
-        "http://localhost:8000/generate_summary/"
-      );
-      console.log("Summary response:", response.data);
-
-      const summaryData = response.data.summaries || [];
-      const responseFilename = response.data.filename;
-
-      // More detailed logging to debug the issue
-      console.log("Current transcription:", transcription?.filename);
-      console.log("Response filename:", responseFilename);
-
-      // Only perform the filename check if both filenames are defined and don't match
-      // This ensures we still show summaries even if one of the filenames is undefined
-      if (
-        transcription &&
-        responseFilename &&
-        transcription.filename &&
-        responseFilename !== transcription.filename
-      ) {
-        console.warn(
-          "Summary filename mismatch:",
-          responseFilename,
-          "vs",
-          transcription.filename
-        );
-        // Continue anyway - don't return early
-      }
-
-      console.log("Received summary data:", summaryData);
-
-      if (!summaryData || summaryData.length === 0) {
-        console.warn("No summary data received");
-        setSummaryLoading(false);
-        return;
-      }
-
-      console.log("Now fetching screenshots for summaries...");
-
-      // First set the basic summaries without screenshots
-      setSummaries(summaryData);
-
-      // Then try to enhance them with screenshots
-      try {
-        const enhancedSummaries = await fetchScreenshotsForSummaries(
-          summaryData
-        );
-        console.log("Final enhanced summaries:", enhancedSummaries);
-        setSummaries(enhancedSummaries);
-      } catch (screenshotError) {
-        console.error(
-          "Error adding screenshots to summaries:",
-          screenshotError
-        );
-        // We still have the basic summaries displayed
-      }
-    } catch (error) {
-      console.error("Error generating summaries:", error);
-      // Handle error (you can add error state if needed)
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  // Add the helper function to fetch screenshots (moved from SummaryPanel)
-  const fetchScreenshotsForSummaries = async (
-    summaryData: SummarySection[]
-  ) => {
-    try {
-      // Get the current transcription data
-      const response = await axios.get(
-        "http://localhost:8000/current_transcription/"
-      );
-
-      if (response.status !== 200) {
-        console.error(`Error fetching transcription data: ${response.status}`);
-        return summaryData;
-      }
-
-      const segments = response.data.transcription.segments;
-
-      console.log("Fetched transcription data successfully");
-      console.log(
-        "Number of segments with screenshots:",
-        segments.filter((s: any) => s.screenshot_url).length
-      );
-
-      // Match summary sections with segment screenshots
-      const enhancedSummaries = summaryData.map((summary: SummarySection) => {
-        // Find the best matching segment for this summary
-        // Strategy 1: Find a segment that's very close to the start time of the summary (within 5 seconds)
-        let matchingSegment = segments.find(
-          (segment: any) =>
-            Math.abs(
-              timeToSeconds(segment.start_time) - timeToSeconds(summary.start)
-            ) < 5
-        );
-
-        // Strategy 2: If no exact match found, try to find a segment that's contained within the summary time range
-        if (!matchingSegment) {
-          const summaryStartTime = timeToSeconds(summary.start);
-          const summaryEndTime = timeToSeconds(summary.end);
-
-          matchingSegment = segments.find((segment: any) => {
-            const segmentTime = timeToSeconds(segment.start_time);
-            return (
-              segmentTime >= summaryStartTime && segmentTime <= summaryEndTime
-            );
-          });
-        }
-
-        // Strategy 3: If still no match, just take the closest segment
-        if (!matchingSegment) {
-          let closestSegment = segments[0];
-          let closestDiff = Math.abs(
-            timeToSeconds(segments[0].start_time) - timeToSeconds(summary.start)
-          );
-
-          for (const segment of segments) {
-            const diff = Math.abs(
-              timeToSeconds(segment.start_time) - timeToSeconds(summary.start)
-            );
-            if (diff < closestDiff) {
-              closestDiff = diff;
-              closestSegment = segment;
-            }
-          }
-
-          matchingSegment = closestSegment;
-        }
-
-        return {
-          ...summary,
-          screenshot_url: matchingSegment?.screenshot_url || null,
-        };
-      });
-
-      return enhancedSummaries;
-    } catch (error) {
-      console.error("Error getting screenshots for summaries:", error);
-      return summaryData; // Return original data if something fails
-    }
-  };
-
-  // Add the timeToSeconds function that was missing
-  const timeToSeconds = (timeStr: string): number => {
-    try {
-      // Handle different time formats: HH:MM:SS or HH:MM:SS.mmm
-      const parts = timeStr.split(":");
-      if (parts.length !== 3) {
-        console.error(`Invalid time format: ${timeStr}`);
-        return 0;
-      }
-
-      const hours = parseInt(parts[0], 10);
-      const minutes = parseInt(parts[1], 10);
-      // Handle seconds with milliseconds
-      const seconds = parseFloat(parts[2]);
-
-      return hours * 3600 + minutes * 60 + seconds;
-    } catch (error) {
-      console.error(`Error converting time ${timeStr} to seconds:`, error);
-      return 0;
-    }
-  };
+  // Summary logic now handled by useSummaries hook
 
   // Language options (ISO 639-1 codes)
   const languageOptions = [
@@ -1489,7 +404,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   // Function to open the modal
   const openImageModal = (imageUrl: string | undefined) => {
     if (imageUrl) {
-      setModalImageUrl(imageUrl);
+      setModalImageUrl(imageUrl as string); // TypeScript narrowing
       setIsModalOpen(true);
     }
   };
@@ -1497,13 +412,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   // Add this after the useEffect hooks
   useEffect(() => {
     if (videoRef) {
-      // Add seeking event listeners
-      const handleSeeking = () => {
-        setIsVideoSeeking(true);
-      };
-
+      // Seeking state is managed by useVideoPlayer hook
+      // This effect only handles active segment updates after seeking
       const handleSeeked = () => {
-        setIsVideoSeeking(false);
         // Update active segment based on current time
         if (transcription?.transcription.segments) {
           const currentTime = videoRef.currentTime;
@@ -1543,22 +454,15 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         }
       };
 
-      videoRef.addEventListener("seeking", handleSeeking);
       videoRef.addEventListener("seeked", handleSeeked);
 
       return () => {
-        videoRef.removeEventListener("seeking", handleSeeking);
         videoRef.removeEventListener("seeked", handleSeeked);
       };
     }
   }, [videoRef, transcription]);
 
-  // --- Spinner/modal overlay ---
-  const isTranscribing =
-    processingStatus &&
-    ["uploading", "transcribing", "extracting"].includes(
-      processingStatus.stage
-    );
+  // --- Spinner/modal overlay logic handled by computed isTranscribing value ---
 
   // When translation is requested, translate all segments using the selected translation method
   useEffect(() => {
@@ -1599,28 +503,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     }
   }, [transcription, translationMethod]);
 
-  // Play/pause handlers
-  const handlePlayPause = () => {
-    if (videoRef) {
-      if (videoRef.paused) {
-        videoRef.play();
-      } else {
-        videoRef.pause();
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (!videoRef) return;
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    videoRef.addEventListener("play", handlePlay);
-    videoRef.addEventListener("pause", handlePause);
-    return () => {
-      videoRef.removeEventListener("play", handlePlay);
-      videoRef.removeEventListener("pause", handlePause);
-    };
-  }, [videoRef]);
+  // Video player logic now handled by useVideoPlayer hook
 
   // Notify parent when transcription changes
   useEffect(() => {
@@ -1630,756 +513,42 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcription]);
 
-  // Add keyboard event handler for seeking and play/pause
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!videoRef) return;
-      // Ctrl+J to open Jump to Time
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        setJumpModalOpen(true);
-        return;
-      }
-      switch (e.key) {
-        case "ArrowRight":
-          e.preventDefault();
-          videoRef.currentTime = Math.min(
-            videoRef.duration,
-            videoRef.currentTime + 5
-          );
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          videoRef.currentTime = Math.max(0, videoRef.currentTime - 5);
-          break;
-        case "p": // P key
-        case "P": // P key (uppercase)
-          e.preventDefault();
-          handlePlayPause();
-          break;
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [videoRef]);
-
-  // Add volume change handler
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVolume = parseFloat(e.target.value);
-    setVolume(newVolume);
-    if (videoRef) {
-      videoRef.volume = newVolume;
-    }
-  };
-
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
-      {/* Spinner overlay when transcribing */}
-      {isTranscribing && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md">
-          <div className="bg-white rounded-3xl p-10 shadow-2xl max-w-lg w-full mx-4">
-            {/* File Info Header */}
-            {file && (
-              <div className="mb-6 pb-6 border-b border-gray-200">
-                <div className="flex items-center gap-3">
-                  <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
-                    <svg
-                      className="w-6 h-6 text-white"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {file.name}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {(file.size / (1024 * 1024)).toFixed(1)} MB
-                      {videoRef && ` • ${Math.floor(videoRef.duration / 60)}:${String(Math.floor(videoRef.duration % 60)).padStart(2, '0')} duration`}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Processing Stages */}
-            <div className="mb-6 space-y-3">
-              {/* Stage 1: Upload */}
-              <div className="flex items-center gap-3">
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  processingStatus?.stage === "uploading"
-                    ? "bg-indigo-500 text-white"
-                    : "bg-green-500 text-white"
-                }`}>
-                  {processingStatus?.stage === "uploading" ? (
-                    <FaSpinner className="animate-spin" size={14} />
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </div>
-                <div className="flex-1">
-                  <p className={`text-sm font-medium ${
-                    processingStatus?.stage === "uploading" ? "text-indigo-600" : "text-gray-600"
-                  }`}>
-                    {processingStatus?.stage === "uploading" ? "Uploading..." : "Upload complete"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Stage 2: Extracting */}
-              <div className="flex items-center gap-3">
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  processingStatus?.stage === "extracting"
-                    ? "bg-indigo-500 text-white"
-                    : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage)
-                    ? "bg-green-500 text-white"
-                    : "bg-gray-200 text-gray-400"
-                }`}>
-                  {processingStatus?.stage === "extracting" ? (
-                    <FaSpinner className="animate-spin" size={14} />
-                  ) : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage) ? (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <span className="text-xs font-semibold">2</span>
-                  )}
-                </div>
-                <div className="flex-1">
-                  <p className={`text-sm font-medium ${
-                    processingStatus?.stage === "extracting"
-                      ? "text-indigo-600"
-                      : processingStatus?.stage && ["transcribing", "translating", "complete"].includes(processingStatus.stage)
-                      ? "text-gray-600"
-                      : "text-gray-400"
-                  }`}>
-                    {processingStatus?.stage === "extracting" ? "Extracting audio..." : "Prepare audio"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Stage 3: Transcribing */}
-              <div className="flex items-center gap-3">
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  processingStatus?.stage === "transcribing"
-                    ? "bg-indigo-500 text-white"
-                    : processingStatus?.stage === "complete"
-                    ? "bg-green-500 text-white"
-                    : "bg-gray-200 text-gray-400"
-                }`}>
-                  {processingStatus?.stage === "transcribing" ? (
-                    <FaSpinner className="animate-spin" size={14} />
-                  ) : processingStatus?.stage === "complete" ? (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <span className="text-xs font-semibold">3</span>
-                  )}
-                </div>
-                <div className="flex-1">
-                  <p className={`text-sm font-medium ${
-                    processingStatus?.stage === "transcribing"
-                      ? "text-indigo-600"
-                      : processingStatus?.stage === "complete"
-                      ? "text-gray-600"
-                      : "text-gray-400"
-                  }`}>
-                    {processingStatus?.stage === "transcribing"
-                      ? "Transcribing speech..."
-                      : processingStatus?.stage === "complete"
-                      ? "Transcription complete"
-                      : "Transcribe audio"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Main Message */}
-            <div className="mb-6">
-              <div className="flex items-center justify-center gap-3 mb-3">
-                <div className="animate-spin">
-                  <FaSpinner size={24} className="text-indigo-600" />
-                </div>
-                <h3 className="text-lg font-bold text-gray-900">
-                  {processingStatus?.stage === "uploading" && "Uploading your file..."}
-                  {processingStatus?.stage === "extracting" && "Preparing audio..."}
-                  {processingStatus?.stage === "transcribing" && "AI is transcribing..."}
-                  {processingStatus?.stage === "translating" && "Translating content..."}
-                </h3>
-              </div>
-              <p className="text-sm text-center text-gray-600">
-                {processingStatus?.stage === "uploading" && "Sending your file to our servers"}
-                {processingStatus?.stage === "extracting" && "Extracting and optimizing audio for processing"}
-                {processingStatus?.stage === "transcribing" && videoRef && (
-                  `Processing ${Math.floor(videoRef.duration / 60)} minutes of audio. This may take 2-4 minutes.`
-                )}
-                {processingStatus?.stage === "transcribing" && !videoRef && (
-                  "Analyzing speech patterns and converting to text"
-                )}
-                {processingStatus?.stage === "translating" && "Converting text to your preferred language"}
-              </p>
-            </div>
-
-            {/* Elapsed Time */}
-            {elapsedTime > 0 && (
-              <div className="mb-6 text-center">
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-full">
-                  <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="text-sm font-medium text-gray-700">
-                    {Math.floor(elapsedTime / 60)}:{String(elapsedTime % 60).padStart(2, '0')} elapsed
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Progress Bar */}
-            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300"
-                style={{
-                  width: `${processingStatus?.progress || 0}%`
-                }}
-              />
-            </div>
-
-            {/* Helpful Tip */}
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="text-xs text-center text-gray-500">
-                💡 Tip: Processing time varies based on audio length and quality
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Processing overlay when transcribing */}
+      <ProcessingOverlay
+        isVisible={isTranscribing}
+        processingStatus={processingStatus}
+        elapsedTime={elapsedTime}
+        file={file}
+        videoRef={videoRef}
+      />
       <div className="h-full text-gray-900 p-6">
         {/* Upload Section */}
         {!transcription && (
-          <div className="mx-auto max-w-5xl">
-            <div className="mb-8">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center">
-                  <svg
-                    className="w-6 h-6 text-white"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-4xl font-bold text-gray-900">AI Subs</h1>
-                  <p className="text-sm text-gray-500">
-                    Intelligent Transcription & Subtitle Generation
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-              <div className="p-8 md:p-10">
-                <div className="text-center mb-10">
-                  <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3">
-                    Transform Your Media Into Text
-                  </h2>
-                  <p className="text-gray-600 max-w-2xl mx-auto leading-relaxed">
-                    Upload a video or audio file and our advanced AI will
-                    automatically transcribe it with accurate timestamps.
-                    <br />
-                    <span className="inline-block mt-2 text-indigo-600 font-semibold">
-                      ⚡ Supports large files • 30+ languages • Instant results
-                    </span>
-                  </p>
-                </div>
-
-                <div
-                  className={`
-                    relative flex flex-col items-center justify-center
-                    w-full max-w-2xl mx-auto h-72 border-3 border-dashed rounded-3xl
-                    transition-all duration-300 ease-in-out cursor-pointer
-                    ${
-                      dragActive
-                        ? "border-indigo-500 bg-indigo-50 shadow-xl scale-[1.02]"
-                        : "border-gray-300 bg-gray-50 hover:bg-indigo-50/70 hover:border-indigo-400 hover:scale-[1.01]"
-                    }
-                    ${
-                      transcribeMutation.isPending
-                        ? "opacity-60 pointer-events-none"
-                        : ""
-                    }
-                  `}
-                  onDragEnter={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDragOver={handleDrag}
-                  onDrop={handleDrop}
-                  onClick={handleButtonClick}
-                >
-                  <div className="flex flex-col items-center justify-center py-8 px-8 text-center">
-                    <div className="mb-6">
-                      <div
-                        className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-4 transition-all duration-300 ${
-                          dragActive
-                            ? "bg-gradient-to-br from-indigo-500 to-purple-600 scale-110 shadow-lg"
-                            : "bg-gradient-to-br from-indigo-100 to-purple-100"
-                        }`}
-                      >
-                        <svg
-                          className={`w-10 h-10 transition-colors duration-300 ${
-                            dragActive ? "text-white" : "text-indigo-600"
-                          }`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                          strokeWidth="1.5"
-                        >
-                          <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                        </svg>
-                      </div>
-                    </div>
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2">
-                      {dragActive ? "Release to upload" : "Drop your file here"}
-                    </h3>
-                    <p className="text-gray-600 mb-1 text-base font-medium">
-                      or{" "}
-                      <span className="text-indigo-600 underline">browse</span>{" "}
-                      your computer
-                    </p>
-                    <p className="text-xs text-gray-500 mt-2">
-                      MP4 • MP3 • WAV • WebM • AVI • MKV and more (up to 10GB)
-                    </p>
-                  </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    accept="video/*,audio/*"
-                    onChange={handleFileChange}
-                    disabled={transcribeMutation.isPending}
-                  />
-                </div>
-
-                {/* Show selected file info if a file is staged */}
-                {file && !transcription && (
-                  <div className="mt-8 max-w-2xl mx-auto p-6 bg-gradient-to-r from-emerald-50 via-cyan-50 to-blue-50 rounded-2xl border-2 border-emerald-200 shadow-sm">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0">
-                        <div className="flex items-center justify-center h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-500 shadow-md">
-                          {file.type.startsWith("video/") ? (
-                            <svg
-                              className="h-6 w-6 text-white"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                              />
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                          ) : (
-                            <svg
-                              className="h-6 w-6 text-white"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M9 19V6a2 2 0 012-2h4a2 2 0 012 2v13m-6 0a2 2 0 002 2h4a2 2 0 002-2m0 0V9a2 2 0 00-2-2h-4a2 2 0 00-2 2v13"
-                              />
-                            </svg>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex-grow">
-                        <h4 className="text-sm font-bold text-gray-900 truncate">
-                          {file.name}
-                        </h4>
-                        <p className="text-sm text-gray-600 mt-1">
-                          📊 Size: {(file.size / (1024 * 1024)).toFixed(2)} MB
-                        </p>
-                        <p className="text-xs text-emerald-700 font-medium mt-2">
-                          ✓ File ready to transcribe
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Language and Method Selection */}
-                <div className="mt-8 max-w-2xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Language Selection */}
-                  <div>
-                    <label
-                      htmlFor="language-select"
-                      className="block text-sm font-semibold text-gray-900 mb-2"
-                    >
-                      🌐 Source Language
-                    </label>
-                    <select
-                      id="language-select"
-                      value={selectedLanguage}
-                      onChange={handleLanguageChange}
-                      disabled={transcribeMutation.isPending}
-                      className="input-base w-full"
-                    >
-                      {languageOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="mt-2 text-xs text-gray-500">
-                      Auto-detect if you're not sure
-                    </p>
-                  </div>
-
-                  {/* Transcription Method */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-900 mb-2">
-                      ⚡ Processing Method
-                    </label>
-                    <div className="flex items-center h-11 px-4 border-2 border-gray-300 rounded-lg bg-white hover:border-indigo-400 transition-colors">
-                      <input
-                        type="radio"
-                        id="local-method"
-                        className="w-4 h-4 accent-indigo-600 cursor-pointer"
-                        name="transcriptionMethod"
-                        value="local"
-                        checked={transcriptionMethod === "local"}
-                        onChange={(e) => {
-                          setTranscriptionMethod(
-                            e.target.value as TranscriptionMethod
-                          );
-                        }}
-                      />
-                      <label
-                        htmlFor="local-method"
-                        className="ml-3 text-sm font-medium text-gray-700 cursor-pointer flex-grow"
-                      >
-                        Local (Faster, Free)
-                      </label>
-                    </div>
-                    <p className="mt-2 text-xs text-gray-500">
-                      Processes on your device
-                    </p>
-                  </div>
-                </div>
-
-                {/* Start Transcription Button */}
-                {file && !transcribeMutation.isPending && !transcription && (
-                  <div className="mt-10 max-w-2xl mx-auto text-center">
-                    <button
-                      onClick={handleStartTranscriptionClick}
-                      className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold rounded-xl shadow-lg 
-                                 hover:from-indigo-700 hover:to-purple-700 hover:shadow-xl
-                                 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
-                                 transition-all duration-200 active:scale-95
-                                 flex items-center justify-center gap-2 text-lg"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M13 10V3L4 14h7v7l9-11h-7z"
-                        />
-                      </svg>
-                      Start Transcribing
-                    </button>
-                  </div>
-                )}
-
-                {/* Load Saved Button */}
-                <div className="mt-3 text-center">
-                  <button
-                    onClick={handleSavedTranscriptionsClick}
-                    className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center justify-center mx-auto"
-                    disabled={transcribeMutation.isPending}
-                  >
-                    <svg
-                      className="w-4 h-4 mr-1"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
-                    </svg>
-                    {showSavedTranscriptions
-                      ? "Hide Saved"
-                      : "Load Saved Transcription"}
-                  </button>
-                </div>
-
-                {/* Saved Transcriptions Panel */}
-                {showSavedTranscriptions && (
-                  <div className="mt-4 max-w-lg mx-auto">
-                    <SavedTranscriptionsPanel
-                      onTranscriptionLoaded={handleTranscriptionLoaded}
-                      onImageClick={openImageModal}
-                    />
-                  </div>
-                )}
-
-                {/* File Format Info */}
-                <div className="mt-4 flex justify-center gap-3">
-                  <div className="flex items-center space-x-1 text-gray-600">
-                    <svg
-                      className="w-3 h-3 text-teal-500"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
-                    <span className="text-2xs">Quick Processing</span>
-                  </div>
-                  <div className="flex items-center space-x-1 text-gray-600">
-                    <svg
-                      className="w-3 h-3 text-teal-500"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                    </svg>
-                    <span className="text-2xs">Secure Upload</span>
-                  </div>
-                  <div className="flex items-center space-x-1 text-gray-600">
-                    <svg
-                      className="w-3 h-3 text-teal-500"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-                    </svg>
-                    <span className="text-2xs">High Accuracy</span>
-                  </div>
-                </div>
-
-                {/* Processing Status - Keep only this one */}
-                {!isNewTranscription && processingStatus && (
-                  <div className="w-full max-w-lg mx-auto mt-6 p-4 rounded-lg border border-gray-100">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-teal-700 flex items-center">
-                        {processingStatus.stage === "extracting" ? (
-                          <>
-                            <svg
-                              className="animate-spin -ml-1 mr-2 h-3 w-3 text-teal-500"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              ></circle>
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              ></path>
-                            </svg>
-                            Extracting audio...
-                          </>
-                        ) : processingStatus.stage === "transcribing" ? (
-                          <>
-                            <svg
-                              className="animate-spin -ml-1 mr-2 h-3 w-3 text-teal-500"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              ></circle>
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              ></path>
-                            </svg>
-                            Transcribing audio...
-                          </>
-                        ) : (
-                          "Processing..."
-                        )}
-                      </span>
-                      <span className="text-xs font-medium text-teal-700">
-                        {processingStatus.stage === "extracting"
-                          ? "Step 1 of 3"
-                          : processingStatus.stage === "transcribing"
-                          ? "Step 2 of 3"
-                          : processingStatus.stage === "complete"
-                          ? "Step 3 of 3"
-                          : `${processingStatus.progress}%`}
-                      </span>
-                    </div>
-                    <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                      {processingStatus.stage === "extracting" ? (
-                        <div className="h-full w-full bg-orange-400 rounded-full animate-pulse opacity-60"></div>
-                      ) : (
-                        <div
-                          className="h-full bg-gradient-to-r from-orange-400 to-rose-500 rounded-full transition-all duration-300"
-                          style={{ width: `${processingStatus.progress}%` }}
-                        />
-                      )}
-                    </div>
-                    <div className="mt-2 flex justify-between text-2xs text-gray-500">
-                      <p className="text-center">
-                        {processingStatus.stage === "extracting"
-                          ? "Extracting audio from video file. This may take several minutes depending on file size..."
-                          : processingStatus.stage === "transcribing"
-                          ? "Converting speech to text..."
-                          : "Processing your file..."}
-                      </p>
-                      <p className="text-right font-medium">
-                        {elapsedTime > 0 &&
-                          `Time elapsed: ${formatProcessingTime(
-                            elapsedTime.toString()
-                          )}`}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Features Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10 pt-2">
-              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-100 to-violet-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                    <svg
-                      className="w-6 h-6 text-violet-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      strokeWidth="1.5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="text-sm font-bold text-gray-900 mb-1">
-                      High Accuracy
-                    </h3>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      Advanced AI model trained on diverse speech patterns for
-                      exceptional accuracy
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                    <svg
-                      className="w-6 h-6 text-orange-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      strokeWidth="1.5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="text-sm font-bold text-gray-900 mb-1">
-                      Fast Processing
-                    </h3>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      Get results in minutes, not hours. Optimized for speed
-                      without sacrificing quality
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="group bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-rose-100 to-rose-200 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                    <svg
-                      className="w-6 h-6 text-rose-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      strokeWidth="1.5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h0a1.125 1.125 0 001.125 1.125m0 0v1.5a.5.5 0 01-.5.5H5a.5.5 0 01-.5-.5v-1.5m0 0h-1.5a.5.5 0 01-.5-.5V15m0 0a1.125 1.125 0 001.125-1.125m0 0h0a1.125 1.125 0 001.125 1.125m0 0v1.5a.5.5 0 01-.5.5H5a.5.5 0 01-.5-.5v-1.5"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="text-sm font-bold text-gray-900 mb-1">
-                      30+ Languages
-                    </h3>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      Automatic language detection with support for languages
-                      worldwide
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <UploadZone
+            file={file}
+            dragActive={dragActive}
+            isTranscribing={isTranscribing}
+            fileInputRef={fileInputRef}
+            handleDrag={handleDrag}
+            handleDrop={handleDrop}
+            handleButtonClick={handleButtonClick}
+            fileUploadHandleChange={fileUploadHandleChange}
+            selectedLanguage={selectedLanguage}
+            handleLanguageChange={handleLanguageChange}
+            transcriptionMethod={transcriptionMethod}
+            setTranscriptionMethod={setTranscriptionMethod}
+            handleStartTranscriptionClick={handleStartTranscriptionClick}
+            showSavedTranscriptions={showSavedTranscriptions}
+            handleSavedTranscriptionsClick={handleSavedTranscriptionsClick}
+            handleTranscriptionLoaded={handleTranscriptionLoaded}
+            openImageModal={openImageModal}
+            isNewTranscription={isNewTranscription}
+            processingStatus={processingStatus}
+            elapsedTime={elapsedTime}
+            languageOptions={languageOptions}
+          />
         )}
 
         {/* Results Section */}
@@ -2507,11 +676,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 {/* Video Player (Top) */}
                 {videoUrl && (
                   <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 mb-4 lg:mb-0">
-                    <div
-                      className="w-full bg-black flex justify-center relative"
-                      onMouseEnter={() => setIsVideoHovered(true)}
-                      onMouseLeave={() => setIsVideoHovered(false)}
-                    >
+                    <div className="w-full bg-black flex justify-center relative">
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
@@ -2621,7 +786,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               onClick={() => {
                                 if (videoRef) {
                                   const newVolume = volume === 0 ? 1 : 0;
-                                  setVolume(newVolume);
+                                  // Volume is managed by useVideoPlayer hook
                                   videoRef.volume = newVolume;
                                 }
                               }}
@@ -2800,210 +965,20 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           </div>
                         </div>
                         {/* Transcript content */}
-                        <div className="p-5 space-y-4">
-                          {transcription.transcription.segments.map(
-                            (segment, index) => (
-                              <div
-                                key={segment.id}
-                                id={`transcript-segment-${segment.id}`}
-                                onClick={() =>
-                                  seekToTimestamp(segment.start_time)
-                                }
-                                className={`p-4 md:p-5 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md hover:cursor-pointer ${
-                                  activeSegmentId === segment.id
-                                    ? "bg-blue-50 border-blue-400 shadow-md"
-                                    : "bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                                }`}
-                              >
-                                <div className="flex items-start gap-4">
-                                  {segment.screenshot_url && (
-                                    <div className="flex-shrink-0">
-                                      <img
-                                        src={`http://localhost:8000${segment.screenshot_url}`}
-                                        alt={`Screenshot at ${segment.start_time}`}
-                                        className="w-40 h-24 object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-110 cursor-pointer border border-gray-200"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openImageModal(
-                                            `http://localhost:8000${segment.screenshot_url}`
-                                          );
-                                        }}
-                                      />
-                                    </div>
-                                  )}
-                                  <div className="flex-grow min-w-0">
-                                    <div className="flex items-center flex-wrap gap-2 mb-2 text-xs font-semibold">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          seekToTimestamp(segment.start_time);
-                                        }}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 hover:text-indigo-900 rounded-lg transition-all duration-200 hover:shadow-sm active:scale-95"
-                                        title="Click to jump to this timestamp"
-                                      >
-                                        <svg
-                                          className="w-4 h-4"
-                                          viewBox="0 0 24 24"
-                                          fill="currentColor"
-                                        >
-                                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                                        </svg>
-                                        {segment.start_time}
-                                      </button>
-                                      <span className="text-gray-400">→</span>
-                                      <span className="text-gray-600">
-                                        {segment.end_time}
-                                      </span>
-                                      {segment.speaker &&
-                                        (() => {
-                                          const isEditing =
-                                            editingSpeaker === segment.speaker;
-                                          if (isEditing) {
-                                            return (
-                                              <div
-                                                className="flex items-center gap-2"
-                                                onClick={(e) =>
-                                                  e.stopPropagation()
-                                                }
-                                              >
-                                                <input
-                                                  type="text"
-                                                  value={editSpeakerName}
-                                                  onChange={(e) =>
-                                                    setEditSpeakerName(
-                                                      e.target.value
-                                                    )
-                                                  }
-                                                  className="px-2 py-1 text-xs border rounded shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                                  autoFocus
-                                                  onKeyDown={(e) => {
-                                                    if (e.key === "Enter")
-                                                      handleSpeakerRename(
-                                                        segment.speaker!
-                                                      );
-                                                    if (e.key === "Escape")
-                                                      setEditingSpeaker(null);
-                                                    e.stopPropagation();
-                                                  }}
-                                                  onClick={(e) =>
-                                                    e.stopPropagation()
-                                                  }
-                                                />
-                                                <button
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleSpeakerRename(
-                                                      segment.speaker!
-                                                    );
-                                                  }}
-                                                  className="p-1 text-xs text-green-600 hover:text-green-800 bg-green-50 rounded hover:bg-green-100"
-                                                  title="Save"
-                                                >
-                                                  <svg
-                                                    className="w-4 h-4"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    viewBox="0 0 24 24"
-                                                  >
-                                                    <path
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                      strokeWidth="2"
-                                                      d="M5 13l4 4L19 7"
-                                                    ></path>
-                                                  </svg>
-                                                </button>
-                                                <button
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setEditingSpeaker(null);
-                                                  }}
-                                                  className="p-1 text-xs text-red-600 hover:text-red-800 bg-red-50 rounded hover:bg-red-100"
-                                                  title="Cancel"
-                                                >
-                                                  <svg
-                                                    className="w-4 h-4"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    viewBox="0 0 24 24"
-                                                  >
-                                                    <path
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                      strokeWidth="2"
-                                                      d="M6 18L18 6M6 6l12 12"
-                                                    ></path>
-                                                  </svg>
-                                                </button>
-                                              </div>
-                                            );
-                                          }
-
-                                          const speakerColors = getSpeakerColor(
-                                            segment.speaker
-                                          );
-                                          return (
-                                            <span
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setEditingSpeaker(
-                                                  segment.speaker
-                                                );
-                                                setEditSpeakerName(
-                                                  formatSpeakerLabel(
-                                                    segment.speaker!
-                                                  )
-                                                );
-                                              }}
-                                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${speakerColors.bg} ${speakerColors.text} ${speakerColors.border} cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-300 transition-all`}
-                                              title="Click to rename speaker"
-                                            >
-                                              <svg
-                                                className="w-3.5 h-3.5"
-                                                fill="currentColor"
-                                                viewBox="0 0 20 20"
-                                              >
-                                                <path
-                                                  fillRule="evenodd"
-                                                  d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                                                  clipRule="evenodd"
-                                                />
-                                              </svg>
-                                              {formatSpeakerLabel(
-                                                segment.speaker
-                                              )}
-                                            </span>
-                                          );
-                                        })()}
-                                      <span className="ml-auto inline-flex items-center px-3 py-1 rounded-full text-2xs font-semibold bg-indigo-100 text-indigo-700">
-                                        Segment {index + 1}
-                                      </span>
-                                    </div>
-                                    <p
-                                      className={`text-gray-800 leading-relaxed ${
-                                        activeSegmentId === segment.id
-                                          ? "font-semibold text-gray-900"
-                                          : "font-medium"
-                                      }`}
-                                    >
-                                      {showTranslation &&
-                                      segment.translation ? (
-                                        <>
-                                          {segment.translation}
-                                          <span className="block text-xs text-gray-500 italic mt-2">
-                                            Original: {segment.text}
-                                          </span>
-                                        </>
-                                      ) : (
-                                        segment.text
-                                      )}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          )}
-                        </div>
+                        <TranscriptSegmentList
+                          segments={transcription.transcription.segments}
+                          activeSegmentId={activeSegmentId}
+                          showTranslation={showTranslation}
+                          seekToTimestamp={seekToTimestamp}
+                          openImageModal={openImageModal}
+                          editingSpeaker={editingSpeaker}
+                          setEditingSpeaker={setEditingSpeaker}
+                          editSpeakerName={editSpeakerName}
+                          setEditSpeakerName={setEditSpeakerName}
+                          handleSpeakerRename={handleSpeakerRename}
+                          getSpeakerColor={getSpeakerColor}
+                          formatSpeakerLabel={formatSpeakerLabel}
+                        />
                       </>
                     )}
 
@@ -3102,7 +1077,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 <p className="mt-1 text-xs text-red-700">{error}</p>
                 <div className="mt-2">
                   <button
-                    onClick={() => transcribeMutation.reset()}
+                    onClick={() => resetTranscriptionState()}
                     className="text-xs font-medium text-red-700 hover:text-red-600 focus:outline-none"
                   >
                     Try again
