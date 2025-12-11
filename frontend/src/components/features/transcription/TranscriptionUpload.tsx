@@ -760,7 +760,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
-                        className="w-full max-h-[50vh] xl:max-h-full object-contain"
+                        className="w-full max-h-[50vh] xl:max-h-full object-none"
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
