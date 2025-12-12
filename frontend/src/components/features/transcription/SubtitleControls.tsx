@@ -3,15 +3,16 @@ import { getSubtitles } from "../../../services/api";
 
 interface SubtitleControlsProps {
   filename: string;
+  videoHash?: string;
 }
 
-export const SubtitleControls = ({ filename }: SubtitleControlsProps) => {
+export const SubtitleControls = ({ filename, videoHash }: SubtitleControlsProps) => {
   const [downloading, setDownloading] = useState<string | null>(null);
 
   const handleDownload = async (language: "original" | "english") => {
     try {
       setDownloading(language);
-      const blob = await getSubtitles(language);
+      const blob = await getSubtitles(language, videoHash);
 
       // Create a new blob with explicit UTF-8 encoding to handle special characters properly
       const newBlob = new Blob([blob], { type: "text/srt;charset=utf-8" });

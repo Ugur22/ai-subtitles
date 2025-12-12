@@ -218,9 +218,11 @@ export const searchTranscription = async (
   return response.data;
 };
 
-export const getSubtitles = async (language: 'original' | 'english'): Promise<Blob> => {
+export const getSubtitles = async (language: 'original' | 'english', videoHash?: string): Promise<Blob> => {
+  const params = videoHash ? { video_hash: videoHash } : {};
   const response = await api.get(`/subtitles/${language}`, {
     responseType: 'blob',
+    params,
   });
 
   return response.data;

@@ -1147,16 +1147,30 @@ async def transcribe_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/subtitles/{language}")
-async def get_subtitles(language: str, request: Request) -> Response:
+async def get_subtitles(language: str, request: Request, video_hash: str = None) -> Response:
     """
     Get subtitles in SRT format. Language can be 'original' or 'english'.
     - 'original': Returns subtitles in the original language (stored in 'text' field)
     - 'english': Returns subtitles in English (stored in 'translation' field)
     """
-    if not hasattr(request.app.state, 'last_transcription'):
-        raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
-    
-    transcription = request.app.state.last_transcription
+    # Try to get transcription from video_hash parameter, app state, or last_transcription_data
+    transcription = None
+
+    if video_hash:
+        # Get from database using video_hash
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail=f"Transcription not found for video_hash: {video_hash}")
+    elif hasattr(request.app.state, 'last_transcription'):
+        transcription = request.app.state.last_transcription
+    else:
+        # Fall back to global last_transcription_data
+        global last_transcription_data
+        if last_transcription_data:
+            transcription = last_transcription_data
+        else:
+            raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
+
     
     if language not in ['original', 'english']:
         raise HTTPException(status_code=400, detail="Language must be 'original' or 'english'")

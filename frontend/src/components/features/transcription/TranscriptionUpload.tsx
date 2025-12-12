@@ -676,7 +676,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                   <div className="h-6 w-px bg-gray-200 mx-1"></div>
 
-                  <SubtitleControls filename={transcription.filename} />
+                  <SubtitleControls
+                    filename={transcription.filename}
+                    videoHash={transcription.video_hash}
+                  />
 
                   <div className="h-6 w-px bg-gray-200 mx-1"></div>
 
