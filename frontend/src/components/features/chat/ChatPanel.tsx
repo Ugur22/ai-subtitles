@@ -107,7 +107,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         question: input,
         video_hash: videoHash,
         provider: selectedProvider,
-        n_results: 5,
+        n_results: 8,  // Increased for more comprehensive context
       });
 
       const assistantMessage: Message = {
