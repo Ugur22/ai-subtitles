@@ -45,6 +45,15 @@ except ImportError as e:
     print(f"Warning: Speaker diarization not available: {str(e)}")
     SPEAKER_DIARIZATION_AVAILABLE = False
 
+# Import LLM and vector store modules
+try:
+    from llm_providers import llm_manager
+    from vector_store import vector_store
+    LLM_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: LLM features not available: {str(e)}")
+    LLM_AVAILABLE = False
+
 # Global variable to store the last transcription
 last_transcription_data = None
 
@@ -2175,6 +2184,243 @@ async def update_speaker_name(video_hash: str, request: Request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# LLM Chat Endpoints
+# ============================================================================
+
+@app.post("/api/index_video/")
+async def index_video_for_chat(request: Request, video_hash: str = None) -> Dict:
+    """
+    Index a video's transcription for chat/Q&A
+
+    Args:
+        video_hash: Optional video hash. If not provided, uses last transcription
+    """
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
+
+    try:
+        # Get transcription data
+        if video_hash:
+            transcription = get_transcription(video_hash)
+            if not transcription:
+                raise HTTPException(status_code=404, detail="Transcription not found")
+        else:
+            # Use last transcription
+            global last_transcription_data
+            if not last_transcription_data:
+                raise HTTPException(status_code=404, detail="No transcription available")
+            transcription = last_transcription_data
+            video_hash = transcription.get('video_hash')
+
+        # Get segments
+        segments = transcription.get('transcription', {}).get('segments', [])
+        if not segments:
+            raise HTTPException(status_code=400, detail="No segments found in transcription")
+
+        # Index in vector database
+        print(f"Indexing video {video_hash} with {len(segments)} segments...")
+        num_chunks = vector_store.index_transcription(video_hash, segments)
+
+        return {
+            "success": True,
+            "video_hash": video_hash,
+            "segments_count": len(segments),
+            "chunks_indexed": num_chunks,
+            "message": f"Successfully indexed {num_chunks} chunks from {len(segments)} segments"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error indexing video: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to index video: {str(e)}")
+
+
+@app.post("/api/chat/")
+async def chat_with_video(request: Request) -> Dict:
+    """
+    Chat with a video using RAG (Retrieval-Augmented Generation)
+
+    Request body:
+        {
+            "question": "What happens in this video?",
+            "video_hash": "abc123",  # optional, uses last transcription if not provided
+            "provider": "ollama",     # optional: ollama, groq, openai, anthropic
+            "n_results": 5            # optional: number of context chunks to retrieve
+        }
+    """
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    try:
+        body = await request.json()
+        question = body.get('question')
+        video_hash = body.get('video_hash')
+        provider_name = body.get('provider')
+        n_results = body.get('n_results', 5)
+
+        if not question:
+            raise HTTPException(status_code=400, detail="Question is required")
+
+        # Get video_hash from last transcription if not provided
+        if not video_hash:
+            global last_transcription_data
+            if not last_transcription_data:
+                raise HTTPException(status_code=404, detail="No video available for chat")
+            video_hash = last_transcription_data.get('video_hash')
+
+        # Check if video is indexed
+        if not vector_store.collection_exists(video_hash):
+            # Auto-index if not already indexed
+            transcription = get_transcription(video_hash)
+            if transcription:
+                segments = transcription.get('transcription', {}).get('segments', [])
+                print(f"Auto-indexing video {video_hash}...")
+                vector_store.index_transcription(video_hash, segments)
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Video not indexed. Please index it first using /api/index_video/"
+                )
+
+        # Retrieve relevant context using vector search
+        print(f"Searching for relevant context for question: {question}")
+        search_results = vector_store.search(video_hash, question, n_results=n_results)
+
+        if not search_results:
+            return {
+                "answer": "I couldn't find relevant information in the video to answer your question.",
+                "sources": [],
+                "provider": provider_name or "none"
+            }
+
+        # Build context from search results
+        context_parts = []
+        sources = []
+
+        for i, result in enumerate(search_results):
+            metadata = result['metadata']
+            text = result['text']
+
+            context_parts.append(
+                f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
+                f"[Speaker: {metadata['speaker']}]\n{text}"
+            )
+
+            sources.append({
+                "start_time": metadata['start_time'],
+                "end_time": metadata['end_time'],
+                "start": metadata['start'],
+                "end": metadata['end'],
+                "speaker": metadata['speaker'],
+                "text": text[:200] + "..." if len(text) > 200 else text
+            })
+
+        context = "\n\n".join(context_parts)
+
+        # Build prompt for LLM
+        system_message = """You are a helpful AI assistant that answers questions about video content.
+You have access to transcripts with timestamps and speaker information.
+Answer questions accurately based on the provided context.
+If you reference specific moments, include the timestamp.
+If the context doesn't contain enough information, say so."""
+
+        user_message = f"""Based on the following transcript segments from the video, please answer the question.
+
+Context from video:
+{context}
+
+Question: {question}
+
+Please provide a clear and concise answer. Include relevant timestamps when referencing specific moments."""
+
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+
+        # Get LLM provider and generate response
+        try:
+            provider = llm_manager.get_provider(provider_name)
+            answer = await provider.generate(messages, temperature=0.7, max_tokens=1000)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLM generation failed: {str(e)}"
+            )
+
+        return {
+            "answer": answer,
+            "sources": sources,
+            "provider": provider_name or llm_manager.default_provider,
+            "video_hash": video_hash
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in chat: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@app.get("/api/llm/providers")
+async def list_llm_providers() -> Dict:
+    """List all available LLM providers and their status"""
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    try:
+        providers = llm_manager.list_available_providers()
+        return {
+            "providers": providers,
+            "default": llm_manager.default_provider
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/llm/test")
+async def test_llm_provider(request: Request) -> Dict:
+    """
+    Test an LLM provider
+
+    Request body:
+        {
+            "provider": "ollama"  # optional, uses default if not provided
+        }
+    """
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    try:
+        body = await request.json()
+        provider_name = body.get('provider')
+
+        provider = llm_manager.get_provider(provider_name)
+
+        # Test with a simple message
+        messages = [
+            {"role": "user", "content": "Hello! Please respond with 'OK' if you can read this."}
+        ]
+
+        response = await provider.generate(messages, temperature=0.5, max_tokens=50)
+
+        return {
+            "success": True,
+            "provider": provider_name or llm_manager.default_provider,
+            "response": response
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "provider": provider_name or llm_manager.default_provider
+        }
 
 if __name__ == "__main__":
     import uvicorn
