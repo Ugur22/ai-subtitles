@@ -2260,7 +2260,7 @@ async def chat_with_video(request: Request) -> Dict:
         question = body.get('question')
         video_hash = body.get('video_hash')
         provider_name = body.get('provider')
-        n_results = body.get('n_results', 5)
+        n_results = body.get('n_results', 8)  # Increased from 5 to 8 for more context
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
@@ -2322,20 +2322,37 @@ async def chat_with_video(request: Request) -> Dict:
         context = "\n\n".join(context_parts)
 
         # Build prompt for LLM
-        system_message = """You are a helpful AI assistant that answers questions about video content.
-You have access to transcripts with timestamps and speaker information.
-Answer questions accurately based on the provided context.
-If you reference specific moments, include the timestamp.
-If the context doesn't contain enough information, say so."""
+        system_message = """You are an expert AI assistant specialized in analyzing video content and transcripts.
 
-        user_message = f"""Based on the following transcript segments from the video, please answer the question.
+Your role:
+- Provide detailed, comprehensive answers based on the video transcript
+- Always cite specific timestamps when referencing information (use format [HH:MM:SS])
+- Identify speakers and their contributions clearly
+- Connect related points across different parts of the video
+- Offer insights and analysis, not just basic summaries
+- Use markdown formatting for better readability (bold, bullet points, etc.)
 
-Context from video:
+Guidelines:
+- Be thorough and detailed in your responses
+- Include relevant quotes from speakers when appropriate
+- Explain context, implications, and connections between ideas
+- If asked to summarize, organize information logically with bullet points or sections
+- Reference multiple sources/timestamps to support your answers
+- If the context is insufficient, explain what information is missing"""
+
+        user_message = f"""Based on the following transcript segments from the video, please answer the question comprehensively.
+
+VIDEO TRANSCRIPT CONTEXT:
 {context}
 
-Question: {question}
+QUESTION: {question}
 
-Please provide a clear and concise answer. Include relevant timestamps when referencing specific moments."""
+Please provide a detailed, well-structured answer that:
+1. Directly addresses the question
+2. Cites specific timestamps and speakers
+3. Provides context and analysis
+4. Uses markdown formatting for clarity
+5. Connects related information from different parts of the video"""
 
         messages = [
             {"role": "system", "content": system_message},
@@ -2345,7 +2362,7 @@ Please provide a clear and concise answer. Include relevant timestamps when refe
         # Get LLM provider and generate response
         try:
             provider = llm_manager.get_provider(provider_name)
-            answer = await provider.generate(messages, temperature=0.7, max_tokens=1000)
+            answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
         except Exception as e:
             raise HTTPException(
                 status_code=500,
