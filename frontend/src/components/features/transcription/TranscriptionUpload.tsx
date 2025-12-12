@@ -757,12 +757,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               >
                 {/* Video Player (Top/Left) */}
                 {videoUrl && (
-                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 w-full xl:w-3/5 flex flex-col">
+                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 w-full xl:w-3/4 flex flex-col">
                     <div className="w-full bg-black flex justify-center relative flex-grow items-center">
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
-                        className="w-full max-h-[50vh] xl:max-h-full object-none"
+                        className="w-full h-full max-h-[70vh] xl:max-h-[80vh] object-contain"
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
@@ -950,7 +950,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 )}
 
                 {/* Tabs for Transcript, Chat, and Summary */}
-                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col w-full xl:w-2/5">
+                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col w-full xl:w-1/4">
                   <div className="flex border-b border-gray-200 sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10">
                     <button
                       onClick={() => {
