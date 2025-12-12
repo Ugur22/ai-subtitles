@@ -90,11 +90,7 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
           e.preventDefault();
           videoRef.currentTime = Math.max(0, videoRef.currentTime - 5);
           break;
-        case "p":
-        case "P":
-          e.preventDefault();
-          handlePlayPause();
-          break;
+        // Removed 'P' key shortcut - was interfering with typing
       }
     };
 
