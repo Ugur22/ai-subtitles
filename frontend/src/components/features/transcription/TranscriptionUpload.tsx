@@ -8,6 +8,7 @@ import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
 import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
+import { ChatPanel } from "../chat/ChatPanel";
 import axios from "axios";
 import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
@@ -44,6 +45,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   // UI-specific state (keep these)
   const [showTranslation, setShowTranslation] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [showSearch, setShowSearch] = useState(true);
   const [progressSimulation] = useState<NodeJS.Timeout | null>(null); // Unused but kept for future use
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
@@ -947,13 +949,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
                 )}
 
-                {/* Tabs for Transcript and Summary */}
+                {/* Tabs for Transcript, Chat, and Summary */}
                 <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col w-full xl:w-2/5">
                   <div className="flex border-b border-gray-200 sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10">
                     <button
-                      onClick={() => setShowSummary(false)}
+                      onClick={() => {
+                        setShowSummary(false);
+                        setShowChat(false);
+                      }}
                       className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        !showSummary
+                        !showSummary && !showChat
                           ? "text-indigo-600"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
@@ -974,12 +979,46 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </svg>
                         Transcript
                       </div>
-                      {!showSummary && (
+                      {!showSummary && !showChat && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
                       )}
                     </button>
                     <button
-                      onClick={() => setShowSummary(true)}
+                      onClick={() => {
+                        setShowSummary(false);
+                        setShowChat(true);
+                      }}
+                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
+                        showChat
+                          ? "text-indigo-600"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                          />
+                        </svg>
+                        Chat
+                      </div>
+                      {showChat && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowSummary(true);
+                        setShowChat(false);
+                      }}
                       className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
                         showSummary
                           ? "text-indigo-600"
@@ -1009,7 +1048,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
 
                   <div className="flex-grow overflow-auto relative">
-                    {!showSummary && (
+                    {!showSummary && !showChat && (
                       <>
                         {/* Sticky Show Translation button */}
                         <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center">
@@ -1198,6 +1237,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           formatSpeakerLabel={formatSpeakerLabel}
                         />
                       </>
+                    )}
+
+                    {/* Chat Panel */}
+                    {showChat && (
+                      <div className="h-full">
+                        <ChatPanel
+                          videoHash={transcription?.video_hash || null}
+                          onTimestampClick={seekToTimestamp}
+                        />
+                      </div>
                     )}
 
                     {/* Summary Panel */}
