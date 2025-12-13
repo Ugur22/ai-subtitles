@@ -6,13 +6,18 @@ openai==1.12.0
 httpx>=0.24.1
 moviepy==1.0.3
 tqdm==4.66.1
-nltk==3.8.1
-scikit-learn==1.3.0
+nltk>=3.9.1,<4.0.0
 pydantic==2.5.2
 pydantic-settings==2.1.0
-torch==2.2.0
-torchaudio==2.2.0
+torch==2.7.0
+torchaudio==2.7.0
 transformers==4.38.2
 numpy==1.26.4
 pyannote.audio==3.1.1
-git+https://github.com/m-bain/whisperx.git 
+faster-whisper==1.2.1
+av==13.1.0
+
+# LLM and RAG dependencies
+sentence-transformers==2.2.2
+chromadb==0.4.22
+groq==0.4.2 

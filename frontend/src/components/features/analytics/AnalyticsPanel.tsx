@@ -1,14 +1,20 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { searchTranscription, SearchResponse } from '../../../services/api';
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { searchTranscription, SearchResponse } from "../../../services/api";
 
-export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (timestamp: string) => void }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResponse | null>(null);
+export const AnalyticsPanel = ({
+  onSeekToTimestamp,
+}: {
+  onSeekToTimestamp?: (timestamp: string) => void;
+}) => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResponse | null>(
+    null
+  );
   const [semanticSearch, setSemanticSearch] = useState(true);
 
   const searchMutation = useMutation({
-    mutationFn: ({ topic, semantic }: { topic: string; semantic: boolean }) => 
+    mutationFn: ({ topic, semantic }: { topic: string; semantic: boolean }) =>
       searchTranscription(topic, semantic),
     onSuccess: (data) => {
       setSearchResults(data);
@@ -48,12 +54,12 @@ export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (tim
             <button
               onClick={handleSearch}
               disabled={searchMutation.isPending || !searchTerm.trim()}
-              className="w-full py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              className="w-full py-2.5 bg-violet-600 text-gray-900 rounded-md hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
             >
-              {searchMutation.isPending ? 'Searching...' : 'Search'}
+              {searchMutation.isPending ? "Searching..." : "Search"}
             </button>
           </div>
-          
+
           <div className="flex items-center">
             <label className="inline-flex items-center cursor-pointer">
               <input
@@ -62,7 +68,7 @@ export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (tim
                 onChange={() => setSemanticSearch(!semanticSearch)}
                 className="sr-only peer"
               />
-              <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-violet-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
               <span className="ms-3 text-sm font-medium">Semantic Search</span>
             </label>
           </div>
@@ -78,46 +84,64 @@ export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (tim
 
         {searchMutation.isError && (
           <div className="p-4 text-red-800 border border-red-300 rounded-md bg-red-50">
-            <p>There was an error processing your search request. Please try again.</p>
+            <p>
+              There was an error processing your search request. Please try
+              again.
+            </p>
           </div>
         )}
 
         {searchResults && (
           <div className="mt-4">
             <h4 className="font-medium text-gray-900 mb-2">
-              Found {searchResults.total_matches} matches for "{searchResults.topic}"
+              Found {searchResults.total_matches} matches for "
+              {searchResults.topic}"
             </h4>
-            
+
             {searchResults.matches.length === 0 ? (
-              <p className="text-gray-500">No matches found. Try a different search term.</p>
+              <p className="text-gray-500">
+                No matches found. Try a different search term.
+              </p>
             ) : (
               <div className="space-y-4">
                 {searchResults.matches.map((match, index) => (
                   <div key={index} className="border rounded-md p-3 bg-gray-50">
                     <div className="flex justify-between mb-1">
-                      <span 
-                        className={`text-sm ${onSeekToTimestamp ? 'text-blue-600 cursor-pointer hover:underline' : 'text-gray-500'}`}
-                        onClick={() => handleTimestampClick(match.timestamp.start)}
+                      <span
+                        className={`text-sm ${
+                          onSeekToTimestamp
+                            ? "text-orange-600 cursor-pointer hover:underline"
+                            : "text-gray-500"
+                        }`}
+                        onClick={() =>
+                          handleTimestampClick(match.timestamp.start)
+                        }
                       >
                         {match.timestamp.start} - {match.timestamp.end}
                       </span>
                     </div>
                     <p className="mb-1 font-medium">{match.original_text}</p>
-                    {match.translated_text && match.translated_text !== match.original_text && (
-                      <p className="text-sm text-gray-600 italic">{match.translated_text}</p>
-                    )}
-                    {(match.context.before.length > 0 || match.context.after.length > 0) && (
+                    {match.translated_text &&
+                      match.translated_text !== match.original_text && (
+                        <p className="text-sm text-gray-600 italic">
+                          {match.translated_text}
+                        </p>
+                      )}
+                    {(match.context.before.length > 0 ||
+                      match.context.after.length > 0) && (
                       <div className="mt-2 text-sm text-gray-500">
                         {match.context.before.length > 0 && (
                           <div className="mb-1">
-                            <span className="text-xs font-medium">Before: </span>
-                            {match.context.before.join(' ')}
+                            <span className="text-xs font-medium">
+                              Before:{" "}
+                            </span>
+                            {match.context.before.join(" ")}
                           </div>
                         )}
                         {match.context.after.length > 0 && (
                           <div>
                             <span className="text-xs font-medium">After: </span>
-                            {match.context.after.join(' ')}
+                            {match.context.after.join(" ")}
                           </div>
                         )}
                       </div>
@@ -131,4 +155,4 @@ export const AnalyticsPanel = ({ onSeekToTimestamp }: { onSeekToTimestamp?: (tim
       </div>
     </div>
   );
-}; 
+};
