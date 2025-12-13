@@ -1,4 +1,5 @@
 import React from "react";
+import { useSpring, animated } from "react-spring";
 
 interface Segment {
   id: string;
@@ -28,6 +29,37 @@ interface TranscriptSegmentListProps {
   };
   formatSpeakerLabel: (speaker: string) => string;
 }
+
+const AnimatedSegment = ({
+  segment,
+  isActive,
+  ...props
+}: {
+  segment: Segment;
+  isActive: boolean;
+  [key: string]: any;
+}) => {
+  const style = useSpring({
+    transform: isActive ? "scale(1.02)" : "scale(1)",
+    boxShadow: isActive
+      ? "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
+      : "0 0 0 0 rgba(0, 0, 0, 0)",
+    borderColor: isActive ? "rgb(96, 165, 250)" : "rgb(229, 231, 235)",
+    backgroundColor: isActive ? "rgb(239, 246, 255)" : "rgb(255, 255, 255)",
+    config: { tension: 300, friction: 20 },
+  });
+
+  return (
+    <animated.div
+      style={style}
+      id={`transcript-segment-${segment.id}`}
+      onClick={props.onClick}
+      className={`p-4 md:p-5 rounded-xl border-2 cursor-pointer transition-colors duration-200 hover:bg-gray-50`}
+    >
+      {props.children}
+    </animated.div>
+  );
+};
 
 export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
   React.memo(
@@ -71,18 +103,19 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
             </div>
           ) : (
             segments.map((segment, index) => (
-              <div
+              <AnimatedSegment
                 key={segment.id}
-                id={`transcript-segment-${segment.id}`}
+                segment={segment}
+                isActive={activeSegmentId === segment.id}
                 onClick={() => {
-                  console.log("Segment div clicked - seeking to", segment.start_time, "segment ID:", segment.id);
+                  console.log(
+                    "Segment div clicked - seeking to",
+                    segment.start_time,
+                    "segment ID:",
+                    segment.id
+                  );
                   seekToTimestamp(segment.start_time);
                 }}
-                className={`p-4 md:p-5 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md hover:cursor-pointer ${
-                  activeSegmentId === segment.id
-                    ? "bg-blue-50 border-blue-400 shadow-md"
-                    : "bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                }`}
               >
                 <div className="flex items-start gap-4">
                   {segment.screenshot_url && (
@@ -129,16 +162,13 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                           <input
                             type="text"
                             value={editSpeakerName}
-                            onChange={(e) =>
-                              setEditSpeakerName(e.target.value)
-                            }
+                            onChange={(e) => setEditSpeakerName(e.target.value)}
                             className="px-2 py-1 text-xs border rounded shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                             autoFocus
                             onKeyDown={(e) => {
                               if (e.key === "Enter")
                                 handleSpeakerRename(segment.speaker!);
-                              if (e.key === "Escape")
-                                setEditingSegmentId(null);
+                              if (e.key === "Escape") setEditingSegmentId(null);
                               e.stopPropagation();
                             }}
                             onClick={(e) => e.stopPropagation()}
@@ -199,7 +229,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                               segmentIndex: index,
                               totalSegments: segments.length,
                               clickedElement: e.currentTarget,
-                              targetElement: e.target
+                              targetElement: e.target,
                             });
                             e.stopPropagation();
                             e.preventDefault();
@@ -208,7 +238,11 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                               formatSpeakerLabel(segment.speaker!)
                             );
                           }}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getSpeakerColor(segment.speaker).bg} ${getSpeakerColor(segment.speaker).text} ${getSpeakerColor(segment.speaker).border} cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-300 transition-all`}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                            getSpeakerColor(segment.speaker).bg
+                          } ${getSpeakerColor(segment.speaker).text} ${
+                            getSpeakerColor(segment.speaker).border
+                          } cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-300 transition-all`}
                           title="Click to rename speaker"
                         >
                           <svg
@@ -249,7 +283,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                     </p>
                   </div>
                 </div>
-              </div>
+              </AnimatedSegment>
             ))
           )}
         </div>

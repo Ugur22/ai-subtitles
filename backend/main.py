@@ -1310,8 +1310,14 @@ async def get_subtitles(language: str, request: Request, video_hash: str = None)
 def _time_to_seconds(time_str: str) -> float:
     """Convert HH:MM:SS time string to seconds"""
     try:
-        h, m, s = time_str.split(':')
-        return int(h) * 3600 + int(m) * 60 + int(s)
+        parts = time_str.split(':')
+        if len(parts) == 3:
+            h, m, s = parts
+            return float(h) * 3600 + float(m) * 60 + float(s)
+        elif len(parts) == 2:
+            m, s = parts
+            return float(m) * 60 + float(s)
+        return 0.0
     except Exception as e:
         print(f"Error converting time to seconds: {str(e)}")
         return 0.0
