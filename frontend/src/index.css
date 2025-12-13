@@ -4,11 +4,11 @@
 
 :root {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  line-height: 1.6;
   font-weight: 400;
   color-scheme: light;
-  color: #213547;
-  background-color: #f9fafb;
+  color: #1f2937;
+  background-color: #f8fafc;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -19,26 +19,105 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: linear-gradient(135deg, #f8fafc 0%, #f0f4f8 100%);
 }
 
 @layer components {
+  /* Button Styles */
   .btn-primary {
-    @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center px-4 py-2.5 border border-transparent text-sm font-semibold rounded-lg 
+           bg-gradient-to-r from-indigo-600 to-purple-600 text-white
+           hover:from-indigo-700 hover:to-purple-700 
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 
+           disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-200 active:scale-95
+           shadow-lg hover:shadow-xl;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center px-4 py-2.5 border-2 border-gray-300 text-sm font-semibold rounded-lg 
+           text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 
+           disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-200 active:scale-95
+           shadow-sm hover:shadow-md;
   }
 
+  .btn-ghost {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-gray-700
+           hover:bg-gray-100 hover:text-gray-900
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
+           disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-200 rounded-lg;
+  }
+
+  /* Card Styles */
   .card {
-    @apply bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden;
+    @apply bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden
+           hover:shadow-md transition-shadow duration-200;
   }
 
   .card-header {
-    @apply px-4 py-3 bg-gray-50 border-b border-gray-200;
+    @apply px-6 py-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200;
   }
 
   .card-body {
-    @apply p-4;
+    @apply p-6;
+  }
+
+  /* Text Styles */
+  .text-title {
+    @apply text-3xl font-bold text-gray-900;
+  }
+
+  .text-subtitle {
+    @apply text-lg font-semibold text-gray-800;
+  }
+
+  .text-label {
+    @apply text-sm font-medium text-gray-700;
+  }
+
+  /* Input Styles */
+  .input-base {
+    @apply block w-full px-4 py-2.5 border-2 border-gray-300 rounded-lg
+           text-gray-900 placeholder-gray-500
+           focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200
+           transition-all duration-200
+           disabled:bg-gray-100 disabled:cursor-not-allowed;
+  }
+
+  .input-sm {
+    @apply px-3 py-2 text-sm;
+  }
+
+  /* Badge Styles */
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold;
+  }
+
+  .badge-primary {
+    @apply badge bg-indigo-100 text-indigo-800;
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-100 text-emerald-800;
+  }
+
+  .badge-info {
+    @apply badge bg-blue-100 text-blue-800;
+  }
+
+  /* Scroll Styles */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded-full hover:bg-gray-500;
   }
 }

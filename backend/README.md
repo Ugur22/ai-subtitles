@@ -1,13 +1,16 @@
 # Video Transcription API
 
-This is a FastAPI-based backend service that transcribes video files into text with timestamps using OpenAI's Whisper model.
+This is a FastAPI-based backend service that transcribes video files into text with timestamps using the local **Faster Whisper** model (no OpenAI API key required).
 
 ## Features
 
 - Upload video/audio files for transcription
+- Local transcription using `faster-whisper` (runs on your machine)
+- High-performance batched inference
+- Speaker diarization support
 - Get transcribed text with timestamps
 - Supports multiple file formats (mp4, mpeg, mpga, m4a, wav, webm, mp3)
-- File size limit of 25MB (OpenAI's limit)
+- No strict file size limit (dependent on server resources, not API limits)
 
 ## Setup
 
@@ -17,25 +20,21 @@ This is a FastAPI-based backend service that transcribes video files into text w
 pip install -r requirements.txt
 ```
 
-2. Create a `.env` file in the root directory with your OpenAI API key:
+Note: For GPU acceleration, ensure you have the correct CUDA/cuDNN libraries installed for `faster-whisper`.
 
-```
-OPENAI_API_KEY=your_api_key_here
-```
-
-3. Run the server:
+2. Run the server:
 
 ```bash
-python main.py
+source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The server will start at `http://localhost:8000`
 
 ## API Endpoints
 
-### POST /transcribe/
+### POST /transcribe_local/
 
-Upload a video/audio file for transcription.
+Upload a video/audio file for local transcription.
 
 **Request:**
 
@@ -55,7 +54,8 @@ Upload a video/audio file for transcription.
                 "id": 0,
                 "start": 0.0,
                 "end": 2.5,
-                "text": "Segment text..."
+                "text": "Segment text...",
+                "speaker": "SPEAKER_00"
             },
             ...
         ]
@@ -69,11 +69,10 @@ The API will return appropriate error messages for:
 
 - Missing files
 - Unsupported file formats
-- Files exceeding size limit
 - Transcription failures
 
 ## Notes
 
-- The API uses OpenAI's Whisper model for transcription
-- CORS is enabled for all origins
-- Maximum file size is 25MB
+- The API uses `faster-whisper` for high-performance local transcription.
+- CORS is enabled for all origins.
+- Large files may take longer to process depending on hardware capabilities.
