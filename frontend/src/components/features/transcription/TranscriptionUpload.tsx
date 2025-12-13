@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   type TranscriptionResponse,
   translateLocalText,
@@ -60,7 +60,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [translationMethod] = useState<TranslationMethod>("none");
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
   const [showScreenshots] = useState(false); // Unused but kept for future use
-  const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [editSpeakerName, setEditSpeakerName] = useState("");
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
@@ -139,6 +139,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       (seg) => seg.speaker === filteredSpeaker
     );
   }, [transcription, filteredSpeaker]);
+
+  // Use a ref to track displayedSegments to avoid unnecessary effect re-runs
+  const displayedSegmentsRef = useRef(displayedSegments);
+  useEffect(() => {
+    displayedSegmentsRef.current = displayedSegments;
+  }, [displayedSegments]);
 
   // Get unique speakers
   const uniqueSpeakers = useMemo(() => {
@@ -276,7 +282,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         setFilteredSpeaker(editSpeakerName.trim());
       }
 
-      setEditingSpeaker(null);
+      setEditingSegmentId(null);
       setEditSpeakerName("");
     } catch (err) {
       console.error("Failed to rename speaker:", err);
@@ -456,9 +462,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       // This effect only handles active segment updates after seeking
       const handleSeeked = () => {
         // Update active segment based on current time (only from displayed segments)
-        if (displayedSegments.length > 0) {
+        // Use ref to avoid unnecessary effect re-runs when displayedSegments changes
+        if (displayedSegmentsRef.current.length > 0) {
           const currentTime = videoRef.currentTime;
-          const segments = displayedSegments;
+          const segments = displayedSegmentsRef.current;
           const matchingSegment = segments.find((segment) => {
             const segmentStartSeconds = timeToSeconds(segment.start_time);
             const segmentEndSeconds = timeToSeconds(segment.end_time);
@@ -500,7 +507,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         videoRef.removeEventListener("seeked", handleSeeked);
       };
     }
-  }, [videoRef, displayedSegments]);
+  }, [videoRef]);
 
   // --- Spinner/modal overlay logic handled by computed isTranscribing value ---
 
@@ -1231,8 +1238,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           showTranslation={showTranslation}
                           seekToTimestamp={seekToTimestamp}
                           openImageModal={openImageModal}
-                          editingSpeaker={editingSpeaker}
-                          setEditingSpeaker={setEditingSpeaker}
+                          editingSegmentId={editingSegmentId}
+                          setEditingSegmentId={setEditingSegmentId}
                           editSpeakerName={editSpeakerName}
                           setEditSpeakerName={setEditSpeakerName}
                           handleSpeakerRename={handleSpeakerRename}
