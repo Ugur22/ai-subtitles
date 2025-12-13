@@ -118,9 +118,22 @@ export const transcribeVideo = async (
   }
 };
 
-export const transcribeLocal = async (file: File): Promise<TranscriptionResponse> => {
+export const transcribeLocal = async (
+  file: File,
+  language?: string,
+  forceLanguage: boolean = false
+): Promise<TranscriptionResponse> => {
   const formData = new FormData();
   formData.append('file', file);
+
+  // Add language parameter if provided
+  if (language) {
+    formData.append('language', language);
+    formData.append('force_language', forceLanguage.toString());
+    console.log(`API: Sending local transcription with language: ${language}, force: ${forceLanguage}`);
+  } else {
+    console.log('API: Sending local transcription with auto-detect language');
+  }
 
   try {
     const response = await api.post<TranscriptionResponse>('/transcribe_local/', formData, {
@@ -146,10 +159,21 @@ export const transcribeLocal = async (file: File): Promise<TranscriptionResponse
 // New SSE-based transcription with real-time progress
 export const transcribeLocalStream = async (
   file: File,
-  onProgress: (stage: string, progress: number, message?: string) => void
+  onProgress: (stage: string, progress: number, message?: string) => void,
+  language?: string,
+  forceLanguage: boolean = false
 ): Promise<TranscriptionResponse> => {
   const formData = new FormData();
   formData.append('file', file);
+
+  // Add language parameter if provided
+  if (language) {
+    formData.append('language', language);
+    formData.append('force_language', forceLanguage.toString());
+    console.log(`API: Sending stream transcription with language: ${language}, force: ${forceLanguage}`);
+  } else {
+    console.log('API: Sending stream transcription with auto-detect language');
+  }
 
   return new Promise((resolve, reject) => {
     fetch('http://localhost:8000/transcribe_local_stream/', {

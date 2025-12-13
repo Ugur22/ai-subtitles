@@ -58,23 +58,45 @@ export const useTranscription = () => {
   const handleStartTranscription = async (
     file: File,
     transcriptionMethod: "local",
-    _selectedLanguage: string // Prefixed with _ to indicate intentionally unused
+    selectedLanguage: string // Now actually using this parameter!
   ) => {
     setProcessingStatus({ stage: "uploading", progress: 0 });
     setError(null);
     startTimer();
 
     try {
+      // Convert language name to ISO code
+      const languageCodeMap: Record<string, string> = {
+        'spanish': 'es',
+        'italian': 'it',
+        'french': 'fr',
+        'german': 'de',
+        'english': 'en',
+        'portuguese': 'pt',
+        'russian': 'ru',
+        'chinese': 'zh',
+        'japanese': 'ja',
+        'korean': 'ko',
+      };
+
+      const languageCode = languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
+      console.log(`Transcription: Using language ${selectedLanguage} -> ${languageCode}`);
+
       // Use ts-pattern for type-safe transcription method selection
       const result = await match(transcriptionMethod)
         .with("local", async () => {
           // Use streaming version with real-time progress
-          const data = await transcribeLocalStream(file, (stage, progress) => {
-            setProcessingStatus({
-              stage: stage as ProcessingStage,
-              progress: progress,
-            });
-          });
+          const data = await transcribeLocalStream(
+            file,
+            (stage, progress) => {
+              setProcessingStatus({
+                stage: stage as ProcessingStage,
+                progress: progress,
+              });
+            },
+            languageCode, // Pass the language code
+            true // Force language override to prevent Whisper from misdetecting
+          );
 
           setTranscription(data);
           setProcessingStatus({ stage: "complete", progress: 100 });

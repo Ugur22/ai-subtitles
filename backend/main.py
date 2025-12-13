@@ -325,12 +325,17 @@ def get_transcription(video_hash):
 load_dotenv()
 
 def format_timestamp(seconds: float) -> str:
-    """Convert seconds to HH:MM:SS format"""
-    td = timedelta(seconds=seconds)
-    hours = td.seconds // 3600
-    minutes = (td.seconds % 3600) // 60
-    seconds = td.seconds % 60
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    """Convert seconds to HH:MM:SS.mmm format with millisecond precision"""
+    # Use int() and modulo to handle any duration correctly
+    total_secs = int(seconds)
+    milliseconds = int((seconds - total_secs) * 1000)
+
+    hours = total_secs // 3600
+    minutes = (total_secs % 3600) // 60
+    secs = total_secs % 60
+
+    # Return format with milliseconds for better subtitle sync
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
 
 def translate_segments(segments: List[Dict], source_lang: str) -> List[Dict]:
     """Translate a batch of segments using local MarianMT model, preserving original text"""
@@ -697,13 +702,59 @@ local_whisper_model = WhisperModel(
 
 # Cache for loaded MarianMT models
 marian_models = {}
+
 def get_marian_model(source_lang):
+    """Load MarianMT translation model for source_lang -> English.
+
+    Args:
+        source_lang: ISO language code (e.g., 'es', 'it', 'fr')
+
+    Returns:
+        Tuple of (tokenizer, model)
+
+    Raises:
+        Exception: If model doesn't exist for this language pair
+    """
     model_name = f"Helsinki-NLP/opus-mt-{source_lang}-en"
-    if model_name not in marian_models:
+
+    # Check if already loaded
+    if model_name in marian_models:
+        print(f"[INFO] Using cached translation model: {model_name}")
+        return marian_models[model_name]
+
+    # Try to load model with proper error handling
+    try:
+        print(f"[INFO] Loading translation model: {model_name}")
         tokenizer = MarianTokenizer.from_pretrained(model_name)
         model = MarianMTModel.from_pretrained(model_name)
         marian_models[model_name] = (tokenizer, model)
-    return marian_models[model_name]
+        print(f"[SUCCESS] Model loaded: {model_name}")
+        return marian_models[model_name]
+
+    except Exception as e:
+        # Suggest alternatives if model doesn't exist
+        available_alternatives = {
+            'es': ['Helsinki-NLP/opus-mt-es-en'],
+            'it': ['Helsinki-NLP/opus-mt-it-en'],
+            'fr': ['Helsinki-NLP/opus-mt-fr-en'],
+            'de': ['Helsinki-NLP/opus-mt-de-en'],
+            'pt': ['Helsinki-NLP/opus-mt-pt-en'],
+            'ru': ['Helsinki-NLP/opus-mt-ru-en'],
+            'zh': ['Helsinki-NLP/opus-mt-zh-en'],
+            'ja': ['Helsinki-NLP/opus-mt-ja-en'],
+        }
+
+        alt_models = available_alternatives.get(source_lang, [])
+        error_msg = f"Translation model '{model_name}' not found. "
+
+        if alt_models:
+            error_msg += f"Alternatives: {', '.join(alt_models)}"
+        else:
+            error_msg += f"No translation model available for '{source_lang}' -> 'en'"
+
+        print(f"[ERROR] {error_msg}")
+        print(f"[ERROR] Original error: {str(e)}")
+        raise Exception(error_msg)
 
 @app.post("/cleanup_screenshots/")
 async def cleanup_screenshots() -> Dict:
@@ -1668,16 +1719,28 @@ async def delete_transcription(video_hash: str):
 # Endpoint for local transcription using faster-whisper
 @app.post("/transcribe_local/")
 async def transcribe_local(
-    file: UploadFile, 
+    file: UploadFile,
     request: Request,
     num_speakers: int = Form(None),
     min_speakers: int = Form(None),
-    max_speakers: int = Form(None)
+    max_speakers: int = Form(None),
+    language: str = Form(None),
+    force_language: bool = Form(False)
 ) -> Dict:
-    """Transcribe uploaded audio/video file locally using faster-whisper (optimized for speed, direct English output)."""
+    """Transcribe uploaded audio/video file locally using faster-whisper.
+
+    Args:
+        file: Audio/video file to transcribe
+        num_speakers: Exact number of speakers (if known)
+        min_speakers: Minimum number of speakers for diarization
+        max_speakers: Maximum number of speakers for diarization
+        language: Optional language code (e.g., 'es', 'it', 'en'). If provided,
+                  Whisper will use this instead of auto-detection.
+        force_language: If True, completely override Whisper's detection with provided language
+    """
     global last_transcription_data
-    
-    print(f"[INFO] Using local faster-whisper. Params: num_speakers={num_speakers}, min={min_speakers}, max={max_speakers}")
+
+    print(f"[INFO] Using local faster-whisper. Params: num_speakers={num_speakers}, min={min_speakers}, max={max_speakers}, language={language}, force_language={force_language}")
     try:
         suffix = Path(file.filename).suffix
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -1770,15 +1833,41 @@ async def transcribe_local(
             raise HTTPException(status_code=500, detail=f"Audio conversion error: {str(e)}")
 
         # --- KEY: Transcribe to original language, then translate if needed ---
+        # Build transcription parameters
+        transcribe_params = {
+            "task": "transcribe",
+            "beam_size": 5,  # Improved: Increase from 1 to 5 for better accuracy
+            "vad_filter": True,  # Add Voice Activity Detection for better timing
+            "vad_parameters": dict(
+                min_silence_duration_ms=500,
+                threshold=0.5
+            )
+        }
+
+        # Add language parameter if provided
+        if language:
+            transcribe_params["language"] = language
+            print(f"[INFO] Using specified language: {language}")
+
         segments, info = local_whisper_model.transcribe(
             transcribe_input,
-            task="transcribe",  # Always transcribe to original language
-            beam_size=1         # Fast processing
+            **transcribe_params
         )
         processing_time = time.time() - start_time
 
         # Detect language from transcription
         detected_language = info.language
+        print(f"[INFO] Whisper detected language: {detected_language}")
+
+        # Validate and potentially override detected language
+        if language and not force_language:
+            if detected_language != language:
+                print(f"[WARNING] Language mismatch! Specified: {language}, Detected: {detected_language}")
+                print(f"[WARNING] Using specified language: {language}")
+                detected_language = language
+        elif force_language and language:
+            print(f"[INFO] Force override - using: {language}")
+            detected_language = language
         
         # Format segments to match expected structure and preserve original language
         # IMPORTANT: Convert generator to list first, as generators can only be consumed once
@@ -1798,20 +1887,60 @@ async def transcribe_local(
             })
         
         print(f"Formatted {len(formatted_segments)} segments")
-        
+
+        # Language code normalization map
+        language_code_map = {
+            'spanish': 'es', 'español': 'es', 'es': 'es',
+            'italian': 'it', 'italiano': 'it', 'it': 'it',
+            'french': 'fr', 'français': 'fr', 'fr': 'fr',
+            'german': 'de', 'deutsch': 'de', 'de': 'de',
+            'portuguese': 'pt', 'português': 'pt', 'pt': 'pt',
+            'russian': 'ru', 'русский': 'ru', 'ru': 'ru',
+            'chinese': 'zh', 'zh': 'zh',
+            'japanese': 'ja', 'ja': 'ja',
+            'korean': 'ko', 'ko': 'ko',
+            'english': 'en', 'en': 'en'
+        }
+
+        # Normalize language code
+        normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
+        print(f"[INFO] Normalized language code: '{detected_language}' -> '{normalized_lang}'")
+
         # Translate if source language is not English
-        if detected_language and detected_language.lower() not in ['en', 'english']:
-            print(f"Detected language: {detected_language}. Translating {len(formatted_segments)} segments...")
+        should_translate = normalized_lang not in ['en', 'english']
+
+        if should_translate:
+            print(f"[INFO] Detected language: {normalized_lang}. Translating {len(formatted_segments)} segments to English...")
+
             try:
-                formatted_segments = translate_segments(formatted_segments, detected_language)
-                print(f"Translation completed successfully. {len(formatted_segments)} segments translated.")
+                # Check if MarianMT model exists for this language
+                model_name = f"Helsinki-NLP/opus-mt-{normalized_lang}-en"
+                print(f"[INFO] Using translation model: {model_name}")
+
+                formatted_segments = translate_segments(formatted_segments, normalized_lang)
+
+                # Validate translations were actually generated
+                translated_count = sum(1 for s in formatted_segments if s.get('translation'))
+                if translated_count == 0:
+                    raise Exception(f"Translation generated 0 translations for {len(formatted_segments)} segments!")
+
+                print(f"[SUCCESS] Translation completed: {translated_count}/{len(formatted_segments)} segments translated")
+
             except Exception as e:
-                print(f"Translation failed: {str(e)}. Continuing with original language only...")
+                error_msg = f"Translation failed: {str(e)}"
+                print(f"[ERROR] {error_msg}")
                 import traceback
                 traceback.print_exc()
-                # Continue without translation if it fails
+
+                # Store error in segments for user visibility
+                for segment in formatted_segments:
+                    segment['translation'] = f"[Translation Error: {normalized_lang}->en model not available]"
+                    segment['translation_error'] = str(e)
         else:
-            print("Language is English. No translation needed.")
+            print("[INFO] Language is English. No translation needed.")
+            # Populate translation field with same text for consistency
+            for segment in formatted_segments:
+                segment['translation'] = segment['text']
 
         # Extract screenshots if it's a video file
         screenshots_dir = os.path.join("static", "screenshots")
@@ -1852,6 +1981,17 @@ async def transcribe_local(
                 if 'speaker' not in seg:
                     seg['speaker'] = "SPEAKER_00"
 
+        # Calculate translation statistics for user feedback
+        translation_stats = {
+            'total_segments': len(formatted_segments),
+            'segments_translated': sum(1 for s in formatted_segments if s.get('translation') and not s.get('translation_error')),
+            'translation_errors': sum(1 for s in formatted_segments if s.get('translation_error')),
+            'detected_language': detected_language,
+            'normalized_language': normalized_lang,
+            'translation_attempted': should_translate
+        }
+        print(f"[STATS] Translation: {translation_stats['segments_translated']}/{translation_stats['total_segments']} successful")
+
         result = {
             "filename": file.filename,
             "video_hash": video_hash,
@@ -1861,7 +2001,8 @@ async def transcribe_local(
                 "duration": duration_str,
                 "segments": formatted_segments,
                 "processing_time": format_eta(int(processing_time))
-            }
+            },
+            "translation_stats": translation_stats
         }
 
         # Store the transcription data
@@ -1896,9 +2037,16 @@ async def transcribe_local_stream(
     request: Request,
     num_speakers: int = Form(None),
     min_speakers: int = Form(None),
-    max_speakers: int = Form(None)
+    max_speakers: int = Form(None),
+    language: str = Form(None),
+    force_language: bool = Form(False)
 ):
-    """Transcribe with real-time progress updates via Server-Sent Events."""
+    """Transcribe with real-time progress updates via Server-Sent Events.
+
+    Args:
+        language: Optional language code (e.g., 'es', 'it', 'en')
+        force_language: If True, override Whisper's detection with provided language
+    """
 
     async def generate_progress():
         global last_transcription_data
@@ -1969,16 +2117,42 @@ async def transcribe_local_stream(
             yield emit("transcribing", 45, "Starting AI transcription...")
 
             start_time = time.time()
+
+            # Build transcription parameters
+            transcribe_params = {
+                "task": "transcribe",
+                "beam_size": 5,  # Better accuracy
+                "vad_filter": True,
+                "vad_parameters": dict(
+                    min_silence_duration_ms=500,
+                    threshold=0.5
+                )
+            }
+
+            # Add language parameter if provided
+            if language:
+                transcribe_params["language"] = language
+                print(f"[INFO] Stream: Using specified language: {language}")
+
             segments, info = local_whisper_model.transcribe(
                 temp_wav_path,
-                task="transcribe",
-                beam_size=1
+                **transcribe_params
             )
 
             yield emit("transcribing", 60, "Processing transcription segments...")
 
             segments_list = list(segments)
             detected_language = info.language
+            print(f"[INFO] Stream: Whisper detected language: {detected_language}")
+
+            # Validate and potentially override detected language
+            if language and not force_language:
+                if detected_language != language:
+                    print(f"[WARNING] Stream: Language mismatch! Specified: {language}, Detected: {detected_language}")
+                    detected_language = language
+            elif force_language and language:
+                print(f"[INFO] Stream: Force override - using: {language}")
+                detected_language = language
 
             formatted_segments = []
             total_segments = len(segments_list)
@@ -2002,12 +2176,39 @@ async def transcribe_local_stream(
 
             yield emit("transcribing", 70, "Translating if needed...")
 
+            # Language code normalization
+            language_code_map = {
+                'spanish': 'es', 'español': 'es', 'es': 'es',
+                'italian': 'it', 'italiano': 'it', 'it': 'it',
+                'french': 'fr', 'français': 'fr', 'fr': 'fr',
+                'german': 'de', 'deutsch': 'de', 'de': 'de',
+                'portuguese': 'pt', 'português': 'pt', 'pt': 'pt',
+                'russian': 'ru', 'русский': 'ru', 'ru': 'ru',
+                'chinese': 'zh', 'zh': 'zh',
+                'japanese': 'ja', 'ja': 'ja',
+                'korean': 'ko', 'ko': 'ko',
+                'english': 'en', 'en': 'en'
+            }
+
+            normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
+            print(f"[INFO] Stream: Normalized language: '{detected_language}' -> '{normalized_lang}'")
+            should_translate = normalized_lang not in ['en', 'english']
+
             # Translate if not English
-            if detected_language and detected_language.lower() not in ['en', 'english']:
+            if should_translate:
                 try:
-                    formatted_segments = translate_segments(formatted_segments, detected_language)
+                    formatted_segments = translate_segments(formatted_segments, normalized_lang)
+                    translated_count = sum(1 for s in formatted_segments if s.get('translation'))
+                    print(f"[SUCCESS] Stream: Translated {translated_count}/{len(formatted_segments)} segments")
                 except Exception as e:
-                    print(f"Translation failed: {str(e)}")
+                    print(f"[ERROR] Stream: Translation failed: {str(e)}")
+                    for segment in formatted_segments:
+                        segment['translation'] = f"[Translation Error: {normalized_lang}->en]"
+                        segment['translation_error'] = str(e)
+            else:
+                print("[INFO] Stream: Language is English, no translation needed")
+                for segment in formatted_segments:
+                    segment['translation'] = segment['text']
 
             yield emit("extracting", 75, "Extracting video screenshots...")
 
