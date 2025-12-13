@@ -818,16 +818,16 @@ async def transcribe_video(
     try:
         if not file:
             raise HTTPException(status_code=400, detail="No file provided")
-            
+
         # Validate file type
-        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3'}
+        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3', '.mov', '.mkv'}
         file_extension = Path(file.filename).suffix.lower()
         if file_extension not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
             )
-            
+
         print(f"\nProcessing video: {file.filename}")
         # Print language if provided
         if language:
@@ -1050,7 +1050,7 @@ async def transcribe_video(
             # Continue with the rest of the function
             # Extract screenshots for each segment if it's a video file
             screenshot_count = 0
-            if file_extension in {'.mp4', '.mpeg', '.webm', '.mov'}: # Added .mov
+            if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
                  print("\nExtracting screenshots for video segments...")
                  # Ensure response.segments exists and is iterable
                  if hasattr(response, 'segments') and response.segments:
@@ -1567,6 +1567,7 @@ async def get_video_file(video_hash: str, request: Request):
                 os.path.join(video_dir, f"{video_hash}.mp4"),
                 os.path.join(video_dir, f"{video_hash}.webm"),
                 os.path.join(video_dir, f"{video_hash}.mov"),
+                os.path.join(video_dir, f"{video_hash}.mkv"),
                 os.path.join(video_dir, f"{video_hash}.mp3")
             ]
             
@@ -1600,6 +1601,8 @@ async def get_video_file(video_hash: str, request: Request):
             media_type = "video/webm"
         elif extension == "mov":
             media_type = "video/quicktime"
+        elif extension == "mkv":
+            media_type = "video/x-matroska"
         elif extension == "mp3":
             media_type = "audio/mpeg"
             
@@ -1658,14 +1661,14 @@ async def update_file_path(video_hash: str, file: UploadFile):
             raise HTTPException(status_code=404, detail="Transcription not found")
         
         # Validate file type
-        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3'}
+        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3', '.mov', '.mkv'}
         file_extension = Path(file.filename).suffix.lower()
         if file_extension not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
             )
-        
+
         # Save the file to the permanent storage
         permanent_storage_dir = os.path.join("static", "videos")
         os.makedirs(permanent_storage_dir, exist_ok=True)
@@ -1953,7 +1956,7 @@ async def transcribe_local(
         os.makedirs(screenshots_dir, exist_ok=True)
         screenshot_count = 0
         
-        if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov'}:
+        if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
             print("\nExtracting screenshots for video segments...")
             for segment in formatted_segments:
                 screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
