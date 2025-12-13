@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
+import { useTransition, animated } from "react-spring";
 
 interface Message {
   role: "user" | "assistant";
@@ -38,6 +39,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Message transitions
+  const messageTransitions = useTransition(messages, {
+    from: { opacity: 0, transform: "translate3d(0, 10px, 0)" },
+    enter: { opacity: 1, transform: "translate3d(0, 0px, 0)" },
+    keys: (item) => messages.indexOf(item),
+    config: { tension: 220, friction: 20 },
+  });
 
   // Load providers on mount
   useEffect(() => {
@@ -275,10 +284,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
 
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+        {messageTransitions((style, message, _, index) => (
+          <animated.div
+            style={style}
+            className={`flex ${
+              message.role === "user" ? "justify-end" : "justify-start"
+            }`}
           >
             <div
               className={`max-w-3xl px-4 py-3 rounded-lg ${
@@ -294,7 +305,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               {/* Sources */}
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-xs font-semibold text-gray-700 mb-2">Sources:</p>
+                  <p className="text-xs font-semibold text-gray-700 mb-2">
+                    Sources:
+                  </p>
                   <div className="space-y-1">
                     {message.sources.map((source, idx) => (
                       <button
@@ -305,15 +318,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <span className="font-medium text-indigo-600">
                           [{source.start_time} - {source.end_time}]
                         </span>
-                        <span className="text-gray-600 ml-2">{source.speaker}</span>
-                        <p className="text-gray-500 mt-1 line-clamp-2">{source.text}</p>
+                        <span className="text-gray-600 ml-2">
+                          {source.speaker}
+                        </span>
+                        <p className="text-gray-500 mt-1 line-clamp-2">
+                          {source.text}
+                        </p>
                       </button>
                     ))}
                   </div>
                 </div>
               )}
             </div>
-          </div>
+          </animated.div>
         ))}
 
         {loading && (
