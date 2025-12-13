@@ -90,12 +90,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || !videoHash) return;
+  const sendMessage = async (messageText?: string | React.MouseEvent) => {
+    const textToSend = typeof messageText === "string" ? messageText : input;
+    if (!textToSend.trim() || !videoHash) return;
 
     const userMessage: Message = {
       role: "user",
-      content: input,
+      content: textToSend,
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -104,7 +105,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     try {
       const response = await axios.post("http://localhost:8000/api/chat/", {
-        question: input,
+        question: textToSend,
         video_hash: videoHash,
         provider: selectedProvider,
         n_results: 8,  // Increased for more comprehensive context
@@ -264,7 +265,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               {quickQuestions.map((question, index) => (
                 <button
                   key={index}
-                  onClick={() => setInput(question)}
+                  onClick={() => sendMessage(question)}
                   className="px-4 py-2 text-sm text-left bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                 >
                   {question}
