@@ -28,6 +28,7 @@ interface TranscriptSegmentListProps {
     border: string;
   };
   formatSpeakerLabel: (speaker: string) => string;
+  onEnrollSpeaker?: (segment: Segment) => void;
 }
 
 const AnimatedSegment = ({
@@ -76,6 +77,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
       handleSpeakerRename,
       getSpeakerColor,
       formatSpeakerLabel,
+      onEnrollSpeaker,
     }) => {
       return (
         <div className="p-5 space-y-4">
@@ -258,6 +260,31 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                           </svg>
                           {formatSpeakerLabel(segment.speaker)}
                         </span>
+                      )}
+                      {segment.speaker && onEnrollSpeaker && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEnrollSpeaker(segment);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-2xs font-semibold bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors border border-purple-200"
+                          title="Enroll this speaker for automatic recognition"
+                        >
+                          <svg
+                            className="w-3 h-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                            />
+                          </svg>
+                          Enroll
+                        </button>
                       )}
                       <span className="ml-auto inline-flex items-center px-3 py-1 rounded-full text-2xs font-semibold bg-indigo-100 text-indigo-700">
                         Segment {index + 1}
