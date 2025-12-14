@@ -44,7 +44,7 @@ const AnimatedSegment = ({
     transform: isActive ? "scale(1.02)" : "scale(1)",
     boxShadow: isActive
       ? "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
-      : "0 0 0 0 rgba(0, 0, 0, 0)",
+      : "0 0 0 0 rgba(0, 0, 0, 0), 0 0 0 0 rgba(0, 0, 0, 0)",
     borderColor: isActive ? "rgb(96, 165, 250)" : "rgb(229, 231, 235)",
     backgroundColor: isActive ? "rgb(239, 246, 255)" : "rgb(255, 255, 255)",
     config: { tension: 300, friction: 20 },

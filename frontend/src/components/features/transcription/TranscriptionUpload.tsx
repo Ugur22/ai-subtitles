@@ -320,7 +320,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       );
     } catch (err: any) {
       console.error("Failed to enroll speaker:", err);
-      alert(`Failed to enroll speaker: ${err.response?.data?.detail || err.message}`);
+      const errorMessage = err.message || "Unknown error occurred";
+      alert(`Failed to enroll speaker: ${errorMessage}`);
     }
   };
 
@@ -346,9 +347,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       window.location.reload();
     } catch (err: any) {
       console.error("Failed to auto-identify speakers:", err);
-      alert(
-        `Failed to auto-identify speakers: ${err.response?.data?.detail || err.message}`
-      );
+      const errorMessage = err.message || "Unknown error occurred";
+      alert(`Failed to auto-identify speakers: ${errorMessage}`);
     }
   };
 

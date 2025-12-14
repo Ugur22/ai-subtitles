@@ -1,0 +1,272 @@
+"""
+Video and utility endpoints
+"""
+import os
+from typing import Dict
+from pathlib import Path
+from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
+
+from config import settings
+from database import get_transcription, update_file_path, delete_transcription
+from models import (
+    CleanupScreenshotsResponse,
+    UpdateFilePathResponse,
+    DeleteTranscriptionResponse,
+    ErrorResponse
+)
+from services.subtitle_service import SubtitleService
+from services.video_service import VideoService
+
+router = APIRouter(tags=["Video & Utilities"])
+
+
+@router.post(
+    "/cleanup_screenshots/",
+    response_model=CleanupScreenshotsResponse,
+    summary="Cleanup screenshot files",
+    description="Delete all screenshots from the static/screenshots directory"
+)
+async def cleanup_screenshots() -> CleanupScreenshotsResponse:
+    """Delete all screenshots from the static/screenshots directory"""
+    try:
+        screenshots_dir = settings.SCREENSHOTS_DIR
+
+        # Check if directory exists
+        if not os.path.exists(screenshots_dir):
+            os.makedirs(screenshots_dir, exist_ok=True)
+            return CleanupScreenshotsResponse(
+                success=True,
+                message="Screenshots directory was empty",
+                files_deleted=0
+            )
+
+        # Count files before deletion
+        files = os.listdir(screenshots_dir)
+        file_count = len(files)
+
+        # Delete all files in the directory
+        for filename in files:
+            file_path = os.path.join(screenshots_dir, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"Deleted: {file_path}")
+
+        return CleanupScreenshotsResponse(
+            success=True,
+            message=f"Successfully deleted {file_count} screenshot files",
+            files_deleted=file_count
+        )
+    except Exception as e:
+        print(f"Error cleaning up screenshots: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error cleaning up screenshots: {str(e)}"
+        )
+
+
+@router.get(
+    "/video/{video_hash}",
+    summary="Stream video file",
+    description="Serve the video file for a specific transcription by hash",
+    responses={
+        404: {"model": ErrorResponse, "description": "Video not found"},
+        500: {"model": ErrorResponse, "description": "Server error"}
+    }
+)
+async def get_video_file(video_hash: str):
+    """Serve the video file for a specific transcription by hash"""
+    try:
+        transcription = get_transcription(video_hash)
+
+        if not transcription:
+            print(f"Transcription not found for hash: {video_hash}")
+            raise HTTPException(status_code=404, detail="Transcription not found")
+
+        if 'file_path' not in transcription or not transcription['file_path']:
+            print(f"File path not set for hash: {video_hash}")
+            raise HTTPException(
+                status_code=404,
+                detail="Video file not found. Please upload the video file using /update_file_path/"
+            )
+
+        file_path = transcription['file_path']
+        if not os.path.exists(file_path):
+            print(f"Video file does not exist at path: {file_path}")
+            raise HTTPException(
+                status_code=404,
+                detail="Video file not found on disk. The file may have been moved or deleted."
+            )
+
+        # Check if this is an MKV file - serve MP4 version if available
+        if file_path.endswith('.mkv'):
+            # Check if MP4 version exists
+            mp4_path = file_path.replace('.mkv', '.mp4')
+            if os.path.exists(mp4_path):
+                print(f"Serving converted MP4 file: {mp4_path}")
+                file_path = mp4_path
+            else:
+                # Convert on the fly if needed
+                print(f"Converting MKV to MP4 on-the-fly for: {video_hash}")
+                VideoService.convert_mkv_to_mp4(file_path, mp4_path)
+                if os.path.exists(mp4_path):
+                    file_path = mp4_path
+
+        print(f"Serving video file: {file_path}")
+        return FileResponse(
+            file_path,
+            media_type="video/mp4",
+            filename=os.path.basename(file_path)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error serving video: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving video: {str(e)}")
+
+
+@router.get(
+    "/subtitles/{language}",
+    summary="Generate SRT subtitles",
+    description="Generate SRT format subtitles from the last transcription",
+    responses={
+        404: {"model": ErrorResponse, "description": "No transcription available"}
+    }
+)
+async def get_subtitles(language: str):
+    """Generate SRT format subtitles from the last transcription"""
+    # Import here to avoid circular import
+    from dependencies import _last_transcription_data
+
+    if not _last_transcription_data:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcription available. Please transcribe a video first."
+        )
+
+    try:
+        # Get segments from transcription
+        segments = _last_transcription_data.get('transcription', {}).get('segments', [])
+        if not segments:
+            raise HTTPException(status_code=404, detail="No segments found in transcription")
+
+        # Determine if we should use translations
+        use_translation = (language.lower() == 'en')
+
+        # Generate SRT content
+        srt_content = SubtitleService.generate_srt(segments, use_translation=use_translation)
+
+        # Return as downloadable file
+        return Response(
+            content=srt_content,
+            media_type="application/x-subrip",
+            headers={
+                "Content-Disposition": f"attachment; filename=subtitles_{language}.srt"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error generating subtitles: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating subtitles: {str(e)}")
+
+
+@router.post(
+    "/update_file_path/{video_hash}",
+    response_model=UpdateFilePathResponse,
+    summary="Update video file path",
+    description="Update an existing transcription with a new video file",
+    responses={
+        404: {"model": ErrorResponse, "description": "Transcription not found"},
+        400: {"model": ErrorResponse, "description": "Invalid file format"}
+    }
+)
+async def update_video_file_path(video_hash: str, file: UploadFile) -> UpdateFilePathResponse:
+    """Update an existing transcription with a new file"""
+    try:
+        # Check if transcription exists
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+
+        # Validate file type
+        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3', '.mov', '.mkv'}
+        file_extension = Path(file.filename).suffix.lower()
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
+            )
+
+        # Save the file to the permanent storage
+        permanent_storage_dir = settings.VIDEOS_DIR
+        os.makedirs(permanent_storage_dir, exist_ok=True)
+        permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{file_extension}")
+
+        # Save file in chunks
+        with open(permanent_file_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                buffer.write(chunk)
+
+        # Update the transcription in the database with the new file path
+        success = update_file_path(video_hash, permanent_file_path)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update database")
+
+        return UpdateFilePathResponse(
+            success=True,
+            message="File path updated successfully",
+            file_path=permanent_file_path
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating file path: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating file path: {str(e)}")
+
+
+@router.delete(
+    "/transcription/{video_hash}",
+    response_model=DeleteTranscriptionResponse,
+    summary="Delete transcription",
+    description="Delete a transcription from the database by hash",
+    responses={
+        404: {"model": ErrorResponse, "description": "Transcription not found"}
+    }
+)
+async def delete_transcription_endpoint(video_hash: str) -> DeleteTranscriptionResponse:
+    """Delete a transcription from the database by hash"""
+    try:
+        # Check if transcription exists
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+
+        # Delete the file if it exists
+        if 'file_path' in transcription and transcription['file_path']:
+            file_path = transcription['file_path']
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted file: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting file {file_path}: {str(e)}")
+
+        # Delete from database
+        success = delete_transcription(video_hash)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete from database")
+
+        return DeleteTranscriptionResponse(
+            success=True,
+            message="Transcription deleted successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting transcription: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting transcription: {str(e)}")
