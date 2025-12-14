@@ -438,28 +438,125 @@ def extract_audio(video_path: str, chunk_duration: int = 600, overlap: int = 5) 
     Returns list of paths to compressed audio chunks
     """
     audio_chunks = []
-    with VideoFileClip(video_path) as video:
-        duration = video.duration
+
+    # Check if this is an MKV file - use ffmpeg directly for better codec support
+    file_ext = os.path.splitext(video_path)[1].lower()
+    if file_ext == '.mkv':
+        print(f"Detected MKV file, using ffmpeg for audio extraction...")
+        return extract_audio_with_ffmpeg(video_path, chunk_duration, overlap)
+
+    try:
+        with VideoFileClip(video_path) as video:
+            # Check if video has audio
+            if video.audio is None:
+                print(f"WARNING: Video file {video_path} has no audio track!")
+                raise Exception("Video file has no audio track")
+
+            duration = video.duration
+            if duration <= chunk_duration:
+                temp_audio_path = video_path + "_temp.wav"
+                compressed_audio_path = video_path + ".wav"
+                video.audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
+                compress_audio(temp_audio_path, compressed_audio_path)
+                os.unlink(temp_audio_path)
+                audio_chunks.append(compressed_audio_path)
+            else:
+                num_chunks = math.ceil(duration / chunk_duration)
+                for i in range(num_chunks):
+                    # Add overlap: previous chunk ends at (i * chunk_duration), next chunk starts overlap seconds before
+                    start_time = max(0, i * chunk_duration - (overlap if i > 0 else 0))
+                    end_time = min((i + 1) * chunk_duration + (overlap if i < num_chunks - 1 else 0), duration)
+                    chunk = video.subclip(start_time, end_time)
+                    temp_chunk_path = f"{video_path}_chunk_{i}_temp.wav"
+                    compressed_chunk_path = f"{video_path}_chunk_{i}.wav"
+                    if chunk.audio is None:
+                        print(f"WARNING: Chunk {i} has no audio!")
+                        continue
+                    chunk.audio.write_audiofile(temp_chunk_path, codec='pcm_s16le')
+                    compress_audio(temp_chunk_path, compressed_chunk_path)
+                    os.unlink(temp_chunk_path)
+                    audio_chunks.append(compressed_chunk_path)
+    except Exception as e:
+        print(f"ERROR in extract_audio: {str(e)}")
+        print(f"Falling back to ffmpeg for audio extraction...")
+        return extract_audio_with_ffmpeg(video_path, chunk_duration, overlap)
+
+    return audio_chunks
+
+def extract_audio_with_ffmpeg(video_path: str, chunk_duration: int = 600, overlap: int = 5) -> list:
+    """
+    Extract audio using ffmpeg directly - more reliable for various codecs
+    """
+    import subprocess
+    audio_chunks = []
+
+    try:
+        # First, get the duration using ffprobe
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            video_path
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        duration = float(result.stdout.strip())
+        print(f"Video duration: {duration} seconds")
+
         if duration <= chunk_duration:
+            # Extract entire audio
             temp_audio_path = video_path + "_temp.wav"
             compressed_audio_path = video_path + ".wav"
-            video.audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
-            compress_audio(temp_audio_path, compressed_audio_path)
-            os.unlink(temp_audio_path)
-            audio_chunks.append(compressed_audio_path)
+
+            extract_cmd = [
+                'ffmpeg', '-i', video_path,
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le',  # PCM 16-bit
+                '-ar', '16000',  # 16kHz sample rate
+                '-ac', '1',  # Mono
+                temp_audio_path,
+                '-y'  # Overwrite
+            ]
+            subprocess.run(extract_cmd, capture_output=True, check=True)
+
+            if os.path.exists(temp_audio_path):
+                compress_audio(temp_audio_path, compressed_audio_path)
+                os.unlink(temp_audio_path)
+                audio_chunks.append(compressed_audio_path)
+                print(f"Extracted audio to {compressed_audio_path}")
         else:
+            # Extract audio in chunks
             num_chunks = math.ceil(duration / chunk_duration)
             for i in range(num_chunks):
-                # Add overlap: previous chunk ends at (i * chunk_duration), next chunk starts overlap seconds before
                 start_time = max(0, i * chunk_duration - (overlap if i > 0 else 0))
                 end_time = min((i + 1) * chunk_duration + (overlap if i < num_chunks - 1 else 0), duration)
-                chunk = video.subclip(start_time, end_time)
+                chunk_duration_actual = end_time - start_time
+
                 temp_chunk_path = f"{video_path}_chunk_{i}_temp.wav"
                 compressed_chunk_path = f"{video_path}_chunk_{i}.wav"
-                chunk.audio.write_audiofile(temp_chunk_path, codec='pcm_s16le')
-                compress_audio(temp_chunk_path, compressed_chunk_path)
-                os.unlink(temp_chunk_path)
-                audio_chunks.append(compressed_chunk_path)
+
+                extract_cmd = [
+                    'ffmpeg', '-ss', str(start_time),
+                    '-i', video_path,
+                    '-t', str(chunk_duration_actual),
+                    '-vn',  # No video
+                    '-acodec', 'pcm_s16le',
+                    '-ar', '16000',
+                    '-ac', '1',
+                    temp_chunk_path,
+                    '-y'
+                ]
+                subprocess.run(extract_cmd, capture_output=True, check=True)
+
+                if os.path.exists(temp_chunk_path):
+                    compress_audio(temp_chunk_path, compressed_chunk_path)
+                    os.unlink(temp_chunk_path)
+                    audio_chunks.append(compressed_chunk_path)
+                    print(f"Extracted audio chunk {i} to {compressed_chunk_path}")
+
+    except Exception as e:
+        print(f"ERROR in extract_audio_with_ffmpeg: {str(e)}")
+        raise
+
     return audio_chunks
 
 def format_srt_timestamp(seconds: float) -> str:
@@ -618,33 +715,109 @@ def process_video_with_ffmpeg(input_path: str, output_path: str) -> None:
     except subprocess.CalledProcessError as e:
         raise Exception(f"Error processing video with ffmpeg: {e.stderr.decode()}")
 
-def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> None:
+def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> bool:
     """Extract a screenshot from a video at a specific timestamp."""
     try:
         print(f"\nExtracting screenshot at timestamp {timestamp}...")
         print(f"Input path: {input_path}")
         print(f"Output path: {output_path}")
-        
+
+        # Check if input file exists
+        if not os.path.exists(input_path):
+            print(f"ERROR: Input file does not exist: {input_path}")
+            return False
+
         # Use FFmpeg to extract the frame
         cmd = [
-            'ffmpeg', '-ss', str(timestamp),
+            'ffmpeg',
+            '-ss', str(timestamp),
             '-i', input_path,
             '-vframes', '1',
             '-q:v', '2',  # High quality
-            '-vf', 'scale=1280:-1',  # Scale to a larger width (e.g., 1280px) instead of 320px
+            '-vf', 'scale=1280:-1',  # Scale to a larger width (e.g., 1280px)
             output_path,
             '-y'  # Overwrite if exists
         ]
         print(f"Running FFmpeg command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, check=True, capture_output=True)
-        print(f"Screenshot extraction completed successfully")
-        return True
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        # Verify output file was created
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            print(f"Screenshot extraction completed successfully (size: {file_size} bytes)")
+            return True
+        else:
+            print(f"ERROR: Screenshot file was not created at {output_path}")
+            return False
+
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: FFmpeg failed to extract screenshot at {timestamp}")
+        print(f"Return code: {e.returncode}")
+        print(f"FFmpeg stderr: {e.stderr}")
+        print(f"FFmpeg stdout: {e.stdout}")
+        return False
     except Exception as e:
-        print(f"Failed to extract screenshot at {timestamp}")
+        print(f"ERROR: Failed to extract screenshot at {timestamp}")
+        print(f"Error type: {type(e).__name__}")
         print(f"Error details: {str(e)}")
-        if isinstance(e, subprocess.CalledProcessError):
-            print(f"FFmpeg stderr: {e.stderr.decode()}")
-        return None
+        import traceback
+        traceback.print_exc()
+        return False
+
+def convert_mkv_to_mp4(input_path: str, output_path: str) -> bool:
+    """
+    Convert MKV file to MP4 with browser-compatible codecs (H.264 + AAC)
+    Returns True if conversion successful, False otherwise
+    """
+    try:
+        print(f"\nConverting MKV to MP4 for browser compatibility...")
+        print(f"Input: {input_path}")
+        print(f"Output: {output_path}")
+
+        # Check if input file exists
+        if not os.path.exists(input_path):
+            print(f"ERROR: Input file does not exist: {input_path}")
+            return False
+
+        # FFmpeg command to convert to MP4 with H.264 video and AAC audio
+        cmd = [
+            'ffmpeg',
+            '-i', input_path,
+            '-c:v', 'libx264',      # H.264 video codec (widely supported)
+            '-preset', 'medium',     # Balance between speed and quality
+            '-crf', '23',            # Quality (23 is default, lower = better quality)
+            '-c:a', 'aac',           # AAC audio codec (widely supported)
+            '-b:a', '128k',          # Audio bitrate
+            '-movflags', '+faststart',  # Enable streaming
+            output_path,
+            '-y'  # Overwrite if exists
+        ]
+
+        print(f"Running conversion command...")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"ERROR: FFmpeg conversion failed")
+            print(f"Return code: {result.returncode}")
+            print(f"Stderr: {result.stderr}")
+            return False
+
+        # Verify output file was created
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            print(f"Conversion completed successfully (size: {file_size / (1024*1024):.2f} MB)")
+            return True
+        else:
+            print(f"ERROR: Output file was not created at {output_path}")
+            return False
+
+    except Exception as e:
+        print(f"ERROR: Failed to convert MKV to MP4")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 # Initialize FastAPI app with custom request size limit
 app = FastAPI(
@@ -898,7 +1071,25 @@ async def transcribe_video(
                  print(f"Saved permanent copy of video to: {permanent_file_path}")
             else:
                  print(f"Permanent copy already exists at: {permanent_file_path}")
-            
+
+            # Convert MKV to MP4 for browser compatibility
+            if file_extension == '.mkv':
+                mp4_path = os.path.join(permanent_storage_dir, f"{video_hash}.mp4")
+                if not os.path.exists(mp4_path):
+                    print("\nMKV file detected - converting to MP4 for browser compatibility...")
+                    conversion_success = convert_mkv_to_mp4(permanent_file_path, mp4_path)
+                    if conversion_success:
+                        print(f"Conversion successful! Using MP4 file for playback.")
+                        # Update paths to use the MP4 file for processing and serving
+                        permanent_file_path = mp4_path
+                        temp_input_path = mp4_path  # Use converted file for screenshots
+                    else:
+                        print(f"WARNING: Conversion failed. Video playback may not work in browser.")
+                else:
+                    print(f"MP4 version already exists at: {mp4_path}")
+                    permanent_file_path = mp4_path
+                    temp_input_path = mp4_path
+
             print("\nExtracting and compressing audio...")
             audio_processed = False
             try:
@@ -1795,6 +1986,23 @@ async def transcribe_local(
         else:
             print(f"Permanent copy already exists at: {permanent_file_path}")
 
+        # Convert MKV to MP4 for browser compatibility
+        if suffix == '.mkv':
+            mp4_path = os.path.join(permanent_storage_dir, f"{video_hash}.mp4")
+            if not os.path.exists(mp4_path):
+                print("\nMKV file detected - converting to MP4 for browser compatibility...")
+                conversion_success = convert_mkv_to_mp4(permanent_file_path, mp4_path)
+                if conversion_success:
+                    print(f"Conversion successful! Using MP4 file for playback.")
+                    permanent_file_path = mp4_path
+                    temp_path = mp4_path  # Use converted file for screenshots
+                else:
+                    print(f"WARNING: Conversion failed. Video playback may not work in browser.")
+            else:
+                print(f"MP4 version already exists at: {mp4_path}")
+                permanent_file_path = mp4_path
+                temp_path = mp4_path
+
         # Get audio duration
         duration = 0.0
         try:
@@ -2226,7 +2434,7 @@ async def transcribe_local_stream(
             os.makedirs(screenshots_dir, exist_ok=True)
             screenshot_count = 0
 
-            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov'}:
+            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
                 for idx, segment in enumerate(formatted_segments):
                     screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
                     screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
