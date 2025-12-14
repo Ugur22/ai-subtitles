@@ -16,6 +16,7 @@ numpy==1.26.4
 pyannote.audio==3.1.1
 faster-whisper==1.2.1
 av==13.1.0
+scipy>=1.11.0  # For speaker recognition similarity calculations
 
 # LLM and RAG dependencies
 sentence-transformers==2.2.2

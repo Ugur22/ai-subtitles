@@ -3,7 +3,10 @@ import {
   type TranscriptionResponse,
   translateLocalText,
   updateSpeakerName,
+  enrollSpeaker,
+  autoIdentifySpeakers,
 } from "../../../services/api";
+import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
 import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
@@ -287,6 +290,65 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     } catch (err) {
       console.error("Failed to rename speaker:", err);
       alert("Failed to rename speaker");
+    }
+  };
+
+  // Speaker Recognition Handlers
+  const handleEnrollSpeaker = async (segment: any) => {
+    if (!transcription) return;
+
+    const speakerName = prompt(
+      `Enroll speaker "${segment.speaker}" for automatic recognition.\n\nEnter the actual name of this speaker:`,
+      formatSpeakerLabel(segment.speaker)
+    );
+
+    if (!speakerName || !speakerName.trim()) return;
+
+    try {
+      const startTime = timeToSeconds(segment.start_time);
+      const endTime = timeToSeconds(segment.end_time);
+
+      await enrollSpeaker(
+        speakerName.trim(),
+        transcription.video_hash,
+        startTime,
+        endTime
+      );
+
+      alert(
+        `✓ Successfully enrolled ${speakerName}!\n\nThis speaker can now be automatically identified in future videos.`
+      );
+    } catch (err: any) {
+      console.error("Failed to enroll speaker:", err);
+      alert(`Failed to enroll speaker: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleAutoIdentifySpeakers = async () => {
+    if (!transcription) return;
+
+    if (
+      !confirm(
+        "This will automatically identify speakers in this video using enrolled voice prints.\n\nMake sure you have enrolled speakers first.\n\nContinue?"
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await autoIdentifySpeakers(transcription.video_hash, 0.7);
+
+      alert(
+        `✓ Auto-identification complete!\n\nIdentified: ${result.identified_segments}/${result.total_segments} segments\n\nRefresh to see the updated speaker names.`
+      );
+
+      // Reload transcription to get updated speaker names
+      window.location.reload();
+    } catch (err: any) {
+      console.error("Failed to auto-identify speakers:", err);
+      alert(
+        `Failed to auto-identify speakers: ${err.response?.data?.detail || err.message}`
+      );
     }
   };
 
@@ -1061,8 +1123,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     {!showSummary && !showChat && (
                       <>
                         {/* Sticky Show Translation button */}
-                        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center">
-                          <div className="flex items-center gap-2">
+                        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <button
                               onClick={() =>
                                 setShowTranslation(!showTranslation)
@@ -1229,6 +1291,30 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 </div>
                               )}
                             </div>
+
+                            {/* Speaker Recognition Buttons */}
+                            <button
+                              onClick={handleAutoIdentifySpeakers}
+                              className="px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white shadow-md hover:shadow-lg"
+                              title="Automatically identify speakers using enrolled voice prints"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                                />
+                              </svg>
+                              Auto-Identify
+                            </button>
+
+                            <EnrolledSpeakersPanel />
                           </div>
                         </div>
                         {/* Transcript content */}
@@ -1245,6 +1331,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           handleSpeakerRename={handleSpeakerRename}
                           getSpeakerColor={getSpeakerColor}
                           formatSpeakerLabel={formatSpeakerLabel}
+                          onEnrollSpeaker={handleEnrollSpeaker}
                         />
                       </>
                     )}
