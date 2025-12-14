@@ -225,7 +225,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(({
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept="video/*,audio/*"
+              accept="video/*,audio/*,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,.mp3,.mov,.mkv"
               onChange={fileUploadHandleChange}
               disabled={isTranscribing}
             />
