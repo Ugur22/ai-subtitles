@@ -7,11 +7,9 @@ from fastapi import APIRouter, HTTPException, Request
 from database import get_transcription
 from dependencies import _last_transcription_data
 from models import (
-    IndexVideoRequest,
     IndexVideoResponse,
     ChatRequest,
     ChatResponse,
-    ListLLMProvidersResponse,
     TestLLMRequest,
     TestLLMResponse,
     ErrorResponse

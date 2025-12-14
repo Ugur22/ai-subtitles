@@ -19,12 +19,9 @@ from database import get_transcription, store_transcription, list_transcriptions
 from dependencies import get_whisper_model, get_speaker_diarizer, _last_transcription_data
 import dependencies
 from models import (
-    TranscriptionResponse,
     TranscriptionListResponse,
     TranslationRequest,
     TranslationResponse,
-    SummaryRequest,
-    SummaryResponse,
     ErrorResponse
 )
 from services.audio_service import AudioService
