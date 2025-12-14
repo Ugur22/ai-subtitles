@@ -11,8 +11,6 @@ from dependencies import _last_transcription_data
 from models import (
     EnrollSpeakerResponse,
     ListSpeakersResponse,
-    IdentifySpeakerResponse,
-    AutoIdentifySpeakersResponse,
     SuccessResponse,
     ErrorResponse
 )
