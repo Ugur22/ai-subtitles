@@ -46,6 +46,144 @@ Choose your preferred AI provider:
 - **MoviePy** (video processing)
 - **SQLite3** (local database)
 
+## Architecture
+
+### System Overview
+
+```mermaid
+flowchart TB
+    subgraph Frontend["Frontend (React + TypeScript)"]
+        UI[UI Components]
+        VP[Video Player]
+        API[API Client]
+    end
+
+    subgraph Backend["Backend (FastAPI)"]
+        subgraph Routers["API Routers"]
+            TR[Transcription Router]
+            SR[Speaker Router]
+            CR[Chat Router]
+            VR[Video Router]
+        end
+
+        subgraph Services["Services Layer"]
+            AS[Audio Service]
+            VS[Video Service]
+            SS[Speaker Service]
+            TS[Translation Service]
+            SBS[Subtitle Service]
+        end
+
+        DB[(SQLite)]
+        VDB[(ChromaDB)]
+    end
+
+    subgraph ML["ML Models"]
+        WH[Faster Whisper]
+        PY[Pyannote Audio]
+        EMB[Sentence Transformers]
+    end
+
+    subgraph LLM["LLM Providers"]
+        OL[Ollama - Local]
+        GR[Groq]
+        OA[OpenAI]
+        AN[Anthropic]
+    end
+
+    UI --> API
+    VP --> API
+    API <--> TR & SR & CR & VR
+
+    TR --> AS --> WH
+    SR --> SS --> PY
+    CR --> VDB --> EMB
+    CR --> LLM
+    VR --> VS
+
+    TR & SR --> DB
+    CR --> DB
+```
+
+### Transcription Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant AS as AudioService
+    participant WH as Faster Whisper
+    participant PY as Pyannote
+    participant DB as SQLite
+
+    U->>FE: Upload Video
+    FE->>API: POST /transcribe_local/
+    API->>AS: Extract Audio (ffmpeg)
+    AS-->>API: Audio File
+
+    par Parallel Processing
+        API->>WH: Transcribe Audio
+        WH-->>API: Raw Segments
+    and
+        API->>PY: Speaker Diarization
+        PY-->>API: Speaker Labels
+    end
+
+    API->>API: Merge Segments + Speakers
+    API->>DB: Save Transcription
+    API-->>FE: Return Results
+    FE-->>U: Display Transcript
+```
+
+### RAG Chat Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant VDB as ChromaDB
+    participant EMB as Embeddings
+    participant LLM as LLM Provider
+
+    U->>FE: Ask Question
+    FE->>API: POST /api/chat/
+
+    API->>EMB: Embed Question
+    EMB-->>API: Question Vector
+
+    API->>VDB: Semantic Search
+    VDB-->>API: Relevant Segments
+
+    API->>API: Build Context Prompt
+    API->>LLM: Query with Context
+    LLM-->>API: Generated Response
+
+    API-->>FE: Return Answer + Sources
+    FE-->>U: Display Response
+```
+
+### Speaker Recognition Flow
+
+```mermaid
+flowchart LR
+    subgraph Enrollment["Speaker Enrollment"]
+        A[Upload Audio] --> B[Extract Embedding]
+        B --> C[Store in Database]
+    end
+
+    subgraph Recognition["Speaker Identification"]
+        D[New Audio Segment] --> E[Extract Embedding]
+        E --> F[Compare with Known Speakers]
+        F --> G{Match Found?}
+        G -->|Yes| H[Assign Speaker Name]
+        G -->|No| I[Keep Generic Label]
+    end
+
+    C -.-> F
+```
+
 ## Prerequisites
 
 - **Node.js** 18+ and npm
