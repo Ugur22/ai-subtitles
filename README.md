@@ -170,21 +170,46 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 
 ```
 ai-subs/
-├── frontend/              # React + TypeScript frontend
+├── frontend/                    # React + TypeScript frontend
 │   ├── src/
-│   │   ├── components/    # UI components
-│   │   ├── hooks/         # Custom React hooks
-│   │   ├── services/      # API client
-│   │   └── utils/         # Helper functions
+│   │   ├── components/          # UI components
+│   │   ├── hooks/               # Custom React hooks
+│   │   ├── services/            # API client
+│   │   └── utils/               # Helper functions
 │   └── package.json
-├── backend/               # FastAPI Python backend
-│   ├── main.py            # API endpoints
-│   ├── speaker_diarization.py
-│   ├── llm_providers.py   # LLM abstraction layer
-│   ├── vector_store.py    # ChromaDB wrapper
+├── backend/                     # FastAPI Python backend
+│   ├── main.py                  # FastAPI app entry point & router registration
+│   ├── config.py                # Pydantic settings configuration
+│   ├── database.py              # SQLite operations
+│   ├── dependencies.py          # Dependency injection for ML models
+│   ├── routers/                 # API endpoint organization
+│   │   ├── transcription.py     # Transcription endpoints
+│   │   ├── speaker.py           # Speaker recognition endpoints
+│   │   ├── chat.py              # LLM/RAG chat endpoints
+│   │   └── video.py             # Video serving & utilities
+│   ├── models/                  # Pydantic request/response models
+│   │   ├── common.py            # Shared models (ErrorResponse, etc.)
+│   │   ├── transcription.py     # Transcription models
+│   │   ├── speaker.py           # Speaker models
+│   │   ├── chat.py              # Chat/LLM models
+│   │   └── video.py             # Video utility models
+│   ├── services/                # Business logic layer
+│   │   ├── audio_service.py     # Audio extraction & processing
+│   │   ├── video_service.py     # Video operations & screenshots
+│   │   ├── speaker_service.py   # Speaker diarization logic
+│   │   ├── translation_service.py
+│   │   ├── subtitle_service.py  # SRT/VTT generation
+│   │   └── summarization_service.py
+│   ├── utils/                   # Helper utilities
+│   │   ├── file_utils.py        # File hashing
+│   │   └── time_utils.py        # Timestamp formatting
+│   ├── speaker_diarization.py   # Pyannote.audio integration
+│   ├── speaker_recognition.py   # Voice biometric system
+│   ├── llm_providers.py         # LLM provider abstraction
+│   ├── vector_store.py          # ChromaDB wrapper for RAG
 │   └── requirements.txt
-├── docs/                  # Additional documentation
-└── README.md              # This file
+├── docs/                        # Additional documentation
+└── README.md                    # This file
 ```
 
 ## Documentation
