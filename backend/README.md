@@ -9,6 +9,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 - **Python** 3.9+
 
 ### AI & Machine Learning
+
 - **Faster Whisper** 1.2.1 - Local speech-to-text (OpenAI Whisper optimized)
 - **PyTorch** 2.7.0 - Deep learning framework
 - **TorchAudio** 2.7.0 - Audio processing
@@ -17,17 +18,20 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 - **Sentence Transformers** 2.2.2 - Text embeddings for semantic search
 
 ### LLM & RAG
+
 - **ChromaDB** 0.4.22 - Vector database for semantic search
 - **Groq** 0.4.2 - Groq cloud LLM client
 - **OpenAI** 1.12.0 - OpenAI/Azure API client
 - Multi-provider LLM support (Ollama, Groq, OpenAI, Anthropic)
 
 ### Media Processing
+
 - **MoviePy** 1.0.3 - Video/audio manipulation
 - **FFmpeg** - Required system dependency
 - **AV** 13.1.0 - Audio/video container format handling
 
 ### Other
+
 - **SQLite3** - Built-in database for transcription storage
 - **python-dotenv** 1.0.0 - Environment configuration
 - **NLTK** 3.9.1 - Natural language processing
@@ -36,11 +40,13 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 ## Prerequisites
 
 ### Required
+
 - **Python** 3.9 or higher
 - **FFmpeg** - System installation required
 - **HuggingFace Account** - For speaker diarization model access
 
 ### Optional (for different LLM providers)
+
 - **Ollama** - For local LLM (recommended for privacy)
 - **Groq API Key** - For fast cloud inference
 - **OpenAI API Key** - For GPT models
@@ -51,17 +57,20 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 ### 1. Install System Dependencies
 
 #### macOS
+
 ```bash
 brew install ffmpeg
 ```
 
 #### Ubuntu/Debian
+
 ```bash
 sudo apt-get update
 sudo apt-get install ffmpeg
 ```
 
 #### Windows
+
 Download FFmpeg from https://ffmpeg.org/download.html and add to PATH.
 
 ### 2. Python Environment Setup
@@ -192,6 +201,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at:
+
 - **API**: `http://localhost:8000`
 - **API Docs (Swagger)**: `http://localhost:8000/docs`
 - **Alternative Docs (ReDoc)**: `http://localhost:8000/redoc`
@@ -201,14 +211,17 @@ The API will be available at:
 ### Transcription
 
 #### `POST /transcribe_local/`
+
 Upload and transcribe audio/video file using local Faster Whisper model.
 
 **Request:** Multipart form data
+
 - `file`: Audio/video file (MP4, MP3, WAV, WebM, etc.)
 - `language`: Language code (optional, auto-detect if not provided)
 - `enable_diarization`: Boolean (default: from env var)
 
 **Response:**
+
 ```json
 {
   "video_hash": "abc123...",
@@ -227,12 +240,15 @@ Upload and transcribe audio/video file using local Faster Whisper model.
 ```
 
 #### `POST /transcribe_local_stream/`
+
 Streaming transcription endpoint for real-time updates.
 
 #### `GET /transcriptions/`
+
 List all saved transcriptions.
 
 **Response:**
+
 ```json
 [
   {
@@ -245,17 +261,21 @@ List all saved transcriptions.
 ```
 
 #### `GET /transcription/{video_hash}`
+
 Get specific transcription by video hash.
 
 #### `DELETE /transcription/{video_hash}`
+
 Delete transcription and associated data.
 
 ### Translation & Subtitles
 
 #### `POST /translate_local/`
+
 Translate transcript segments using local MarianMT model.
 
 **Request:**
+
 ```json
 {
   "video_hash": "abc123...",
@@ -264,9 +284,11 @@ Translate transcript segments using local MarianMT model.
 ```
 
 #### `GET /subtitles/{language}`
+
 Generate subtitle file (WebVTT or SRT format).
 
 **Query Parameters:**
+
 - `video_hash`: Video identifier
 - `format`: `webvtt` or `srt` (default: webvtt)
 - `include_speakers`: Boolean (default: true)
@@ -274,9 +296,11 @@ Generate subtitle file (WebVTT or SRT format).
 ### Speaker Management
 
 #### `POST /transcription/{video_hash}/speaker`
+
 Update speaker name/label.
 
 **Request:**
+
 ```json
 {
   "old_speaker": "SPEAKER_00",
@@ -287,9 +311,11 @@ Update speaker name/label.
 ### Search & RAG Chat
 
 #### `POST /api/index_video/`
+
 Index video transcription for semantic search.
 
 **Request:**
+
 ```json
 {
   "video_hash": "abc123..."
@@ -297,9 +323,11 @@ Index video transcription for semantic search.
 ```
 
 #### `POST /api/chat/`
+
 Chat with video content using RAG (Retrieval-Augmented Generation).
 
 **Request:**
+
 ```json
 {
   "video_hash": "abc123...",
@@ -309,6 +337,7 @@ Chat with video content using RAG (Retrieval-Augmented Generation).
 ```
 
 **Response:**
+
 ```json
 {
   "response": "Based on the transcript, they discussed...",
@@ -323,17 +352,21 @@ Chat with video content using RAG (Retrieval-Augmented Generation).
 ```
 
 #### `GET /api/llm/providers`
+
 List available LLM providers and their status.
 
 #### `POST /api/llm/test`
+
 Test LLM provider configuration.
 
 ### Summaries
 
 #### `POST /generate_summary/`
+
 Generate AI summary of transcription.
 
 **Request:**
+
 ```json
 {
   "video_hash": "abc123...",
@@ -344,12 +377,15 @@ Generate AI summary of transcription.
 ### Video & Media
 
 #### `GET /video/{video_hash}`
+
 Stream original video file.
 
 #### `POST /update_file_path/{video_hash}`
+
 Update path to original file if moved.
 
 #### `POST /cleanup_screenshots/`
+
 Clean up temporary screenshot files.
 
 ## Database Schema
@@ -357,6 +393,7 @@ Clean up temporary screenshot files.
 The backend uses SQLite with the following main tables:
 
 ### `transcriptions`
+
 - `video_hash` (TEXT, PRIMARY KEY)
 - `created_at` (TIMESTAMP)
 - `file_path` (TEXT)
@@ -364,6 +401,7 @@ The backend uses SQLite with the following main tables:
 - `metadata` (JSON)
 
 ### `segments`
+
 - `id` (INTEGER, PRIMARY KEY)
 - `video_hash` (TEXT, FOREIGN KEY)
 - `segment_index` (INTEGER)
@@ -373,6 +411,7 @@ The backend uses SQLite with the following main tables:
 - `speaker` (TEXT)
 
 ### `translations`
+
 - `video_hash` (TEXT)
 - `segment_index` (INTEGER)
 - `target_language` (TEXT)
@@ -403,16 +442,17 @@ backend/
 
 ### Faster Whisper Models
 
-| Model | Size | English-only | Multilingual | Relative Speed |
-|-------|------|--------------|--------------|----------------|
-| tiny | 39 MB | ✓ | ✓ | ~32x |
-| base | 74 MB | ✓ | ✓ | ~16x |
-| small | 244 MB | ✓ | ✓ | ~6x |
-| medium | 769 MB | ✓ | ✓ | ~2x |
-| large-v2 | 1550 MB | - | ✓ | 1x |
-| large-v3 | 1550 MB | - | ✓ | 1x |
+| Model    | Size    | English-only | Multilingual | Relative Speed |
+| -------- | ------- | ------------ | ------------ | -------------- |
+| tiny     | 39 MB   | ✓            | ✓            | ~32x           |
+| base     | 74 MB   | ✓            | ✓            | ~16x           |
+| small    | 244 MB  | ✓            | ✓            | ~6x            |
+| medium   | 769 MB  | ✓            | ✓            | ~2x            |
+| large-v2 | 1550 MB | -            | ✓            | 1x             |
+| large-v3 | 1550 MB | -            | ✓            | 1x             |
 
 **Recommendation:**
+
 - **Development/CPU:** `small` (good balance of speed/accuracy)
 - **Production/GPU:** `large-v3` (best accuracy)
 - **Quick testing:** `tiny` or `base`
@@ -420,6 +460,7 @@ backend/
 ### Speaker Diarization Model
 
 Uses `pyannote/speaker-diarization-3.1` which requires:
+
 - HuggingFace token
 - Acceptance of model terms
 - ~500MB download on first use
@@ -427,6 +468,7 @@ Uses `pyannote/speaker-diarization-3.1` which requires:
 ## Performance Optimization
 
 ### CPU Optimization
+
 ```bash
 # Use int8 quantization for faster CPU inference
 FASTWHISPER_COMPUTE_TYPE=int8
@@ -434,6 +476,7 @@ FASTWHISPER_MODEL=small
 ```
 
 ### GPU Optimization (NVIDIA)
+
 ```bash
 # Install CUDA-enabled PyTorch first
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -445,6 +488,7 @@ FASTWHISPER_MODEL=large-v3
 ```
 
 ### Apple Silicon Optimization
+
 ```bash
 # Use Metal Performance Shaders
 FASTWHISPER_DEVICE=mps
@@ -457,12 +501,13 @@ FASTWHISPER_MODEL=medium
 ### Running with Auto-reload
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Interactive API Documentation
 
 Once running, visit:
+
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
@@ -489,6 +534,7 @@ curl -X POST "http://localhost:8000/api/chat/" \
 ### Common Issues
 
 **"ModuleNotFoundError: No module named 'torch'"**
+
 ```bash
 # Ensure virtual environment is activated
 source venv/bin/activate
@@ -496,6 +542,7 @@ pip install -r requirements.txt
 ```
 
 **"FFmpeg not found"**
+
 ```bash
 # macOS
 brew install ffmpeg
@@ -508,6 +555,7 @@ ffmpeg -version
 ```
 
 **"HuggingFace authentication failed"**
+
 ```bash
 # Verify token is set in .env
 cat .env | grep HUGGINGFACE_TOKEN
@@ -517,6 +565,7 @@ cat .env | grep HUGGINGFACE_TOKEN
 ```
 
 **"Ollama connection refused"**
+
 ```bash
 # Start Ollama service
 ollama serve
@@ -529,6 +578,7 @@ ollama pull llama3.2:3b
 ```
 
 **"CUDA out of memory"**
+
 ```bash
 # Reduce model size or use CPU
 FASTWHISPER_MODEL=small
@@ -536,6 +586,7 @@ FASTWHISPER_DEVICE=cpu
 ```
 
 **Port 8000 already in use**
+
 ```bash
 # Find and kill process
 lsof -ti:8000 | xargs kill -9
@@ -547,6 +598,7 @@ uvicorn main:app --reload --port 8001
 ## Deployment
 
 For production deployment instructions, see:
+
 - [General Deployment Guide](../docs/DEPLOYMENT.md)
 - [AWS Deployment Guide](../docs/AWS_DEPLOYMENT.md)
 
