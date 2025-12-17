@@ -22,7 +22,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 - **ChromaDB** 0.4.22 - Vector database for semantic search
 - **Groq** 0.4.2 - Groq cloud LLM client
 - **OpenAI** 1.12.0 - OpenAI/Azure API client
-- Multi-provider LLM support (Ollama, Groq, OpenAI, Anthropic)
+- Multi-provider LLM support (Ollama, Groq, OpenAI, Anthropic, Grok)
 
 ### Media Processing
 
@@ -51,6 +51,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 - **Groq API Key** - For fast cloud inference
 - **OpenAI API Key** - For GPT models
 - **Anthropic API Key** - For Claude models
+- **xAI API Key** - For Grok models
 
 ## Installation
 
@@ -141,7 +142,7 @@ MAX_SPEAKERS=10
 # LLM PROVIDER CONFIGURATION
 # ============================================
 # Choose your LLM provider for chat/summarization
-# Options: local (Ollama), groq, openai, anthropic
+# Options: local (Ollama), groq, openai, anthropic, grok
 DEFAULT_LLM_PROVIDER=local
 
 # --------------------------------------------
@@ -168,6 +169,13 @@ OPENAI_MODEL=gpt-4
 # --------------------------------------------
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+
+# --------------------------------------------
+# xAI Grok Settings (Cloud)
+# --------------------------------------------
+# Get your API key from: https://console.x.ai/
+XAI_API_KEY=your_xai_api_key_here
+XAI_MODEL=grok-beta
 ```
 
 ### 5. Get HuggingFace Token (Required for Speaker Diarization)

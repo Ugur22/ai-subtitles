@@ -67,7 +67,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const loadProviders = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/api/llm/providers");
+      const response = await axios.get(
+        "http://localhost:8000/api/llm/providers"
+      );
       setProviders(response.data.providers);
 
       // Set default provider to first available one
@@ -117,7 +119,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         question: textToSend,
         video_hash: videoHash,
         provider: selectedProvider,
-        n_results: 8,  // Increased for more comprehensive context
+        n_results: 8, // Increased for more comprehensive context
       });
 
       const assistantMessage: Message = {
@@ -131,7 +133,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       console.error("Chat error:", error);
       const errorMessage: Message = {
         role: "assistant",
-        content: `Error: ${error.response?.data?.detail || error.message || "Failed to get response"}`,
+        content: `Error: ${
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to get response"
+        }`,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -153,7 +159,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     if (match[1] && match[2] && match[3]) {
       // HH:MM:SS format
-      return parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]);
+      return (
+        parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3])
+      );
     } else if (match[4] && match[5]) {
       // MM:SS format
       return parseInt(match[4]) * 60 + parseInt(match[5]);
@@ -186,7 +194,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             />
           </svg>
           <p className="text-lg font-medium">No video loaded</p>
-          <p className="text-sm mt-2">Upload and transcribe a video to start chatting</p>
+          <p className="text-sm mt-2">
+            Upload and transcribe a video to start chatting
+          </p>
         </div>
       </div>
     );
@@ -247,7 +257,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   value={provider.name}
                   disabled={!provider.available}
                 >
-                  {provider.name} - {provider.model} {!provider.available && "(unavailable)"}
+                  {provider.name} - {provider.model}{" "}
+                  {!provider.available && "(unavailable)"}
                 </option>
               ))}
             </select>
@@ -366,7 +377,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
           >
             <svg
-              className="w-5 h-5"
+              className="w-5 h-5 transform rotate-90"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
