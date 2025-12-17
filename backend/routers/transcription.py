@@ -308,7 +308,8 @@ def translate_segments(segments: List[Dict], source_lang: str) -> List[Dict]:
 def add_speaker_labels(audio_path: str, segments: List[Dict], num_speakers: int = None,
                       min_speakers: int = None, max_speakers: int = None) -> List[Dict]:
     """Wrapper for SpeakerService.add_speaker_labels"""
-    return SpeakerService.add_speaker_labels(audio_path, segments, num_speakers, min_speakers, max_speakers)
+    diarizer = get_speaker_diarizer()
+    return SpeakerService.add_speaker_labels(audio_path, segments, diarizer, num_speakers, min_speakers, max_speakers)
 
 def extract_screenshot(input_path: str, timestamp: float, output_path: str) -> bool:
     """Wrapper for VideoService.extract_screenshot"""
