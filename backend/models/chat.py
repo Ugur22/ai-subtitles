@@ -43,7 +43,7 @@ class ChatRequest(BaseModel):
     """Request to chat with a video"""
     question: str = Field(..., description="Question to ask about the video")
     video_hash: Optional[str] = Field(None, description="Video hash (uses last transcription if not provided)")
-    provider: Optional[str] = Field(None, description="LLM provider (ollama, groq, openai, anthropic)")
+    provider: Optional[str] = Field(None, description="LLM provider (ollama, groq, openai, anthropic, grok)")
     n_results: Optional[int] = Field(8, description="Number of context chunks to retrieve")
 
     model_config = {
