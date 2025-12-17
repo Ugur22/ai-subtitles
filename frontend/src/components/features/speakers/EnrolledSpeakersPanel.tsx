@@ -86,7 +86,7 @@ export const EnrolledSpeakersPanel: React.FC<EnrolledSpeakersPanelProps> = ({
 
       {/* Panel */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+        <div className="absolute top-full left-0 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
           <div className="p-4 border-b border-gray-200">
             <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
               <svg
