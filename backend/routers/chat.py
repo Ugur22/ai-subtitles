@@ -488,12 +488,13 @@ async def test_llm_provider(request: TestLLMRequest) -> TestLLMResponse:
         404: {"model": ErrorResponse, "description": "Transcription not found"}
     }
 )
-async def index_video_images(video_hash: str = None) -> IndexImagesResponse:
+async def index_video_images(video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
     """
     Index video screenshots using CLIP embeddings for visual search
 
     Args:
         video_hash: Optional video hash. If not provided, uses last transcription
+        force_reindex: If True, delete existing index and re-index all images
     """
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
@@ -518,8 +519,8 @@ async def index_video_images(video_hash: str = None) -> IndexImagesResponse:
             raise HTTPException(status_code=400, detail="No segments found in transcription")
 
         # Index images in vector database
-        print(f"Indexing images for video {video_hash} from {len(segments)} segments...")
-        num_images = vector_store.index_video_images(video_hash, segments)
+        print(f"Indexing images for video {video_hash} from {len(segments)} segments... (force_reindex={force_reindex})")
+        num_images = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
 
         return IndexImagesResponse(
             success=True,

@@ -11,6 +11,10 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Optional
 from PIL import Image
 import hashlib
+from pathlib import Path
+
+# Get the backend directory path for resolving relative paths
+BACKEND_DIR = Path(__file__).parent.absolute()
 
 
 class VectorStore:
@@ -335,7 +339,8 @@ class VectorStore:
     def index_video_images(
         self,
         video_hash: str,
-        segments: List[Dict]
+        segments: List[Dict],
+        force_reindex: bool = False
     ) -> int:
         """
         Index video screenshot images into vector database using CLIP embeddings
@@ -343,6 +348,7 @@ class VectorStore:
         Args:
             video_hash: Unique hash of the video
             segments: List of transcription segments with screenshot_url field
+            force_reindex: If True, delete existing collection and re-index
 
         Returns:
             Number of images indexed
@@ -351,16 +357,26 @@ class VectorStore:
             print("No segments to index")
             return 0
 
+        # Handle force re-indexing by deleting existing collection
+        if force_reindex:
+            try:
+                collection_name = f"images_{video_hash}"
+                self.chroma_client.delete_collection(collection_name)
+                print(f"Deleted existing image collection for force re-index: {collection_name}")
+            except Exception as e:
+                print(f"No existing collection to delete or error: {e}")
+
         collection = self.get_or_create_image_collection(video_hash)
 
-        # Check if already indexed
-        try:
-            count = collection.count()
-            if count > 0:
-                print(f"Image collection already has {count} items. Skipping indexing.")
-                return count
-        except:
-            pass
+        # Check if already indexed (skip if force_reindex since we just deleted it)
+        if not force_reindex:
+            try:
+                count = collection.count()
+                if count > 0:
+                    print(f"Image collection already has {count} items. Skipping indexing.")
+                    return count
+            except:
+                pass
 
         # Extract image paths from segments
         image_data = []
@@ -371,13 +387,15 @@ class VectorStore:
             screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
             if screenshot_url:
                 segments_with_urls += 1
-                # Convert URL path to file system path
+                # Convert URL path to absolute file system path
                 # screenshot_url is like "/static/screenshots/hash_123.45.jpg"
-                # We need to convert to "./static/screenshots/hash_123.45.jpg"
+                # We need to convert to absolute path based on backend directory
                 if screenshot_url.startswith('/static/'):
-                    screenshot_path = '.' + screenshot_url
+                    screenshot_path = str(BACKEND_DIR / screenshot_url.lstrip('/'))
                 elif screenshot_url.startswith('static/'):
-                    screenshot_path = './' + screenshot_url
+                    screenshot_path = str(BACKEND_DIR / screenshot_url)
+                elif screenshot_url.startswith('./'):
+                    screenshot_path = str(BACKEND_DIR / screenshot_url.lstrip('./'))
                 else:
                     screenshot_path = screenshot_url
 

@@ -2,6 +2,7 @@
 Video and utility endpoints
 """
 import os
+import glob
 from typing import Dict, Optional
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, Request
@@ -25,36 +26,64 @@ router = APIRouter(tags=["Video & Utilities"])
     "/cleanup_screenshots/",
     response_model=CleanupScreenshotsResponse,
     summary="Cleanup screenshot files",
-    description="Delete all screenshots from the static/screenshots directory"
+    description="Delete all screenshots from the static/screenshots directory and clean up orphaned ChromaDB image collections"
 )
 async def cleanup_screenshots() -> CleanupScreenshotsResponse:
-    """Delete all screenshots from the static/screenshots directory"""
+    """Delete all screenshots from the static/screenshots directory and clean up orphaned ChromaDB collections"""
     try:
         screenshots_dir = settings.SCREENSHOTS_DIR
 
         # Check if directory exists
         if not os.path.exists(screenshots_dir):
             os.makedirs(screenshots_dir, exist_ok=True)
-            return CleanupScreenshotsResponse(
-                success=True,
-                message="Screenshots directory was empty",
-                files_deleted=0
-            )
+            file_count = 0
+        else:
+            # Count files before deletion
+            files = os.listdir(screenshots_dir)
+            file_count = len(files)
 
-        # Count files before deletion
-        files = os.listdir(screenshots_dir)
-        file_count = len(files)
+            # Delete all files in the directory
+            for filename in files:
+                file_path = os.path.join(screenshots_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                    print(f"Deleted: {file_path}")
 
-        # Delete all files in the directory
-        for filename in files:
-            file_path = os.path.join(screenshots_dir, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-                print(f"Deleted: {file_path}")
+        # Also clean up orphaned ChromaDB image collections
+        # (collections that exist but the transcription doesn't exist in the database anymore)
+        collections_cleaned = 0
+        try:
+            from vector_store import vector_store
+            from database import get_transcription
+            import re
+
+            all_collections = vector_store.client.list_collections()
+            for collection in all_collections:
+                # Extract video hash from collection name
+                # Collections are named: video_{hash} or video_{hash}_images
+                match = re.match(r'video_([a-f0-9]+)(_images)?', collection.name)
+                if match:
+                    video_hash = match.group(1)
+                    # Check if this transcription still exists in the database
+                    transcription = get_transcription(video_hash)
+                    if not transcription:
+                        # This is an orphaned collection - delete it
+                        vector_store.client.delete_collection(collection.name)
+                        collections_cleaned += 1
+                        print(f"Deleted orphaned ChromaDB collection: {collection.name}")
+
+            if collections_cleaned > 0:
+                print(f"Cleaned up {collections_cleaned} orphaned ChromaDB collections")
+        except Exception as e:
+            print(f"Warning: Failed to clean up ChromaDB collections: {str(e)}")
+
+        message = f"Successfully deleted {file_count} screenshot files"
+        if collections_cleaned > 0:
+            message += f" and {collections_cleaned} orphaned ChromaDB collections"
 
         return CleanupScreenshotsResponse(
             success=True,
-            message=f"Successfully deleted {file_count} screenshot files",
+            message=message,
             files_deleted=file_count
         )
     except Exception as e:
@@ -295,15 +324,51 @@ async def delete_transcription_endpoint(video_hash: str) -> DeleteTranscriptionR
         if not transcription:
             raise HTTPException(status_code=404, detail="Transcription not found")
 
-        # Delete the file if it exists
+        # Delete the video file if it exists
         if 'file_path' in transcription and transcription['file_path']:
             file_path = transcription['file_path']
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                    print(f"Deleted file: {file_path}")
+                    print(f"Deleted video file: {file_path}")
                 except Exception as e:
-                    print(f"Error deleting file {file_path}: {str(e)}")
+                    print(f"Error deleting video file {file_path}: {str(e)}")
+
+        # Delete all screenshots associated with this video hash
+        screenshots_dir = settings.SCREENSHOTS_DIR
+        screenshot_pattern = os.path.join(screenshots_dir, f"{video_hash}_*.jpg")
+        screenshots_to_delete = glob.glob(screenshot_pattern)
+
+        deleted_screenshots_count = 0
+        for screenshot in screenshots_to_delete:
+            try:
+                os.remove(screenshot)
+                deleted_screenshots_count += 1
+                print(f"Deleted screenshot: {screenshot}")
+            except Exception as e:
+                print(f"Error deleting screenshot {screenshot}: {str(e)}")
+
+        if deleted_screenshots_count > 0:
+            print(f"Deleted {deleted_screenshots_count} screenshots for video hash: {video_hash}")
+        else:
+            print(f"No screenshots found to delete for video hash: {video_hash}")
+
+        # Delete ChromaDB collections (text and image embeddings)
+        try:
+            from vector_store import vector_store
+
+            # Delete text collection
+            if vector_store.collection_exists(video_hash):
+                vector_store.delete_collection(video_hash)
+                print(f"Deleted text embeddings collection for video hash: {video_hash}")
+
+            # Delete image collection
+            if vector_store.image_collection_exists(video_hash):
+                vector_store.delete_image_collection(video_hash)
+                print(f"Deleted image embeddings collection for video hash: {video_hash}")
+        except Exception as e:
+            # Don't fail the deletion if vector store cleanup fails
+            print(f"Warning: Failed to delete vector store collections: {str(e)}")
 
         # Delete from database
         success = delete_transcription(video_hash)
@@ -313,7 +378,7 @@ async def delete_transcription_endpoint(video_hash: str) -> DeleteTranscriptionR
 
         return DeleteTranscriptionResponse(
             success=True,
-            message="Transcription deleted successfully"
+            message=f"Transcription deleted successfully (including {deleted_screenshots_count} screenshots)"
         )
     except HTTPException:
         raise

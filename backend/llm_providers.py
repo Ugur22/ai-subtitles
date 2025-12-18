@@ -9,8 +9,12 @@ import base64
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
+
+# Get the backend directory path for resolving relative paths
+BACKEND_DIR = Path(__file__).parent.absolute()
 
 
 class BaseLLMProvider(ABC):
@@ -220,13 +224,30 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             # Convert images to base64
             image_data = []
+            failed_images = []
             for img_path in image_paths:
                 try:
-                    with open(img_path, "rb") as image_file:
+                    # Convert relative paths to absolute paths
+                    if img_path.startswith('./') or img_path.startswith('static/'):
+                        abs_path = BACKEND_DIR / img_path.lstrip('./')
+                    else:
+                        abs_path = Path(img_path)
+
+                    if not abs_path.exists():
+                        print(f"Warning: Image file does not exist: {abs_path}")
+                        failed_images.append(str(abs_path))
+                        continue
+
+                    with open(abs_path, "rb") as image_file:
                         encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
                         image_data.append(encoded_image)
                 except Exception as e:
-                    print(f"Warning: Failed to load image {img_path}: {str(e)}")
+                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
+                    failed_images.append(str(img_path))
+
+            if failed_images:
+                print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
+                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only
@@ -353,19 +374,36 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             # Convert images to base64
             image_data = []
+            failed_images = []
             for img_path in image_paths:
                 try:
-                    with open(img_path, "rb") as image_file:
+                    # Convert relative paths to absolute paths
+                    if img_path.startswith('./') or img_path.startswith('static/'):
+                        abs_path = BACKEND_DIR / img_path.lstrip('./')
+                    else:
+                        abs_path = Path(img_path)
+
+                    if not abs_path.exists():
+                        print(f"Warning: Image file does not exist: {abs_path}")
+                        failed_images.append(str(abs_path))
+                        continue
+
+                    with open(abs_path, "rb") as image_file:
                         encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
                         # Detect image type
-                        ext = img_path.lower().split('.')[-1]
+                        ext = str(abs_path).lower().split('.')[-1]
                         media_type = f"image/{ext}" if ext in ['jpeg', 'jpg', 'png', 'gif', 'webp'] else "image/jpeg"
                         image_data.append({
                             "data": encoded_image,
                             "media_type": media_type
                         })
                 except Exception as e:
-                    print(f"Warning: Failed to load image {img_path}: {str(e)}")
+                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
+                    failed_images.append(str(img_path))
+
+            if failed_images:
+                print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
+                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only
@@ -492,13 +530,30 @@ class GrokProvider(BaseLLMProvider):
         try:
             # Convert images to base64
             image_data = []
+            failed_images = []
             for img_path in image_paths:
                 try:
-                    with open(img_path, "rb") as image_file:
+                    # Convert relative paths to absolute paths
+                    if img_path.startswith('./') or img_path.startswith('static/'):
+                        abs_path = BACKEND_DIR / img_path.lstrip('./')
+                    else:
+                        abs_path = Path(img_path)
+
+                    if not abs_path.exists():
+                        print(f"Warning: Image file does not exist: {abs_path}")
+                        failed_images.append(str(abs_path))
+                        continue
+
+                    with open(abs_path, "rb") as image_file:
                         encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
                         image_data.append(encoded_image)
                 except Exception as e:
-                    print(f"Warning: Failed to load image {img_path}: {str(e)}")
+                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
+                    failed_images.append(str(img_path))
+
+            if failed_images:
+                print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
+                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only
