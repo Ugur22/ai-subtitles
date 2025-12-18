@@ -8,7 +8,7 @@ interface Segment {
 }
 
 interface CustomProgressBarProps {
-  videoRef: HTMLVideoElement;
+  videoRef?: HTMLVideoElement;
   duration: number;
   currentTime: number;
   onSeek: (time: number) => void;
@@ -29,7 +29,6 @@ function formatTime(seconds: number) {
 }
 
 const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
-  videoRef,
   duration,
   currentTime,
   onSeek,
@@ -46,7 +45,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
   }
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!barRef.current) return;
+    if (!barRef.current || !duration || duration <= 0) return;
     const rect = barRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = Math.max(0, Math.min(1, x / rect.width));
@@ -64,7 +63,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
   };
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!barRef.current) return;
+    if (!barRef.current || !duration || duration <= 0) return;
     const rect = barRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = Math.max(0, Math.min(1, x / rect.width));

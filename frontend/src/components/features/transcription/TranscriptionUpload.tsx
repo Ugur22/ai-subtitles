@@ -114,6 +114,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     isVideoSeeking,
     handlePlayPause,
     handleVolumeChange,
+    seek,
+    play,
   } = videoPlayerHook;
 
   const subtitlesHook = useSubtitles({
@@ -353,22 +355,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   const seekToTimestamp = (timeString: string) => {
-    console.log("Seeking to timestamp:", timeString, "videoRef:", videoRef);
-    if (!videoRef) {
-      console.error("Video reference not available");
-      return;
-    }
-    if (!timeString) {
-      console.error("Time string is empty");
-      return;
-    }
+    if (!timeString) return;
 
     const seconds = timeToSeconds(timeString);
-    console.log("Converted to seconds:", seconds);
-    videoRef.currentTime = seconds;
-    videoRef
-      .play()
-      .catch((err: Error) => console.error("Error playing video:", err));
+    seek(seconds);
+    play();
 
     // Find the corresponding segment in the transcript (only from displayed segments)
     if (displayedSegments.length > 0) {
@@ -973,7 +964,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </div>
                         <CustomProgressBar
                           videoRef={videoRef}
-                          duration={videoRef.duration || 0}
+                          duration={videoRef.duration > 0 ? videoRef.duration : 0}
                           currentTime={videoRef.currentTime || 0}
                           segments={displayedSegments}
                           getScreenshotUrlForTime={(time) => {
@@ -996,7 +987,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               : null;
                           }}
                           onSeek={(time: number) => {
-                            videoRef.currentTime = time;
+                            seek(time);
                           }}
                         />
                         <div className="flex justify-end px-4 pb-2">
@@ -1011,9 +1002,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           isOpen={jumpModalOpen}
                           onClose={() => setJumpModalOpen(false)}
                           onJump={(seconds) => {
-                            if (videoRef) videoRef.currentTime = seconds;
+                            seek(seconds);
                           }}
-                          duration={videoRef.duration || 0}
+                          duration={videoRef.duration > 0 ? videoRef.duration : 0}
                           currentTime={videoRef.currentTime || 0}
                         />
                       </>

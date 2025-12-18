@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # ChromaDB Configuration
     CHROMA_DB_PATH: str = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 
+    # CLIP Visual Search Configuration
+    ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
+    CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
+
     class Config:
         case_sensitive = True
         env_file = ".env"

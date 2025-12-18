@@ -45,6 +45,8 @@ class ChatRequest(BaseModel):
     video_hash: Optional[str] = Field(None, description="Video hash (uses last transcription if not provided)")
     provider: Optional[str] = Field(None, description="LLM provider (ollama, groq, openai, anthropic, grok)")
     n_results: Optional[int] = Field(8, description="Number of context chunks to retrieve")
+    include_visuals: Optional[bool] = Field(False, description="Include visual analysis from video screenshots (requires vision-capable model)")
+    n_images: Optional[int] = Field(3, description="Number of relevant images to include when include_visuals=True")
 
     model_config = {
         "json_schema_extra": {
@@ -52,7 +54,9 @@ class ChatRequest(BaseModel):
                 "question": "What happens in this video?",
                 "video_hash": "abc123",
                 "provider": "ollama",
-                "n_results": 8
+                "n_results": 8,
+                "include_visuals": False,
+                "n_images": 3
             }
         }
     }
@@ -143,6 +147,91 @@ class TestLLMResponse(BaseModel):
                 "provider": "ollama",
                 "response": "I'm doing well, thank you for asking!",
                 "error": None
+            }
+        }
+    }
+
+
+class IndexImagesResponse(BaseModel):
+    """Response after indexing video images"""
+    success: bool = Field(..., description="Operation success status")
+    video_hash: str = Field(..., description="Video hash")
+    images_indexed: int = Field(..., description="Number of images indexed")
+    message: str = Field(..., description="Success message")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "success": True,
+                "video_hash": "abc123",
+                "images_indexed": 42,
+                "message": "Successfully indexed 42 images"
+            }
+        }
+    }
+
+
+class SearchImagesRequest(BaseModel):
+    """Request to search video images"""
+    query: str = Field(..., description="Text query to search for in images (e.g., 'person pointing at screen')")
+    video_hash: Optional[str] = Field(None, description="Video hash (uses last transcription if not provided)")
+    n_results: Optional[int] = Field(5, description="Number of results to return")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "query": "person writing on whiteboard",
+                "video_hash": "abc123",
+                "n_results": 5
+            }
+        }
+    }
+
+
+class ImageSearchResult(BaseModel):
+    """Single image search result"""
+    screenshot_path: str = Field(..., description="Path to the screenshot image")
+    segment_id: str = Field(..., description="Segment ID")
+    start: float = Field(..., description="Start time in seconds")
+    end: float = Field(..., description="End time in seconds")
+    speaker: str = Field(..., description="Speaker at this timestamp")
+    distance: Optional[float] = Field(None, description="Distance score (lower is better)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "screenshot_path": "/path/to/screenshot_001.jpg",
+                "segment_id": "seg_001",
+                "start": 5.0,
+                "end": 10.0,
+                "speaker": "SPEAKER_00",
+                "distance": 0.234
+            }
+        }
+    }
+
+
+class SearchImagesResponse(BaseModel):
+    """Response from image search"""
+    results: List[ImageSearchResult] = Field(..., description="List of matching images")
+    video_hash: str = Field(..., description="Video hash")
+    query: str = Field(..., description="Search query used")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "results": [
+                    {
+                        "screenshot_path": "/path/to/screenshot_001.jpg",
+                        "segment_id": "seg_001",
+                        "start": 5.0,
+                        "end": 10.0,
+                        "speaker": "SPEAKER_00",
+                        "distance": 0.234
+                    }
+                ],
+                "video_hash": "abc123",
+                "query": "person writing on whiteboard"
             }
         }
     }
