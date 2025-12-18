@@ -364,9 +364,13 @@ class VectorStore:
 
         # Extract image paths from segments
         image_data = []
+        segments_with_urls = 0
+        missing_files = 0
+
         for seg in segments:
             screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
             if screenshot_url:
+                segments_with_urls += 1
                 # Convert URL path to file system path
                 # screenshot_url is like "/static/screenshots/hash_123.45.jpg"
                 # We need to convert to "./static/screenshots/hash_123.45.jpg"
@@ -385,9 +389,18 @@ class VectorStore:
                         'end': seg.get('end', 0.0),
                         'speaker': seg.get('speaker', 'SPEAKER_00')
                     })
+                else:
+                    missing_files += 1
+                    if missing_files <= 3:  # Only log first 3 to avoid spam
+                        print(f"Warning: Screenshot file not found: {screenshot_path}")
+
+        print(f"Screenshot analysis: {segments_with_urls} segments have URLs, {len(image_data)} files exist, {missing_files} files missing")
 
         if not image_data:
-            print("No valid screenshots found in segments")
+            if segments_with_urls == 0:
+                print("No screenshots found in segments - segments may not have screenshot_url field")
+            else:
+                print(f"No valid screenshots found - all {segments_with_urls} screenshot files are missing")
             return 0
 
         # Generate embeddings for all images
