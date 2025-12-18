@@ -53,15 +53,18 @@ export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
   const localInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
-    if (isOpen) {
+    // Only set the input when the modal first opens, not on every currentTime change
+    if (isOpen && !wasOpenRef.current) {
       setInput(secondsToTimeString(currentTime));
       setError("");
       setTimeout(() => {
         (inputRef?.current || localInputRef.current)?.focus();
       }, 0);
     }
+    wasOpenRef.current = isOpen;
   }, [isOpen, currentTime, inputRef]);
 
   const handleOk = () => {
@@ -85,21 +88,19 @@ export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
     }
   };
 
-  if (!isOpen) return null;
-
-  // Modal animation
+  // Modal animation - hooks must be called before any conditional returns
   const backdropAnimation = useSpring({
-    opacity: 1,
+    opacity: isOpen ? 1 : 0,
     config: animationConfig.smooth,
-    from: { opacity: 0 },
   });
 
   const modalAnimation = useSpring({
-    transform: "scale(1)",
-    opacity: 1,
+    transform: isOpen ? "scale(1)" : "scale(0.85)",
+    opacity: isOpen ? 1 : 0,
     config: springConfig.wobbly,
-    from: { transform: "scale(0.85)", opacity: 0 },
   });
+
+  if (!isOpen) return null;
 
   return (
     <animated.div

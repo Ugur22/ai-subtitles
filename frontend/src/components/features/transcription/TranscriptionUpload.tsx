@@ -109,6 +109,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const {
     videoRef,
     setVideoRef,
+    currentTime,
     isPlaying,
     volume,
     isVideoSeeking,
@@ -964,8 +965,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </div>
                         <CustomProgressBar
                           videoRef={videoRef}
-                          duration={videoRef.duration > 0 ? videoRef.duration : 0}
-                          currentTime={videoRef.currentTime || 0}
+                          duration={videoRef && videoRef.duration > 0 ? videoRef.duration : 0}
+                          currentTime={currentTime}
                           segments={displayedSegments}
                           getScreenshotUrlForTime={(time) => {
                             // Find the segment whose start_time is closest to the hovered time
@@ -1004,8 +1005,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           onJump={(seconds) => {
                             seek(seconds);
                           }}
-                          duration={videoRef.duration > 0 ? videoRef.duration : 0}
-                          currentTime={videoRef.currentTime || 0}
+                          duration={videoRef && videoRef.duration > 0 ? videoRef.duration : 0}
+                          currentTime={currentTime}
                         />
                       </>
                     )}
