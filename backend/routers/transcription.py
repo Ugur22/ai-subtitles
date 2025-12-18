@@ -327,6 +327,88 @@ def get_audio_duration(file_path: str) -> float:
 local_whisper_model = get_whisper_model()
 
 
+def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video_hash: str,
+                                     min_gap_duration: float = 2.0) -> List[Dict]:
+    """
+    Detect timeline gaps between speech segments and create silent segments with screenshots.
+
+    Args:
+        segments: List of existing speech segments (sorted by start time)
+        video_path: Path to video file for screenshot extraction
+        video_hash: Hash of the video for screenshot filename generation
+        min_gap_duration: Minimum gap duration (in seconds) to create a silent segment
+
+    Returns:
+        List of segments including both original and new silent segments, sorted by start time
+    """
+    if not segments:
+        return segments
+
+    # Sort segments by start time to ensure proper ordering
+    sorted_segments = sorted(segments, key=lambda s: s['start'])
+    result_segments = []
+    screenshots_dir = os.path.join("static", "screenshots")
+    os.makedirs(screenshots_dir, exist_ok=True)
+
+    print(f"\nDetecting silent gaps (minimum duration: {min_gap_duration}s)...")
+    gaps_found = 0
+
+    for i in range(len(sorted_segments)):
+        # Add the current speech segment
+        result_segments.append(sorted_segments[i])
+
+        # Check if there's a gap before the next segment
+        if i < len(sorted_segments) - 1:
+            current_end = sorted_segments[i]['end']
+            next_start = sorted_segments[i + 1]['start']
+            gap_duration = next_start - current_end
+
+            # Only create silent segment if gap is significant
+            if gap_duration >= min_gap_duration:
+                gaps_found += 1
+                gap_midpoint = current_end + (gap_duration / 2)
+
+                # Extract screenshot from the middle of the gap
+                screenshot_filename = f"{video_hash}_{gap_midpoint:.2f}_silent.jpg"
+                screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                screenshot_url = None
+
+                # Only extract screenshot if it's a video file
+                if video_path and os.path.exists(video_path):
+                    success = extract_screenshot(video_path, gap_midpoint, screenshot_path)
+                    if success and os.path.exists(screenshot_path):
+                        screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                        print(f"  Gap {gaps_found}: {current_end:.2f}s - {next_start:.2f}s ({gap_duration:.2f}s) - Screenshot extracted")
+                    else:
+                        print(f"  Gap {gaps_found}: {current_end:.2f}s - {next_start:.2f}s ({gap_duration:.2f}s) - Screenshot failed")
+
+                # Create silent segment
+                silent_segment = {
+                    "id": str(uuid.uuid4()),
+                    "start": current_end,
+                    "end": next_start,
+                    "start_time": format_timestamp(current_end),
+                    "end_time": format_timestamp(next_start),
+                    "text": "[No speech]",
+                    "translation": "[No speech]",
+                    "speaker": "VISUAL",
+                    "is_silent": True
+                }
+
+                if screenshot_url:
+                    silent_segment["screenshot_url"] = screenshot_url
+
+                result_segments.append(silent_segment)
+
+    if gaps_found > 0:
+        print(f"Created {gaps_found} silent segments for timeline gaps")
+    else:
+        print("No significant gaps found between speech segments")
+
+    # Return sorted by start time
+    return sorted(result_segments, key=lambda s: s['start'])
+
+
 # =============================================================================
 # COMPLEX TRANSCRIPTION ENDPOINTS
 # The following three endpoints are large (300+ lines each) and contain
@@ -531,11 +613,12 @@ async def transcribe_video(
                             if segment_text and not segment_text.isspace():
                                 all_segments.append(segment)
                             else:
+                                # FIX Issue 1: Preserve ALL original fields including screenshot_url
                                 all_segments.append({
-                                    'start': segment['start'],
-                                    'end': segment['end'],
+                                    **segment,  # Preserve all original fields
                                     'text': '[No speech detected]',
-                                    'translation': '[No speech detected]'
+                                    'translation': '[No speech detected]',
+                                    'is_silent': True  # Mark as silent segment
                                 })
                 
                 # Create a synthetic response object to hold the combined results
@@ -657,6 +740,20 @@ async def transcribe_video(
                 for seg in all_segments:
                     if 'speaker' not in seg:
                         seg['speaker'] = "SPEAKER_00"
+
+            # FIX Issue 2: Detect gaps and create silent segments with screenshots
+            if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                print("\n" + "="*60)
+                print("Detecting timeline gaps and creating silent segments...")
+                print("="*60)
+                all_segments = create_silent_segments_for_gaps(
+                    segments=all_segments,
+                    video_path=temp_input_path,
+                    video_hash=video_hash,
+                    min_gap_duration=2.0
+                )
+                response.segments = all_segments
+                print("Gap detection complete!")
 
             # Process transcription result
             print("\nProcessing final transcription result...")
@@ -1025,6 +1122,17 @@ async def transcribe_local(
                 if 'speaker' not in seg:
                     seg['speaker'] = "SPEAKER_00"
 
+        # FIX Issue 2: Detect gaps and create silent segments with screenshots
+        if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+            print("\nDetecting timeline gaps and creating silent segments...")
+            formatted_segments = create_silent_segments_for_gaps(
+                segments=formatted_segments,
+                video_path=temp_path,
+                video_hash=video_hash,
+                min_gap_duration=2.0
+            )
+            print("Gap detection complete")
+
         # Calculate translation statistics for user feedback
         translation_stats = {
             'total_segments': len(formatted_segments),
@@ -1295,6 +1403,17 @@ async def transcribe_local_stream(
                 for seg in formatted_segments:
                     if 'speaker' not in seg:
                         seg['speaker'] = "SPEAKER_00"
+
+            # FIX Issue 2: Detect gaps and create silent segments with screenshots
+            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                yield emit("extracting", 90, "Detecting timeline gaps...")
+                formatted_segments = create_silent_segments_for_gaps(
+                    segments=formatted_segments,
+                    video_path=temp_path,
+                    video_hash=video_hash,
+                    min_gap_duration=2.0
+                )
+                print("Gap detection complete")
 
             yield emit("complete", 95, "Finalizing transcription...")
 
