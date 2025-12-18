@@ -94,10 +94,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     setIndexingStatus("Indexing video for chat...");
     try {
+      // Index text transcription
       await axios.post("http://localhost:8000/api/index_video/", null, {
         params: { video_hash: videoHash },
       });
-      setIndexingStatus("Video indexed successfully!");
+
+      // Index images for visual search
+      try {
+        await axios.post("http://localhost:8000/api/index_images/", null, {
+          params: { video_hash: videoHash },
+        });
+        setIndexingStatus("Video and images indexed successfully!");
+      } catch (imageError) {
+        console.warn("Failed to index images:", imageError);
+        setIndexingStatus("Video indexed (images indexing skipped)");
+      }
+
       setTimeout(() => setIndexingStatus(null), 3000);
     } catch (error) {
       console.error("Failed to index video:", error);
@@ -415,7 +427,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-4 space-y-3">
                   {/* Visual Sources (Screenshots) */}
-                  {message.sources.filter((s) => s.type === "visual").length > 0 && (
+                  {message.sources.filter((s) => s.screenshot_url).length > 0 && (
                     <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg p-3 border border-purple-200">
                       <div className="flex items-center gap-2 mb-3">
                         <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -427,7 +439,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       </div>
                       <div className="grid grid-cols-3 gap-2">
                         {message.sources
-                          .filter((s) => s.type === "visual")
+                          .filter((s) => s.screenshot_url)
                           .map((source, idx) => (
                             <button
                               key={idx}
@@ -477,7 +489,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   )}
 
                   {/* Text Sources (Transcript) */}
-                  {message.sources.filter((s) => !s.type || s.type === "text").length > 0 && (
+                  {message.sources.filter((s) => !s.screenshot_url).length > 0 && (
                     <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-3 border border-blue-200">
                       <div className="flex items-center gap-2 mb-2">
                         <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -489,7 +501,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       </div>
                       <div className="space-y-1.5">
                         {message.sources
-                          .filter((s) => !s.type || s.type === "text")
+                          .filter((s) => !s.screenshot_url)
                           .map((source, idx) => (
                             <button
                               key={idx}
