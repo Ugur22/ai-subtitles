@@ -2,10 +2,10 @@
 Video and utility endpoints
 """
 import os
-from typing import Dict
+from typing import Dict, Optional
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, HTTPException, UploadFile, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from config import settings
 from database import get_transcription, update_file_path, delete_transcription
@@ -65,17 +65,30 @@ async def cleanup_screenshots() -> CleanupScreenshotsResponse:
         )
 
 
+def ranged_file_generator(file_path: str, start: int, end: int, chunk_size: int = 1024 * 1024):
+    """Generator that yields chunks of a file for range requests"""
+    with open(file_path, "rb") as f:
+        f.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = f.read(min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
 @router.get(
     "/video/{video_hash}",
     summary="Stream video file",
-    description="Serve the video file for a specific transcription by hash",
+    description="Serve the video file for a specific transcription by hash with support for range requests (seeking)",
     responses={
         404: {"model": ErrorResponse, "description": "Video not found"},
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def get_video_file(video_hash: str):
-    """Serve the video file for a specific transcription by hash"""
+async def get_video_file(video_hash: str, request: Request):
+    """Serve the video file for a specific transcription by hash with range request support"""
     try:
         transcription = get_transcription(video_hash)
 
@@ -112,12 +125,49 @@ async def get_video_file(video_hash: str):
                 if os.path.exists(mp4_path):
                     file_path = mp4_path
 
-        print(f"Serving video file: {file_path}")
-        return FileResponse(
-            file_path,
-            media_type="video/mp4",
-            filename=os.path.basename(file_path)
-        )
+        file_size = os.path.getsize(file_path)
+
+        # Check for Range header (needed for video seeking)
+        range_header = request.headers.get("range")
+
+        if range_header:
+            # Parse range header (e.g., "bytes=0-1024" or "bytes=0-")
+            range_match = range_header.replace("bytes=", "").split("-")
+            start = int(range_match[0]) if range_match[0] else 0
+            end = int(range_match[1]) if range_match[1] else file_size - 1
+
+            # Ensure end doesn't exceed file size
+            end = min(end, file_size - 1)
+            content_length = end - start + 1
+
+            print(f"Serving video range: {start}-{end}/{file_size}")
+
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Type": "video/mp4",
+            }
+
+            return StreamingResponse(
+                ranged_file_generator(file_path, start, end),
+                status_code=206,  # Partial Content
+                headers=headers,
+                media_type="video/mp4"
+            )
+        else:
+            # No range header - serve the full file
+            print(f"Serving full video file: {file_path}")
+            headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+            }
+            return FileResponse(
+                file_path,
+                media_type="video/mp4",
+                filename=os.path.basename(file_path),
+                headers=headers
+            )
 
     except HTTPException:
         raise

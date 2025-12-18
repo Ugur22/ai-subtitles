@@ -30,7 +30,11 @@ from models.chat import (
     LLMProviderInfo,
     ListLLMProvidersResponse,
     TestLLMRequest,
-    TestLLMResponse
+    TestLLMResponse,
+    IndexImagesResponse,
+    SearchImagesRequest,
+    SearchImagesResponse,
+    ImageSearchResult
 )
 from models.video import (
     CleanupScreenshotsResponse,
@@ -69,6 +73,10 @@ __all__ = [
     "ListLLMProvidersResponse",
     "TestLLMRequest",
     "TestLLMResponse",
+    "IndexImagesResponse",
+    "SearchImagesRequest",
+    "SearchImagesResponse",
+    "ImageSearchResult",
     # Video
     "CleanupScreenshotsResponse",
     "UpdateFilePathResponse",
