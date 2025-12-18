@@ -362,6 +362,26 @@ async def update_speaker_name(video_hash: str, request: Request) -> Dict:
         if not success:
             raise HTTPException(status_code=500, detail="Failed to save updates to database")
 
+        # Update vector store metadata for RAG/chat
+        vector_store_updates = {"text_updated": 0, "images_updated": 0}
+        try:
+            from vector_store import vector_store
+
+            # Only update if the collection exists (video has been indexed)
+            if vector_store.collection_exists(video_hash):
+                print(f"Updating vector store speaker metadata from '{original_speaker}' to '{new_speaker_name}'...")
+                vector_store_updates = vector_store.update_speaker_name(
+                    video_hash,
+                    original_speaker,
+                    new_speaker_name
+                )
+                print(f"Vector store updated: {vector_store_updates}")
+        except Exception as e:
+            # Don't fail the entire operation if vector store update fails
+            print(f"Warning: Failed to update vector store: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
         # Update global cache if it matches
         global _last_transcription_data
         if _last_transcription_data and _last_transcription_data.get("video_hash") == video_hash:
@@ -373,7 +393,8 @@ async def update_speaker_name(video_hash: str, request: Request) -> Dict:
             "success": True,
             "message": f"Updated {updated_count} segments from '{original_speaker}' to '{new_speaker_name}'",
             "updated_count": updated_count,
-            "video_hash": video_hash
+            "video_hash": video_hash,
+            "vector_store_updates": vector_store_updates
         }
 
     except HTTPException:
