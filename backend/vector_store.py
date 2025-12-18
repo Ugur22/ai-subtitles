@@ -521,6 +521,100 @@ class VectorStore:
         except:
             return False
 
+    def update_speaker_name(
+        self,
+        video_hash: str,
+        old_speaker: str,
+        new_speaker: str
+    ) -> Dict[str, int]:
+        """
+        Update speaker name in vector store metadata for both text and image collections
+
+        Args:
+            video_hash: Unique hash of the video
+            old_speaker: Original speaker name/label to replace
+            new_speaker: New speaker name
+
+        Returns:
+            Dict with counts of updated items in text and image collections
+        """
+        results = {
+            "text_updated": 0,
+            "images_updated": 0
+        }
+
+        # Update text collection (video_{hash})
+        try:
+            collection_name = f"video_{video_hash}"
+            collection = self.client.get_collection(name=collection_name)
+
+            # Get all items in the collection
+            all_items = collection.get(
+                include=["metadatas"]
+            )
+
+            if all_items and all_items['ids']:
+                # Find items with the old speaker name
+                ids_to_update = []
+                updated_metadatas = []
+
+                for i, metadata in enumerate(all_items['metadatas']):
+                    if metadata.get('speaker') == old_speaker:
+                        ids_to_update.append(all_items['ids'][i])
+                        # Create updated metadata
+                        new_metadata = metadata.copy()
+                        new_metadata['speaker'] = new_speaker
+                        updated_metadatas.append(new_metadata)
+
+                # Update the items with new metadata
+                if ids_to_update:
+                    collection.update(
+                        ids=ids_to_update,
+                        metadatas=updated_metadatas
+                    )
+                    results['text_updated'] = len(ids_to_update)
+                    print(f"Updated {len(ids_to_update)} text chunks from '{old_speaker}' to '{new_speaker}'")
+
+        except Exception as e:
+            print(f"Error updating text collection: {str(e)}")
+
+        # Update image collection (video_{hash}_images)
+        try:
+            collection_name = f"video_{video_hash}_images"
+            collection = self.client.get_collection(name=collection_name)
+
+            # Get all items in the collection
+            all_items = collection.get(
+                include=["metadatas"]
+            )
+
+            if all_items and all_items['ids']:
+                # Find items with the old speaker name
+                ids_to_update = []
+                updated_metadatas = []
+
+                for i, metadata in enumerate(all_items['metadatas']):
+                    if metadata.get('speaker') == old_speaker:
+                        ids_to_update.append(all_items['ids'][i])
+                        # Create updated metadata
+                        new_metadata = metadata.copy()
+                        new_metadata['speaker'] = new_speaker
+                        updated_metadatas.append(new_metadata)
+
+                # Update the items with new metadata
+                if ids_to_update:
+                    collection.update(
+                        ids=ids_to_update,
+                        metadatas=updated_metadatas
+                    )
+                    results['images_updated'] = len(ids_to_update)
+                    print(f"Updated {len(ids_to_update)} images from '{old_speaker}' to '{new_speaker}'")
+
+        except Exception as e:
+            print(f"Error updating image collection: {str(e)}")
+
+        return results
+
 
 # Global vector store instance
 vector_store = VectorStore()
