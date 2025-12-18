@@ -68,7 +68,11 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
     if (!videoRef) return;
 
     const handleSeeking = () => setIsVideoSeeking(true);
-    const handleSeeked = () => setIsVideoSeeking(false);
+    const handleSeeked = () => {
+      setIsVideoSeeking(false);
+      // Update currentTime immediately after seek completes (especially when paused)
+      setCurrentTime(videoRef.currentTime);
+    };
 
     videoRef.addEventListener("seeking", handleSeeking);
     videoRef.addEventListener("seeked", handleSeeked);
