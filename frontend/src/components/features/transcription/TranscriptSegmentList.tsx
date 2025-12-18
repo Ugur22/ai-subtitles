@@ -9,6 +9,7 @@ interface Segment {
   translation?: string | null;
   speaker?: string;
   screenshot_url?: string;
+  is_silent?: boolean;
 }
 
 interface TranscriptSegmentListProps {
@@ -40,13 +41,20 @@ const AnimatedSegment = ({
   isActive: boolean;
   [key: string]: any;
 }) => {
+  // Different styling for silent/visual segments
+  const isSilent = segment.is_silent;
+
   const style = useSpring({
     transform: isActive ? "scale(1.02)" : "scale(1)",
     boxShadow: isActive
       ? "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
       : "0 0 0 0 rgba(0, 0, 0, 0), 0 0 0 0 rgba(0, 0, 0, 0)",
-    borderColor: isActive ? "rgb(96, 165, 250)" : "rgb(229, 231, 235)",
-    backgroundColor: isActive ? "rgb(239, 246, 255)" : "rgb(255, 255, 255)",
+    borderColor: isSilent
+      ? (isActive ? "rgb(148, 163, 184)" : "rgb(203, 213, 225)") // slate colors for silent
+      : (isActive ? "rgb(96, 165, 250)" : "rgb(229, 231, 235)"), // original blue/gray for speech
+    backgroundColor: isSilent
+      ? (isActive ? "rgb(241, 245, 249)" : "rgb(248, 250, 252)") // slate-50/100 for silent
+      : (isActive ? "rgb(239, 246, 255)" : "rgb(255, 255, 255)"), // original for speech
     config: { tension: 300, friction: 20 },
   });
 
@@ -55,7 +63,11 @@ const AnimatedSegment = ({
       style={style}
       id={`transcript-segment-${segment.id}`}
       onClick={props.onClick}
-      className={`p-4 md:p-5 rounded-xl border-2 cursor-pointer transition-colors duration-200 hover:bg-gray-50`}
+      className={`p-4 md:p-5 rounded-xl border-2 cursor-pointer transition-colors duration-200 ${
+        isSilent
+          ? 'border-dashed hover:border-slate-400'
+          : 'hover:bg-gray-50'
+      }`}
     >
       {props.children}
     </animated.div>
@@ -119,13 +131,17 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                   seekToTimestamp(segment.start_time);
                 }}
               >
-                <div className="flex items-start gap-4">
+                <div className={`flex items-start gap-4 ${segment.is_silent ? 'flex-col' : ''}`}>
                   {segment.screenshot_url && (
-                    <div className="flex-shrink-0">
+                    <div className={segment.is_silent ? 'w-full' : 'flex-shrink-0'}>
                       <img
                         src={`http://localhost:8000${segment.screenshot_url}`}
                         alt={`Screenshot at ${segment.start_time}`}
-                        className="w-40 h-24 object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-110 cursor-pointer border border-gray-200"
+                        className={`object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-105 cursor-pointer border ${
+                          segment.is_silent
+                            ? 'w-full h-64 border-slate-300'
+                            : 'w-40 h-24 border-gray-200'
+                        }`}
                         onClick={(e) => {
                           e.stopPropagation();
                           openImageModal(
@@ -135,7 +151,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                       />
                     </div>
                   )}
-                  <div className="flex-grow min-w-0">
+                  <div className="flex-grow min-w-0 w-full">
                     <div className="flex items-center flex-wrap gap-2 mb-2 text-xs font-semibold">
                       <button
                         onClick={(e) => {
@@ -156,7 +172,26 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                       </button>
                       <span className="text-gray-400">→</span>
                       <span className="text-gray-600">{segment.end_time}</span>
-                      {segment.speaker && editingSegmentId === segment.id && (
+                      {segment.is_silent ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">
+                          <svg
+                            className="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                            />
+                          </svg>
+                          Visual Moment
+                        </span>
+                      ) : (
+                        <>
+                          {segment.speaker && editingSegmentId === segment.id && (
                         <div
                           className="flex items-center gap-2"
                           onClick={(e) => e.stopPropagation()}
@@ -261,53 +296,61 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                           {formatSpeakerLabel(segment.speaker)}
                         </span>
                       )}
-                      {segment.speaker && onEnrollSpeaker && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEnrollSpeaker(segment);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-2xs font-semibold bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors border border-purple-200"
-                          title="Enroll this speaker for automatic recognition"
-                        >
-                          <svg
-                            className="w-3 h-3"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                            />
-                          </svg>
-                          Enroll
-                        </button>
+                          {segment.speaker && onEnrollSpeaker && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEnrollSpeaker(segment);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-2xs font-semibold bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors border border-purple-200"
+                              title="Enroll this speaker for automatic recognition"
+                            >
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                                />
+                              </svg>
+                              Enroll
+                            </button>
+                          )}
+                        </>
                       )}
                       <span className="ml-auto inline-flex items-center px-3 py-1 rounded-full text-2xs font-semibold bg-indigo-100 text-indigo-700">
                         Segment {index + 1}
                       </span>
                     </div>
-                    <p
-                      className={`text-gray-800 leading-relaxed ${
-                        activeSegmentId === segment.id
-                          ? "font-semibold text-gray-900"
-                          : "font-medium"
-                      }`}
-                    >
-                      {showTranslation && segment.translation ? (
-                        <>
-                          {segment.translation}
-                          <span className="block text-xs text-gray-500 italic mt-2">
-                            Original: {segment.text}
-                          </span>
-                        </>
-                      ) : (
-                        segment.text
-                      )}
-                    </p>
+                    {segment.is_silent ? (
+                      <p className="text-slate-600 leading-relaxed italic text-sm">
+                        No speech during this segment
+                      </p>
+                    ) : (
+                      <p
+                        className={`text-gray-800 leading-relaxed ${
+                          activeSegmentId === segment.id
+                            ? "font-semibold text-gray-900"
+                            : "font-medium"
+                        }`}
+                      >
+                        {showTranslation && segment.translation ? (
+                          <>
+                            {segment.translation}
+                            <span className="block text-xs text-gray-500 italic mt-2">
+                              Original: {segment.text}
+                            </span>
+                          </>
+                        ) : (
+                          segment.text
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
               </AnimatedSegment>
