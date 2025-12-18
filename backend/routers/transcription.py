@@ -327,16 +327,74 @@ def get_audio_duration(file_path: str) -> float:
 local_whisper_model = get_whisper_model()
 
 
+def fix_segment_durations(segments: List[Dict], max_duration_per_word: float = 2.0,
+                          min_duration: float = 0.5, max_segment_duration: float = 30.0) -> List[Dict]:
+    """
+    Fix segments with unreasonably long durations caused by chunk boundary processing.
+
+    This addresses the issue where Whisper creates incorrectly long segments during chunk
+    processing. When segments are discarded at chunk boundaries, the previous segment's
+    end time can be incorrectly extended (e.g., a single word spanning 178 seconds).
+
+    Args:
+        segments: List of segments to fix
+        max_duration_per_word: Maximum expected seconds per word (default: 2.0)
+        min_duration: Minimum segment duration in seconds (default: 0.5)
+        max_segment_duration: Absolute maximum segment duration in seconds (default: 30.0)
+
+    Returns:
+        Segments with corrected durations
+    """
+    fixed_count = 0
+
+    for segment in segments:
+        # Skip silent segments (they're meant to have longer durations)
+        if segment.get('is_silent', False):
+            continue
+
+        text = segment.get('text', '').strip()
+        word_count = len(text.split()) if text else 1
+
+        start = segment.get('start', 0)
+        end = segment.get('end', 0)
+        duration = end - start
+
+        # Calculate expected max duration based on word count
+        # Use a reasonable estimate: average speaking rate is ~2-3 words per second
+        # So 2 seconds per word is very generous
+        expected_max = max(min_duration, word_count * max_duration_per_word)
+        expected_max = min(expected_max, max_segment_duration)
+
+        # If duration is way too long, fix it (allow 3x tolerance before fixing)
+        if duration > expected_max * 3:
+            new_end = start + expected_max
+            print(f"Fixing segment duration: '{text[:50]}...' was {duration:.1f}s ({duration/60:.1f}min), now {expected_max:.1f}s (words: {word_count})")
+            segment['end'] = new_end
+            # Update end_time string too
+            segment['end_time'] = format_timestamp(new_end)
+            fixed_count += 1
+
+    if fixed_count > 0:
+        print(f"Fixed {fixed_count} segments with unreasonably long durations")
+
+    return segments
+
+
 def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video_hash: str,
-                                     min_gap_duration: float = 2.0) -> List[Dict]:
+                                     min_gap_duration: float = 2.0,
+                                     silent_chunk_duration: float = 10.0) -> List[Dict]:
     """
     Detect timeline gaps between speech segments and create silent segments with screenshots.
+
+    For long gaps, multiple silent segments are created (each ~10 seconds) so that each
+    segment can have its own screenshot extracted at the midpoint.
 
     Args:
         segments: List of existing speech segments (sorted by start time)
         video_path: Path to video file for screenshot extraction
         video_hash: Hash of the video for screenshot filename generation
         min_gap_duration: Minimum gap duration (in seconds) to create a silent segment
+        silent_chunk_duration: Duration of each silent segment chunk (default: 10 seconds)
 
     Returns:
         List of segments including both original and new silent segments, sorted by start time
@@ -350,8 +408,9 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
     screenshots_dir = os.path.join("static", "screenshots")
     os.makedirs(screenshots_dir, exist_ok=True)
 
-    print(f"\nDetecting silent gaps (minimum duration: {min_gap_duration}s)...")
+    print(f"\nDetecting silent gaps (minimum duration: {min_gap_duration}s, chunk size: {silent_chunk_duration}s)...")
     gaps_found = 0
+    total_silent_segments_created = 0
 
     for i in range(len(sorted_segments)):
         # Add the current speech segment
@@ -363,45 +422,56 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
             next_start = sorted_segments[i + 1]['start']
             gap_duration = next_start - current_end
 
-            # Only create silent segment if gap is significant
+            # Only create silent segment(s) if gap is significant
             if gap_duration >= min_gap_duration:
                 gaps_found += 1
-                gap_midpoint = current_end + (gap_duration / 2)
 
-                # Extract screenshot from the middle of the gap
-                screenshot_filename = f"{video_hash}_{gap_midpoint:.2f}_silent.jpg"
-                screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-                screenshot_url = None
+                # Calculate how many chunks we need for this gap
+                num_chunks = max(1, int(gap_duration / silent_chunk_duration))
+                chunk_size = gap_duration / num_chunks  # Distribute evenly
 
-                # Only extract screenshot if it's a video file
-                if video_path and os.path.exists(video_path):
-                    success = extract_screenshot(video_path, gap_midpoint, screenshot_path)
-                    if success and os.path.exists(screenshot_path):
-                        screenshot_url = f"/static/screenshots/{screenshot_filename}"
-                        print(f"  Gap {gaps_found}: {current_end:.2f}s - {next_start:.2f}s ({gap_duration:.2f}s) - Screenshot extracted")
-                    else:
-                        print(f"  Gap {gaps_found}: {current_end:.2f}s - {next_start:.2f}s ({gap_duration:.2f}s) - Screenshot failed")
+                print(f"  Gap {gaps_found}: {current_end:.2f}s - {next_start:.2f}s ({gap_duration:.2f}s) - Creating {num_chunks} silent segments")
 
-                # Create silent segment
-                silent_segment = {
-                    "id": str(uuid.uuid4()),
-                    "start": current_end,
-                    "end": next_start,
-                    "start_time": format_timestamp(current_end),
-                    "end_time": format_timestamp(next_start),
-                    "text": "[No speech]",
-                    "translation": "[No speech]",
-                    "speaker": "VISUAL",
-                    "is_silent": True
-                }
+                # Create multiple silent segments for long gaps
+                for chunk_idx in range(num_chunks):
+                    chunk_start = current_end + (chunk_idx * chunk_size)
+                    chunk_end = current_end + ((chunk_idx + 1) * chunk_size)
+                    chunk_midpoint = chunk_start + (chunk_size / 2)
 
-                if screenshot_url:
-                    silent_segment["screenshot_url"] = screenshot_url
+                    # Extract screenshot from the middle of this chunk
+                    screenshot_filename = f"{video_hash}_{chunk_midpoint:.2f}_silent.jpg"
+                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                    screenshot_url = None
 
-                result_segments.append(silent_segment)
+                    # Only extract screenshot if it's a video file
+                    if video_path and os.path.exists(video_path):
+                        success = extract_screenshot(video_path, chunk_midpoint, screenshot_path)
+                        if success and os.path.exists(screenshot_path):
+                            screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                        else:
+                            print(f"    Chunk {chunk_idx + 1}/{num_chunks}: Screenshot extraction failed at {chunk_midpoint:.2f}s")
+
+                    # Create silent segment for this chunk
+                    silent_segment = {
+                        "id": str(uuid.uuid4()),
+                        "start": chunk_start,
+                        "end": chunk_end,
+                        "start_time": format_timestamp(chunk_start),
+                        "end_time": format_timestamp(chunk_end),
+                        "text": "[No speech]",
+                        "translation": "[No speech]",
+                        "speaker": "VISUAL",
+                        "is_silent": True
+                    }
+
+                    if screenshot_url:
+                        silent_segment["screenshot_url"] = screenshot_url
+
+                    result_segments.append(silent_segment)
+                    total_silent_segments_created += 1
 
     if gaps_found > 0:
-        print(f"Created {gaps_found} silent segments for timeline gaps")
+        print(f"Created {total_silent_segments_created} silent segments across {gaps_found} timeline gaps")
     else:
         print("No significant gaps found between speech segments")
 
@@ -713,6 +783,13 @@ async def transcribe_video(
                       print("No segments available to extract screenshots from.")
             else:
                  print("\nFile is not a video format. Skipping screenshot extraction.")
+
+            # FIX: Fix overly long segment durations caused by chunk boundary processing
+            print("\n" + "="*60)
+            print("Fixing segment durations...")
+            print("="*60)
+            all_segments = fix_segment_durations(all_segments)
+            response.segments = all_segments
 
             # Add speaker diarization
             try:
@@ -1083,17 +1160,21 @@ async def transcribe_local(
             for segment in formatted_segments:
                 segment['translation'] = segment['text']
 
+        # FIX: Fix overly long segment durations caused by chunk boundary processing
+        print("\nFixing segment durations...")
+        formatted_segments = fix_segment_durations(formatted_segments)
+
         # Extract screenshots if it's a video file
         screenshots_dir = os.path.join("static", "screenshots")
         os.makedirs(screenshots_dir, exist_ok=True)
         screenshot_count = 0
-        
+
         if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
             print("\nExtracting screenshots for video segments...")
             for segment in formatted_segments:
                 screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
                 screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-                
+
                 success = extract_screenshot(temp_path, segment['start'], screenshot_path)
                 if success and os.path.exists(screenshot_path):
                     screenshot_url = f"/static/screenshots/{screenshot_filename}"
@@ -1101,7 +1182,7 @@ async def transcribe_local(
                     screenshot_count += 1
                 else:
                     segment["screenshot_url"] = None
-            
+
             print(f"\nFinished screenshot extraction. Successfully added {screenshot_count} screenshots.")
 
         # Add speaker diarization
@@ -1326,6 +1407,10 @@ async def transcribe_local_stream(
                     yield emit("transcribing", segment_progress, f"Processed {i}/{total_segments} segments...")
 
             processing_time = time.time() - start_time
+
+            # FIX: Fix overly long segment durations caused by chunk boundary processing
+            yield emit("transcribing", 68, "Fixing segment durations...")
+            formatted_segments = fix_segment_durations(formatted_segments)
 
             yield emit("transcribing", 70, "Translating if needed...")
 
