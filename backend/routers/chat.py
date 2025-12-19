@@ -264,8 +264,15 @@ async def chat_with_video(request: ChatRequest) -> Dict:
                             screenshot_path = img_result['screenshot_path']
 
                             # Convert local path to URL
-                            # screenshot_path is like "./static/screenshots/hash_123.45.jpg"
-                            screenshot_url = screenshot_path.replace('./static/', '/static/')
+                            # screenshot_path can be absolute like "/path/to/backend/static/screenshots/hash_123.45.jpg"
+                            # or relative like "./static/screenshots/hash_123.45.jpg"
+                            if 'static/screenshots/' in screenshot_path:
+                                # Extract the filename from the path
+                                filename = screenshot_path.split('static/screenshots/')[-1]
+                                screenshot_url = f"/static/screenshots/{filename}"
+                            else:
+                                # Fallback: try the old approach
+                                screenshot_url = screenshot_path.replace('./static/', '/static/')
 
                             visual_parts.append(
                                 f"Screenshot {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
