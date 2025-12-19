@@ -33,65 +33,202 @@ interface LLMProvider {
   model: string;
 }
 
-// Helper function to get emoji and label for audio event types
+// Helper function to get emoji, label, and category for audio event types
 const getEventDetails = (eventType: string) => {
   const type = eventType.toLowerCase();
 
-  // Emotions
+  // Emotions - Purple category
   if (type.includes('happy') || type.includes('joy')) {
-    return { emoji: '😊', label: 'Happy' };
+    return { emoji: '😊', label: 'Happy', category: 'emotion' };
   }
   if (type.includes('sad') || type.includes('sadness')) {
-    return { emoji: '😢', label: 'Sad' };
+    return { emoji: '😢', label: 'Sad', category: 'emotion' };
   }
   if (type.includes('angry') || type.includes('anger')) {
-    return { emoji: '😠', label: 'Angry' };
+    return { emoji: '😠', label: 'Angry', category: 'emotion' };
   }
   if (type.includes('fear') || type.includes('scared')) {
-    return { emoji: '😨', label: 'Fearful' };
+    return { emoji: '😨', label: 'Fearful', category: 'emotion' };
   }
   if (type.includes('neutral') || type.includes('calm')) {
-    return { emoji: '😐', label: 'Neutral' };
+    return { emoji: '😐', label: 'Neutral', category: 'emotion' };
   }
   if (type.includes('surprise')) {
-    return { emoji: '😲', label: 'Surprised' };
+    return { emoji: '😲', label: 'Surprised', category: 'emotion' };
   }
   if (type.includes('disgust')) {
-    return { emoji: '🤢', label: 'Disgust' };
+    return { emoji: '🤢', label: 'Disgust', category: 'emotion' };
   }
 
-  // Audio events
+  // Vocal expressions and reactions - Speech category
+  if (type.includes('sigh')) {
+    return { emoji: '😮‍💨', label: 'Sigh', category: 'speech' };
+  }
+  if (type.includes('gasp')) {
+    return { emoji: '😮', label: 'Gasp', category: 'speech' };
+  }
+  if (type.includes('moan')) {
+    return { emoji: '😩', label: 'Moan', category: 'speech' };
+  }
+  if (type.includes('groan')) {
+    return { emoji: '😫', label: 'Groan', category: 'speech' };
+  }
+  if (type.includes('panting')) {
+    return { emoji: '😤', label: 'Panting', category: 'speech' };
+  }
+  if (type.includes('huff') || type.includes('huffing')) {
+    return { emoji: '😤', label: 'Huffing', category: 'speech' };
+  }
+  if (type.includes('scream')) {
+    return { emoji: '😱', label: 'Scream', category: 'speech' };
+  }
+  if (type.includes('whimper')) {
+    return { emoji: '🥺', label: 'Whimper', category: 'speech' };
+  }
+  if (type.includes('sniff') || type.includes('sniffle')) {
+    return { emoji: '🤧', label: 'Sniffling', category: 'speech' };
+  }
+  if (type.includes('yawn')) {
+    return { emoji: '🥱', label: 'Yawn', category: 'speech' };
+  }
+  if (type.includes('sneeze')) {
+    return { emoji: '🤧', label: 'Sneeze', category: 'speech' };
+  }
+  if (type.includes('cough')) {
+    return { emoji: '🤒', label: 'Cough', category: 'speech' };
+  }
+  if (type.includes('hiccup')) {
+    return { emoji: '😯', label: 'Hiccup', category: 'speech' };
+  }
+
+  // Breathing sounds - Speech category
+  if (type.includes('breath') || type.includes('breathing')) {
+    return { emoji: '💨', label: 'Breathing', category: 'speech' };
+  }
+  if (type.includes('exhale')) {
+    return { emoji: '😮‍💨', label: 'Exhale', category: 'speech' };
+  }
+  if (type.includes('inhale')) {
+    return { emoji: '😤', label: 'Inhale', category: 'speech' };
+  }
+
+  // Speech and vocalizations - Speech category
   if (type.includes('speech') || type.includes('speaking') || type.includes('narration')) {
-    return { emoji: '🗣️', label: 'Speech' };
-  }
-  if (type.includes('music') || type.includes('melody')) {
-    return { emoji: '🎵', label: 'Music' };
-  }
-  if (type.includes('applause') || type.includes('clap')) {
-    return { emoji: '👏', label: 'Applause' };
+    return { emoji: '🗣️', label: 'Speech', category: 'speech' };
   }
   if (type.includes('laugh')) {
-    return { emoji: '😂', label: 'Laughter' };
+    return { emoji: '😂', label: 'Laughter', category: 'speech' };
+  }
+  if (type.includes('giggle') || type.includes('chuckle')) {
+    return { emoji: '😄', label: 'Giggling', category: 'speech' };
   }
   if (type.includes('cry') || type.includes('sobbing')) {
-    return { emoji: '😭', label: 'Crying' };
-  }
-  if (type.includes('silence') || type.includes('ambient') || type.includes('quiet')) {
-    return { emoji: '🔇', label: 'Silence' };
+    return { emoji: '😭', label: 'Crying', category: 'speech' };
   }
   if (type.includes('shout') || type.includes('yell')) {
-    return { emoji: '📢', label: 'Shouting' };
+    return { emoji: '📢', label: 'Shouting', category: 'speech' };
   }
   if (type.includes('whisper')) {
-    return { emoji: '🤫', label: 'Whisper' };
+    return { emoji: '🤫', label: 'Whisper', category: 'speech' };
   }
   if (type.includes('cheer')) {
-    return { emoji: '🎉', label: 'Cheering' };
+    return { emoji: '🎉', label: 'Cheering', category: 'speech' };
+  }
+  if (type.includes('hum') || type.includes('humming')) {
+    return { emoji: '🎵', label: 'Humming', category: 'speech' };
+  }
+  if (type.includes('sing')) {
+    return { emoji: '🎤', label: 'Singing', category: 'speech' };
   }
 
-  // Default - capitalize first letter
+  // Body sounds - Sound category
+  if (type.includes('clap') || type.includes('applause')) {
+    return { emoji: '👏', label: 'Applause', category: 'sound' };
+  }
+  if (type.includes('snap') || type.includes('finger snap')) {
+    return { emoji: '👆', label: 'Snap', category: 'sound' };
+  }
+  if (type.includes('footstep') || type.includes('step')) {
+    return { emoji: '👣', label: 'Footsteps', category: 'sound' };
+  }
+  if (type.includes('knock')) {
+    return { emoji: '🚪', label: 'Knocking', category: 'sound' };
+  }
+  if (type.includes('tap') || type.includes('tapping')) {
+    return { emoji: '👆', label: 'Tapping', category: 'sound' };
+  }
+  if (type.includes('stomp')) {
+    return { emoji: '🦶', label: 'Stomping', category: 'sound' };
+  }
+
+  // Music and audio - Sound category
+  if (type.includes('music') || type.includes('melody')) {
+    return { emoji: '🎵', label: 'Music', category: 'sound' };
+  }
+  if (type.includes('silence') || type.includes('ambient') || type.includes('quiet')) {
+    return { emoji: '🔇', label: 'Silence', category: 'sound' };
+  }
+  if (type.includes('noise')) {
+    return { emoji: '🔊', label: 'Noise', category: 'sound' };
+  }
+
+  // Default - other category
   const label = eventType.charAt(0).toUpperCase() + eventType.slice(1);
-  return { emoji: '🔊', label };
+  return { emoji: '🔊', label, category: 'other' };
+};
+
+// Get color theme based on event category
+const getCategoryTheme = (category: string) => {
+  switch (category) {
+    case 'emotion':
+      return {
+        bg: 'from-purple-50 to-fuchsia-50',
+        border: 'border-purple-300',
+        hoverBorder: 'hover:border-purple-400',
+        hoverShadow: 'hover:shadow-purple-200',
+        text: 'text-purple-700',
+        timestamp: 'text-purple-600',
+        confidence: 'bg-purple-500',
+        badge: 'bg-purple-100 text-purple-700',
+        icon: 'text-purple-600',
+      };
+    case 'speech':
+      return {
+        bg: 'from-blue-50 to-cyan-50',
+        border: 'border-blue-300',
+        hoverBorder: 'hover:border-blue-400',
+        hoverShadow: 'hover:shadow-blue-200',
+        text: 'text-blue-700',
+        timestamp: 'text-blue-600',
+        confidence: 'bg-blue-500',
+        badge: 'bg-blue-100 text-blue-700',
+        icon: 'text-blue-600',
+      };
+    case 'sound':
+      return {
+        bg: 'from-emerald-50 to-teal-50',
+        border: 'border-emerald-300',
+        hoverBorder: 'hover:border-emerald-400',
+        hoverShadow: 'hover:shadow-emerald-200',
+        text: 'text-emerald-700',
+        timestamp: 'text-emerald-600',
+        confidence: 'bg-emerald-500',
+        badge: 'bg-emerald-100 text-emerald-700',
+        icon: 'text-emerald-600',
+      };
+    default:
+      return {
+        bg: 'from-amber-50 to-orange-50',
+        border: 'border-amber-300',
+        hoverBorder: 'hover:border-amber-400',
+        hoverShadow: 'hover:shadow-amber-200',
+        text: 'text-amber-700',
+        timestamp: 'text-amber-600',
+        confidence: 'bg-amber-500',
+        badge: 'bg-amber-100 text-amber-700',
+        icon: 'text-amber-600',
+      };
+  }
 };
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -600,62 +737,84 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
                   {/* Audio Events */}
                   {message.sources.filter((s) => s.type === "audio").length > 0 && (
-                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-lg p-3 border border-amber-200">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="p-1.5 bg-amber-100 rounded-lg">
-                          <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                          </svg>
+                    <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="p-2 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-lg">
+                            <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-gray-900">
+                              Audio Events Detected
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {message.sources.filter((s) => s.type === "audio").length} events found
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">
-                          Audio Events ({message.sources.filter((s) => s.type === "audio").length})
-                        </p>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {message.sources
                           .filter((s) => s.type === "audio")
                           .map((source, idx) => {
                             const eventDetails = getEventDetails(source.event_type || 'unknown');
+                            const theme = getCategoryTheme(eventDetails.category);
                             const confidence = source.confidence || 0;
+                            const duration = source.end && source.start
+                              ? `${(source.end - source.start).toFixed(1)}s`
+                              : null;
+
                             return (
                               <button
                                 key={idx}
                                 onClick={() => onTimestampClick?.(source.start_time)}
-                                className="bg-white rounded-lg border-2 border-amber-200 p-3 hover:border-amber-400 hover:shadow-lg transition-all text-left group"
-                                title={`Click to jump to ${source.start_time}`}
+                                className={`relative bg-gradient-to-br ${theme.bg} rounded-xl border-2 ${theme.border} ${theme.hoverBorder} p-4 hover:shadow-lg ${theme.hoverShadow} transition-all duration-200 text-left group`}
+                                title={`${eventDetails.label} at ${source.start_time}${duration ? ` (${duration})` : ''} - Click to play`}
+                                aria-label={`Jump to ${eventDetails.label} event at ${source.start_time}`}
                               >
-                                {/* Event Emoji */}
-                                <div className="text-2xl mb-2">{eventDetails.emoji}</div>
-
-                                {/* Event Type Label */}
-                                <div className="font-semibold text-sm text-gray-800 mb-1">
-                                  {eventDetails.label}
-                                </div>
-
-                                {/* Timestamp */}
-                                <div className="text-xs text-amber-600 font-mono mb-1 group-hover:text-amber-700">
-                                  {source.start_time}
-                                </div>
-
-                                {/* Speaker */}
-                                {source.speaker && source.speaker !== 'Unknown' && (
-                                  <div className="text-xs text-gray-500 mb-2">
-                                    {source.speaker}
+                                {/* Confidence badge - Top right */}
+                                {confidence > 0 && (
+                                  <div className={`absolute top-3 right-3 px-2 py-0.5 ${theme.badge} rounded-full text-xs font-bold`}>
+                                    {Math.round(confidence * 100)}%
                                   </div>
                                 )}
 
-                                {/* Confidence Bar */}
-                                {confidence > 0 && (
-                                  <div className="mt-2">
-                                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-amber-500 rounded-full transition-all"
-                                        style={{ width: `${confidence * 100}%` }}
-                                      />
-                                    </div>
-                                    <div className="text-xs text-gray-400 mt-1">
-                                      {Math.round(confidence * 100)}%
-                                    </div>
+                                {/* Event Emoji - Large and prominent */}
+                                <div className="text-3xl mb-3 group-hover:scale-110 transition-transform duration-200">
+                                  {eventDetails.emoji}
+                                </div>
+
+                                {/* Event Type Label - Bold and clear */}
+                                <div className={`font-bold text-base ${theme.text} mb-2`}>
+                                  {eventDetails.label}
+                                </div>
+
+                                {/* Timestamp - Prominent with icon */}
+                                <div className="flex items-center gap-1.5 mb-2">
+                                  <svg className={`w-3.5 h-3.5 ${theme.timestamp}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  <span className={`text-sm font-mono font-semibold ${theme.timestamp} group-hover:underline`}>
+                                    {source.start_time}
+                                  </span>
+                                  {duration && (
+                                    <span className="text-xs text-gray-500 ml-1">
+                                      ({duration})
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Speaker - If available */}
+                                {source.speaker && source.speaker !== 'Unknown' && (
+                                  <div className="flex items-center gap-1.5">
+                                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    </svg>
+                                    <span className="text-xs text-gray-600 font-medium">
+                                      {source.speaker}
+                                    </span>
                                   </div>
                                 )}
                               </button>
