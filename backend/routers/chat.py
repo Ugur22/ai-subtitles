@@ -300,6 +300,73 @@ async def chat_with_video(request: ChatRequest) -> Dict:
             else:
                 print(f"Images not indexed for video {video_hash}. Continuing with text-only analysis.")
 
+        # Search for relevant audio events if available
+        audio_context = ""
+        audio_sources = []
+
+        if vector_store.audio_collection_exists(video_hash):
+            try:
+                audio_results = vector_store.search_audio_events(
+                    video_hash,
+                    question,
+                    n_results=5
+                )
+
+                if audio_results:
+                    print(f"Found {len(audio_results)} relevant audio events")
+                    audio_parts = []
+
+                    for i, audio_result in enumerate(audio_results):
+                        metadata = audio_result['metadata']
+                        description = audio_result['description']
+
+                        audio_parts.append(
+                            f"Audio Event {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
+                            f"Events: {description}"
+                        )
+
+                        # Parse description to extract individual events
+                        # Description format: "laughter (85%), speech (62%), ..."
+                        # Split by comma and parse each event
+                        events_list = description.split(", ")
+
+                        for event_str in events_list[:3]:  # Limit to top 3 events per segment
+                            # Parse "event_type (confidence%)" format
+                            if "(" in event_str and ")" in event_str:
+                                event_type = event_str.split("(")[0].strip()
+                                confidence_str = event_str.split("(")[1].split("%")[0].strip()
+
+                                try:
+                                    confidence = float(confidence_str) / 100.0
+                                except ValueError:
+                                    confidence = 0.5  # Default confidence
+
+                                # Skip low confidence or "emotion:" prefix events for cleaner UI
+                                if confidence < 0.3:
+                                    continue
+
+                                # Handle emotion prefix (e.g., "emotion: happy")
+                                if event_type.startswith("emotion:"):
+                                    event_type = event_type.replace("emotion:", "").strip()
+
+                                # Add individual audio source for each event
+                                audio_sources.append({
+                                    "start_time": f"{int(float(metadata['start']) // 3600):02d}:{int((float(metadata['start']) % 3600) // 60):02d}:{int(float(metadata['start']) % 60):02d}",
+                                    "end_time": f"{int(float(metadata['end']) // 3600):02d}:{int((float(metadata['end']) % 3600) // 60):02d}:{int(float(metadata['end']) % 60):02d}",
+                                    "start": float(metadata['start']),
+                                    "end": float(metadata['end']),
+                                    "speaker": metadata.get('speaker', 'Unknown'),
+                                    "event_type": event_type,
+                                    "confidence": confidence,
+                                    "type": "audio"
+                                })
+
+                    audio_context = "\n".join(audio_parts)
+            except Exception as e:
+                print(f"Warning: Failed to search audio events: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
         # Build prompt for LLM
         if include_visuals and image_paths:
             system_message = """You are an expert AI assistant specialized in analyzing video content, combining both visual and textual information.
@@ -322,23 +389,45 @@ Guidelines:
 - Reference multiple sources/timestamps to support your answers
 - If the context is insufficient, explain what information is missing"""
 
-            user_message = f"""Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.
+            user_message_parts = [
+                "Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.",
+                "",
+                "VIDEO TRANSCRIPT CONTEXT:",
+                context,
+                "",
+                "VISUAL CONTEXT (Screenshots provided):",
+                visual_context
+            ]
 
-VIDEO TRANSCRIPT CONTEXT:
-{context}
+            if audio_context:
+                user_message_parts.extend([
+                    "",
+                    "AUDIO CONTEXT (Sound Events):",
+                    audio_context
+                ])
 
-VISUAL CONTEXT (Screenshots provided):
-{visual_context}
+            user_message_parts.extend([
+                "",
+                f"QUESTION: {question}",
+                "",
+                "Please provide a detailed, well-structured answer that:",
+                "1. Directly addresses the question",
+                "2. Analyzes both the visual content in the screenshots AND the transcript text"
+            ])
 
-QUESTION: {question}
+            if audio_context:
+                user_message_parts.append("3. Considers relevant audio events and sound cues")
+                user_message_parts.append("4. Cites specific timestamps and speakers")
+                user_message_parts.append("5. Describes relevant visual elements you observe")
+                user_message_parts.append("6. Provides context and analysis connecting visual, audio, and textual information")
+                user_message_parts.append("7. Uses markdown formatting for clarity")
+            else:
+                user_message_parts.append("3. Cites specific timestamps and speakers")
+                user_message_parts.append("4. Describes relevant visual elements you observe")
+                user_message_parts.append("5. Provides context and analysis connecting visual and textual information")
+                user_message_parts.append("6. Uses markdown formatting for clarity")
 
-Please provide a detailed, well-structured answer that:
-1. Directly addresses the question
-2. Analyzes both the visual content in the screenshots AND the transcript text
-3. Cites specific timestamps and speakers
-4. Describes relevant visual elements you observe
-5. Provides context and analysis connecting visual and textual information
-6. Uses markdown formatting for clarity"""
+            user_message = "\n".join(user_message_parts)
         else:
             system_message = """You are an expert AI assistant specialized in analyzing video content and transcripts.
 
@@ -358,19 +447,39 @@ Guidelines:
 - Reference multiple sources/timestamps to support your answers
 - If the context is insufficient, explain what information is missing"""
 
-            user_message = f"""Based on the following transcript segments from the video, please answer the question comprehensively.
+            user_message_parts = [
+                "Based on the following transcript segments from the video, please answer the question comprehensively.",
+                "",
+                "VIDEO TRANSCRIPT CONTEXT:",
+                context
+            ]
 
-VIDEO TRANSCRIPT CONTEXT:
-{context}
+            if audio_context:
+                user_message_parts.extend([
+                    "",
+                    "AUDIO CONTEXT (Sound Events):",
+                    audio_context
+                ])
 
-QUESTION: {question}
+            user_message_parts.extend([
+                "",
+                f"QUESTION: {question}",
+                "",
+                "Please provide a detailed, well-structured answer that:",
+                "1. Directly addresses the question",
+                "2. Cites specific timestamps and speakers",
+                "3. Provides context and analysis"
+            ])
 
-Please provide a detailed, well-structured answer that:
-1. Directly addresses the question
-2. Cites specific timestamps and speakers
-3. Provides context and analysis
-4. Uses markdown formatting for clarity
-5. Connects related information from different parts of the video"""
+            if audio_context:
+                user_message_parts.append("4. Considers relevant audio events and sound cues")
+                user_message_parts.append("5. Uses markdown formatting for clarity")
+                user_message_parts.append("6. Connects related information from different parts of the video")
+            else:
+                user_message_parts.append("4. Uses markdown formatting for clarity")
+                user_message_parts.append("5. Connects related information from different parts of the video")
+
+            user_message = "\n".join(user_message_parts)
 
         messages = [
             {"role": "system", "content": system_message},
@@ -400,8 +509,13 @@ Please provide a detailed, well-structured answer that:
                 detail=f"LLM generation failed: {str(e)}"
             )
 
-        # Combine text and visual sources
-        all_sources = sources + visual_sources
+        # Combine text, visual, and audio sources
+        all_sources = sources + visual_sources + audio_sources
+
+        # Debug logging
+        print(f"DEBUG: text sources: {len(sources)}, visual sources: {len(visual_sources)}, audio sources: {len(audio_sources)}")
+        if audio_sources:
+            print(f"DEBUG: First audio source: {audio_sources[0]}")
 
         return {
             "answer": answer,

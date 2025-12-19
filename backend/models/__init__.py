@@ -2,6 +2,11 @@
 Pydantic models for the API
 """
 from models.common import ErrorResponse, SuccessResponse
+from models.audio_events import (
+    AudioEvent,
+    SpeechEmotion,
+    AudioAnalysis
+)
 from models.transcription import (
     TranscriptionSegment,
     TranscriptionData,
@@ -46,6 +51,10 @@ __all__ = [
     # Common
     "ErrorResponse",
     "SuccessResponse",
+    # Audio Events
+    "AudioEvent",
+    "SpeechEmotion",
+    "AudioAnalysis",
     # Transcription
     "TranscriptionSegment",
     "TranscriptionData",

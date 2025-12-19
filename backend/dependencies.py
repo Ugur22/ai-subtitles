@@ -14,9 +14,18 @@ except ImportError as e:
     print(f"Warning: Speaker diarization not available: {str(e)}")
     SPEAKER_DIARIZATION_AVAILABLE = False
 
+# Import audio analyzer module
+try:
+    from audio_analyzer import AudioAnalyzer
+    AUDIO_ANALYSIS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Audio analysis not available: {str(e)}")
+    AUDIO_ANALYSIS_AVAILABLE = False
+
 # Global model instances (lazy loaded)
 _whisper_model: Optional[WhisperModel] = None
 _speaker_diarizer: Optional['SpeakerDiarizer'] = None
+_audio_analyzer: Optional['AudioAnalyzer'] = None
 
 # Global variable to store the last transcription
 _last_transcription_data = None
@@ -67,3 +76,27 @@ def get_speaker_diarizer() -> Optional['SpeakerDiarizer']:
             return None
 
     return _speaker_diarizer
+
+
+def get_audio_analyzer() -> Optional['AudioAnalyzer']:
+    """Get or initialize the audio analyzer (singleton)"""
+    global _audio_analyzer
+
+    if not AUDIO_ANALYSIS_AVAILABLE:
+        print("Audio analysis module not available")
+        return None
+
+    # Check if feature is enabled
+    if not settings.ENABLE_AUDIO_ANALYSIS:
+        print("Audio analysis is disabled in .env")
+        return None
+
+    if _audio_analyzer is None:
+        try:
+            _audio_analyzer = AudioAnalyzer()
+            print("Audio analyzer initialized successfully")
+        except Exception as e:
+            print(f"Error initializing audio analyzer: {str(e)}")
+            return None
+
+    return _audio_analyzer

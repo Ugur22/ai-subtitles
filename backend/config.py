@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
     CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
 
+    # Audio Analysis Configuration
+    ENABLE_AUDIO_ANALYSIS: bool = os.getenv("ENABLE_AUDIO_ANALYSIS", "true").lower() == "true"
+    PANNS_MODEL: str = os.getenv("PANNS_MODEL", "Cnn14_mAP=0.431")
+    AUDIO_EVENT_THRESHOLD: float = float(os.getenv("AUDIO_EVENT_THRESHOLD", "0.3"))
+    ENABLE_SPEECH_EMOTION: bool = os.getenv("ENABLE_SPEECH_EMOTION", "true").lower() == "true"
+    SER_MODEL: str = os.getenv("SER_MODEL", "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition")
+
     class Config:
         case_sensitive = True
         env_file = ".env"
