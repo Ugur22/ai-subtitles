@@ -21,4 +21,9 @@ scipy>=1.11.0  # For speaker recognition similarity calculations
 # LLM and RAG dependencies
 sentence-transformers==2.2.2
 chromadb==0.4.22
-groq==0.4.2 
+groq==0.4.2
+
+# Audio Analysis
+panns-inference>=0.1.1
+librosa>=0.10.0
+soundfile>=0.12.0 

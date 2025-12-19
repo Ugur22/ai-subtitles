@@ -29,6 +29,7 @@ from services.video_service import VideoService
 from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 from services.summarization_service import SummarizationService
+from services.audio_analysis_service import AudioAnalysisService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp, format_eta, time_to_seconds, time_diff_minutes
 
@@ -286,6 +287,95 @@ async def generate_summary(request: Request) -> Dict:
         "filename": filename,
         "sections_count": len(sections)
     }
+
+
+@router.post(
+    "/analyze_audio/{video_hash}",
+    summary="Analyze audio for existing video",
+    description="Run audio analysis (events, emotions) on an already-transcribed video without re-transcribing",
+    tags=["Transcription"]
+)
+async def analyze_audio_for_video(video_hash: str, force_reindex: bool = False):
+    """
+    Analyze audio events and emotions for an existing transcription.
+
+    This allows adding audio analysis to videos that were transcribed before
+    audio analysis was available, without needing to re-transcribe.
+
+    Args:
+        video_hash: The video hash to analyze
+        force_reindex: If True, re-analyze even if already done
+    """
+    try:
+        # Get existing transcription
+        transcription = get_transcription(video_hash)
+        if not transcription:
+            raise HTTPException(status_code=404, detail="Transcription not found")
+
+        # Check if audio analysis is enabled
+        if not settings.ENABLE_AUDIO_ANALYSIS:
+            raise HTTPException(status_code=400, detail="Audio analysis is disabled in settings")
+
+        # Find the video file
+        video_path = None
+        for ext in ['.mp4', '.mkv', '.webm', '.mov', '.mpeg']:
+            potential_path = os.path.join(settings.VIDEOS_DIR, f"{video_hash}{ext}")
+            if os.path.exists(potential_path):
+                video_path = potential_path
+                break
+
+        if not video_path:
+            raise HTTPException(status_code=404, detail="Video file not found")
+
+        # Get segments
+        segments = transcription.get('transcription', {}).get('segments', [])
+        if not segments:
+            raise HTTPException(status_code=400, detail="No segments found in transcription")
+
+        print(f"Analyzing audio for video {video_hash} with {len(segments)} segments...")
+
+        # Run audio analysis
+        from services.audio_analysis_service import AudioAnalysisService
+
+        analyzed_segments = AudioAnalysisService.analyze_segments(
+            audio_path=video_path,
+            segments=segments,
+            video_hash=video_hash
+        )
+
+        # Also analyze silent segments
+        analyzed_segments = AudioAnalysisService.analyze_silent_segments(
+            audio_path=video_path,
+            segments=analyzed_segments
+        )
+
+        # Update transcription in database
+        transcription['transcription']['segments'] = analyzed_segments
+        store_transcription(video_hash, transcription.get('filename', 'unknown'), transcription, video_path)
+
+        # Index audio events in vector store
+        from vector_store import vector_store
+        audio_indexed = vector_store.index_audio_events(video_hash, analyzed_segments, force_reindex=force_reindex)
+
+        # Create summary
+        summary = AudioAnalysisService.create_audio_summary(analyzed_segments)
+
+        return {
+            "success": True,
+            "video_hash": video_hash,
+            "segments_analyzed": len(analyzed_segments),
+            "audio_events_indexed": audio_indexed,
+            "summary": summary,
+            "message": f"Successfully analyzed audio for {len(analyzed_segments)} segments"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error analyzing audio: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Audio analysis failed: {str(e)}")
 
 
 # Helper function wrappers for service modules (to maintain compatibility with endpoint code)
@@ -818,6 +908,44 @@ async def transcribe_video(
                     if 'speaker' not in seg:
                         seg['speaker'] = "SPEAKER_00"
 
+            # Audio analysis for events and emotions
+            if settings.ENABLE_AUDIO_ANALYSIS:
+                try:
+                    print("\n" + "="*60)
+                    print("Analyzing audio events and emotions...")
+                    print("="*60)
+
+                    # Analyze audio events and emotions in segments
+                    all_segments = AudioAnalysisService.analyze_segments(
+                        audio_path=temp_input_path,
+                        segments=all_segments,
+                        video_hash=video_hash
+                    )
+
+                    # Also analyze silent segments for background sounds
+                    all_segments = AudioAnalysisService.analyze_silent_segments(
+                        audio_path=temp_input_path,
+                        segments=all_segments
+                    )
+
+                    # Update response segments
+                    response.segments = all_segments
+
+                    # Index audio events in vector store for search
+                    try:
+                        from vector_store import vector_store
+                        vector_store.index_audio_events(video_hash, all_segments)
+                        print("Audio events indexed in vector store")
+                    except Exception as idx_e:
+                        print(f"Audio indexing failed (non-critical): {str(idx_e)}")
+
+                    print("Audio analysis complete!")
+                except Exception as e:
+                    print(f"Audio analysis failed (non-critical): {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continue without audio analysis - not critical for transcription
+
             # FIX Issue 2: Detect gaps and create silent segments with screenshots
             if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
                 print("\n" + "="*60)
@@ -1203,6 +1331,39 @@ async def transcribe_local(
                 if 'speaker' not in seg:
                     seg['speaker'] = "SPEAKER_00"
 
+        # Audio analysis for events and emotions
+        if settings.ENABLE_AUDIO_ANALYSIS:
+            try:
+                print("\nAnalyzing audio events and emotions...")
+
+                # Analyze audio events and emotions in segments
+                formatted_segments = AudioAnalysisService.analyze_segments(
+                    audio_path=temp_wav_path,
+                    segments=formatted_segments,
+                    video_hash=video_hash
+                )
+
+                # Also analyze silent segments for background sounds
+                formatted_segments = AudioAnalysisService.analyze_silent_segments(
+                    audio_path=temp_wav_path,
+                    segments=formatted_segments
+                )
+
+                # Index audio events in vector store for search
+                try:
+                    from vector_store import vector_store
+                    vector_store.index_audio_events(video_hash, formatted_segments)
+                    print("Audio events indexed in vector store")
+                except Exception as idx_e:
+                    print(f"Audio indexing failed (non-critical): {str(idx_e)}")
+
+                print("Audio analysis complete!")
+            except Exception as e:
+                print(f"Audio analysis failed (non-critical): {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Continue without audio analysis - not critical for transcription
+
         # FIX Issue 2: Detect gaps and create silent segments with screenshots
         if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
             print("\nDetecting timeline gaps and creating silent segments...")
@@ -1488,6 +1649,40 @@ async def transcribe_local_stream(
                 for seg in formatted_segments:
                     if 'speaker' not in seg:
                         seg['speaker'] = "SPEAKER_00"
+
+            # Audio analysis for events and emotions
+            if settings.ENABLE_AUDIO_ANALYSIS:
+                try:
+                    yield emit("transcribing", 88, "Analyzing audio events and emotions...")
+                    print("\nAnalyzing audio events and emotions...")
+
+                    # Analyze audio events and emotions in segments
+                    formatted_segments = AudioAnalysisService.analyze_segments(
+                        audio_path=temp_wav_path,
+                        segments=formatted_segments,
+                        video_hash=video_hash
+                    )
+
+                    # Also analyze silent segments for background sounds
+                    formatted_segments = AudioAnalysisService.analyze_silent_segments(
+                        audio_path=temp_wav_path,
+                        segments=formatted_segments
+                    )
+
+                    # Index audio events in vector store for search
+                    try:
+                        from vector_store import vector_store
+                        vector_store.index_audio_events(video_hash, formatted_segments)
+                        print("Audio events indexed in vector store")
+                    except Exception as idx_e:
+                        print(f"Audio indexing failed (non-critical): {str(idx_e)}")
+
+                    print("Audio analysis complete!")
+                except Exception as e:
+                    print(f"Audio analysis failed (non-critical): {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continue without audio analysis - not critical for transcription
 
             # FIX Issue 2: Detect gaps and create silent segments with screenshots
             if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:

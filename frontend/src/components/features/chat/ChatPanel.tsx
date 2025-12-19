@@ -11,7 +11,9 @@ interface Source {
   speaker: string;
   text?: string;
   screenshot_url?: string;
-  type?: "text" | "visual";
+  type?: "text" | "visual" | "audio";
+  event_type?: string;
+  confidence?: number;
 }
 
 interface Message {
@@ -30,6 +32,67 @@ interface LLMProvider {
   available: boolean;
   model: string;
 }
+
+// Helper function to get emoji and label for audio event types
+const getEventDetails = (eventType: string) => {
+  const type = eventType.toLowerCase();
+
+  // Emotions
+  if (type.includes('happy') || type.includes('joy')) {
+    return { emoji: '😊', label: 'Happy' };
+  }
+  if (type.includes('sad') || type.includes('sadness')) {
+    return { emoji: '😢', label: 'Sad' };
+  }
+  if (type.includes('angry') || type.includes('anger')) {
+    return { emoji: '😠', label: 'Angry' };
+  }
+  if (type.includes('fear') || type.includes('scared')) {
+    return { emoji: '😨', label: 'Fearful' };
+  }
+  if (type.includes('neutral') || type.includes('calm')) {
+    return { emoji: '😐', label: 'Neutral' };
+  }
+  if (type.includes('surprise')) {
+    return { emoji: '😲', label: 'Surprised' };
+  }
+  if (type.includes('disgust')) {
+    return { emoji: '🤢', label: 'Disgust' };
+  }
+
+  // Audio events
+  if (type.includes('speech') || type.includes('speaking') || type.includes('narration')) {
+    return { emoji: '🗣️', label: 'Speech' };
+  }
+  if (type.includes('music') || type.includes('melody')) {
+    return { emoji: '🎵', label: 'Music' };
+  }
+  if (type.includes('applause') || type.includes('clap')) {
+    return { emoji: '👏', label: 'Applause' };
+  }
+  if (type.includes('laugh')) {
+    return { emoji: '😂', label: 'Laughter' };
+  }
+  if (type.includes('cry') || type.includes('sobbing')) {
+    return { emoji: '😭', label: 'Crying' };
+  }
+  if (type.includes('silence') || type.includes('ambient') || type.includes('quiet')) {
+    return { emoji: '🔇', label: 'Silence' };
+  }
+  if (type.includes('shout') || type.includes('yell')) {
+    return { emoji: '📢', label: 'Shouting' };
+  }
+  if (type.includes('whisper')) {
+    return { emoji: '🤫', label: 'Whisper' };
+  }
+  if (type.includes('cheer')) {
+    return { emoji: '🎉', label: 'Cheering' };
+  }
+
+  // Default - capitalize first letter
+  const label = eventType.charAt(0).toUpperCase() + eventType.slice(1);
+  return { emoji: '🔊', label };
+};
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   videoHash,
@@ -469,15 +532,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               </div>
                               {/* Timestamp badge */}
                               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                                <button
+                                <span
+                                  role="button"
+                                  tabIndex={0}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     onTimestampClick?.(source.start_time);
                                   }}
-                                  className="text-white text-xs font-mono font-bold hover:text-purple-300 transition-colors"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.stopPropagation();
+                                      onTimestampClick?.(source.start_time);
+                                    }
+                                  }}
+                                  className="text-white text-xs font-mono font-bold hover:text-purple-300 transition-colors cursor-pointer"
                                 >
                                   {source.start_time}
-                                </button>
+                                </span>
                                 <p className="text-white/80 text-xs truncate">
                                   {source.speaker}
                                 </p>
@@ -489,7 +560,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   )}
 
                   {/* Text Sources (Transcript) */}
-                  {message.sources.filter((s) => !s.screenshot_url).length > 0 && (
+                  {message.sources.filter((s) => !s.screenshot_url && s.type !== "audio").length > 0 && (
                     <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-3 border border-blue-200">
                       <div className="flex items-center gap-2 mb-2">
                         <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -501,7 +572,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       </div>
                       <div className="space-y-1.5">
                         {message.sources
-                          .filter((s) => !s.screenshot_url)
+                          .filter((s) => !s.screenshot_url && s.type !== "audio")
                           .map((source, idx) => (
                             <button
                               key={idx}
@@ -523,6 +594,73 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               )}
                             </button>
                           ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Audio Events */}
+                  {message.sources.filter((s) => s.type === "audio").length > 0 && (
+                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-lg p-3 border border-amber-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="p-1.5 bg-amber-100 rounded-lg">
+                          <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                          </svg>
+                        </div>
+                        <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">
+                          Audio Events ({message.sources.filter((s) => s.type === "audio").length})
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {message.sources
+                          .filter((s) => s.type === "audio")
+                          .map((source, idx) => {
+                            const eventDetails = getEventDetails(source.event_type || 'unknown');
+                            const confidence = source.confidence || 0;
+                            return (
+                              <button
+                                key={idx}
+                                onClick={() => onTimestampClick?.(source.start_time)}
+                                className="bg-white rounded-lg border-2 border-amber-200 p-3 hover:border-amber-400 hover:shadow-lg transition-all text-left group"
+                                title={`Click to jump to ${source.start_time}`}
+                              >
+                                {/* Event Emoji */}
+                                <div className="text-2xl mb-2">{eventDetails.emoji}</div>
+
+                                {/* Event Type Label */}
+                                <div className="font-semibold text-sm text-gray-800 mb-1">
+                                  {eventDetails.label}
+                                </div>
+
+                                {/* Timestamp */}
+                                <div className="text-xs text-amber-600 font-mono mb-1 group-hover:text-amber-700">
+                                  {source.start_time}
+                                </div>
+
+                                {/* Speaker */}
+                                {source.speaker && source.speaker !== 'Unknown' && (
+                                  <div className="text-xs text-gray-500 mb-2">
+                                    {source.speaker}
+                                  </div>
+                                )}
+
+                                {/* Confidence Bar */}
+                                {confidence > 0 && (
+                                  <div className="mt-2">
+                                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-amber-500 rounded-full transition-all"
+                                        style={{ width: `${confidence * 100}%` }}
+                                      />
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">
+                                      {Math.round(confidence * 100)}%
+                                    </div>
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
                       </div>
                     </div>
                   )}

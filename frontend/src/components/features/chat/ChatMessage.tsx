@@ -9,7 +9,9 @@ interface Source {
   speaker: string;
   text?: string;
   screenshot_url?: string;
-  type?: "text" | "visual";
+  type?: "text" | "visual" | "audio";
+  event_type?: string;
+  confidence?: number;
 }
 
 interface ChatMessageProps {
@@ -25,6 +27,11 @@ interface ScreenshotGalleryProps {
 }
 
 interface TextSourcesProps {
+  sources: Source[];
+  onTimestampClick?: (timeString: string) => void;
+}
+
+interface AudioSourcesProps {
   sources: Source[];
   onTimestampClick?: (timeString: string) => void;
 }
@@ -207,6 +214,149 @@ const TextSources: React.FC<TextSourcesProps> = ({
   );
 };
 
+const AudioSources: React.FC<AudioSourcesProps> = ({
+  sources,
+  onTimestampClick,
+}) => {
+  if (sources.length === 0) return null;
+
+  // Helper function to get emoji and label for event type
+  const getEventDetails = (eventType: string) => {
+    const type = eventType.toLowerCase();
+
+    // Emotions
+    if (type.includes('happy') || type.includes('joy')) {
+      return { emoji: '😊', label: 'Happy' };
+    }
+    if (type.includes('sad') || type.includes('sadness')) {
+      return { emoji: '😢', label: 'Sad' };
+    }
+    if (type.includes('angry') || type.includes('anger')) {
+      return { emoji: '😠', label: 'Angry' };
+    }
+    if (type.includes('fear') || type.includes('scared')) {
+      return { emoji: '😨', label: 'Fearful' };
+    }
+    if (type.includes('neutral') || type.includes('calm')) {
+      return { emoji: '😐', label: 'Neutral' };
+    }
+    if (type.includes('surprise')) {
+      return { emoji: '😲', label: 'Surprised' };
+    }
+    if (type.includes('disgust')) {
+      return { emoji: '🤢', label: 'Disgust' };
+    }
+
+    // Audio events
+    if (type.includes('speech') || type.includes('speaking') || type.includes('narration')) {
+      return { emoji: '🗣️', label: 'Speech' };
+    }
+    if (type.includes('music') || type.includes('melody')) {
+      return { emoji: '🎵', label: 'Music' };
+    }
+    if (type.includes('applause') || type.includes('clap')) {
+      return { emoji: '👏', label: 'Applause' };
+    }
+    if (type.includes('laugh')) {
+      return { emoji: '😂', label: 'Laughter' };
+    }
+    if (type.includes('cry') || type.includes('sobbing')) {
+      return { emoji: '😭', label: 'Crying' };
+    }
+    if (type.includes('silence') || type.includes('ambient') || type.includes('quiet')) {
+      return { emoji: '🔇', label: 'Silence' };
+    }
+    if (type.includes('shout') || type.includes('yell')) {
+      return { emoji: '📢', label: 'Shouting' };
+    }
+    if (type.includes('whisper')) {
+      return { emoji: '🤫', label: 'Whisper' };
+    }
+    if (type.includes('cheer')) {
+      return { emoji: '🎉', label: 'Cheering' };
+    }
+
+    // Default - capitalize first letter
+    const label = eventType.charAt(0).toUpperCase() + eventType.slice(1);
+    return { emoji: '🔊', label };
+  };
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-200">
+      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-2 bg-amber-100 rounded-lg">
+            <svg
+              className="w-5 h-5 text-amber-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+              />
+            </svg>
+          </div>
+          <h4 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+            Audio Events ({sources.length})
+          </h4>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          {sources.map((source, idx) => {
+            const eventDetails = getEventDetails(source.event_type || 'unknown');
+            const confidence = source.confidence || 0;
+
+            return (
+              <button
+                key={idx}
+                onClick={() => onTimestampClick?.(source.start_time)}
+                className="bg-white rounded-lg border-2 border-gray-200 p-3 hover:border-amber-400 hover:shadow-lg transition-all cursor-pointer text-left"
+                title={`Click to jump to ${source.start_time}`}
+              >
+                {/* Event Emoji - Large and centered at top */}
+                <div className="text-2xl mb-2">{eventDetails.emoji}</div>
+
+                {/* Event Type Label */}
+                <div className="font-semibold text-sm text-gray-800 mb-1">
+                  {eventDetails.label}
+                </div>
+
+                {/* Timestamp - Amber colored, font-mono */}
+                <div className="text-xs text-amber-600 font-mono mb-1">
+                  {source.start_time}
+                </div>
+
+                {/* Speaker */}
+                {source.speaker && source.speaker !== 'Unknown' && (
+                  <div className="text-xs text-gray-500 mb-2">
+                    {source.speaker}
+                  </div>
+                )}
+
+                {/* Confidence Bar */}
+                {confidence > 0 && (
+                  <div className="mt-2">
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                        style={{ width: `${confidence * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   role,
   content,
@@ -215,6 +365,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 }) => {
   // Separate sources by type
   const visualSources = sources?.filter((s) => s.type === "visual") || [];
+  const audioSources = sources?.filter((s) => s.type === "audio") || [];
   const textSources = sources?.filter((s) => s.type === "text" || !s.type) || [];
 
   return (
@@ -284,6 +435,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             screenshots={visualSources}
             onTimestampClick={onTimestampClick}
           />
+        )}
+
+        {/* Audio Events */}
+        {role === "assistant" && audioSources.length > 0 && (
+          <AudioSources sources={audioSources} onTimestampClick={onTimestampClick} />
         )}
 
         {/* Text Sources */}
