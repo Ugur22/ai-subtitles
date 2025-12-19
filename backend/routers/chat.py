@@ -170,6 +170,7 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         n_results = request.n_results or 8
         include_visuals = request.include_visuals or False
         n_images = request.n_images or 3
+        custom_instructions = request.custom_instructions
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
@@ -397,6 +398,10 @@ Guidelines:
 - Reference multiple sources/timestamps to support your answers
 - If the context is insufficient, explain what information is missing"""
 
+            # Append custom instructions if provided
+            if custom_instructions:
+                system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
+
             user_message_parts = [
                 "Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.",
                 "",
@@ -462,6 +467,10 @@ Guidelines:
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
 - If the context is insufficient, explain what information is missing"""
+
+            # Append custom instructions if provided
+            if custom_instructions:
+                system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
 
             user_message_parts = [
                 "Based on the following transcript segments from the video, please answer the question comprehensively.",
