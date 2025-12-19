@@ -47,6 +47,7 @@ class ChatRequest(BaseModel):
     n_results: Optional[int] = Field(8, description="Number of context chunks to retrieve")
     include_visuals: Optional[bool] = Field(False, description="Include visual analysis from video screenshots (requires vision-capable model)")
     n_images: Optional[int] = Field(3, description="Number of relevant images to include when include_visuals=True")
+    custom_instructions: Optional[str] = Field(None, description="Custom instructions for how the AI should respond (e.g., 'respond in Spanish', 'be brief')")
 
     model_config = {
         "json_schema_extra": {
@@ -56,7 +57,8 @@ class ChatRequest(BaseModel):
                 "provider": "ollama",
                 "n_results": 8,
                 "include_visuals": False,
-                "n_images": 3
+                "n_images": 3,
+                "custom_instructions": "Respond in Spanish and be concise"
             }
         }
     }

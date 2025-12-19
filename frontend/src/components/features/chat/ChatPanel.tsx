@@ -243,6 +243,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [includeVisuals, setIncludeVisuals] = useState(false);
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
   const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
+  const [customInstructions, setCustomInstructions] = useState<string>("");
+  const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Message transitions
@@ -339,6 +341,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         n_results: 8, // Increased for more comprehensive context
         include_visuals: includeVisuals,
         n_images: includeVisuals ? 3 : undefined,
+        custom_instructions: customInstructions || undefined,
       });
 
       const assistantMessage: Message = {
@@ -846,6 +849,72 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       {/* Input */}
       <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+        {/* Custom Instructions Section */}
+        <div className="mb-3">
+          <button
+            onClick={() => setShowCustomInstructions(!showCustomInstructions)}
+            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+            aria-expanded={showCustomInstructions}
+            aria-label="Toggle custom instructions"
+          >
+            <svg
+              className={`w-4 h-4 transition-transform ${showCustomInstructions ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5l7 7-7 7"
+              />
+            </svg>
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+            <span>Custom Instructions</span>
+            {customInstructions && (
+              <span className="ml-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-semibold">
+                Active
+              </span>
+            )}
+          </button>
+
+          {showCustomInstructions && (
+            <div className="mt-3 bg-white rounded-lg border border-gray-300 p-3">
+              <textarea
+                value={customInstructions}
+                onChange={(e) => setCustomInstructions(e.target.value)}
+                placeholder="Add custom instructions for the AI (e.g., 'Respond in Spanish', 'Be brief and casual', 'Focus on technical details')..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-sm"
+                rows={3}
+                disabled={loading}
+              />
+              <p className="mt-2 text-xs text-gray-500">
+                These instructions will be applied to all your questions. They persist across messages.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Chat Input */}
         <div className="flex gap-2">
           <input
             type="text"
