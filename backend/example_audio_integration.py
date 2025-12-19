@@ -15,7 +15,7 @@ from audio_analyzer import analyze_audio_segment, get_simplified_events
 def enhance_transcription_with_audio_analysis(
     transcription_segments: List[Dict],
     audio_path: str,
-    confidence_threshold: float = 0.3
+    confidence_threshold: float = 0.2
 ) -> List[Dict]:
     """
     Enhance transcription segments with audio analysis data.
@@ -100,7 +100,7 @@ def detect_video_highlights(
             audio_path,
             current_time,
             end_time,
-            threshold=0.3
+            threshold=0.2
         )
 
         # Criteria for highlights
@@ -187,7 +187,7 @@ def categorize_video_content(
             audio_path,
             current_time,
             end_time,
-            threshold=0.3
+            threshold=0.2
         )
 
         total_samples += 1

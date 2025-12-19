@@ -366,6 +366,11 @@ async def delete_transcription_endpoint(video_hash: str) -> DeleteTranscriptionR
             if vector_store.image_collection_exists(video_hash):
                 vector_store.delete_image_collection(video_hash)
                 print(f"Deleted image embeddings collection for video hash: {video_hash}")
+
+            # Delete audio collection
+            if vector_store.audio_collection_exists(video_hash):
+                vector_store.delete_audio_collection(video_hash)
+                print(f"Deleted audio embeddings collection for video hash: {video_hash}")
         except Exception as e:
             # Don't fail the deletion if vector store cleanup fails
             print(f"Warning: Failed to delete vector store collections: {str(e)}")

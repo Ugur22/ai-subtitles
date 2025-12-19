@@ -30,8 +30,8 @@ def test_basic_analysis(audio_path: str, start: float = 0.0, end: float = None):
         end = float('inf')
 
     # Run analysis with default threshold
-    print("Running analysis with threshold=0.3...")
-    result = analyze_audio_segment(audio_path, start, end, threshold=0.3)
+    print("Running analysis with threshold=0.2...")
+    result = analyze_audio_segment(audio_path, start, end, threshold=0.2)
 
     # Print formatted summary
     print("\n" + "="*70)
@@ -96,7 +96,7 @@ def test_multiple_thresholds(audio_path: str, start: float = 0.0, end: float = N
     if end is None:
         end = float('inf')
 
-    thresholds = [0.1, 0.3, 0.5, 0.7]
+    thresholds = [0.1, 0.2, 0.3, 0.5]
 
     for threshold in thresholds:
         print(f"\nThreshold: {threshold}")
@@ -122,7 +122,7 @@ def test_segment_analysis(audio_path: str, segment_duration: float = 5.0):
         print(f"\nSegment {i+1}: {start}s - {end}s")
         print("-" * 70)
 
-        result = analyze_audio_segment(audio_path, start, end, threshold=0.3)
+        result = analyze_audio_segment(audio_path, start, end, threshold=0.2)
 
         # Print compact summary
         print(f"  Speech: {'Yes' if result['has_speech'] else 'No':3s} | "

@@ -35,42 +35,69 @@ logger = logging.getLogger(__name__)
 
 # Mapping from AudioSet classes to simplified event categories
 AUDIOSET_CATEGORY_MAPPING = {
-    # Emotional events
+    # Emotional and expressive sounds
     "Laughter": "laughter",
     "Giggle": "laughter",
     "Chuckle, chortle": "laughter",
     "Belly laugh": "laughter",
+    "Snicker": "laughter",
+    "Snort": "laughter",
     "Crying, sobbing": "crying",
     "Baby crying, infant cry": "crying",
     "Whimper": "crying",
-    "Wail, moan": "crying",
+    "Wail, moan": "moan",  # Separated from crying
+    "Groan": "groan",
     "Screaming": "screaming",
     "Scream": "screaming",
     "Shout": "screaming",
     "Yell": "screaming",
+    "Shriek": "screaming",
     "Sigh": "sigh",
     "Gasp": "gasp",
-    "Snicker": "laughter",
+    "Pant": "panting",
+    "Gulp": "gulp",
+    "Burping, eructation": "burp",
+    "Hiccup": "hiccup",
+    "Yawn": "yawn",
 
-    # Ambient events
-    "Applause": "applause",
+    # Breathing and respiratory sounds
+    "Breathing": "breathing",
+    "Wheeze": "wheeze",
+    "Snoring": "snoring",
+    "Sniff": "sniff",
+    "Sneeze": "sneeze",
+    "Cough": "cough",
+    "Throat clearing": "throat_clearing",
+    "Panting": "panting",
+    "Snort": "snort",
+
+    # Body sounds
+    "Finger snapping": "snap",
     "Clapping": "applause",
+    "Slap, smack": "slap",
+    "Clap": "applause",
+    "Hands": "body_sound",
+    "Slapping": "slap",
+    "Tapping": "tapping",
+    "Walk, footsteps": "footsteps",
+    "Footsteps": "footsteps",
+    "Run": "footsteps",
+    "Stomp": "footsteps",
+    "Chewing, mastication": "chewing",
+    "Biting": "biting",
+    "Crunch": "crunch",
+    "Rustling": "rustling",
+
+    # Crowd and ambient human sounds
+    "Applause": "applause",
     "Cheering": "cheering",
     "Cheer": "cheering",
-    "Music": "music",
-    "Musical instrument": "music",
-    "Singing": "music",
-    "Piano": "music",
-    "Guitar": "music",
-    "Drum": "music",
-    "Door": "door",
-    "Knock": "knock",
-    "Slam": "door",
-    "Footsteps": "footsteps",
-    "Walk, footsteps": "footsteps",
-    "Run": "footsteps",
-    "Silence": "silence",
-    "Background noise": "ambient",
+    "Crowd": "crowd",
+    "Battle cry": "battle_cry",
+    "Hubbub, speech noise, speech babble": "crowd",
+    "Children playing": "children",
+    "Baby laughter": "laughter",
+    "Children shouting": "children",
 
     # Speech-related
     "Speech": "speech",
@@ -80,31 +107,228 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Conversation": "conversation",
     "Narration, monologue": "narration",
     "Speech synthesizer": "speech",
-    "Whispering": "speech",
-    "Shouting": "speech",
+    "Whispering": "whisper",
+    "Shouting": "screaming",
+    "Babbling": "babbling",
+    "Singing": "singing",
+    "Humming": "humming",
+    "Whistling": "whistling",
+    "Rapping": "speech",
+    "Groan": "groan",
 
-    # Other common events
-    "Gunshot, gunfire": "gunshot",
-    "Explosion": "explosion",
+    # Music
+    "Music": "music",
+    "Musical instrument": "music",
+    "Piano": "music",
+    "Guitar": "music",
+    "Drum": "music",
+    "Keyboard (musical)": "music",
+    "Synthesizer": "music",
+    "Violin, fiddle": "music",
+    "Bass guitar": "music",
+    "Acoustic guitar": "music",
+    "Electric guitar": "music",
+    "Drum kit": "music",
+    "Cymbal": "music",
+    "Bass drum": "music",
+    "Snare drum": "music",
+    "Tabla": "music",
+    "Orchestra": "music",
+    "Choir": "music",
+
+    # Environmental/Ambient events
+    "Silence": "silence",
+    "Background noise": "ambient",
+    "White noise": "ambient",
+    "Pink noise": "ambient",
+    "Static": "ambient",
+    "Hiss": "ambient",
+    "Buzz": "buzz",
+    "Hum": "hum",
+    "Rumble": "rumble",
+
+    # Doors and movement
+    "Door": "door",
+    "Knock": "knock",
+    "Slam": "door",
+    "Sliding door": "door",
+    "Cupboard open or close": "door",
+    "Drawer open or close": "door",
+    "Door bell": "doorbell",
+
+    # Glass and breaking sounds
     "Glass": "glass",
     "Breaking": "breaking",
     "Crash": "crash",
+    "Smash, crash": "crash",
+    "Shatter": "breaking",
+    "Crackle": "crackle",
+
+    # Weather
     "Thunder": "thunder",
+    "Thunderstorm": "thunder",
     "Rain": "rain",
+    "Rain on surface": "rain",
+    "Raindrop": "rain",
     "Wind": "wind",
+    "Wind noise (microphone)": "wind",
+    "Gust, wind": "wind",
+    "Howl": "howl",
+    "Lightning": "thunder",
+
+    # Fire and water
     "Fire": "fire",
+    "Crackle": "fire",
+    "Water": "water",
+    "Pour": "water",
+    "Trickle, dribble": "water",
+    "Gush": "water",
+    "Fill (with liquid)": "water",
+    "Splash, splatter": "water",
+    "Stream": "water",
+    "Waterfall": "water",
+    "Ocean": "water",
+    "Waves, surf": "water",
+
+    # Mechanical and industrial
     "Siren": "siren",
+    "Alarm": "alarm",
+    "Buzzer": "alarm",
+    "Smoke detector, smoke alarm": "alarm",
+    "Fire alarm": "alarm",
+    "Telephone bell ringing": "phone",
+    "Ringtone": "phone",
+    "Dial tone": "phone",
+    "Busy signal": "phone",
+    "Beep, bleep": "beep",
+    "Click": "click",
+    "Tick": "tick",
+    "Tick-tock": "tick",
+    "Ratchet, pawl": "mechanical",
+    "Mechanisms": "mechanical",
+    "Engine": "mechanical",
+    "Idling": "mechanical",
+
+    # Vehicles
     "Car": "vehicle",
     "Vehicle": "vehicle",
+    "Motor vehicle (road)": "vehicle",
+    "Car passing by": "vehicle",
+    "Truck": "vehicle",
+    "Motorcycle": "vehicle",
     "Aircraft": "vehicle",
+    "Airplane": "vehicle",
+    "Helicopter": "vehicle",
     "Train": "vehicle",
+    "Railroad car, train wagon": "vehicle",
+    "Train horn": "vehicle",
+    "Train whistle": "vehicle",
+    "Bicycle": "vehicle",
+    "Skateboard": "vehicle",
+    "Engine starting": "vehicle",
+    "Accelerating, revving, vroom": "vehicle",
+    "Tire squeal": "vehicle",
+    "Skidding": "vehicle",
+    "Car alarm": "alarm",
+    "Honking": "horn",
+    "Air horn, truck horn": "horn",
+
+    # Weapons and impacts
+    "Gunshot, gunfire": "gunshot",
+    "Machine gun": "gunshot",
+    "Fusillade": "gunshot",
+    "Artillery fire": "gunshot",
+    "Explosion": "explosion",
+    "Burst, pop": "pop",
+    "Bang": "bang",
+    "Boom": "boom",
+    "Thump, thud": "thump",
+    "Whack, thwack": "hit",
+    "Smack, slap": "slap",
+    "Whip": "whip",
+
+    # Animals
     "Dog": "animal",
-    "Cat": "animal",
-    "Bird": "animal",
-    "Roar": "animal",
     "Bark": "animal",
+    "Howl": "animal",
+    "Bow-wow": "animal",
+    "Growling": "animal",
+    "Whimper (dog)": "animal",
+    "Cat": "animal",
     "Meow": "animal",
+    "Purr": "animal",
+    "Hiss": "animal",
+    "Bird": "animal",
+    "Bird vocalization, bird call, bird song": "animal",
     "Chirp, tweet": "animal",
+    "Squawk": "animal",
+    "Pigeon, dove": "animal",
+    "Crow": "animal",
+    "Caw": "animal",
+    "Owl": "animal",
+    "Hoot": "animal",
+    "Rooster": "animal",
+    "Crow": "animal",
+    "Roar": "animal",
+    "Horse": "animal",
+    "Neigh, whinny": "animal",
+    "Cattle, bovinae": "animal",
+    "Moo": "animal",
+    "Cowbell": "animal",
+    "Pig": "animal",
+    "Oink": "animal",
+    "Goat": "animal",
+    "Bleat": "animal",
+    "Sheep": "animal",
+    "Fowl": "animal",
+    "Chicken, rooster": "animal",
+    "Cluck": "animal",
+    "Insect": "animal",
+    "Bee, wasp, etc.": "animal",
+    "Buzz": "animal",
+    "Cricket": "animal",
+    "Mosquito": "animal",
+    "Fly, housefly": "animal",
+    "Frog": "animal",
+    "Croak": "animal",
+
+    # Household and tools
+    "Power tool": "tools",
+    "Drill": "tools",
+    "Saw": "tools",
+    "Hammer": "tools",
+    "Sawing": "tools",
+    "Filing (rasp)": "tools",
+    "Sanding": "tools",
+    "Vacuum cleaner": "appliance",
+    "Blender": "appliance",
+    "Dishwasher": "appliance",
+    "Washing machine": "appliance",
+    "Microwave oven": "appliance",
+    "Frying (food)": "cooking",
+    "Sizzle": "cooking",
+    "Boiling": "cooking",
+    "Kettle whistle": "kettle",
+
+    # Paper and writing
+    "Tearing": "paper",
+    "Crumpling, crinkling": "paper",
+    "Paper": "paper",
+    "Writing": "writing",
+    "Typing": "typing",
+    "Keyboard": "typing",
+    "Computer keyboard": "typing",
+    "Typewriter": "typing",
+
+    # Electronics
+    "Beep, bleep": "beep",
+    "Electronic tuner": "electronic",
+    "Sine wave": "electronic",
+    "Chirp tone": "electronic",
+    "Camera": "camera",
+    "Single-lens reflex camera": "camera",
+    "Video game sound": "game",
+    "Coin (dropping)": "coin",
 }
 
 
@@ -245,13 +469,15 @@ class ModelManager:
 # Audio Event Detection using PANNs
 # ============================================================================
 
-def detect_audio_events(audio_path: str, threshold: float = 0.3) -> List[AudioEvent]:
+def detect_audio_events(audio_path: str, threshold: float = 0.2) -> List[AudioEvent]:
     """
     Detect audio events using PANNs model.
 
     Args:
         audio_path: Path to the audio file
         threshold: Confidence threshold for event detection (0-1)
+                  Default lowered to 0.2 for better sensitivity to detect
+                  more varied human sounds and subtle audio events
 
     Returns:
         List of detected AudioEvent objects
@@ -480,7 +706,7 @@ def analyze_audio_segment(
     audio_path: str,
     start: float,
     end: float,
-    threshold: float = 0.3
+    threshold: float = 0.2
 ) -> Dict:
     """
     Perform comprehensive audio analysis on a segment.
@@ -494,7 +720,8 @@ def analyze_audio_segment(
         audio_path: Path to the audio file
         start: Start time in seconds
         end: End time in seconds
-        threshold: Confidence threshold for event detection (default: 0.3)
+        threshold: Confidence threshold for event detection (default: 0.2)
+                  Lowered from 0.3 to improve detection of subtle human sounds
 
     Returns:
         Dictionary containing:
@@ -668,7 +895,7 @@ class AudioAnalyzer:
         audio_path: str,
         start: float,
         end: float,
-        threshold: float = 0.3
+        threshold: float = 0.2
     ) -> Dict:
         """
         Analyze an audio segment.
@@ -677,7 +904,7 @@ class AudioAnalyzer:
             audio_path: Path to the audio file
             start: Start time in seconds
             end: End time in seconds
-            threshold: Confidence threshold for event detection
+            threshold: Confidence threshold for event detection (default: 0.2)
 
         Returns:
             Dictionary with analysis results
