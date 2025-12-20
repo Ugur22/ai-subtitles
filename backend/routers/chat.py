@@ -1,7 +1,7 @@
 """
 Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from fastapi import APIRouter, HTTPException, Request
 
 from database import get_transcription
@@ -43,10 +43,27 @@ def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
     Returns:
         Speaker name/label if found in query, None otherwise
     """
+    speakers = _extract_all_speakers_from_query(query, video_hash)
+    return speakers[0] if speakers else None
+
+
+def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
+    """
+    Extract ALL speaker names from query by checking against enrolled speakers
+    and segment speaker labels.
+
+    Args:
+        query: User's question/query
+        video_hash: Video hash to get segments from
+
+    Returns:
+        List of speaker names/labels found in query
+    """
     if not query:
-        return None
+        return []
 
     query_lower = query.lower()
+    found_speakers = []
 
     # First, check enrolled speakers (e.g., "Concetta", "John")
     try:
@@ -57,11 +74,11 @@ def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
         for speaker_name in enrolled_speakers:
             if speaker_name.lower() in query_lower:
                 print(f"Found enrolled speaker in query: {speaker_name}")
-                return speaker_name
+                found_speakers.append(speaker_name)
     except Exception as e:
         print(f"Could not load speaker recognition system: {e}")
 
-    # If no enrolled speaker found, check for SPEAKER_XX labels in segments
+    # Also check for SPEAKER_XX labels in segments
     # This handles cases where segments use labels like "SPEAKER_19"
     try:
         transcription = get_transcription(video_hash)
@@ -77,13 +94,13 @@ def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
 
             # Check if any speaker label is mentioned in the query
             for speaker_label in speaker_labels:
-                if speaker_label.lower() in query_lower:
+                if speaker_label.lower() in query_lower and speaker_label not in found_speakers:
                     print(f"Found speaker label in query: {speaker_label}")
-                    return speaker_label
+                    found_speakers.append(speaker_label)
     except Exception as e:
         print(f"Could not check segment speakers: {e}")
 
-    return None
+    return found_speakers
 
 
 @router.post(
@@ -236,6 +253,7 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         image_paths = []
         visual_context = ""
         visual_sources = []
+        visual_query_used = None  # Track the transformed query for visual search
 
         if include_visuals:
             print(f"Visual analysis requested, searching for {n_images} relevant images...")
@@ -243,16 +261,86 @@ async def chat_with_video(request: ChatRequest) -> Dict:
             # Check if images are indexed
             if vector_store.image_collection_exists(video_hash):
                 try:
-                    # Check if the query mentions a specific speaker
-                    speaker_filter = _extract_speaker_from_query(question, video_hash)
+                    # Extract ALL speaker names from the query
+                    speaker_names = _extract_all_speakers_from_query(question, video_hash)
 
-                    # Search for relevant images using the question
+                    # Create a visual-optimized query for CLIP
+                    # CLIP doesn't know specific people by name, so we replace all speaker names
+                    # and let CLIP focus on the visual concepts (e.g., "swimming", "talking")
+                    visual_query = question
+                    if speaker_names:
+                        import re
+                        # Replace all speaker names with "person" (or "people" if multiple speakers)
+                        replacement = "person" if len(speaker_names) == 1 else "people"
+
+                        for speaker_name in speaker_names:
+                            visual_query = re.sub(
+                                rf'\b{re.escape(speaker_name)}\b',
+                                replacement,
+                                visual_query,
+                                flags=re.IGNORECASE
+                            )
+
+                        print(f"Visual search: transformed '{question}' -> '{visual_query}'")
+                        visual_query_used = visual_query
+                    else:
+                        visual_query_used = question
+
+                    # Search for relevant images using the visual-optimized query
+                    # No speaker filter - CLIP searches by visual similarity, not speaker metadata
                     image_results = vector_store.search_images(
                         video_hash,
-                        question,
+                        visual_query,
                         n_results=n_images,
-                        speaker_filter=speaker_filter
+                        speaker_filter=None  # Don't filter by speaker - let CLIP find visual matches
                     )
+
+                    # Phase 1: Temporal Correlation Scoring
+                    # Score visual results by temporal overlap with speaker segments
+                    if speaker_names and image_results:
+                        print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
+
+                        # Get speaker segments from transcript
+                        transcription = get_transcription(video_hash)
+                        if transcription:
+                            segments = transcription.get('transcription', {}).get('segments', [])
+
+                            # Build timeline for each speaker mentioned
+                            speaker_timelines = {}
+                            for name in speaker_names:
+                                speaker_timelines[name] = [
+                                    (seg['start'], seg['end'])
+                                    for seg in segments
+                                    if seg.get('speaker', '').lower() == name.lower()
+                                ]
+                                print(f"  Speaker '{name}': {len(speaker_timelines[name])} segments")
+
+                            # Score each visual result by overlap with speaker timelines
+                            for result in image_results:
+                                img_start = result['metadata'].get('start', 0)
+                                img_end = result['metadata'].get('end', 0)
+
+                                overlap_score = 0
+                                overlapping_speakers = []
+
+                                for speaker, timeline in speaker_timelines.items():
+                                    for seg_start, seg_end in timeline:
+                                        # Check for temporal overlap
+                                        if img_start <= seg_end and img_end >= seg_start:
+                                            overlap_score += 1
+                                            if speaker not in overlapping_speakers:
+                                                overlapping_speakers.append(speaker)
+
+                                result['overlap_score'] = overlap_score
+                                result['likely_speakers'] = overlapping_speakers
+
+                            # Sort by overlap score (highest first)
+                            image_results.sort(key=lambda x: x.get('overlap_score', 0), reverse=True)
+
+                            print(f"Scored {len(image_results)} visual results by speaker timeline overlap")
+                            for i, result in enumerate(image_results[:3]):  # Log top 3
+                                print(f"  Result {i+1}: overlap_score={result.get('overlap_score', 0)}, "
+                                      f"speakers={result.get('likely_speakers', [])}")
 
                     if image_results:
                         print(f"Found {len(image_results)} relevant images")
@@ -288,7 +376,9 @@ async def chat_with_video(request: ChatRequest) -> Dict:
                                 "end": metadata['end'],
                                 "speaker": metadata['speaker'],
                                 "screenshot_url": screenshot_url,
-                                "type": "visual"
+                                "type": "visual",
+                                "likely_speakers": img_result.get('likely_speakers', []),
+                                "overlap_score": img_result.get('overlap_score', 0)
                             })
 
                         visual_context = "\n".join(visual_parts)
@@ -542,12 +632,18 @@ Guidelines:
         if audio_sources:
             print(f"DEBUG: First audio source: {audio_sources[0]}")
 
-        return {
+        response = {
             "answer": answer,
             "sources": all_sources,
             "provider_used": provider_name or llm_manager.default_provider,
             "video_hash": video_hash
         }
+
+        # Add visual query if it was used
+        if visual_query_used:
+            response["visual_query_used"] = visual_query_used
+
+        return response
 
     except HTTPException:
         raise
