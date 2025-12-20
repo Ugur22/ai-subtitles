@@ -14,12 +14,16 @@ interface Source {
   type?: "text" | "visual" | "audio";
   event_type?: string;
   confidence?: number;
+  likely_speakers?: string[];
+  overlap_score?: number;
 }
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  visual_query_used?: string;
+  original_question?: string;
 }
 
 interface ChatPanelProps {
@@ -348,6 +352,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         role: "assistant",
         content: response.data.answer,
         sources: response.data.sources,
+        visual_query_used: response.data.visual_query_used,
+        original_question: textToSend,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -460,8 +466,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 }`}
                 aria-label={
                   includeVisuals
-                    ? "Disable visual search"
-                    : "Enable visual search"
+                    ? "Disable scene search"
+                    : "Enable scene search"
                 }
               >
                 <svg
@@ -486,7 +492,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     />
                   )}
                 </svg>
-                <span>Visual Search</span>
+                <span>Scene Search</span>
                 {includeVisuals && (
                   <span className="ml-1 px-1.5 py-0.5 bg-indigo-200 text-indigo-800 text-xs rounded-full">
                     ON
@@ -498,16 +504,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div className="relative">
                 <button
                   className="w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center text-xs font-bold transition-colors"
-                  title="Learn about Visual Search"
-                  aria-label="Visual search information"
+                  title="Scene Search finds visual moments (actions, objects, settings). Cannot identify specific people by name - use transcript for speaker queries."
+                  aria-label="Scene search information"
                 >
                   ?
                 </button>
                 {/* Tooltip on hover */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 shadow-lg min-w-max">
-                  <div className="font-medium mb-1">Visual Search</div>
-                  <div className="text-gray-300">Analyze video frames with AI vision</div>
-                  <div className="text-gray-300">for visual context and details</div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 shadow-lg">
+                  <div className="font-medium mb-1.5">Scene Search</div>
+                  <div className="text-gray-300 mb-1">Finds visual moments (actions, objects, settings).</div>
+                  <div className="text-gray-300">Cannot identify specific people by name - use transcript for speaker queries.</div>
                   <svg
                     className="absolute top-full left-1/2 -translate-x-1/2 text-gray-900"
                     width="8"
@@ -611,10 +617,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {messageTransitions((style, message) => (
           <animated.div
             style={style}
-            className={`flex ${
-              message.role === "user" ? "justify-end" : "justify-start"
+            className={`flex flex-col gap-2 ${
+              message.role === "user" ? "items-end" : "items-start"
             }`}
           >
+            {/* Show query transformation notification for assistant messages */}
+            {message.role === "assistant" &&
+             message.visual_query_used &&
+             message.original_question &&
+             message.visual_query_used !== message.original_question && (
+              <div className="max-w-3xl px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-gray-700 flex items-start gap-2">
+                <span className="text-sm">💡</span>
+                <div>
+                  <span className="font-medium">Scene search:</span> "{message.visual_query_used}"
+                </div>
+              </div>
+            )}
+
             <div
               className={`max-w-3xl px-4 py-3 rounded-lg ${
                 message.role === "user"
@@ -633,11 +652,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {message.sources.filter((s) => s.screenshot_url).length > 0 && (
                     <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg p-3 border border-purple-200">
                       <div className="flex items-center gap-2 mb-3">
-                        <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
+                        <span className="text-base">🎨</span>
                         <p className="text-xs font-bold text-purple-900 uppercase tracking-wide">
-                          Visual Analysis
+                          Scene Matches
                         </p>
                       </div>
                       <div className="grid grid-cols-3 gap-2">
@@ -670,8 +687,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
                                 </svg>
                               </div>
-                              {/* Timestamp badge */}
-                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                              {/* Timestamp and speaker info badge */}
+                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-2">
                                 <span
                                   role="button"
                                   tabIndex={0}
@@ -685,13 +702,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                       onTimestampClick?.(source.start_time);
                                     }
                                   }}
-                                  className="text-white text-xs font-mono font-bold hover:text-purple-300 transition-colors cursor-pointer"
+                                  className="text-white text-xs font-mono font-bold hover:text-purple-300 transition-colors cursor-pointer block mb-0.5"
                                 >
                                   {source.start_time}
                                 </span>
-                                <p className="text-white/80 text-xs truncate">
-                                  {source.speaker}
-                                </p>
+                                {(source as any).likely_speakers && (source as any).likely_speakers.length > 0 ? (
+                                  <p className="text-white/90 text-xs truncate">
+                                    Likely: {(source as any).likely_speakers.join(", ")}
+                                  </p>
+                                ) : (
+                                  <p className="text-white/80 text-xs truncate">
+                                    {source.speaker}
+                                  </p>
+                                )}
                               </div>
                             </button>
                           ))}
@@ -703,11 +726,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {message.sources.filter((s) => !s.screenshot_url && s.type !== "audio").length > 0 && (
                     <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-3 border border-blue-200">
                       <div className="flex items-center gap-2 mb-2">
-                        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
+                        <span className="text-base">📝</span>
                         <p className="text-xs font-bold text-blue-900 uppercase tracking-wide">
-                          Transcript Sources
+                          From Transcript
                         </p>
                       </div>
                       <div className="space-y-1.5">
