@@ -70,7 +70,7 @@ def test_image_embeddings():
     print(f"Query: '{query}'")
 
     try:
-        results = vs.search_images(video_hash, query, n_results=3)
+        results = vs.search_images(video_hash, query, n_results=6)
         print(f"Found {len(results)} results:")
         for i, result in enumerate(results, 1):
             print(f"\n  Result {i}:")

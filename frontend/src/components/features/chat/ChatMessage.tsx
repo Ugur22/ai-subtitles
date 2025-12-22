@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 
 interface Source {
@@ -42,9 +42,41 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
   screenshots,
   onTimestampClick,
 }) => {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (selectedImageIndex === null) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedImageIndex(null);
+      } else if (e.key === "ArrowLeft" && selectedImageIndex > 0) {
+        setSelectedImageIndex(selectedImageIndex - 1);
+      } else if (e.key === "ArrowRight" && selectedImageIndex < screenshots.length - 1) {
+        setSelectedImageIndex(selectedImageIndex + 1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedImageIndex, screenshots.length]);
+
+  const handlePrevious = () => {
+    if (selectedImageIndex !== null && selectedImageIndex > 0) {
+      setSelectedImageIndex(selectedImageIndex - 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (selectedImageIndex !== null && selectedImageIndex < screenshots.length - 1) {
+      setSelectedImageIndex(selectedImageIndex + 1);
+    }
+  };
 
   if (screenshots.length === 0) return null;
+
+  const currentScreenshot = selectedImageIndex !== null ? screenshots[selectedImageIndex] : null;
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-200">
@@ -60,7 +92,7 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
           <div
             key={idx}
             className="relative group cursor-pointer"
-            onClick={() => setSelectedImage(screenshot.screenshot_url || null)}
+            onClick={() => setSelectedImageIndex(idx)}
           >
             <img
               src={`http://localhost:8000${screenshot.screenshot_url}`}
@@ -103,20 +135,22 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
         ))}
       </div>
 
-      {/* Lightbox Modal */}
-      {selectedImage && (
+      {/* Lightbox Modal with Slideshow */}
+      {selectedImageIndex !== null && currentScreenshot && (
         <div
-          className="fixed inset-0 z-50 bg-black bg-opacity-90 flex items-center justify-center p-4"
-          onClick={() => setSelectedImage(null)}
+          className="fixed inset-0 z-50 bg-black bg-opacity-90 flex items-center justify-center p-4 group"
+          onClick={() => setSelectedImageIndex(null)}
         >
-          <div className="relative max-w-5xl max-h-full">
+          <div className="relative max-w-5xl max-h-full" onClick={(e) => e.stopPropagation()}>
             <img
-              src={`http://localhost:8000${selectedImage}`}
-              alt="Enlarged screenshot"
+              src={`http://localhost:8000${currentScreenshot.screenshot_url}`}
+              alt={`Screenshot at ${currentScreenshot.start_time}`}
               className="max-w-full max-h-[90vh] object-contain rounded-lg"
             />
+
+            {/* Close Button */}
             <button
-              onClick={() => setSelectedImage(null)}
+              onClick={() => setSelectedImageIndex(null)}
               className="absolute top-2 right-2 w-10 h-10 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all"
               aria-label="Close"
             >
@@ -134,6 +168,73 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
                 />
               </svg>
             </button>
+
+            {/* Image Counter */}
+            <div className="absolute top-2 left-2 px-3 py-1.5 bg-black bg-opacity-60 text-white text-sm font-medium rounded-full backdrop-blur-sm">
+              {selectedImageIndex + 1} of {screenshots.length}
+            </div>
+
+            {/* Previous Button */}
+            {selectedImageIndex > 0 && (
+              <button
+                onClick={handlePrevious}
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-white bg-opacity-20 hover:bg-opacity-40 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all opacity-50 hover:opacity-100"
+                aria-label="Previous image"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2.5}
+                    d="M15 19l-7-7 7-7"
+                  />
+                </svg>
+              </button>
+            )}
+
+            {/* Next Button */}
+            {selectedImageIndex < screenshots.length - 1 && (
+              <button
+                onClick={handleNext}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-white bg-opacity-20 hover:bg-opacity-40 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all opacity-50 hover:opacity-100"
+                aria-label="Next image"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2.5}
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </button>
+            )}
+
+            {/* Timestamp and Speaker Info */}
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-4 py-2 bg-black bg-opacity-60 text-white rounded-lg backdrop-blur-sm">
+              <button
+                onClick={() => onTimestampClick?.(currentScreenshot.start_time)}
+                className="text-sm font-mono font-bold hover:text-purple-300 transition-colors"
+                title="Click to jump to this timestamp"
+              >
+                {currentScreenshot.start_time}
+              </button>
+              {currentScreenshot.likely_speakers && currentScreenshot.likely_speakers.length > 0 && (
+                <p className="text-xs text-white/90 mt-1 text-center">
+                  Likely: {currentScreenshot.likely_speakers.join(", ")}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}

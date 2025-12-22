@@ -246,7 +246,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [selectedProvider, setSelectedProvider] = useState<string>("ollama");
   const [includeVisuals, setIncludeVisuals] = useState(false);
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
-  const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
+  const [screenshotModal, setScreenshotModal] = useState<{ screenshots: string[], currentIndex: number, sources: Source[] } | null>(null);
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -258,6 +258,36 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     keys: (item) => messages.indexOf(item),
     config: { tension: 220, friction: 20 },
   });
+
+  // Screenshot modal keyboard navigation
+  useEffect(() => {
+    if (!screenshotModal) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setScreenshotModal(null);
+      } else if (e.key === "ArrowLeft" && screenshotModal.currentIndex > 0) {
+        setScreenshotModal({ ...screenshotModal, currentIndex: screenshotModal.currentIndex - 1 });
+      } else if (e.key === "ArrowRight" && screenshotModal.currentIndex < screenshotModal.screenshots.length - 1) {
+        setScreenshotModal({ ...screenshotModal, currentIndex: screenshotModal.currentIndex + 1 });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [screenshotModal]);
+
+  const handlePreviousScreenshot = () => {
+    if (screenshotModal && screenshotModal.currentIndex > 0) {
+      setScreenshotModal({ ...screenshotModal, currentIndex: screenshotModal.currentIndex - 1 });
+    }
+  };
+
+  const handleNextScreenshot = () => {
+    if (screenshotModal && screenshotModal.currentIndex < screenshotModal.screenshots.length - 1) {
+      setScreenshotModal({ ...screenshotModal, currentIndex: screenshotModal.currentIndex + 1 });
+    }
+  };
 
   // Load providers on mount
   useEffect(() => {
@@ -344,7 +374,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         provider: selectedProvider,
         n_results: 8, // Increased for more comprehensive context
         include_visuals: includeVisuals,
-        n_images: includeVisuals ? 3 : undefined,
+        n_images: includeVisuals ? 6 : undefined,
         custom_instructions: customInstructions || undefined,
       });
 
@@ -665,9 +695,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               key={idx}
                               onClick={() => {
                                 if (source.screenshot_url) {
-                                  setExpandedScreenshot(
-                                    `http://localhost:8000${source.screenshot_url}`
-                                  );
+                                  const visualSources = message.sources!.filter((s) => s.screenshot_url);
+                                  const screenshots = visualSources.map((s) => `http://localhost:8000${s.screenshot_url}`);
+                                  setScreenshotModal({ screenshots, currentIndex: idx, sources: visualSources });
                                 }
                               }}
                               className="group relative aspect-video bg-white rounded-lg overflow-hidden border-2 border-purple-200 hover:border-purple-400 transition-all hover:shadow-lg cursor-pointer"
@@ -968,28 +998,79 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
       </div>
 
-      {/* Screenshot Modal */}
-      {expandedScreenshot && (
+      {/* Screenshot Modal with Slideshow */}
+      {screenshotModal && (
         <div
           className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
-          onClick={() => setExpandedScreenshot(null)}
+          onClick={() => setScreenshotModal(null)}
         >
-          <div className="relative max-w-6xl max-h-full">
+          <div className="relative max-w-6xl max-h-full" onClick={(e) => e.stopPropagation()}>
+            {/* Close Button */}
             <button
-              onClick={() => setExpandedScreenshot(null)}
-              className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors"
+              onClick={() => setScreenshotModal(null)}
+              className="absolute top-2 right-2 z-10 w-10 h-10 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all"
               aria-label="Close screenshot"
             >
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
+
+            {/* Image Counter */}
+            <div className="absolute top-2 left-2 z-10 px-3 py-1.5 bg-black bg-opacity-60 text-white text-sm font-medium rounded-full backdrop-blur-sm">
+              {screenshotModal.currentIndex + 1} of {screenshotModal.screenshots.length}
+            </div>
+
+            {/* Main Image */}
             <img
-              src={expandedScreenshot}
+              src={screenshotModal.screenshots[screenshotModal.currentIndex]}
               alt="Expanded screenshot"
               className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
             />
+
+            {/* Previous Button */}
+            {screenshotModal.currentIndex > 0 && (
+              <button
+                onClick={handlePreviousScreenshot}
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-white bg-opacity-20 hover:bg-opacity-40 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all opacity-50 hover:opacity-100"
+                aria-label="Previous image"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            )}
+
+            {/* Next Button */}
+            {screenshotModal.currentIndex < screenshotModal.screenshots.length - 1 && (
+              <button
+                onClick={handleNextScreenshot}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-white bg-opacity-20 hover:bg-opacity-40 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-all opacity-50 hover:opacity-100"
+                aria-label="Next image"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+
+            {/* Timestamp and Speaker Info */}
+            {screenshotModal.sources[screenshotModal.currentIndex] && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-4 py-2 bg-black bg-opacity-60 text-white rounded-lg backdrop-blur-sm text-center">
+                <button
+                  onClick={() => onTimestampClick?.(screenshotModal.sources[screenshotModal.currentIndex].start_time)}
+                  className="text-sm font-mono font-bold hover:text-purple-300 transition-colors"
+                  title="Click to jump to this timestamp"
+                >
+                  {screenshotModal.sources[screenshotModal.currentIndex].start_time}
+                </button>
+                {(screenshotModal.sources[screenshotModal.currentIndex] as any).likely_speakers?.length > 0 && (
+                  <p className="text-xs text-white/90 mt-1">
+                    Likely: {(screenshotModal.sources[screenshotModal.currentIndex] as any).likely_speakers.join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

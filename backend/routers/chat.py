@@ -186,7 +186,7 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         provider_name = request.provider
         n_results = request.n_results or 8
         include_visuals = request.include_visuals or False
-        n_images = request.n_images or 3
+        n_images = request.n_images or 6
         custom_instructions = request.custom_instructions
 
         if not question:
