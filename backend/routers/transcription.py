@@ -1183,10 +1183,10 @@ async def transcribe_local(
         transcribe_params = {
             "task": "transcribe",
             "beam_size": 5,  # Improved: Increase from 1 to 5 for better accuracy
-            "vad_filter": True,  # Add Voice Activity Detection for better timing
+            "vad_filter": settings.VAD_ENABLED,  # Add Voice Activity Detection for better timing
             "vad_parameters": dict(
-                min_silence_duration_ms=500,
-                threshold=0.5
+                min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
+                threshold=settings.VAD_THRESHOLD
             )
         }
 
@@ -1517,10 +1517,10 @@ async def transcribe_local_stream(
             transcribe_params = {
                 "task": "transcribe",
                 "beam_size": 5,  # Better accuracy
-                "vad_filter": True,
+                "vad_filter": settings.VAD_ENABLED,
                 "vad_parameters": dict(
-                    min_silence_duration_ms=500,
-                    threshold=0.5
+                    min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
+                    threshold=settings.VAD_THRESHOLD
                 )
             }
 

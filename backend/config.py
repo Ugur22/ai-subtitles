@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     ENABLE_SPEECH_EMOTION: bool = os.getenv("ENABLE_SPEECH_EMOTION", "true").lower() == "true"
     SER_MODEL: str = os.getenv("SER_MODEL", "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition")
 
+    # VAD (Voice Activity Detection) Configuration
+    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
+    VAD_THRESHOLD: float = float(os.getenv("VAD_THRESHOLD", "0.2"))  # Lower = more permissive (default was 0.5, too aggressive)
+    VAD_MIN_SILENCE_DURATION_MS: int = int(os.getenv("VAD_MIN_SILENCE_DURATION_MS", "500"))
+
     class Config:
         case_sensitive = True
         env_file = ".env"
