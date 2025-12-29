@@ -34,7 +34,9 @@ COPY . .
 
 # Create symlinks from app directories to persistent storage
 # This allows the app to use normal paths while data is stored on volumes
-RUN ln -sf /data/static/videos /app/static/videos && \
+# Note: /app/static may not exist if gitignored, so create it first
+RUN mkdir -p /app/static && \
+    ln -sf /data/static/videos /app/static/videos && \
     ln -sf /data/static/screenshots /app/static/screenshots
 
 # Expose port (Railway will override this with PORT env var)
