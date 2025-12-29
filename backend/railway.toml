@@ -1,6 +1,6 @@
 [build]
 # Use custom Dockerfile for Railway
-dockerfilePath = "Dockerfile.railway"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 # Number of instances (1 for hobby plan)
