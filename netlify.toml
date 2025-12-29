@@ -1,0 +1,70 @@
+# Netlify Configuration for ai-subs Frontend
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  # Directory containing the source code
+  base = "frontend"
+
+  # Build command
+  command = "npm ci && npm run build"
+
+  # Directory containing the built files
+  publish = "dist"
+
+# Production context (default branch - usually main/master)
+[context.production]
+  # Environment variables are set in Netlify UI for security
+  # VITE_API_URL should be set to: https://REDACTED_BACKEND_URL
+
+# Deploy preview context (pull requests)
+[context.deploy-preview]
+  command = "npm ci && npm run build"
+
+# Branch deploy context
+[context.branch-deploy]
+  command = "npm ci && npm run build"
+
+# SPA Routing - Redirect all requests to index.html
+# This ensures client-side routing works (even though current app doesn't use it)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Cache static assets aggressively
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Cache fonts
+[[headers]]
+  for = "*.woff2"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Don't cache HTML (ensures users get latest version)
+[[headers]]
+  for = "*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Service worker and manifest shouldn't be cached
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
