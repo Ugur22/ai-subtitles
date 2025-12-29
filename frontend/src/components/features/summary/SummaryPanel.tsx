@@ -114,10 +114,11 @@ export const SummaryPanel = ({
   isVisible,
   onSeekTo,
   summaries,
-  setSummaries,
+  setSummaries: _setSummaries,
   loading,
   generateSummaries,
 }: SummaryPanelProps) => {
+  // Note: _setSummaries is passed for future use but currently unused
   const [expandedSection, setExpandedSection] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
