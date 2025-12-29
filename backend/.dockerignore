@@ -1,0 +1,67 @@
+# Docker ignore file for Railway deployment
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Local data (will use Railway volumes instead)
+*.db
+transcriptions.db
+chroma_db/
+static/videos/*
+static/screenshots/*
+
+# Keep the static directory structure
+!static/
+!static/.gitkeep
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Local development files
+docker-compose*.yml
+Makefile

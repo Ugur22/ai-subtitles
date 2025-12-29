@@ -44,13 +44,14 @@ class Settings(BaseSettings):
     # File Upload Configuration
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024 * 1024  # 10GB
 
-    # Directory Configuration
-    VIDEOS_DIR: str = os.path.join("static", "videos")
-    SCREENSHOTS_DIR: str = os.path.join("static", "screenshots")
-    STATIC_DIR: str = "static"
+    # Directory Configuration - Support Railway persistent volumes via env vars
+    # Railway mounts volumes to /data, local dev uses relative paths
+    VIDEOS_DIR: str = os.getenv("VIDEOS_DIR", os.path.join("static", "videos"))
+    SCREENSHOTS_DIR: str = os.getenv("SCREENSHOTS_DIR", os.path.join("static", "screenshots"))
+    STATIC_DIR: str = os.getenv("STATIC_DIR", "static")
 
-    # Database Configuration
-    DATABASE_PATH: str = "transcriptions.db"
+    # Database Configuration - Support Railway persistent volumes
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "transcriptions.db")
 
     # Whisper Model Configuration
     FASTWHISPER_MODEL: str = os.getenv("FASTWHISPER_MODEL", "small")
