@@ -413,8 +413,15 @@ def get_audio_duration(file_path: str) -> float:
     """Wrapper for AudioService.get_audio_duration"""
     return AudioService.get_audio_duration(file_path)
 
-# Get local whisper model instance
-local_whisper_model = get_whisper_model()
+# Lazy-loaded whisper model instance (loaded on first use, not at startup)
+_whisper_model_instance = None
+
+def get_local_whisper_model():
+    """Get the whisper model, loading it lazily on first use."""
+    global _whisper_model_instance
+    if _whisper_model_instance is None:
+        _whisper_model_instance = get_whisper_model()
+    return _whisper_model_instance
 
 
 def fix_segment_durations(segments: List[Dict], max_duration_per_word: float = 2.0,
@@ -731,7 +738,7 @@ async def transcribe_video(
                     with open(chunk_path, "rb") as chunk_file:
                         print(f"Calling Whisper API for chunk {i+1}...")
                         # Always use task="transcribe" to get original language text
-                        segments, info = local_whisper_model.transcribe(
+                        segments, info = get_local_whisper_model().transcribe(
                             chunk_path,
                             task="transcribe",
                             language=language if language else None,
@@ -1195,7 +1202,7 @@ async def transcribe_local(
             transcribe_params["language"] = language
             print(f"[INFO] Using specified language: {language}")
 
-        segments, info = local_whisper_model.transcribe(
+        segments, info = get_local_whisper_model().transcribe(
             transcribe_input,
             **transcribe_params
         )
@@ -1529,7 +1536,7 @@ async def transcribe_local_stream(
                 transcribe_params["language"] = language
                 print(f"[INFO] Stream: Using specified language: {language}")
 
-            segments, info = local_whisper_model.transcribe(
+            segments, info = get_local_whisper_model().transcribe(
                 temp_wav_path,
                 **transcribe_params
             )
