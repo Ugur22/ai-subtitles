@@ -1,0 +1,46 @@
+# Railway-optimized requirements
+# Heavy ML dependencies (PyTorch, Whisper, Pyannote, PANNs) are disabled
+# These will run on Modal for GPU acceleration
+
+# Core FastAPI
+fastapi==0.104.1
+python-multipart==0.0.6
+uvicorn==0.24.0
+python-dotenv==1.0.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# HTTP client
+httpx>=0.24.1
+openai==1.12.0
+
+# Video processing (FFmpeg-based, lightweight)
+moviepy==1.0.3
+
+# Progress bars and utilities
+tqdm==4.66.1
+
+# NLP
+nltk>=3.9.1,<4.0.0
+
+# LLM providers
+groq==0.4.2
+
+# Vector store for RAG
+sentence-transformers==2.2.2
+chromadb==0.4.22
+
+# Audio utilities (lightweight)
+scipy>=1.11.0
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# NumPy (required by many packages)
+numpy==1.26.4
+
+# NOTE: The following are EXCLUDED for Railway deployment:
+# - torch, torchaudio (large, need GPU)
+# - pyannote.audio (speaker diarization - use Modal)
+# - faster-whisper (transcription - use Modal)
+# - panns-inference (audio analysis - use Modal)
+# - transformers (large - only needed for on-device ML)
