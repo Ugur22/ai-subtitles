@@ -126,7 +126,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
               }`}
             >
               {processingStatus?.stage === "uploading" ? (
-                <FaSpinner className="animate-spin" size={14} />
+                <span className="animate-spin"><FaSpinner size={14} /></span>
               ) : (
                 <svg
                   className="w-4 h-4"
@@ -171,7 +171,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
               }`}
             >
               {processingStatus?.stage === "extracting" ? (
-                <FaSpinner className="animate-spin" size={14} />
+                <span className="animate-spin"><FaSpinner size={14} /></span>
               ) : processingStatus?.stage &&
                 ["transcribing", "translating", "complete"].includes(
                   processingStatus.stage
@@ -223,7 +223,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
               }`}
             >
               {processingStatus?.stage === "transcribing" ? (
-                <FaSpinner className="animate-spin" size={14} />
+                <span className="animate-spin"><FaSpinner size={14} /></span>
               ) : processingStatus?.stage === "complete" ? (
                 <svg
                   className="w-4 h-4"
@@ -261,9 +261,9 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
         {/* Main Message */}
         <div className="mb-6">
           <div className="flex items-center justify-center gap-3 mb-3">
-            <div className="animate-spin">
-              <FaSpinner size={24} className="text-indigo-600" />
-            </div>
+            <span className="animate-spin text-indigo-600">
+              <FaSpinner size={24} />
+            </span>
             <h3 className="text-lg font-bold text-gray-900">
               {processingStatus?.stage && getMainMessage(processingStatus.stage)}
             </h3>

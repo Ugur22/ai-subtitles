@@ -1,7 +1,6 @@
 import React from "react";
 import { match } from "ts-pattern";
 import { SavedTranscriptionsPanel } from "./SavedTranscriptionsPanel";
-import { formatProcessingTime } from "../../../utils/time";
 
 interface ProcessingStatus {
   stage:
@@ -61,11 +60,12 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     handleSavedTranscriptionsClick,
     handleTranscriptionLoaded,
     openImageModal,
-    isNewTranscription,
-    processingStatus,
-    elapsedTime,
+    isNewTranscription: _isNewTranscription,
+    processingStatus: _processingStatus,
+    elapsedTime: _elapsedTime,
     languageOptions,
   }) => {
+    // Note: _isNewTranscription, _processingStatus, _elapsedTime are available for future use
     // Helper functions using ts-pattern for cleaner conditional logic
     const getFileIcon = (fileType: string) =>
       match(fileType)
@@ -108,29 +108,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             />
           </svg>
         ));
-
-    const getProcessingMessage = (stage: ProcessingStatus["stage"]) =>
-      match(stage)
-        .with("extracting", () => "Extracting audio...")
-        .with("transcribing", () => "Transcribing audio...")
-        .otherwise(() => "Processing...");
-
-    const getProcessingStep = (stage: ProcessingStatus["stage"]) =>
-      match(stage)
-        .with("extracting", () => "Step 1 of 3")
-        .with("transcribing", () => "Step 2 of 3")
-        .with("complete", () => "Step 3 of 3")
-        .otherwise(() => "Processing");
-
-    const getProcessingDescription = (stage: ProcessingStatus["stage"]) =>
-      match(stage)
-        .with(
-          "extracting",
-          () =>
-            "Extracting audio from video file. This may take several minutes depending on file size..."
-        )
-        .with("transcribing", () => "Converting speech to text...")
-        .otherwise(() => "Processing your file...");
 
     return (
       <div className="mx-auto max-w-5xl">

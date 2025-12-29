@@ -48,7 +48,7 @@ export const SavedTranscriptionsPanel = ({
   const handleLoadTranscription = async (hash: string) => {
     try {
       setLoadingTranscription(true);
-      const transcriptionData = await loadSavedTranscription(hash);
+      await loadSavedTranscription(hash);
       setLoadingTranscription(false);
 
       // Reset any cached data in react-query
