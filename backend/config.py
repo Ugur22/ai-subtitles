@@ -2,7 +2,8 @@
 Configuration management using Pydantic Settings
 """
 import os
-from typing import Optional
+import json
+from typing import Optional, List
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -19,7 +20,26 @@ class Settings(BaseSettings):
     API_DESCRIPTION: str = "API for video transcription with Whisper, speaker diarization, and LLM features"
 
     # CORS Configuration
-    CORS_ORIGINS: list = ["http://localhost:5173"]
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        """
+        Load CORS origins from environment variable.
+        Expects a JSON array string, e.g., CORS_ORIGINS='["https://myapp.vercel.app","https://app.example.com"]'
+        Defaults to localhost for development if not set.
+        """
+        cors_env = os.getenv("CORS_ORIGINS")
+        if cors_env:
+            try:
+                origins = json.loads(cors_env)
+                if isinstance(origins, list):
+                    return origins
+                else:
+                    print(f"Warning: CORS_ORIGINS is not a list, using default")
+                    return ["http://localhost:5173"]
+            except json.JSONDecodeError as e:
+                print(f"Warning: Failed to parse CORS_ORIGINS as JSON: {e}, using default")
+                return ["http://localhost:5173"]
+        return ["http://localhost:5173"]
 
     # File Upload Configuration
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024 * 1024  # 10GB

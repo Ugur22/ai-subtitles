@@ -6,6 +6,7 @@ import {
   enrollSpeaker,
   autoIdentifySpeakers,
 } from "../../../services/api";
+import { API_BASE_URL } from "../../../config";
 import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
@@ -427,13 +428,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       if (videoHash) {
         // Load a specific saved transcription
         const response = await axios.get(
-          `http://localhost:8000/transcription/${videoHash}`
+          `${API_BASE_URL}/transcription/${videoHash}`
         );
         data = response.data;
       } else {
         // Load the current transcription
         const response = await axios.get(
-          "http://localhost:8000/current_transcription/"
+          `${API_BASE_URL}/current_transcription/`
         );
         data = response.data;
       }
@@ -445,7 +446,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       setShowSavedTranscriptions(false);
       setSummaries([]);
       if (data.video_hash) {
-        const videoPath = `http://localhost:8000/video/${data.video_hash}`;
+        const videoPath = `${API_BASE_URL}/video/${data.video_hash}`;
         setVideoUrl(videoPath);
       } else if (data.file_path) {
         const pathParts = data.file_path.split("/");
@@ -453,7 +454,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         const hashMatch = fileName.match(/^([a-f0-9]+)\./i);
         if (hashMatch && hashMatch[1]) {
           const extractedHash = hashMatch[1];
-          const videoPath = `http://localhost:8000/video/${extractedHash}`;
+          const videoPath = `${API_BASE_URL}/video/${extractedHash}`;
           setVideoUrl(videoPath);
         } else {
           setError("Could not load video: Missing video identifier");
@@ -984,7 +985,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               }
                             }
                             return closest && closest.screenshot_url
-                              ? `http://localhost:8000${closest.screenshot_url}`
+                              ? `${API_BASE_URL}${closest.screenshot_url}`
                               : null;
                           }}
                           onSeek={(time: number) => {

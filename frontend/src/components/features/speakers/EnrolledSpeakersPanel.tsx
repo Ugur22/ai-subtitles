@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../../../config";
 
 interface Speaker {
   name: string;
@@ -21,7 +22,7 @@ export const EnrolledSpeakersPanel: React.FC<EnrolledSpeakersPanelProps> = ({
   const fetchSpeakers = async () => {
     setLoading(true);
     try {
-      const response = await axios.get("http://localhost:8000/api/speaker/list");
+      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`);
       setSpeakers(response.data.speakers || []);
     } catch (error) {
       console.error("Error fetching speakers:", error);
@@ -42,7 +43,7 @@ export const EnrolledSpeakersPanel: React.FC<EnrolledSpeakersPanelProps> = ({
     }
 
     try {
-      await axios.delete(`http://localhost:8000/api/speaker/${speakerName}`);
+      await axios.delete(`${API_BASE_URL}/api/speaker/${speakerName}`);
       await fetchSpeakers();
       onSpeakerDeleted?.();
     } catch (error) {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { useSpring, animated, config, useTransition } from "react-spring";
+import { API_BASE_URL } from "../../../config";
 
 interface SummarySection {
   title: string;
@@ -162,7 +163,7 @@ export const SummaryPanel = ({
     }
 
     // Otherwise, prepend the API server URL
-    return `http://localhost:8000${url}`;
+    return `${API_BASE_URL}${url}`;
   };
 
   const openImageModal = (imageUrl: string | undefined) => {
