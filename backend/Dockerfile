@@ -22,12 +22,11 @@ RUN mkdir -p /data/static/videos \
     /data/db
 
 # Copy requirements first to leverage Docker cache
-# Use Railway-optimized requirements (without heavy ML dependencies)
-COPY requirements-railway.txt .
+COPY requirements.txt .
 
 # Install Python dependencies
 # Use --no-cache-dir to reduce image size
-RUN pip install --no-cache-dir -r requirements-railway.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
