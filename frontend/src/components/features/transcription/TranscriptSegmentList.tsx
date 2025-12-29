@@ -1,5 +1,6 @@
 import React from "react";
 import { useSpring, animated } from "react-spring";
+import { API_BASE_URL } from "../../../config";
 
 interface Segment {
   id: string;
@@ -147,7 +148,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                       className={segment.is_silent ? "w-full" : "flex-shrink-0"}
                     >
                       <img
-                        src={`http://localhost:8000${segment.screenshot_url}`}
+                        src={`${API_BASE_URL}${segment.screenshot_url}`}
                         alt={`Screenshot at ${segment.start_time}`}
                         className={`object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-105   cursor-pointer border ${
                           segment.is_silent
@@ -157,7 +158,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                         onClick={(e) => {
                           e.stopPropagation();
                           openImageModal(
-                            `http://localhost:8000${segment.screenshot_url}`
+                            `${API_BASE_URL}${segment.screenshot_url}`
                           );
                         }}
                       />

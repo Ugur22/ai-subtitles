@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { API_BASE_URL } from '../config';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -195,7 +196,7 @@ export const transcribeLocalStream = async (
   }
 
   return new Promise((resolve, reject) => {
-    fetch('http://localhost:8000/transcribe_local_stream/', {
+    fetch(`${API_BASE_URL}/transcribe_local_stream/`, {
       method: 'POST',
       body: formData,
     })

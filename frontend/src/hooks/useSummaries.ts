@@ -6,6 +6,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { timeToSeconds } from "../utils/time";
+import { API_BASE_URL } from "../config";
 import type { TranscriptionResponse } from "../services/api";
 
 interface SummarySection {
@@ -32,7 +33,7 @@ export const useSummaries = (options: UseSummariesOptions) => {
     try {
       // Get the current transcription data
       const response = await axios.get(
-        "http://localhost:8000/current_transcription/"
+        `${API_BASE_URL}/current_transcription/`
       );
 
       if (response.status !== 200) {
@@ -103,7 +104,7 @@ export const useSummaries = (options: UseSummariesOptions) => {
     try {
       console.log("Generating summaries...");
       const response = await axios.post(
-        "http://localhost:8000/generate_summary/"
+        `${API_BASE_URL}/generate_summary/`
       );
 
       const summaryData = response.data.summaries || [];

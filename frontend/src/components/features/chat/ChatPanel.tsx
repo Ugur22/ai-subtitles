@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 import { useTransition, animated } from "react-spring";
+import { API_BASE_URL } from "../../../config";
 
 interface Source {
   start_time: string;
@@ -309,7 +310,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const loadProviders = async () => {
     try {
       const response = await axios.get(
-        "http://localhost:8000/api/llm/providers"
+        `${API_BASE_URL}/api/llm/providers`
       );
       setProviders(response.data.providers);
 
@@ -331,13 +332,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setIndexingStatus("Indexing video for chat...");
     try {
       // Index text transcription
-      await axios.post("http://localhost:8000/api/index_video/", null, {
+      await axios.post(`${API_BASE_URL}/api/index_video/`, null, {
         params: { video_hash: videoHash },
       });
 
       // Index images for visual search
       try {
-        await axios.post("http://localhost:8000/api/index_images/", null, {
+        await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
           params: { video_hash: videoHash },
         });
         setIndexingStatus("Video and images indexed successfully!");
@@ -368,7 +369,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setLoading(true);
 
     try {
-      const response = await axios.post("http://localhost:8000/api/chat/", {
+      const response = await axios.post(`${API_BASE_URL}/api/chat/`, {
         question: textToSend,
         video_hash: videoHash,
         provider: selectedProvider,
@@ -696,14 +697,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               onClick={() => {
                                 if (source.screenshot_url) {
                                   const visualSources = message.sources!.filter((s) => s.screenshot_url);
-                                  const screenshots = visualSources.map((s) => `http://localhost:8000${s.screenshot_url}`);
+                                  const screenshots = visualSources.map((s) => `${API_BASE_URL}${s.screenshot_url}`);
                                   setScreenshotModal({ screenshots, currentIndex: idx, sources: visualSources });
                                 }
                               }}
                               className="group relative aspect-video bg-white rounded-lg overflow-hidden border-2 border-purple-200 hover:border-purple-400 transition-all hover:shadow-lg cursor-pointer"
                             >
                               <img
-                                src={`http://localhost:8000${source.screenshot_url}`}
+                                src={`${API_BASE_URL}${source.screenshot_url}`}
                                 alt={`Screenshot at ${source.start_time}`}
                                 className="w-full h-full object-cover"
                                 onError={(e) => {
