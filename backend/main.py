@@ -33,7 +33,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription
+from routers import video, chat, speaker, transcription, upload
 
 # Import LLM and vector store modules (optional)
 try:
@@ -81,6 +81,17 @@ async def startup_event():
     print(f"- Videos directory: {settings.VIDEOS_DIR}")
     print(f"- Screenshots directory: {settings.SCREENSHOTS_DIR}")
 
+    # Clean up old GCS uploads if enabled
+    if settings.ENABLE_GCS_UPLOADS:
+        try:
+            from services.gcs_service import gcs_service
+            deleted = gcs_service.cleanup_old_uploads(max_age_hours=24)
+            print(f"- GCS uploads enabled (bucket: {settings.GCS_BUCKET_NAME})")
+            if deleted > 0:
+                print(f"- Cleaned up {deleted} old GCS uploads")
+        except Exception as e:
+            print(f"- GCS cleanup failed (non-critical): {e}")
+
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
@@ -116,6 +127,7 @@ app.include_router(transcription.router)
 app.include_router(speaker.router)
 app.include_router(chat.router)
 app.include_router(video.router)
+app.include_router(upload.router)
 
 
 # Health check endpoint

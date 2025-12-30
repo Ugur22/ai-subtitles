@@ -6,12 +6,13 @@
 import { useState, useRef, useEffect } from "react";
 import { match, P } from "ts-pattern";
 import {
-  transcribeLocalStream,
+  transcribeSmartStream,
   type TranscriptionResponse,
 } from "../services/api";
 
 type ProcessingStage =
   | "uploading"
+  | "downloading"  // GCS download stage
   | "transcribing"
   | "translating"
   | "extracting"
@@ -92,10 +93,13 @@ export const useTranscription = () => {
       // Use ts-pattern for type-safe transcription method selection
       const result = await match(transcriptionMethod)
         .with("local", async () => {
-          // Use streaming version with real-time progress
-          const data = await transcribeLocalStream(
+          // Use smart streaming that handles both small and large files
+          // - Small files (<32MB): Direct upload
+          // - Large files (>=32MB): Upload to GCS first, then process
+          const data = await transcribeSmartStream(
             file,
-            (stage, progress) => {
+            (stage, progress, message) => {
+              console.log(`[Transcription] ${stage}: ${progress}% - ${message || ''}`);
               setProcessingStatus({
                 stage: stage as ProcessingStage,
                 progress: progress,

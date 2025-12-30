@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://REDACTED_FRONTEND_URL", "http://localhost:5173"],
+    "method": ["PUT", "POST", "GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Content-Length", "x-goog-resumable"],
+    "maxAgeSeconds": 3600
+  }
+]
