@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     VAD_THRESHOLD: float = float(os.getenv("VAD_THRESHOLD", "0.2"))  # Lower = more permissive (default was 0.5, too aggressive)
     VAD_MIN_SILENCE_DURATION_MS: int = int(os.getenv("VAD_MIN_SILENCE_DURATION_MS", "500"))
 
+    # GCS Upload Configuration
+    ENABLE_GCS_UPLOADS: bool = os.getenv("ENABLE_GCS_UPLOADS", "false").lower() == "true"
+    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "ai-subs-uploads")
+    GCS_UPLOAD_PREFIX: str = os.getenv("GCS_UPLOAD_PREFIX", "uploads/")
+    GCS_PROCESSED_PREFIX: str = os.getenv("GCS_PROCESSED_PREFIX", "processed/")
+    GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
+    GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "86400"))  # 24 hours for playback
+
     class Config:
         case_sensitive = True
         env_file = ".env"

@@ -1743,3 +1743,331 @@ async def transcribe_local_stream(
             yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': str(e)})}\n\n"
 
     return StreamingResponse(generate_progress(), media_type="text/event-stream")
+
+
+@router.post("/transcribe_gcs_stream/")
+async def transcribe_gcs_stream(
+    request: Request,
+    gcs_path: str = Form(...),
+    filename: str = Form(...),
+    num_speakers: int = Form(None),
+    min_speakers: int = Form(None),
+    max_speakers: int = Form(None),
+    language: str = Form(None),
+    force_language: bool = Form(False)
+):
+    """
+    Transcribe a video file uploaded to GCS with real-time progress updates.
+
+    This endpoint is used for large files (>32MB) that were uploaded directly
+    to GCS to bypass Cloud Run's request size limit.
+
+    Args:
+        gcs_path: Path to the file in GCS (e.g., "uploads/uuid_video.mp4")
+        filename: Original filename for display
+        language: Optional language code (e.g., 'es', 'it', 'en')
+        force_language: If True, override Whisper's detection with provided language
+    """
+    from services.gcs_service import gcs_service
+
+    async def generate_progress():
+        temp_path = None
+        temp_wav_path = None
+
+        try:
+            # Progress helper
+            def emit(stage: str, progress: int, message: str = ""):
+                return f"data: {json.dumps({'stage': stage, 'progress': progress, 'message': message})}\n\n"
+
+            yield emit("downloading", 5, "Verifying file in cloud storage...")
+
+            # Verify file exists in GCS
+            if not gcs_service.file_exists(gcs_path):
+                yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': 'File not found in cloud storage'})}\n\n"
+                return
+
+            file_size = gcs_service.get_file_size(gcs_path)
+            size_mb = file_size / (1024 * 1024)
+            yield emit("downloading", 10, f"Downloading {size_mb:.1f} MB from cloud...")
+
+            # Download from GCS to temp file
+            suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".mp4"
+            temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
+
+            yield emit("downloading", 25, "Download complete")
+
+            # Generate hash and check cache
+            video_hash = generate_file_hash(temp_path)
+            existing_transcription = get_transcription(video_hash)
+
+            if existing_transcription:
+                segments_count = len(existing_transcription.get('transcription', {}).get('segments', []))
+                if segments_count > 0:
+                    print(f"Found cached transcription with {segments_count} segments")
+                    # Move file to processed folder
+                    gcs_service.move_to_processed(gcs_path)
+                    yield emit("complete", 100, "Loaded from cache")
+                    yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': existing_transcription})}\n\n"
+                    return
+
+            # Save permanent copy locally
+            permanent_storage_dir = os.path.join("static", "videos")
+            os.makedirs(permanent_storage_dir, exist_ok=True)
+            permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
+            if not os.path.exists(permanent_file_path):
+                shutil.copy2(temp_path, permanent_file_path)
+
+            # Get duration
+            duration = 0.0
+            try:
+                duration = get_audio_duration(temp_path)
+                duration_str = str(timedelta(seconds=int(duration)))
+            except Exception as e:
+                duration_str = "Unknown"
+
+            # Determine max_speakers
+            computed_max_speakers = max_speakers
+            if computed_max_speakers is None and num_speakers is None:
+                computed_max_speakers = 5 if duration < 300 else 20
+
+            yield emit("extracting", 30, "Converting audio to WAV format...")
+
+            # Convert to WAV
+            wav_suffix = ".wav"
+            with tempfile.NamedTemporaryFile(suffix=wav_suffix, delete=False) as wav_tmp:
+                temp_wav_path = wav_tmp.name
+
+            command = [
+                'ffmpeg', '-i', temp_path,
+                '-vn', '-ac', '1', '-ar', '16000',
+                temp_wav_path, '-y'
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+
+            yield emit("transcribing", 40, "Starting AI transcription...")
+
+            start_time = time.time()
+
+            # Build transcription parameters
+            transcribe_params = {
+                "task": "transcribe",
+                "beam_size": 5,
+                "vad_filter": settings.VAD_ENABLED,
+                "vad_parameters": dict(
+                    min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
+                    threshold=settings.VAD_THRESHOLD
+                )
+            }
+
+            if language:
+                transcribe_params["language"] = language
+                print(f"[INFO] GCS Stream: Using specified language: {language}")
+
+            segments, info = get_local_whisper_model().transcribe(
+                temp_wav_path,
+                **transcribe_params
+            )
+
+            yield emit("transcribing", 55, "Processing transcription segments...")
+
+            segments_list = list(segments)
+            detected_language = info.language
+            print(f"[INFO] GCS Stream: Whisper detected language: {detected_language}")
+
+            # Validate and potentially override detected language
+            if language and not force_language:
+                if detected_language != language:
+                    print(f"[WARNING] GCS Stream: Language mismatch! Specified: {language}, Detected: {detected_language}")
+                    detected_language = language
+            elif force_language and language:
+                print(f"[INFO] GCS Stream: Force override - using: {language}")
+                detected_language = language
+
+            formatted_segments = []
+            total_segments = len(segments_list)
+            for i, seg in enumerate(segments_list):
+                formatted_segments.append({
+                    "id": str(uuid.uuid4()),
+                    "start": seg.start,
+                    "end": seg.end,
+                    "start_time": format_timestamp(seg.start),
+                    "end_time": format_timestamp(seg.end),
+                    "text": seg.text,
+                    "translation": None,
+                })
+
+                if i % 10 == 0:
+                    segment_progress = 55 + int((i / total_segments) * 10)
+                    yield emit("transcribing", segment_progress, f"Processed {i}/{total_segments} segments...")
+
+            processing_time = time.time() - start_time
+
+            yield emit("transcribing", 65, "Fixing segment durations...")
+            formatted_segments = fix_segment_durations(formatted_segments)
+
+            yield emit("transcribing", 68, "Translating if needed...")
+
+            # Language code normalization
+            language_code_map = {
+                'spanish': 'es', 'español': 'es', 'es': 'es',
+                'italian': 'it', 'italiano': 'it', 'it': 'it',
+                'french': 'fr', 'français': 'fr', 'fr': 'fr',
+                'german': 'de', 'deutsch': 'de', 'de': 'de',
+                'portuguese': 'pt', 'português': 'pt', 'pt': 'pt',
+                'russian': 'ru', 'русский': 'ru', 'ru': 'ru',
+                'chinese': 'zh', 'zh': 'zh',
+                'japanese': 'ja', 'ja': 'ja',
+                'korean': 'ko', 'ko': 'ko',
+                'english': 'en', 'en': 'en'
+            }
+
+            normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
+            should_translate = normalized_lang not in ['en', 'english']
+
+            if should_translate:
+                try:
+                    formatted_segments = translate_segments(formatted_segments, normalized_lang)
+                    translated_count = sum(1 for s in formatted_segments if s.get('translation'))
+                    print(f"[SUCCESS] GCS Stream: Translated {translated_count}/{len(formatted_segments)} segments")
+                except Exception as e:
+                    print(f"[ERROR] GCS Stream: Translation failed: {str(e)}")
+                    for segment in formatted_segments:
+                        segment['translation'] = f"[Translation Error: {normalized_lang}->en]"
+                        segment['translation_error'] = str(e)
+            else:
+                for segment in formatted_segments:
+                    segment['translation'] = segment['text']
+
+            yield emit("extracting", 72, "Extracting video screenshots...")
+
+            # Extract screenshots
+            screenshots_dir = os.path.join("static", "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+            screenshot_count = 0
+
+            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                for idx, segment in enumerate(formatted_segments):
+                    screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
+                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+
+                    success = extract_screenshot(temp_path, segment['start'], screenshot_path)
+                    if success and os.path.exists(screenshot_path):
+                        segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
+                        screenshot_count += 1
+                    else:
+                        segment["screenshot_url"] = None
+
+                    if idx % 5 == 0:
+                        screenshot_progress = 72 + int((idx / len(formatted_segments)) * 8)
+                        yield emit("extracting", screenshot_progress, f"Screenshots: {idx}/{len(formatted_segments)}")
+
+            yield emit("transcribing", 82, "Identifying speakers...")
+
+            # Speaker diarization
+            try:
+                formatted_segments = add_speaker_labels(
+                    audio_path=temp_path,
+                    segments=formatted_segments,
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=computed_max_speakers
+                )
+            except Exception as e:
+                print(f"Speaker diarization failed: {str(e)}")
+                for seg in formatted_segments:
+                    if 'speaker' not in seg:
+                        seg['speaker'] = "SPEAKER_00"
+
+            # Audio analysis
+            if settings.ENABLE_AUDIO_ANALYSIS:
+                try:
+                    yield emit("transcribing", 86, "Analyzing audio events and emotions...")
+
+                    formatted_segments = AudioAnalysisService.analyze_segments(
+                        audio_path=temp_wav_path,
+                        segments=formatted_segments,
+                        video_hash=video_hash
+                    )
+
+                    formatted_segments = AudioAnalysisService.analyze_silent_segments(
+                        audio_path=temp_wav_path,
+                        segments=formatted_segments
+                    )
+
+                    try:
+                        from vector_store import vector_store
+                        vector_store.index_audio_events(video_hash, formatted_segments)
+                    except Exception as idx_e:
+                        print(f"Audio indexing failed (non-critical): {str(idx_e)}")
+
+                except Exception as e:
+                    print(f"Audio analysis failed (non-critical): {str(e)}")
+
+            # Gap detection
+            if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                yield emit("extracting", 90, "Detecting timeline gaps...")
+                formatted_segments = create_silent_segments_for_gaps(
+                    segments=formatted_segments,
+                    video_path=temp_path,
+                    video_hash=video_hash,
+                    min_gap_duration=2.0
+                )
+
+            yield emit("complete", 95, "Finalizing transcription...")
+
+            # Build result
+            result = {
+                "filename": filename,
+                "video_hash": video_hash,
+                "transcription": {
+                    "text": "".join([seg.text for seg in segments_list]),
+                    "language": info.language,
+                    "duration": duration_str,
+                    "segments": formatted_segments,
+                    "processing_time": format_eta(int(processing_time))
+                },
+                "gcs_path": gcs_path,  # Include GCS path for reference
+            }
+
+            # Store transcription
+            store_transcription(video_hash, filename, result, permanent_file_path)
+            dependencies._last_transcription_data = result
+            request.app.state.last_transcription = result
+            result["video_url"] = f"/video/{video_hash}"
+
+            # Move file to processed folder in GCS
+            try:
+                new_gcs_path = gcs_service.move_to_processed(gcs_path)
+                result["gcs_path"] = new_gcs_path
+            except Exception as e:
+                print(f"[GCS] Failed to move to processed: {e}")
+
+            # Clean up temp files
+            try:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                if temp_wav_path and os.path.exists(temp_wav_path):
+                    os.unlink(temp_wav_path)
+            except Exception as e:
+                print(f"Error cleaning up: {e}")
+
+            yield emit("complete", 100, "Transcription complete!")
+            yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': result})}\n\n"
+
+        except Exception as e:
+            print(f"Error in GCS streaming transcription: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Clean up on error
+            try:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                if temp_wav_path and os.path.exists(temp_wav_path):
+                    os.unlink(temp_wav_path)
+            except:
+                pass
+
+            yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate_progress(), media_type="text/event-stream")

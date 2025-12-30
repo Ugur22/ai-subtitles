@@ -367,4 +367,158 @@ export const updateSpeakerName = async (
     new_speaker_name: newSpeakerName,
   });
   return response.data;
-}; 
+};
+
+// ============================================================================
+// GCS Upload & Large File Support
+// ============================================================================
+
+import { uploadToGCS, requiresGCSUpload, DIRECT_UPLOAD_LIMIT, formatFileSize } from './gcsUpload';
+
+/**
+ * Transcribe a file from GCS with real-time progress updates via SSE.
+ * Used for large files (>32MB) that were uploaded directly to GCS.
+ */
+export const transcribeGCSStream = async (
+  gcsPath: string,
+  filename: string,
+  onProgress: (stage: string, progress: number, message?: string) => void,
+  language?: string,
+  forceLanguage: boolean = false
+): Promise<TranscriptionResponse> => {
+  const formData = new FormData();
+  formData.append('gcs_path', gcsPath);
+  formData.append('filename', filename);
+
+  if (language) {
+    formData.append('language', language);
+    formData.append('force_language', forceLanguage.toString());
+    console.log(`API: Sending GCS stream transcription with language: ${language}, force: ${forceLanguage}`);
+  } else {
+    console.log('API: Sending GCS stream transcription with auto-detect language');
+  }
+
+  return new Promise((resolve, reject) => {
+    fetch(`${API_BASE_URL}/transcribe_gcs_stream/`, {
+      method: 'POST',
+      body: formData,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (!reader) {
+          throw new Error('No response body');
+        }
+
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete SSE messages
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+
+                // Call progress callback
+                onProgress(data.stage, data.progress, data.message);
+
+                // If we got the final result
+                if (data.result) {
+                  resolve(data.result);
+                  return;
+                }
+
+                // If there was an error
+                if (data.error) {
+                  reject(new Error(data.error));
+                  return;
+                }
+              } catch (e) {
+                console.warn('Failed to parse SSE data:', line);
+              }
+            }
+          }
+        }
+      })
+      .catch((error) => {
+        reject(error);
+      });
+  });
+};
+
+/**
+ * Smart transcription that automatically handles both small and large files.
+ *
+ * - Files < 32MB: Direct upload via transcribeLocalStream
+ * - Files >= 32MB: Upload to GCS first, then process via transcribeGCSStream
+ *
+ * Progress is unified:
+ * - 0-50%: Uploading (for large files via GCS)
+ * - 50-100%: Processing (transcription, screenshots, etc.)
+ */
+export const transcribeSmartStream = async (
+  file: File,
+  onProgress: (stage: string, progress: number, message?: string) => void,
+  language?: string,
+  forceLanguage: boolean = false
+): Promise<TranscriptionResponse> => {
+  const fileSize = file.size;
+  const fileSizeFormatted = formatFileSize(fileSize);
+
+  console.log(`[Smart] File size: ${fileSizeFormatted}, requires GCS: ${requiresGCSUpload(fileSize)}`);
+
+  if (requiresGCSUpload(fileSize)) {
+    // Large file: Upload to GCS first, then process
+    console.log(`[Smart] Large file detected (${fileSizeFormatted}), using GCS upload`);
+
+    onProgress('uploading', 0, `Preparing to upload ${fileSizeFormatted}...`);
+
+    // Upload to GCS with progress tracking (0-50%)
+    const gcsPath = await uploadToGCS(file, (loaded, total, percentage) => {
+      // Map GCS upload progress to 0-50%
+      const mappedProgress = Math.round(percentage * 0.5);
+      const loadedFormatted = formatFileSize(loaded);
+      const totalFormatted = formatFileSize(total);
+      onProgress('uploading', mappedProgress, `Uploading ${loadedFormatted} / ${totalFormatted}`);
+    });
+
+    console.log(`[Smart] GCS upload complete: ${gcsPath}`);
+    onProgress('uploading', 50, 'Upload complete, starting transcription...');
+
+    // Process via GCS stream endpoint (50-100%)
+    return transcribeGCSStream(
+      gcsPath,
+      file.name,
+      (stage, progress, message) => {
+        // Map backend progress (0-100) to 50-100%
+        const mappedProgress = 50 + Math.round(progress * 0.5);
+        onProgress(stage, mappedProgress, message);
+      },
+      language,
+      forceLanguage
+    );
+  } else {
+    // Small file: Direct upload
+    console.log(`[Smart] Small file (${fileSizeFormatted}), using direct upload`);
+    return transcribeLocalStream(file, onProgress, language, forceLanguage);
+  }
+};
+
+/**
+ * Get the maximum file size that can be uploaded directly (without GCS)
+ */
+export const getDirectUploadLimit = (): number => DIRECT_UPLOAD_LIMIT; 
