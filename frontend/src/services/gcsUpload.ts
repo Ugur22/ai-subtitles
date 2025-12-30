@@ -68,6 +68,12 @@ export async function getSignedUploadUrl(
  *
  * This bypasses the backend entirely, uploading directly to Google Cloud Storage.
  * Progress is tracked via XMLHttpRequest for accurate percentage reporting.
+ *
+ * For files >= 100MB, uses resumable upload protocol (two-step):
+ * 1. POST to signed URL with x-goog-resumable: start -> returns session URI
+ * 2. PUT file data to session URI
+ *
+ * For files < 100MB, uses simple PUT upload.
  */
 export async function uploadToGCS(
   file: File,
@@ -80,12 +86,33 @@ export async function uploadToGCS(
     file.size
   );
 
+  const contentType = file.type || 'video/mp4';
   console.log(`[GCS] Starting ${method} upload to: ${gcs_path}`);
 
+  // For resumable uploads (method === "POST"), we need to:
+  // 1. First initiate the resumable session to get a session URI
+  // 2. Then upload the file to that session URI
+  if (method === 'POST') {
+    return uploadResumable(file, upload_url, gcs_path, contentType, onProgress);
+  }
+
+  // Simple PUT upload for smaller files
+  return uploadSimple(file, upload_url, gcs_path, contentType, onProgress);
+}
+
+/**
+ * Simple PUT upload for files < 100MB
+ */
+async function uploadSimple(
+  file: File,
+  uploadUrl: string,
+  gcsPath: string,
+  contentType: string,
+  onProgress?: (loaded: number, total: number, percentage: number) => void
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
-    // Track upload progress
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable && onProgress) {
         const percentage = Math.round((event.loaded / event.total) * 100);
@@ -96,11 +123,11 @@ export async function uploadToGCS(
 
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        console.log(`[GCS] Upload complete: ${gcs_path}`);
-        resolve(gcs_path);
+        console.log(`[GCS] Upload complete: ${gcsPath}`);
+        resolve(gcsPath);
       } else {
-        console.error(`[GCS] Upload failed with status: ${xhr.status}`);
-        reject(new Error(`Upload failed with status ${xhr.status}`));
+        console.error(`[GCS] Upload failed with status: ${xhr.status}`, xhr.responseText);
+        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.responseText}`));
       }
     });
 
@@ -114,8 +141,92 @@ export async function uploadToGCS(
       reject(new Error('Upload was aborted'));
     });
 
-    xhr.open(method, upload_url);
-    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.send(file);
+  });
+}
+
+/**
+ * Resumable upload for large files (>= 100MB)
+ *
+ * GCS Resumable Upload Protocol:
+ * Step 1: POST to signed URL with "x-goog-resumable: start" header
+ *         -> GCS returns 200 OK with "Location" header containing session URI
+ * Step 2: PUT file data to the session URI
+ *         -> GCS returns 200 OK when complete
+ */
+async function uploadResumable(
+  file: File,
+  initiationUrl: string,
+  gcsPath: string,
+  contentType: string,
+  onProgress?: (loaded: number, total: number, percentage: number) => void
+): Promise<string> {
+  // Step 1: Initiate resumable upload session
+  console.log('[GCS] Initiating resumable upload session...');
+
+  const initResponse = await fetch(initiationUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': contentType,
+      'x-goog-resumable': 'start',
+      'Content-Length': '0',
+    },
+  });
+
+  if (!initResponse.ok) {
+    const errorText = await initResponse.text();
+    console.error(`[GCS] Failed to initiate resumable upload: ${initResponse.status}`, errorText);
+    throw new Error(`Failed to initiate resumable upload: ${initResponse.status} ${errorText}`);
+  }
+
+  // Get the session URI from the Location header
+  const sessionUri = initResponse.headers.get('Location');
+  if (!sessionUri) {
+    console.error('[GCS] No Location header in resumable upload response');
+    throw new Error('No session URI returned from GCS');
+  }
+
+  console.log(`[GCS] Got session URI, uploading ${formatFileSize(file.size)}...`);
+
+  // Step 2: Upload the file to the session URI
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && onProgress) {
+        const percentage = Math.round((event.loaded / event.total) * 100);
+        onProgress(event.loaded, event.total, percentage);
+        if (percentage % 10 === 0) {
+          console.log(`[GCS] Resumable upload progress: ${percentage}%`);
+        }
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        console.log(`[GCS] Resumable upload complete: ${gcsPath}`);
+        resolve(gcsPath);
+      } else {
+        console.error(`[GCS] Resumable upload failed with status: ${xhr.status}`, xhr.responseText);
+        reject(new Error(`Resumable upload failed with status ${xhr.status}: ${xhr.responseText}`));
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      console.error('[GCS] Resumable upload network error');
+      reject(new Error('Resumable upload failed due to network error'));
+    });
+
+    xhr.addEventListener('abort', () => {
+      console.warn('[GCS] Resumable upload aborted');
+      reject(new Error('Resumable upload was aborted'));
+    });
+
+    // PUT the file to the session URI (NOT the original signed URL)
+    xhr.open('PUT', sessionUri);
+    xhr.setRequestHeader('Content-Type', contentType);
     xhr.send(file);
   });
 }
