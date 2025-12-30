@@ -479,7 +479,8 @@ def fix_segment_durations(segments: List[Dict], max_duration_per_word: float = 2
 
 def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video_hash: str,
                                      min_gap_duration: float = 2.0,
-                                     silent_chunk_duration: float = 10.0) -> List[Dict]:
+                                     silent_chunk_duration: float = 10.0,
+                                     source_url: str = None) -> List[Dict]:
     """
     Detect timeline gaps between speech segments and create silent segments with screenshots.
 
@@ -488,10 +489,11 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
 
     Args:
         segments: List of existing speech segments (sorted by start time)
-        video_path: Path to video file for screenshot extraction
+        video_path: Path to video file for screenshot extraction (can be None if source_url provided)
         video_hash: Hash of the video for screenshot filename generation
         min_gap_duration: Minimum gap duration (in seconds) to create a silent segment
         silent_chunk_duration: Duration of each silent segment chunk (default: 10 seconds)
+        source_url: Optional URL to stream video from (for GCS streaming, avoids downloading full video)
 
     Returns:
         List of segments including both original and new silent segments, sorted by start time
@@ -540,8 +542,16 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
                     screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
                     screenshot_url = None
 
-                    # Only extract screenshot if it's a video file
-                    if video_path and os.path.exists(video_path):
+                    # Extract screenshot - prefer URL streaming if available (no full download needed)
+                    if source_url:
+                        # Use URL-based extraction (efficient HTTP Range requests)
+                        success = VideoService.extract_screenshot_from_url(source_url, chunk_midpoint, screenshot_path)
+                        if success and os.path.exists(screenshot_path):
+                            screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                        else:
+                            print(f"    Chunk {chunk_idx + 1}/{num_chunks}: URL screenshot extraction failed at {chunk_midpoint:.2f}s")
+                    elif video_path and os.path.exists(video_path):
+                        # Fallback to file-based extraction
                         success = extract_screenshot(video_path, chunk_midpoint, screenshot_path)
                         if success and os.path.exists(screenshot_path):
                             screenshot_url = f"/static/screenshots/{screenshot_filename}"
@@ -1979,34 +1989,43 @@ async def transcribe_gcs_stream(
                 for segment in formatted_segments:
                     segment['translation'] = segment['text']
 
-            yield emit("extracting", 72, "Extracting video screenshots...")
+            yield emit("extracting", 72, "Extracting video screenshots (streaming from cloud)...")
 
-            # Extract screenshots - need to download video for this
+            # Extract screenshots directly from GCS URL (no full video download!)
+            # This uses FFmpeg's HTTP Range requests to only download needed keyframes
             screenshots_dir = os.path.join("static", "screenshots")
             os.makedirs(screenshots_dir, exist_ok=True)
             screenshot_count = 0
 
             if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
-                # Download video file for screenshot extraction
-                if temp_path is None:
-                    yield emit("extracting", 73, "Downloading video for screenshots...")
-                    temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
-                    print(f"[GCS Stream] Downloaded video for screenshots: {temp_path}")
+                yield emit("extracting", 73, "Streaming screenshots from cloud...")
 
+                # Collect all timestamps to extract
+                timestamps = [segment['start'] for segment in formatted_segments]
+                print(f"[GCS Stream] Extracting {len(timestamps)} screenshots via URL streaming...")
+
+                # Extract screenshots directly from GCS URL (no download!)
+                # Uses parallel workers with HTTP Range requests for efficiency
+                screenshot_results = VideoService.extract_screenshots_parallel_from_url(
+                    source_url=read_url,  # Reuse the signed URL from audio extraction
+                    timestamps=timestamps,
+                    output_dir=screenshots_dir,
+                    video_hash=video_hash,
+                    max_workers=4  # Limit parallel connections to control memory
+                )
+
+                # Map results back to segments
                 for idx, segment in enumerate(formatted_segments):
-                    screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
-                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-
-                    success = extract_screenshot(temp_path, segment['start'], screenshot_path)
-                    if success and os.path.exists(screenshot_path):
+                    ts = segment['start']
+                    screenshot_path = screenshot_results.get(ts)
+                    if screenshot_path and os.path.exists(screenshot_path):
+                        screenshot_filename = os.path.basename(screenshot_path)
                         segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
                         screenshot_count += 1
                     else:
                         segment["screenshot_url"] = None
 
-                    if idx % 5 == 0:
-                        screenshot_progress = 73 + int((idx / len(formatted_segments)) * 7)
-                        yield emit("extracting", screenshot_progress, f"Screenshots: {idx}/{len(formatted_segments)}")
+                print(f"[GCS Stream] Extracted {screenshot_count}/{len(formatted_segments)} screenshots via streaming")
 
             yield emit("transcribing", 82, "Identifying speakers...")
 
@@ -2062,22 +2081,19 @@ async def transcribe_gcs_stream(
                 except Exception as e:
                     print(f"Audio analysis failed (non-critical): {str(e)}")
 
-            # Gap detection - need video file for screenshot extraction in gaps
+            # Gap detection - use URL streaming for screenshots (no full download needed!)
             if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
-                yield emit("extracting", 90, "Detecting timeline gaps...")
+                yield emit("extracting", 90, "Detecting timeline gaps (streaming)...")
 
-                # Download video if not already downloaded
-                if temp_path is None:
-                    yield emit("extracting", 91, "Downloading video for gap detection...")
-                    temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
-                    print(f"[GCS Stream] Downloaded video for gap detection: {temp_path}")
-
+                # Use URL-based gap detection - no video download needed!
                 formatted_segments = create_silent_segments_for_gaps(
                     segments=formatted_segments,
-                    video_path=temp_path,
+                    video_path=None,  # No local file needed
                     video_hash=video_hash,
-                    min_gap_duration=2.0
+                    min_gap_duration=2.0,
+                    source_url=read_url  # Stream screenshots from GCS URL
                 )
+                print(f"[GCS Stream] Gap detection completed using URL streaming")
 
             yield emit("complete", 95, "Finalizing transcription...")
 
@@ -2095,20 +2111,33 @@ async def transcribe_gcs_stream(
                 "gcs_path": gcs_path,  # Include GCS path for reference
             }
 
-            # Save permanent copy of video if we downloaded it
+            # Note: We no longer download the full video to save memory
+            # Video playback can be streamed directly from GCS
             permanent_storage_dir = os.path.join("static", "videos")
             os.makedirs(permanent_storage_dir, exist_ok=True)
             permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
 
-            if temp_path and not os.path.exists(permanent_file_path):
+            # Only copy if we happened to download the video (shouldn't happen with streaming)
+            if temp_path and os.path.exists(temp_path) and not os.path.exists(permanent_file_path):
                 shutil.copy2(temp_path, permanent_file_path)
                 print(f"[GCS Stream] Saved permanent copy: {permanent_file_path}")
+            elif not os.path.exists(permanent_file_path):
+                # No local copy - video will be served from GCS
+                permanent_file_path = None
+                print(f"[GCS Stream] No local video copy - will stream from GCS")
 
-            # Store transcription
-            store_transcription(video_hash, filename, result, permanent_file_path)
+            # Store transcription (permanent_file_path can be None)
+            store_transcription(video_hash, filename, result, permanent_file_path or gcs_path)
             dependencies._last_transcription_data = result
             request.app.state.last_transcription = result
-            result["video_url"] = f"/video/{video_hash}"
+
+            # For video URL, prefer local if available, otherwise provide GCS path for streaming
+            if permanent_file_path and os.path.exists(permanent_file_path):
+                result["video_url"] = f"/video/{video_hash}"
+            else:
+                # Video will be streamed from GCS - frontend needs to handle this
+                result["video_url"] = f"/video/{video_hash}"  # Backend will proxy from GCS
+                result["gcs_video_url"] = gcs_path  # Also provide GCS path as fallback
 
             # Move file to processed folder in GCS
             try:
