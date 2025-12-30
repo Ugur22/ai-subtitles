@@ -1788,16 +1788,16 @@ async def transcribe_gcs_stream(
 
             file_size = gcs_service.get_file_size(gcs_path)
             size_mb = file_size / (1024 * 1024)
-            yield emit("downloading", 10, f"Downloading {size_mb:.1f} MB from cloud...")
+            yield emit("downloading", 10, f"Verifying cache for {size_mb:.1f} MB video...")
 
-            # Download from GCS to temp file
             suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".mp4"
-            temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
 
-            yield emit("downloading", 25, "Download complete")
+            # For caching, we use the GCS path as a unique identifier to avoid downloading
+            # just for hash generation. This is safe because GCS paths include UUIDs.
+            # Format: hash the gcs_path itself to create a stable video_hash
+            import hashlib
+            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
 
-            # Generate hash and check cache
-            video_hash = generate_file_hash(temp_path)
             existing_transcription = get_transcription(video_hash)
 
             if existing_transcription:
@@ -1810,41 +1810,55 @@ async def transcribe_gcs_stream(
                     yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': existing_transcription})}\n\n"
                     return
 
-            # Save permanent copy locally
-            permanent_storage_dir = os.path.join("static", "videos")
-            os.makedirs(permanent_storage_dir, exist_ok=True)
-            permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
-            if not os.path.exists(permanent_file_path):
-                shutil.copy2(temp_path, permanent_file_path)
+            yield emit("extracting", 15, "Streaming audio extraction from cloud...")
 
-            # Get duration
-            duration = 0.0
+            # Generate signed URL for streaming
+            read_url = gcs_service.generate_download_signed_url(gcs_path)
+            print(f"[GCS Stream] Generated read URL for streaming: {gcs_path}")
+
+            # Create temp directory for audio chunks
+            temp_dir = tempfile.mkdtemp()
+            print(f"[GCS Stream] Created temp directory for audio chunks: {temp_dir}")
+
+            # Extract audio directly from streaming URL (no full download!)
             try:
-                duration = get_audio_duration(temp_path)
-                duration_str = str(timedelta(seconds=int(duration)))
+                audio_chunks = AudioService.extract_audio_streaming(
+                    source_url=read_url,
+                    output_dir=temp_dir,
+                    segment_duration=300  # 5-minute segments
+                )
+                print(f"[GCS Stream] Extracted {len(audio_chunks)} audio chunks via streaming")
             except Exception as e:
-                duration_str = "Unknown"
+                print(f"[GCS Stream] Streaming audio extraction failed: {e}")
+                raise Exception(f"Failed to extract audio from streaming URL: {str(e)}")
+
+            yield emit("extracting", 25, f"Extracted {len(audio_chunks)} audio segments")
+
+            # For screenshot extraction and video playback, we need to download the video
+            # But we defer this until after transcription if needed
+            temp_path = None
+            permanent_file_path = None
+
+            # Get duration from first audio chunk (or probe the URL)
+            duration = 0.0
+            duration_str = "Unknown"
+            try:
+                if audio_chunks:
+                    # Sum up duration from all chunks
+                    for chunk_path in audio_chunks:
+                        chunk_duration = get_audio_duration(chunk_path)
+                        duration += chunk_duration
+                    duration_str = str(timedelta(seconds=int(duration)))
+                    print(f"[GCS Stream] Total audio duration: {duration_str}")
+            except Exception as e:
+                print(f"[GCS Stream] Could not determine duration: {e}")
 
             # Determine max_speakers
             computed_max_speakers = max_speakers
             if computed_max_speakers is None and num_speakers is None:
                 computed_max_speakers = 5 if duration < 300 else 20
 
-            yield emit("extracting", 30, "Converting audio to WAV format...")
-
-            # Convert to WAV
-            wav_suffix = ".wav"
-            with tempfile.NamedTemporaryFile(suffix=wav_suffix, delete=False) as wav_tmp:
-                temp_wav_path = wav_tmp.name
-
-            command = [
-                'ffmpeg', '-i', temp_path,
-                '-vn', '-ac', '1', '-ar', '16000',
-                temp_wav_path, '-y'
-            ]
-            subprocess.run(command, check=True, capture_output=True)
-
-            yield emit("transcribing", 40, "Starting AI transcription...")
+            yield emit("transcribing", 30, "Processing audio chunks for transcription...")
 
             start_time = time.time()
 
@@ -1863,16 +1877,43 @@ async def transcribe_gcs_stream(
                 transcribe_params["language"] = language
                 print(f"[INFO] GCS Stream: Using specified language: {language}")
 
-            segments, info = get_local_whisper_model().transcribe(
-                temp_wav_path,
-                **transcribe_params
-            )
+            # Transcribe each audio chunk and combine results
+            all_segments = []
+            detected_language = None
+            chunk_duration_seconds = 300  # Must match segment_duration above
+
+            total_chunks = len(audio_chunks)
+            for i, chunk_path in enumerate(audio_chunks):
+                progress = 30 + int((i / total_chunks) * 25)  # 30-55% progress
+                yield emit("transcribing", progress, f"Transcribing chunk {i+1}/{total_chunks}...")
+
+                print(f"[GCS Stream] Transcribing chunk {i+1}/{total_chunks}: {chunk_path}")
+
+                segments, info = get_local_whisper_model().transcribe(
+                    chunk_path,
+                    **transcribe_params
+                )
+
+                chunk_segments = list(segments)
+
+                # Use language from first chunk
+                if detected_language is None:
+                    detected_language = info.language
+                    print(f"[INFO] GCS Stream: Whisper detected language: {detected_language}")
+
+                # Adjust segment times based on chunk offset
+                chunk_offset = i * chunk_duration_seconds
+                for seg in chunk_segments:
+                    # Adjust segment times to be relative to the full video
+                    seg.start += chunk_offset
+                    seg.end += chunk_offset
+
+                all_segments.extend(chunk_segments)
 
             yield emit("transcribing", 55, "Processing transcription segments...")
 
-            segments_list = list(segments)
-            detected_language = info.language
-            print(f"[INFO] GCS Stream: Whisper detected language: {detected_language}")
+            segments_list = all_segments
+            print(f"[GCS Stream] Combined {len(segments_list)} segments from {total_chunks} chunks")
 
             # Validate and potentially override detected language
             if language and not force_language:
@@ -1940,12 +1981,18 @@ async def transcribe_gcs_stream(
 
             yield emit("extracting", 72, "Extracting video screenshots...")
 
-            # Extract screenshots
+            # Extract screenshots - need to download video for this
             screenshots_dir = os.path.join("static", "screenshots")
             os.makedirs(screenshots_dir, exist_ok=True)
             screenshot_count = 0
 
             if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                # Download video file for screenshot extraction
+                if temp_path is None:
+                    yield emit("extracting", 73, "Downloading video for screenshots...")
+                    temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
+                    print(f"[GCS Stream] Downloaded video for screenshots: {temp_path}")
+
                 for idx, segment in enumerate(formatted_segments):
                     screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
                     screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
@@ -1958,41 +2005,53 @@ async def transcribe_gcs_stream(
                         segment["screenshot_url"] = None
 
                     if idx % 5 == 0:
-                        screenshot_progress = 72 + int((idx / len(formatted_segments)) * 8)
+                        screenshot_progress = 73 + int((idx / len(formatted_segments)) * 7)
                         yield emit("extracting", screenshot_progress, f"Screenshots: {idx}/{len(formatted_segments)}")
 
             yield emit("transcribing", 82, "Identifying speakers...")
 
-            # Speaker diarization
+            # Speaker diarization - use first audio chunk for diarization
             try:
-                formatted_segments = add_speaker_labels(
-                    audio_path=temp_path,
-                    segments=formatted_segments,
-                    num_speakers=num_speakers,
-                    min_speakers=min_speakers,
-                    max_speakers=computed_max_speakers
-                )
+                # Use the first audio chunk for speaker diarization
+                diarization_audio = audio_chunks[0] if audio_chunks else None
+                if diarization_audio:
+                    formatted_segments = add_speaker_labels(
+                        audio_path=diarization_audio,
+                        segments=formatted_segments,
+                        num_speakers=num_speakers,
+                        min_speakers=min_speakers,
+                        max_speakers=computed_max_speakers
+                    )
+                else:
+                    print("[GCS Stream] No audio chunks available for speaker diarization")
+                    for seg in formatted_segments:
+                        if 'speaker' not in seg:
+                            seg['speaker'] = "SPEAKER_00"
             except Exception as e:
                 print(f"Speaker diarization failed: {str(e)}")
                 for seg in formatted_segments:
                     if 'speaker' not in seg:
                         seg['speaker'] = "SPEAKER_00"
 
-            # Audio analysis
+            # Audio analysis - use first audio chunk
             if settings.ENABLE_AUDIO_ANALYSIS:
                 try:
                     yield emit("transcribing", 86, "Analyzing audio events and emotions...")
 
-                    formatted_segments = AudioAnalysisService.analyze_segments(
-                        audio_path=temp_wav_path,
-                        segments=formatted_segments,
-                        video_hash=video_hash
-                    )
+                    analysis_audio = audio_chunks[0] if audio_chunks else None
+                    if analysis_audio:
+                        formatted_segments = AudioAnalysisService.analyze_segments(
+                            audio_path=analysis_audio,
+                            segments=formatted_segments,
+                            video_hash=video_hash
+                        )
 
-                    formatted_segments = AudioAnalysisService.analyze_silent_segments(
-                        audio_path=temp_wav_path,
-                        segments=formatted_segments
-                    )
+                        formatted_segments = AudioAnalysisService.analyze_silent_segments(
+                            audio_path=analysis_audio,
+                            segments=formatted_segments
+                        )
+                    else:
+                        print("[GCS Stream] No audio chunks available for audio analysis")
 
                     try:
                         from vector_store import vector_store
@@ -2003,9 +2062,16 @@ async def transcribe_gcs_stream(
                 except Exception as e:
                     print(f"Audio analysis failed (non-critical): {str(e)}")
 
-            # Gap detection
+            # Gap detection - need video file for screenshot extraction in gaps
             if suffix.lower() in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
                 yield emit("extracting", 90, "Detecting timeline gaps...")
+
+                # Download video if not already downloaded
+                if temp_path is None:
+                    yield emit("extracting", 91, "Downloading video for gap detection...")
+                    temp_path = gcs_service.download_to_temp(gcs_path, suffix=suffix)
+                    print(f"[GCS Stream] Downloaded video for gap detection: {temp_path}")
+
                 formatted_segments = create_silent_segments_for_gaps(
                     segments=formatted_segments,
                     video_path=temp_path,
@@ -2021,13 +2087,22 @@ async def transcribe_gcs_stream(
                 "video_hash": video_hash,
                 "transcription": {
                     "text": "".join([seg.text for seg in segments_list]),
-                    "language": info.language,
+                    "language": detected_language or "unknown",
                     "duration": duration_str,
                     "segments": formatted_segments,
                     "processing_time": format_eta(int(processing_time))
                 },
                 "gcs_path": gcs_path,  # Include GCS path for reference
             }
+
+            # Save permanent copy of video if we downloaded it
+            permanent_storage_dir = os.path.join("static", "videos")
+            os.makedirs(permanent_storage_dir, exist_ok=True)
+            permanent_file_path = os.path.join(permanent_storage_dir, f"{video_hash}{suffix}")
+
+            if temp_path and not os.path.exists(permanent_file_path):
+                shutil.copy2(temp_path, permanent_file_path)
+                print(f"[GCS Stream] Saved permanent copy: {permanent_file_path}")
 
             # Store transcription
             store_transcription(video_hash, filename, result, permanent_file_path)
@@ -2044,10 +2119,15 @@ async def transcribe_gcs_stream(
 
             # Clean up temp files
             try:
+                # Clean up temp directory with audio chunks
+                if temp_dir and os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    print(f"[GCS Stream] Cleaned up temp directory: {temp_dir}")
+
+                # Clean up downloaded video if it exists
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
-                if temp_wav_path and os.path.exists(temp_wav_path):
-                    os.unlink(temp_wav_path)
+                    print(f"[GCS Stream] Cleaned up temp video: {temp_path}")
             except Exception as e:
                 print(f"Error cleaning up: {e}")
 
@@ -2061,12 +2141,17 @@ async def transcribe_gcs_stream(
 
             # Clean up on error
             try:
-                if temp_path and os.path.exists(temp_path):
+                # Clean up temp directory with audio chunks
+                if 'temp_dir' in locals() and temp_dir and os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    print(f"[GCS Stream] Cleaned up temp directory on error: {temp_dir}")
+
+                # Clean up downloaded video if it exists
+                if 'temp_path' in locals() and temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
-                if temp_wav_path and os.path.exists(temp_wav_path):
-                    os.unlink(temp_wav_path)
-            except:
-                pass
+                    print(f"[GCS Stream] Cleaned up temp video on error: {temp_path}")
+            except Exception as cleanup_error:
+                print(f"Error during cleanup: {cleanup_error}")
 
             yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': str(e)})}\n\n"
 
