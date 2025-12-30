@@ -3,7 +3,7 @@ import { FaSpinner } from "react-icons/fa";
 import { match } from "ts-pattern";
 
 interface ProcessingStatus {
-  stage: "uploading" | "extracting" | "transcribing" | "translating" | "complete";
+  stage: "uploading" | "downloading" | "extracting" | "transcribing" | "translating" | "complete";
   progress: number;
 }
 
@@ -28,6 +28,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
   const getMainMessage = (stage: ProcessingStatus["stage"]) =>
     match(stage)
       .with("uploading", () => "Uploading your file...")
+      .with("downloading", () => "Downloading from cloud...")
       .with("extracting", () => "Preparing audio...")
       .with("transcribing", () => "AI is transcribing...")
       .with("translating", () => "Translating content...")
@@ -36,7 +37,8 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
 
   const getDescription = (stage: ProcessingStatus["stage"]) =>
     match(stage)
-      .with("uploading", () => "Sending your file to our servers")
+      .with("uploading", () => "Sending your file to cloud storage")
+      .with("downloading", () => "Server is downloading the file for processing")
       .with("extracting", () => "Extracting and optimizing audio for processing")
       .with("transcribing", () =>
         videoRef
@@ -54,7 +56,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
     stepStage: "uploading" | "extracting" | "transcribing",
     currentStage: ProcessingStatus["stage"]
   ) => {
-    const stageOrder = ["uploading", "extracting", "transcribing", "translating", "complete"];
+    const stageOrder = ["uploading", "downloading", "extracting", "transcribing", "translating", "complete"];
     const currentIndex = stageOrder.indexOf(currentStage);
     const stepIndex = stageOrder.indexOf(stepStage);
 

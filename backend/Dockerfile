@@ -1,5 +1,5 @@
-# Railway-optimized Dockerfile for FastAPI Backend
-# Optimized for smaller image size and Railway persistent volumes
+# Railway/Cloud Run optimized Dockerfile for FastAPI Backend
+# Includes pre-downloaded translation models for production reliability
 
 # Use Python 3.9 slim image as base
 FROM python:3.9-slim
@@ -7,19 +7,23 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
+# Set HuggingFace cache directory (persists models in image)
+ENV HF_HOME=/app/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+
 # Install system dependencies including FFmpeg
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
-
 # Create directories for persistent data
 # Railway will mount volumes to these paths
 RUN mkdir -p /data/static/videos \
     /data/static/screenshots \
     /data/chroma_db \
-    /data/db
+    /data/db \
+    /app/.cache/huggingface
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
@@ -27,6 +31,12 @@ COPY requirements.txt .
 # Install Python dependencies
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download MarianMT translation models during build
+# This prevents runtime download failures in Cloud Run/Railway
+# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic
+COPY download_models.py /tmp/download_models.py
+RUN python /tmp/download_models.py && rm /tmp/download_models.py
 
 # Copy the rest of the application
 COPY . .

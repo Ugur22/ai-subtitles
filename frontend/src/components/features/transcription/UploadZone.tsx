@@ -5,6 +5,7 @@ import { SavedTranscriptionsPanel } from "./SavedTranscriptionsPanel";
 interface ProcessingStatus {
   stage:
     | "uploading"
+    | "downloading"
     | "extracting"
     | "transcribing"
     | "translating"
