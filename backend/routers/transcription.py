@@ -2002,17 +2002,38 @@ async def transcribe_gcs_stream(
 
                 # Collect all timestamps to extract
                 timestamps = [segment['start'] for segment in formatted_segments]
-                print(f"[GCS Stream] Extracting {len(timestamps)} screenshots via URL streaming...")
+                total_screenshots = len(timestamps)
+                print(f"[GCS Stream] Extracting {total_screenshots} screenshots via URL streaming...", flush=True)
 
-                # Extract screenshots directly from GCS URL (no download!)
-                # Uses parallel workers with HTTP Range requests for efficiency
-                screenshot_results = VideoService.extract_screenshots_parallel_from_url(
-                    source_url=read_url,  # Reuse the signed URL from audio extraction
-                    timestamps=timestamps,
-                    output_dir=screenshots_dir,
-                    video_hash=video_hash,
-                    max_workers=4  # Limit parallel connections to control memory
-                )
+                # Process in smaller batches to maintain SSE heartbeat
+                # Without heartbeats, the connection times out after ~60-100s
+                BATCH_SIZE = 16  # Process 16 at a time, yield progress after each batch
+                screenshot_results = {}
+
+                for batch_start in range(0, total_screenshots, BATCH_SIZE):
+                    batch_end = min(batch_start + BATCH_SIZE, total_screenshots)
+                    batch_timestamps = timestamps[batch_start:batch_end]
+
+                    try:
+                        batch_results = VideoService.extract_screenshots_parallel_from_url(
+                            source_url=read_url,  # Reuse the signed URL from audio extraction
+                            timestamps=batch_timestamps,
+                            output_dir=screenshots_dir,
+                            video_hash=video_hash,
+                            max_workers=4  # Limit parallel connections to control memory
+                        )
+                        screenshot_results.update(batch_results)
+                    except Exception as e:
+                        print(f"[GCS Stream] Screenshot batch {batch_start}-{batch_end} failed: {e}", flush=True)
+                        # Mark failed timestamps as None
+                        for ts in batch_timestamps:
+                            screenshot_results[ts] = None
+
+                    # Send heartbeat every batch to keep SSE connection alive
+                    progress = 73 + int((batch_end / total_screenshots) * 7)  # 73-80% range
+                    success_so_far = sum(1 for v in screenshot_results.values() if v is not None)
+                    yield emit("extracting", progress, f"Screenshots: {batch_end}/{total_screenshots} ({success_so_far} ok)")
+                    print(f"[GCS Stream] Screenshot progress: {batch_end}/{total_screenshots}", flush=True)
 
                 # Map results back to segments
                 for idx, segment in enumerate(formatted_segments):
@@ -2025,7 +2046,7 @@ async def transcribe_gcs_stream(
                     else:
                         segment["screenshot_url"] = None
 
-                print(f"[GCS Stream] Extracted {screenshot_count}/{len(formatted_segments)} screenshots via streaming")
+                print(f"[GCS Stream] Extracted {screenshot_count}/{total_screenshots} screenshots via streaming", flush=True)
 
             yield emit("transcribing", 82, "Identifying speakers...")
 
