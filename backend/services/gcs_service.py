@@ -29,22 +29,34 @@ class GCSService:
         if cls._credentials is None:
             cls._credentials, project = default()
 
-            # Get service account email
-            if hasattr(cls._credentials, 'service_account_email'):
-                cls._service_account_email = cls._credentials.service_account_email
-            else:
-                # Fetch from metadata server (Cloud Run)
-                try:
-                    import requests
-                    response = requests.get(
-                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
-                        headers={"Metadata-Flavor": "Google"},
-                        timeout=5
-                    )
-                    cls._service_account_email = response.text
-                except Exception as e:
-                    print(f"[GCS] Warning: Could not get service account email: {e}")
-                    cls._service_account_email = None
+            # Get service account email - always fetch from metadata server on Cloud Run
+            # because compute_engine.Credentials.service_account_email returns "default"
+            cls._service_account_email = None
+
+            # First try metadata server (works on Cloud Run)
+            try:
+                import requests
+                response = requests.get(
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                    headers={"Metadata-Flavor": "Google"},
+                    timeout=5
+                )
+                if response.status_code == 200 and "@" in response.text:
+                    cls._service_account_email = response.text.strip()
+                    print(f"[GCS] Got service account email from metadata: {cls._service_account_email}")
+            except Exception as e:
+                print(f"[GCS] Metadata server not available: {e}")
+
+            # Fall back to credentials attribute (works with service account key files)
+            if cls._service_account_email is None:
+                if hasattr(cls._credentials, 'service_account_email'):
+                    email = cls._credentials.service_account_email
+                    if email and "@" in email:
+                        cls._service_account_email = email
+                        print(f"[GCS] Got service account email from credentials: {email}")
+
+            if cls._service_account_email is None:
+                print("[GCS] WARNING: Could not determine service account email!")
 
         # Refresh credentials if needed
         if not cls._credentials.valid:
