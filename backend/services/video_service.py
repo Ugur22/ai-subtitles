@@ -159,7 +159,7 @@ class VideoService:
                     results[ts] = None
 
         success_count = sum(1 for v in results.values() if v is not None)
-        print(f"[URL Screenshots] Extracted {success_count}/{len(timestamps)} screenshots")
+        print(f"[URL Screenshots] Extracted {success_count}/{len(timestamps)} screenshots", flush=True)
 
         return results
 
