@@ -15,6 +15,109 @@ class AudioService:
     """Service for audio extraction and processing operations"""
 
     @staticmethod
+    def extract_audio_streaming(source_url: str, output_dir: str, segment_duration: int = 300) -> List[str]:
+        """
+        Extract audio directly from a URL using FFmpeg streaming without downloading the full video.
+
+        This method uses FFmpeg's native HTTP streaming capabilities to extract audio directly
+        from a remote URL (e.g., GCS signed URL) without downloading the entire video file first.
+        This significantly reduces memory usage and improves performance for large videos.
+
+        Args:
+            source_url: HTTP(S) URL to the video file (e.g., GCS signed URL)
+            output_dir: Directory where audio segments will be saved
+            segment_duration: Duration of each audio segment in seconds (default: 300 = 5 minutes)
+
+        Returns:
+            List of paths to the created audio segment files
+
+        Raises:
+            Exception: If FFmpeg is not available or extraction fails
+
+        Notes:
+            - Uses -vn flag to skip video decoding (critical for memory savings)
+            - Outputs WAV segments with pcm_s16le codec, 16000 Hz, mono
+            - Segments are numbered sequentially (e.g., audio_000.wav, audio_001.wav)
+        """
+        try:
+            # Check if ffmpeg is available
+            if not shutil.which('ffmpeg'):
+                raise Exception("ffmpeg is not installed. Please install ffmpeg first.")
+
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Generate output file pattern
+            output_pattern = os.path.join(output_dir, "audio_%03d.wav")
+
+            print(f"Starting streaming audio extraction from URL...")
+            print(f"Source: {source_url[:100]}...")  # Log first 100 chars of URL
+            print(f"Output directory: {output_dir}")
+            print(f"Segment duration: {segment_duration} seconds")
+
+            # Build FFmpeg command for streaming extraction with segmentation
+            # -vn: Skip video decoding (critical for memory savings)
+            # -acodec pcm_s16le: 16-bit PCM audio (uncompressed, good for transcription)
+            # -ar 16000: 16kHz sample rate (standard for speech recognition)
+            # -ac 1: Mono channel (reduces size, sufficient for transcription)
+            # -f segment: Enable segmentation
+            # -segment_time: Duration of each segment
+            # -reset_timestamps 1: Reset timestamps for each segment
+            command = [
+                'ffmpeg',
+                '-i', source_url,           # Input from URL
+                '-vn',                       # Skip video decoding
+                '-acodec', 'pcm_s16le',     # PCM 16-bit little-endian
+                '-ar', '16000',              # 16kHz sample rate
+                '-ac', '1',                  # Mono channel
+                '-f', 'segment',             # Use segmenter
+                '-segment_time', str(segment_duration),  # Segment duration
+                '-reset_timestamps', '1',    # Reset timestamps for each segment
+                output_pattern,              # Output file pattern
+                '-y'                         # Overwrite if exists
+            ]
+
+            # Run FFmpeg command
+            print(f"Running FFmpeg command: {' '.join(command[:3])}...")  # Log command without full URL
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # Log FFmpeg output for debugging
+            if result.stderr:
+                print(f"FFmpeg output: {result.stderr[-500:]}")  # Log last 500 chars
+
+            # Find all created audio segments
+            audio_chunks = []
+            segment_index = 0
+            while True:
+                segment_path = os.path.join(output_dir, f"audio_{segment_index:03d}.wav")
+                if os.path.exists(segment_path):
+                    file_size_mb = os.path.getsize(segment_path) / (1024 * 1024)
+                    print(f"Created segment {segment_index}: {segment_path} ({file_size_mb:.2f} MB)")
+                    audio_chunks.append(segment_path)
+                    segment_index += 1
+                else:
+                    break
+
+            if not audio_chunks:
+                raise Exception("No audio segments were created. The video may not contain audio.")
+
+            print(f"Successfully extracted {len(audio_chunks)} audio segments")
+            return audio_chunks
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else str(e)
+            print(f"FFmpeg error during streaming extraction: {error_msg}")
+            raise Exception(f"Failed to extract audio from URL: {error_msg}")
+        except Exception as e:
+            print(f"Error in extract_audio_streaming: {str(e)}")
+            raise
+
+    @staticmethod
     def extract_audio_with_ffmpeg(video_path: str, chunk_duration: int = 600, overlap: int = 5) -> List[str]:
         """
         Extract audio using ffmpeg directly - more reliable for various codecs
