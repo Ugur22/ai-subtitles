@@ -34,13 +34,20 @@ _last_transcription_data = None
 def get_whisper_model() -> WhisperModel:
     """Get or initialize the faster-whisper model (singleton)"""
     global _whisper_model
+    import os
 
     if _whisper_model is None:
+        # Use the same cache directory as set in Dockerfile/download_models.py
+        cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
+
         print(f"Initializing Whisper model: {settings.FASTWHISPER_MODEL} on {settings.FASTWHISPER_DEVICE}")
+        print(f"Using cache directory: {cache_dir}")
+
         _whisper_model = WhisperModel(
             settings.FASTWHISPER_MODEL,
             device=settings.FASTWHISPER_DEVICE,
-            compute_type=settings.FASTWHISPER_COMPUTE_TYPE
+            compute_type=settings.FASTWHISPER_COMPUTE_TYPE,
+            download_root=cache_dir  # Use pre-downloaded models
         )
         print("Whisper model initialized successfully")
 

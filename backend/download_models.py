@@ -5,6 +5,11 @@ from transformers import MarianMTModel, MarianTokenizer
 from huggingface_hub import snapshot_download
 import os
 
+# Set cache directory explicitly (matches Dockerfile ENV vars)
+os.environ['HF_HOME'] = '/app/.cache/huggingface'
+os.environ['TRANSFORMERS_CACHE'] = '/app/.cache/huggingface'
+os.environ['XDG_CACHE_HOME'] = '/app/.cache'
+
 # Common language models (source -> English)
 # Each model is ~300MB, total ~3GB for all languages
 LANGUAGES = [
@@ -31,17 +36,42 @@ def download_whisper_model():
 
     # The model used by faster-whisper (Systran/faster-whisper-small)
     whisper_model = "Systran/faster-whisper-small"
+    cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
+
+    print(f"Cache directory: {cache_dir}")
+    print(f"Cache exists: {os.path.exists(cache_dir)}")
 
     try:
         print(f"Downloading {whisper_model}...")
-        # Download to HuggingFace cache
-        snapshot_download(
+        # Download to HuggingFace cache with explicit cache_dir
+        model_path = snapshot_download(
             repo_id=whisper_model,
             local_files_only=False,
+            cache_dir=cache_dir,
         )
-        print(f"  OK: Whisper model downloaded successfully")
+        print(f"  OK: Whisper model downloaded to: {model_path}")
+
+        # Verify the model files exist
+        if os.path.exists(model_path):
+            files = os.listdir(model_path)
+            print(f"  Model files: {files}")
+
+        # Also try to load with faster_whisper to ensure it works
+        from faster_whisper import WhisperModel
+        print("  Verifying model loads correctly...")
+        model = WhisperModel(
+            "small",
+            device="cpu",
+            compute_type="int8",
+            download_root=cache_dir
+        )
+        print("  OK: Model verified successfully")
+        del model  # Free memory
+
     except Exception as e:
         print(f"  ERROR: Whisper model failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise  # Whisper is critical, fail the build if it can't be downloaded
 
 
