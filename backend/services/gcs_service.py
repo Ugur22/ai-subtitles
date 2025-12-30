@@ -9,6 +9,8 @@ from datetime import timedelta
 from typing import Optional, Tuple
 from google.cloud import storage
 from google.cloud.storage import Blob
+from google.auth import default
+from google.auth.transport import requests as auth_requests
 
 from config import settings
 
@@ -18,12 +20,44 @@ class GCSService:
 
     _client: Optional[storage.Client] = None
     _bucket: Optional[storage.Bucket] = None
+    _credentials = None
+    _service_account_email: Optional[str] = None
+
+    @classmethod
+    def _get_credentials(cls):
+        """Get credentials and service account email for IAM signing."""
+        if cls._credentials is None:
+            cls._credentials, project = default()
+
+            # Get service account email
+            if hasattr(cls._credentials, 'service_account_email'):
+                cls._service_account_email = cls._credentials.service_account_email
+            else:
+                # Fetch from metadata server (Cloud Run)
+                try:
+                    import requests
+                    response = requests.get(
+                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                        headers={"Metadata-Flavor": "Google"},
+                        timeout=5
+                    )
+                    cls._service_account_email = response.text
+                except Exception as e:
+                    print(f"[GCS] Warning: Could not get service account email: {e}")
+                    cls._service_account_email = None
+
+        # Refresh credentials if needed
+        if not cls._credentials.valid:
+            cls._credentials.refresh(auth_requests.Request())
+
+        return cls._credentials
 
     @classmethod
     def _get_client(cls) -> storage.Client:
         """Get or create a GCS client (singleton)."""
         if cls._client is None:
-            cls._client = storage.Client()
+            credentials = cls._get_credentials()
+            cls._client = storage.Client(credentials=credentials)
         return cls._client
 
     @classmethod
@@ -45,6 +79,7 @@ class GCSService:
         Generate a signed URL for direct upload to GCS.
 
         Use this for files < 100MB. For larger files, use resumable upload.
+        Uses IAM signBlob API for Cloud Run compatibility (no private key needed).
 
         Args:
             filename: Original filename (will be sanitized)
@@ -56,6 +91,8 @@ class GCSService:
         """
         import uuid
 
+        # Get credentials for IAM signing
+        credentials = cls._get_credentials()
         bucket = cls._get_bucket()
         expiry = expiry_seconds or settings.GCS_SIGNED_URL_EXPIRY
 
@@ -65,12 +102,14 @@ class GCSService:
 
         blob = bucket.blob(gcs_path)
 
-        # Generate signed URL for PUT request
+        # Generate signed URL using IAM signBlob (works on Cloud Run)
         signed_url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(seconds=expiry),
             method="PUT",
             content_type=content_type,
+            service_account_email=cls._service_account_email,
+            access_token=credentials.token,
         )
 
         print(f"[GCS] Generated signed URL for upload: {gcs_path}")
@@ -90,6 +129,7 @@ class GCSService:
         - Pause and resume
         - Automatic retry on network failures
         - Progress tracking
+        Uses IAM signBlob API for Cloud Run compatibility.
 
         Args:
             filename: Original filename
@@ -101,6 +141,8 @@ class GCSService:
         """
         import uuid
 
+        # Get credentials for IAM signing
+        credentials = cls._get_credentials()
         bucket = cls._get_bucket()
         expiry = expiry_seconds or settings.GCS_SIGNED_URL_EXPIRY
 
@@ -110,13 +152,15 @@ class GCSService:
 
         blob = bucket.blob(gcs_path)
 
-        # Generate signed URL that initiates a resumable upload
+        # Generate signed URL that initiates a resumable upload (using IAM signing)
         signed_url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(seconds=expiry),
             method="POST",
             headers={"x-goog-resumable": "start"},
             content_type=content_type,
+            service_account_email=cls._service_account_email,
+            access_token=credentials.token,
         )
 
         print(f"[GCS] Generated resumable upload URL for: {gcs_path}")
@@ -208,6 +252,7 @@ class GCSService:
         Generate a signed URL for downloading/streaming a file.
 
         Use this for video playback - URLs are valid for 24 hours by default.
+        Uses IAM signBlob API for Cloud Run compatibility.
 
         Args:
             gcs_path: Path in GCS
@@ -216,6 +261,8 @@ class GCSService:
         Returns:
             Signed URL for GET request
         """
+        # Get credentials for IAM signing
+        credentials = cls._get_credentials()
         bucket = cls._get_bucket()
         blob = bucket.blob(gcs_path)
         expiry = expiry_seconds or settings.GCS_DOWNLOAD_URL_EXPIRY
@@ -224,6 +271,8 @@ class GCSService:
             version="v4",
             expiration=timedelta(seconds=expiry),
             method="GET",
+            service_account_email=cls._service_account_email,
+            access_token=credentials.token,
         )
 
         return signed_url
