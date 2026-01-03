@@ -118,7 +118,7 @@ export const useJobTracker = () => {
           table: 'transcription_jobs',
           filter: `job_id=in.(${activeJobIds.join(',')})`,
         },
-        (payload) => {
+        (payload: { new: Record<string, unknown> }) => {
           const updatedJob = payload.new as Job;
 
           // Update job in state
