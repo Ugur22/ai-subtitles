@@ -146,3 +146,53 @@ export const msToTime = (ms: number): string => {
     "0"
   )}`;
 };
+
+/**
+ * Formats a duration in seconds to a human-readable string
+ * @param seconds - Duration in seconds
+ * @returns Formatted string like "2 min 30 sec" or "45 sec"
+ */
+export const formatDuration = (seconds: number): string => {
+  if (seconds < 60) {
+    return `${Math.round(seconds)} sec`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+
+  if (remainingSeconds === 0) {
+    return `${minutes} min`;
+  }
+
+  return `${minutes} min ${remainingSeconds} sec`;
+};
+
+/**
+ * Formats an ISO date string to a relative time string
+ * @param isoString - ISO 8601 date string
+ * @returns Relative time string like "2 hours ago", "yesterday", etc.
+ */
+export const formatRelativeTime = (isoString: string): string => {
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHours = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSec < 60) {
+    return "just now";
+  } else if (diffMin < 60) {
+    return `${diffMin} ${diffMin === 1 ? "minute" : "minutes"} ago`;
+  } else if (diffHours < 24) {
+    return `${diffHours} ${diffHours === 1 ? "hour" : "hours"} ago`;
+  } else if (diffDays === 1) {
+    return "yesterday";
+  } else if (diffDays < 7) {
+    return `${diffDays} days ago`;
+  } else {
+    // For older dates, show the actual date
+    return date.toLocaleDateString();
+  }
+};

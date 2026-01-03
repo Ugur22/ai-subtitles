@@ -32,11 +32,14 @@ import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
 import { useTranscription } from "../../../hooks/useTranscription";
 import { useSummaries } from "../../../hooks/useSummaries";
+import { useBackgroundJobSubmit } from "../../../hooks/useBackgroundJobSubmit";
+import { useJobTracker } from "../../../hooks/useJobTracker";
+import { JobPanel } from "../jobs";
 
 // Note: ProcessingStage type moved to useTranscription hook
 
 // Add transcription method type
-type TranscriptionMethod = "local";
+type TranscriptionMethod = "local" | "background";
 type TranslationMethod = "none" | "marianmt";
 
 type TranscriptionUploadProps = {
@@ -69,6 +72,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [showJobPanel, setShowJobPanel] = useState(false);
+
+  // Initialize job tracker for background processing
+  const jobTracker = useJobTracker();
+  const backgroundJobSubmit = useBackgroundJobSubmit(() => {
+    // Refetch jobs when a new job is submitted
+    jobTracker.refetch();
+  });
 
   // Initialize custom hooks
   const transcriptionHook = useTranscription();
@@ -230,8 +241,48 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       return;
     }
 
-    // Use the hook's handleStartTranscription which manages all state internally
-    await handleStartTranscription(file, transcriptionMethod, selectedLanguage);
+    // Convert language name to ISO code
+    const languageCodeMap: Record<string, string> = {
+      'spanish': 'es',
+      'italian': 'it',
+      'french': 'fr',
+      'german': 'de',
+      'english': 'en',
+      'portuguese': 'pt',
+      'russian': 'ru',
+      'chinese': 'zh',
+      'japanese': 'ja',
+      'korean': 'ko',
+    };
+    const languageCode = languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
+
+    // Handle background processing mode
+    if (transcriptionMethod === "background") {
+      try {
+        const result = await backgroundJobSubmit.submit(file, {
+          language: languageCode || undefined,
+          forceLanguage: true,
+        });
+
+        if (result) {
+          // Show success message and open job panel
+          setShowJobPanel(true);
+
+          // If cached result, load it immediately
+          if (result.cached) {
+            // The job already has results, refetch to get the full data
+            jobTracker.refetch();
+          }
+        }
+      } catch (error) {
+        // Error is already set in backgroundJobSubmit state
+        console.error('Background job submission failed:', error);
+      }
+      return;
+    }
+
+    // Use the hook's handleStartTranscription for local processing
+    await handleStartTranscription(file, transcriptionMethod as "local", selectedLanguage);
   };
 
   const startNewTranscription = () => {
@@ -1460,6 +1511,66 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           </div>
         )}
       </div>
+
+      {/* Background Jobs Panel Toggle Button */}
+      <button
+        onClick={() => setShowJobPanel(!showJobPanel)}
+        className={`fixed bottom-6 right-6 z-40 p-4 rounded-full shadow-lg transition-all duration-200 flex items-center gap-2 ${
+          jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length > 0
+            ? 'bg-indigo-600 hover:bg-indigo-700'
+            : 'bg-gray-700 hover:bg-gray-800'
+        } text-white`}
+        title="View background jobs"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+        </svg>
+        {jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+            {jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length}
+          </span>
+        )}
+      </button>
+
+      {/* Background Job Submission Progress Overlay */}
+      {backgroundJobSubmit.isSubmitting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Submitting Job</h3>
+            <div className="mb-4">
+              <div className="flex justify-between text-sm text-gray-600 mb-1">
+                <span>{backgroundJobSubmit.progress?.message || 'Preparing...'}</span>
+                <span>{backgroundJobSubmit.progress?.progress || 0}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${backgroundJobSubmit.progress?.progress || 0}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-sm text-gray-500">
+              {backgroundJobSubmit.progress?.stage === 'hashing' && 'Calculating file fingerprint...'}
+              {backgroundJobSubmit.progress?.stage === 'uploading' && 'Uploading to cloud storage...'}
+              {backgroundJobSubmit.progress?.stage === 'submitting' && 'Queuing for processing...'}
+              {backgroundJobSubmit.progress?.stage === 'complete' && 'Done!'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Background Jobs Panel */}
+      <JobPanel
+        isOpen={showJobPanel}
+        onClose={() => setShowJobPanel(false)}
+        onViewTranscript={(job) => {
+          // Load the job result as the current transcription
+          if (job.result_json) {
+            setTranscription(job.result_json);
+            setShowJobPanel(false);
+          }
+        }}
+      />
     </div>
   );
 };

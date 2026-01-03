@@ -521,4 +521,185 @@ export const transcribeSmartStream = async (
 /**
  * Get the maximum file size that can be uploaded directly (without GCS)
  */
-export const getDirectUploadLimit = (): number => DIRECT_UPLOAD_LIMIT; 
+export const getDirectUploadLimit = (): number => DIRECT_UPLOAD_LIMIT;
+
+// ============================================================================
+// Background Job Processing API
+// ============================================================================
+
+import type {
+  Job,
+  JobSubmitResponse,
+  JobSubmitParams,
+  JobListResponse,
+  JobShareResponse,
+} from '../types/job';
+
+/**
+ * Submit a new transcription job to be processed in the background
+ */
+export const submitJob = async (params: JobSubmitParams): Promise<JobSubmitResponse> => {
+  const response = await api.post<JobSubmitResponse>('/api/jobs/submit', params);
+  return response.data;
+};
+
+/**
+ * Get the status and details of a specific job
+ * Requires the access token for authentication
+ */
+export const getJob = async (jobId: string, token: string): Promise<Job> => {
+  const response = await api.get<Job>(`/api/jobs/${jobId}`, {
+    params: { token },
+  });
+  return response.data;
+};
+
+/**
+ * Get a paginated list of jobs using stored access tokens
+ * @param tokens - Array of access tokens for jobs to fetch
+ * @param page - Page number (1-indexed)
+ * @param perPage - Number of jobs per page (default 10)
+ */
+export const getJobs = async (
+  tokens: string[],
+  page: number = 1,
+  perPage: number = 10
+): Promise<JobListResponse> => {
+  const response = await api.get<JobListResponse>('/api/jobs', {
+    params: {
+      tokens: tokens.join(','),
+      page,
+      per_page: perPage,
+    },
+  });
+  return response.data;
+};
+
+/**
+ * Cancel a pending job
+ * Only works for jobs with status 'pending' (not yet processing)
+ */
+export const cancelJob = async (jobId: string, token: string): Promise<Job> => {
+  const response = await api.delete<Job>(`/api/jobs/${jobId}`, {
+    params: { token },
+  });
+  return response.data;
+};
+
+/**
+ * Retry a failed job with the same settings
+ * Resets the job to 'pending' status and triggers background processing
+ */
+export const retryJob = async (jobId: string, token: string): Promise<Job> => {
+  const response = await api.post<Job>(`/api/jobs/${jobId}/retry`, null, {
+    params: { token },
+  });
+  return response.data;
+};
+
+/**
+ * Get a shareable URL for a job
+ * The URL includes the access token and can be shared with others
+ */
+export const getShareUrl = async (jobId: string, token: string): Promise<JobShareResponse> => {
+  const response = await api.get<JobShareResponse>(`/api/jobs/${jobId}/share`, {
+    params: { token },
+  });
+  return response.data;
+};
+
+/**
+ * Submission progress stages
+ */
+export type SubmissionStage = 'hashing' | 'uploading' | 'submitting' | 'complete';
+
+export interface SubmissionProgress {
+  stage: SubmissionStage;
+  progress: number;
+  message: string;
+}
+
+/**
+ * Background job submission options
+ */
+export interface BackgroundJobOptions {
+  file: File;
+  language?: string;
+  forceLanguage?: boolean;
+  numSpeakers?: number;
+  minSpeakers?: number;
+  maxSpeakers?: number;
+  onProgress?: (progress: SubmissionProgress) => void;
+}
+
+/**
+ * Submit a file for background transcription processing.
+ *
+ * This function handles the complete flow:
+ * 1. Generate file hash for deduplication
+ * 2. Upload file to GCS (if large) or via backend
+ * 3. Submit job to the background processing queue
+ * 4. Return job_id and access_token for tracking
+ *
+ * Unlike SSE-based transcription, this allows the user to close their browser
+ * and receive notifications when processing is complete.
+ */
+export const submitBackgroundJob = async (
+  options: BackgroundJobOptions
+): Promise<JobSubmitResponse> => {
+  const { file, language, forceLanguage = false, numSpeakers, minSpeakers, maxSpeakers, onProgress } = options;
+
+  const report = (stage: SubmissionStage, progress: number, message: string) => {
+    if (onProgress) {
+      onProgress({ stage, progress, message });
+    }
+    console.log(`[BackgroundJob] ${stage}: ${progress}% - ${message}`);
+  };
+
+  // Step 1: Generate file hash (for deduplication)
+  report('hashing', 0, 'Calculating file hash...');
+
+  // Import hash utility dynamically to avoid circular deps
+  const { generateFileHash } = await import('../utils/file');
+  const videoHash = await generateFileHash(file, (hashProgress) => {
+    // Hash is 0-10% of overall progress
+    report('hashing', Math.round(hashProgress * 0.1), `Calculating hash: ${hashProgress}%`);
+  });
+
+  report('hashing', 10, `Hash calculated: ${videoHash.substring(0, 12)}...`);
+
+  // Step 2: Upload to GCS
+  report('uploading', 10, 'Uploading file...');
+
+  // Always use GCS for background jobs (ensures file is available for async processing)
+  const gcsPath = await uploadToGCS(file, (loaded, total, percentage) => {
+    // Upload is 10-80% of overall progress
+    const mappedProgress = 10 + Math.round(percentage * 0.7);
+    const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
+    const totalMB = (total / (1024 * 1024)).toFixed(1);
+    report('uploading', mappedProgress, `Uploading: ${loadedMB} / ${totalMB} MB`);
+  });
+
+  report('uploading', 80, 'Upload complete');
+
+  // Step 3: Submit job to backend
+  report('submitting', 80, 'Submitting job...');
+
+  const jobParams: JobSubmitParams = {
+    filename: file.name,
+    gcs_path: gcsPath,
+    file_size_bytes: file.size,
+    video_hash: videoHash,
+    language,
+    force_language: forceLanguage,
+    num_speakers: numSpeakers,
+    min_speakers: minSpeakers,
+    max_speakers: maxSpeakers,
+  };
+
+  const response = await submitJob(jobParams);
+
+  report('complete', 100, response.cached ? 'Found cached result!' : 'Job submitted successfully');
+
+  return response;
+}; 

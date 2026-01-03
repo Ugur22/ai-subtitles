@@ -30,7 +30,7 @@ interface UploadZoneProps {
   selectedLanguage: string;
   handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   transcriptionMethod: string;
-  setTranscriptionMethod: React.Dispatch<React.SetStateAction<"local">>;
+  setTranscriptionMethod: React.Dispatch<React.SetStateAction<"local" | "background">>;
   handleStartTranscriptionClick: () => void;
   showSavedTranscriptions: boolean;
   handleSavedTranscriptionsClick: () => void;
@@ -272,27 +272,50 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                 <label className="block text-sm font-semibold text-gray-900 mb-2">
                   ⚡ Processing Method
                 </label>
-                <div className="flex items-center h-11 px-4 border-2 border-gray-300 rounded-lg bg-white hover:border-indigo-400 transition-colors">
-                  <input
-                    type="radio"
-                    id="local-method"
-                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
-                    name="transcriptionMethod"
-                    value="local"
-                    checked={transcriptionMethod === "local"}
-                    onChange={(e) =>
-                      setTranscriptionMethod(e.target.value as "local")
-                    }
-                  />
-                  <label
-                    htmlFor="local-method"
-                    className="ml-3 text-sm font-medium text-gray-700 cursor-pointer flex-grow"
-                  >
-                    Local (Faster, Free)
-                  </label>
+                <div className="space-y-2">
+                  <div className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${transcriptionMethod === "local" ? "border-indigo-500 bg-indigo-50" : "border-gray-300 hover:border-indigo-400"}`}>
+                    <input
+                      type="radio"
+                      id="local-method"
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                      name="transcriptionMethod"
+                      value="local"
+                      checked={transcriptionMethod === "local"}
+                      onChange={(e) =>
+                        setTranscriptionMethod(e.target.value as "local" | "background")
+                      }
+                    />
+                    <label
+                      htmlFor="local-method"
+                      className="ml-3 text-sm font-medium text-gray-700 cursor-pointer flex-grow"
+                    >
+                      Real-time (Stay on page)
+                    </label>
+                  </div>
+                  <div className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${transcriptionMethod === "background" ? "border-indigo-500 bg-indigo-50" : "border-gray-300 hover:border-indigo-400"}`}>
+                    <input
+                      type="radio"
+                      id="background-method"
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                      name="transcriptionMethod"
+                      value="background"
+                      checked={transcriptionMethod === "background"}
+                      onChange={(e) =>
+                        setTranscriptionMethod(e.target.value as "local" | "background")
+                      }
+                    />
+                    <label
+                      htmlFor="background-method"
+                      className="ml-3 text-sm font-medium text-gray-700 cursor-pointer flex-grow"
+                    >
+                      Background (Close & return)
+                    </label>
+                  </div>
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  Processes on your device
+                  {transcriptionMethod === "local"
+                    ? "View progress in real-time (keep browser open)"
+                    : "Get notified when done (close browser OK)"}
                 </p>
               </div>
             </div>
