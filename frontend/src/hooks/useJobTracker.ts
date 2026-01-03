@@ -119,7 +119,7 @@ export const useJobTracker = () => {
           filter: `job_id=in.(${activeJobIds.join(',')})`,
         },
         (payload: { new: Record<string, unknown> }) => {
-          const updatedJob = payload.new as Job;
+          const updatedJob = payload.new as unknown as Job;
 
           // Update job in state
           setJobs(prev =>
