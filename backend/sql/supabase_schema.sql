@@ -2,8 +2,8 @@
 -- Version: 2.0
 -- Run this in Supabase SQL Editor to set up the required tables
 
--- Main transcription jobs table
-CREATE TABLE transcription_jobs (
+-- Main jobs table
+CREATE TABLE jobs (
     job_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     access_token UUID NOT NULL DEFAULT gen_random_uuid(),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
@@ -33,15 +33,15 @@ CREATE TABLE transcription_jobs (
     force_language BOOLEAN DEFAULT FALSE
 );
 
--- Enable real-time for transcription_jobs
-ALTER PUBLICATION supabase_realtime ADD TABLE transcription_jobs;
+-- Enable real-time for jobs
+ALTER PUBLICATION supabase_realtime ADD TABLE jobs;
 
 -- Indexes for common queries
-CREATE INDEX idx_jobs_status ON transcription_jobs(status);
-CREATE INDEX idx_jobs_created ON transcription_jobs(created_at DESC);
-CREATE INDEX idx_jobs_hash ON transcription_jobs(video_hash);
-CREATE INDEX idx_jobs_access_token ON transcription_jobs(access_token);
-CREATE INDEX idx_jobs_stale ON transcription_jobs(status, last_seen)
+CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
+CREATE INDEX idx_jobs_hash ON jobs(video_hash);
+CREATE INDEX idx_jobs_access_token ON jobs(access_token);
+CREATE INDEX idx_jobs_stale ON jobs(status, last_seen)
     WHERE status = 'processing';
 
 -- Historical duration tracking for time estimates
@@ -64,11 +64,11 @@ INSERT INTO job_duration_stats (file_size_bucket, avg_duration_seconds, sample_c
 -- The backend service uses the service role key to bypass RLS
 
 -- Enable RLS but allow service role full access
-ALTER TABLE transcription_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_duration_stats ENABLE ROW LEVEL SECURITY;
 
 -- Policy for service role (backend) - full access
-CREATE POLICY "Service role has full access to jobs" ON transcription_jobs
+CREATE POLICY "Service role has full access to jobs" ON jobs
     FOR ALL
     USING (true)
     WITH CHECK (true);
@@ -114,7 +114,7 @@ $$ LANGUAGE plpgsql;
 
 -- Trigger to update stats on job completion
 CREATE TRIGGER trigger_update_duration_stats
-    AFTER UPDATE ON transcription_jobs
+    AFTER UPDATE ON jobs
     FOR EACH ROW
     EXECUTE FUNCTION update_duration_stats();
 
@@ -130,11 +130,11 @@ BEGIN
 
     -- Get GCS paths before deletion
     SELECT ARRAY_AGG(gcs_path) INTO paths
-    FROM transcription_jobs
+    FROM jobs
     WHERE created_at < cutoff AND gcs_path IS NOT NULL;
 
     -- Delete old jobs
-    DELETE FROM transcription_jobs
+    DELETE FROM jobs
     WHERE created_at < cutoff;
 
     GET DIAGNOSTICS count = ROW_COUNT;
@@ -144,5 +144,5 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Comment on tables
-COMMENT ON TABLE transcription_jobs IS 'Background transcription job queue with status tracking';
+COMMENT ON TABLE jobs IS 'Background transcription job queue with status tracking';
 COMMENT ON TABLE job_duration_stats IS 'Historical job duration statistics for time estimates';
