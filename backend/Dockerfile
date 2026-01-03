@@ -11,11 +11,12 @@ WORKDIR /app
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 
-# Install system dependencies including FFmpeg
+# Install system dependencies including FFmpeg and wget (for PANNs model download)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 # Create directories for persistent data
 # Railway will mount volumes to these paths
@@ -23,7 +24,8 @@ RUN mkdir -p /data/static/videos \
     /data/static/screenshots \
     /data/chroma_db \
     /data/db \
-    /app/.cache/huggingface
+    /app/.cache/huggingface \
+    /root/panns_data
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .

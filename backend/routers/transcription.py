@@ -2035,18 +2035,55 @@ async def transcribe_gcs_stream(
                     yield emit("extracting", progress, f"Screenshots: {batch_end}/{total_screenshots} ({success_so_far} ok)")
                     print(f"[GCS Stream] Screenshot progress: {batch_end}/{total_screenshots}", flush=True)
 
-                # Map results back to segments
-                for idx, segment in enumerate(formatted_segments):
-                    ts = segment['start']
-                    screenshot_path = screenshot_results.get(ts)
-                    if screenshot_path and os.path.exists(screenshot_path):
-                        screenshot_filename = os.path.basename(screenshot_path)
-                        segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
-                        screenshot_count += 1
-                    else:
-                        segment["screenshot_url"] = None
+                # Upload screenshots to GCS if enabled
+                if settings.ENABLE_GCS_UPLOADS:
+                    yield emit("extracting", 80, "Uploading screenshots to cloud storage...")
+                    print(f"[GCS Stream] Uploading screenshots to GCS...", flush=True)
 
-                print(f"[GCS Stream] Extracted {screenshot_count}/{total_screenshots} screenshots via streaming", flush=True)
+                    # Upload screenshots in batch
+                    try:
+                        gcs_urls = gcs_service.upload_screenshots_batch(
+                            screenshot_paths=screenshot_results,
+                            video_hash=video_hash
+                        )
+
+                        # Map GCS URLs back to segments
+                        for idx, segment in enumerate(formatted_segments):
+                            ts = segment['start']
+                            gcs_url = gcs_urls.get(ts)
+                            if gcs_url:
+                                segment["screenshot_url"] = gcs_url
+                                screenshot_count += 1
+                            else:
+                                segment["screenshot_url"] = None
+
+                        print(f"[GCS Stream] Uploaded {screenshot_count}/{total_screenshots} screenshots to GCS", flush=True)
+
+                    except Exception as e:
+                        print(f"[GCS Stream] Screenshot upload to GCS failed, falling back to local URLs: {e}", flush=True)
+                        # Fall back to local URLs
+                        for idx, segment in enumerate(formatted_segments):
+                            ts = segment['start']
+                            screenshot_path = screenshot_results.get(ts)
+                            if screenshot_path and os.path.exists(screenshot_path):
+                                screenshot_filename = os.path.basename(screenshot_path)
+                                segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
+                                screenshot_count += 1
+                            else:
+                                segment["screenshot_url"] = None
+                else:
+                    # Use local URLs (development mode)
+                    for idx, segment in enumerate(formatted_segments):
+                        ts = segment['start']
+                        screenshot_path = screenshot_results.get(ts)
+                        if screenshot_path and os.path.exists(screenshot_path):
+                            screenshot_filename = os.path.basename(screenshot_path)
+                            segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
+                            screenshot_count += 1
+                        else:
+                            segment["screenshot_url"] = None
+
+                    print(f"[GCS Stream] Extracted {screenshot_count}/{total_screenshots} screenshots via streaming", flush=True)
 
             yield emit("transcribing", 82, "Identifying speakers...")
 

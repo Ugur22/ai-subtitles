@@ -6,7 +6,7 @@ This service enables direct-to-GCS uploads which bypass Cloud Run's 32MB request
 import os
 import tempfile
 from datetime import timedelta
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from google.cloud import storage
 from google.cloud.storage import Blob
 from google.auth import default
@@ -288,6 +288,94 @@ class GCSService:
         )
 
         return signed_url
+
+    @classmethod
+    def upload_screenshot(
+        cls,
+        local_path: str,
+        video_hash: str,
+        timestamp: float
+    ) -> str:
+        """
+        Upload a single screenshot to GCS and return signed URL.
+
+        Args:
+            local_path: Path to the local screenshot file
+            video_hash: Video hash for organizing screenshots
+            timestamp: Timestamp of the screenshot
+
+        Returns:
+            Signed URL for the uploaded screenshot
+        """
+        bucket = cls._get_bucket()
+
+        # Generate GCS path: screenshots/{video_hash}/{timestamp}.jpg
+        filename = f"{timestamp:.2f}.jpg"
+        gcs_path = f"{settings.GCS_SCREENSHOTS_PREFIX}{video_hash}/{filename}"
+
+        # Upload the file
+        blob = bucket.blob(gcs_path)
+        blob.upload_from_filename(local_path)
+
+        print(f"[GCS] Uploaded screenshot: {gcs_path}")
+
+        # Generate signed URL for viewing
+        signed_url = cls.generate_download_signed_url(
+            gcs_path,
+            expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+        )
+
+        return signed_url
+
+    @classmethod
+    def upload_screenshots_batch(
+        cls,
+        screenshot_paths: Dict[float, str],
+        video_hash: str
+    ) -> Dict[float, str]:
+        """
+        Batch upload screenshots to GCS and return signed URLs.
+
+        Args:
+            screenshot_paths: Dict mapping timestamp -> local file path
+            video_hash: Video hash for organizing screenshots
+
+        Returns:
+            Dict mapping timestamp -> signed URL (or None if upload failed)
+        """
+        bucket = cls._get_bucket()
+        result = {}
+
+        for timestamp, local_path in screenshot_paths.items():
+            try:
+                if not local_path or not os.path.exists(local_path):
+                    result[timestamp] = None
+                    continue
+
+                # Generate GCS path
+                filename = f"{timestamp:.2f}.jpg"
+                gcs_path = f"{settings.GCS_SCREENSHOTS_PREFIX}{video_hash}/{filename}"
+
+                # Upload the file
+                blob = bucket.blob(gcs_path)
+                blob.upload_from_filename(local_path)
+
+                # Generate signed URL
+                signed_url = cls.generate_download_signed_url(
+                    gcs_path,
+                    expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+                )
+
+                result[timestamp] = signed_url
+
+            except Exception as e:
+                print(f"[GCS] Failed to upload screenshot at {timestamp}s: {e}")
+                result[timestamp] = None
+
+        uploaded_count = sum(1 for v in result.values() if v is not None)
+        print(f"[GCS] Batch uploaded {uploaded_count}/{len(screenshot_paths)} screenshots")
+
+        return result
 
     @classmethod
     def delete_file(cls, gcs_path: str) -> bool:
