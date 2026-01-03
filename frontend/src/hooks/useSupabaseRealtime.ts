@@ -61,7 +61,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'transcription_jobs',
+          table: 'jobs',
           filter: `job_id=eq.${jobId}`,
         },
         (payload: { new: Record<string, unknown> }) => {

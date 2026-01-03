@@ -115,7 +115,7 @@ export const useJobTracker = () => {
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'transcription_jobs',
+          table: 'jobs',
           filter: `job_id=in.(${activeJobIds.join(',')})`,
         },
         (payload: { new: Record<string, unknown> }) => {
