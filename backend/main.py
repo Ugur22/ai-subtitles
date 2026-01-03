@@ -33,7 +33,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription, upload
+from routers import video, chat, speaker, transcription, upload, jobs
 
 # Import LLM and vector store modules (optional)
 try:
@@ -128,6 +128,7 @@ app.include_router(speaker.router)
 app.include_router(chat.router)
 app.include_router(video.router)
 app.include_router(upload.router)
+app.include_router(jobs.router)
 
 
 # Health check endpoint

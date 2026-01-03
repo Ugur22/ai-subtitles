@@ -14,6 +14,7 @@
     "@ffmpeg/util": "^0.12.2",
     "@headlessui/react": "^2.2.0",
     "@heroicons/react": "^2.2.0",
+    "@supabase/supabase-js": "^2.45.0",
     "@tanstack/react-query": "^5.66.8",
     "axios": "^1.7.9",
     "react": "^19.0.0",
