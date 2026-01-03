@@ -52,6 +52,8 @@ class Settings(BaseSettings):
 
     # Database Configuration - Support Railway persistent volumes
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "transcriptions.db")
+    DATABASE_TYPE: str = os.getenv("DATABASE_TYPE", "sqlite")  # "sqlite" or "firestore"
+    FIRESTORE_COLLECTION: str = os.getenv("FIRESTORE_COLLECTION", "transcriptions")
 
     # Whisper Model Configuration
     FASTWHISPER_MODEL: str = os.getenv("FASTWHISPER_MODEL", "small")
@@ -101,8 +103,10 @@ class Settings(BaseSettings):
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "ai-subs-uploads")
     GCS_UPLOAD_PREFIX: str = os.getenv("GCS_UPLOAD_PREFIX", "uploads/")
     GCS_PROCESSED_PREFIX: str = os.getenv("GCS_PROCESSED_PREFIX", "processed/")
+    GCS_SCREENSHOTS_PREFIX: str = os.getenv("GCS_SCREENSHOTS_PREFIX", "screenshots/")
     GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
     GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "86400"))  # 24 hours for playback
+    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "604800"))  # 7 days for screenshots
 
     class Config:
         case_sensitive = True
