@@ -383,6 +383,7 @@ class ModelManager:
     _panns_model = None
     _emotion_model = None
     _emotion_processor = None
+    _emotion_model_failed = False  # Track if loading failed to avoid repeated attempts
     _librosa = None
     _soundfile = None
 
@@ -395,8 +396,19 @@ class ModelManager:
                 import panns_inference
                 from panns_inference import AudioTagging
 
-                # Initialize the model (will download if not cached)
-                cls._panns_model = AudioTagging(checkpoint_path=None, device='cuda' if torch.cuda.is_available() else 'cpu')
+                # Check if pre-downloaded checkpoint exists
+                predownloaded_checkpoint = "/root/panns_data/Cnn14_mAP=0.431.pth"
+                checkpoint_path = None
+
+                if os.path.exists(predownloaded_checkpoint):
+                    checkpoint_path = predownloaded_checkpoint
+                    logger.info(f"Using pre-downloaded PANNs checkpoint: {checkpoint_path}")
+                else:
+                    logger.warning(f"Pre-downloaded checkpoint not found at {predownloaded_checkpoint}, falling back to auto-download")
+                    checkpoint_path = None  # Will auto-download
+
+                # Initialize the model
+                cls._panns_model = AudioTagging(checkpoint_path=checkpoint_path, device='cuda' if torch.cuda.is_available() else 'cpu')
                 logger.info("PANNs model loaded successfully")
             except ImportError:
                 logger.error("panns_inference not installed. Install with: pip install panns-inference")
@@ -409,7 +421,14 @@ class ModelManager:
 
     @classmethod
     def get_emotion_model(cls):
-        """Lazy load wav2vec2 emotion recognition model"""
+        """Lazy load wav2vec2 emotion recognition model.
+
+        Returns (None, None) if model fails to load, allowing graceful degradation.
+        """
+        # If already failed, don't retry
+        if cls._emotion_model_failed:
+            return None, None
+
         if cls._emotion_model is None or cls._emotion_processor is None:
             try:
                 logger.info("Loading wav2vec2 emotion model...")
@@ -432,11 +451,13 @@ class ModelManager:
                 cls._emotion_model.eval()
                 logger.info("Emotion model loaded successfully")
             except ImportError as e:
-                logger.error(f"transformers not installed. Install with: pip install transformers - Error: {e}")
-                raise
+                logger.warning(f"transformers not installed for emotion model: {e}")
+                cls._emotion_model_failed = True
+                return None, None
             except Exception as e:
-                logger.error(f"Failed to load emotion model: {e}", exc_info=True)
-                raise
+                logger.warning(f"Failed to load emotion model (emotion detection will be skipped): {e}")
+                cls._emotion_model_failed = True
+                return None, None
 
         return cls._emotion_model, cls._emotion_processor
 
@@ -546,6 +567,11 @@ def detect_speech_emotion(audio_path: str) -> Optional[SpeechEmotion]:
     """
     try:
         model, feature_extractor = ModelManager.get_emotion_model()
+
+        # Gracefully handle model loading failure
+        if model is None or feature_extractor is None:
+            return None
+
         librosa = ModelManager.get_librosa()
 
         # Load audio file at 16kHz (required for wav2vec2)

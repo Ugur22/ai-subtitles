@@ -1,0 +1,77 @@
+# Cloud Build ignore file - prevent uploading large files
+
+# Include .gitignore rules
+#!include:.gitignore
+
+# ===== CRITICAL: Large files that must NOT be uploaded =====
+# These are the main culprits causing 15GB uploads and 30min timeouts
+
+# Video files (15GB+)
+static/videos/
+static/videos/*
+*.mp4
+*.mpeg
+*.webm
+*.mov
+*.avi
+*.mkv
+
+# Screenshot files
+static/screenshots/
+static/screenshots/*
+
+# Audio files
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ===== Database files =====
+*.db
+transcriptions.db
+chroma_db/
+
+# ===== IDE and local files =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ===== Git =====
+.git/
+.gitignore
+
+# ===== Testing =====
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+test_*.py
+*_test.py
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Local config =====
+.env
+.env.local
+.env.*.local
+docker-compose*.yml

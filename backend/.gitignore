@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Database
+*.db
+chroma_db/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Local config
+.env
+.env.local
+.env.*.local
+
+# Large media files (handled by .gcloudignore for Cloud Build)
+static/videos/
+static/screenshots/
