@@ -66,7 +66,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
         },
         (payload: { new: Record<string, unknown> }) => {
           // Update job state with real-time data
-          setJob(payload.new as Job);
+          setJob(payload.new as unknown as Job);
           setError(null);
         }
       )
