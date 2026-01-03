@@ -64,7 +64,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
           table: 'transcription_jobs',
           filter: `job_id=eq.${jobId}`,
         },
-        (payload) => {
+        (payload: { new: Record<string, unknown> }) => {
           // Update job state with real-time data
           setJob(payload.new as Job);
           setError(null);
