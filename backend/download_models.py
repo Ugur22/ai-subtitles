@@ -159,6 +159,39 @@ def download_sentence_transformers_model():
         raise  # This is critical for the chat feature
 
 
+def download_bart_model():
+    """Download BART model for summarization to prevent runtime downloads."""
+    print("="*50)
+    print("Downloading BART Summarization model...")
+    print("="*50)
+
+    model_name = "facebook/bart-large-cnn"
+
+    try:
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+        print(f"Downloading {model_name}...")
+        print("  Downloading tokenizer...")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        print("  Downloading model weights...")
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        print(f"  OK: BART model downloaded successfully")
+
+        # Verify it works
+        print("  Verifying model...")
+        inputs = tokenizer("Test summarization.", return_tensors="pt", max_length=1024, truncation=True)
+        outputs = model.generate(inputs["input_ids"], max_length=50, min_length=10, num_beams=4)
+        tokenizer.decode(outputs[0], skip_special_tokens=True)
+        print("  OK: Model verified")
+        del model, tokenizer  # Free memory
+
+    except Exception as e:
+        print(f"  ERROR: BART model failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise  # BART is critical for summaries, fail the build
+
+
 def download_emotion_model():
     """Download wav2vec2 emotion recognition model to prevent runtime downloads."""
     print("="*50)
@@ -209,6 +242,9 @@ def main():
 
     # Download sentence-transformers model (critical for chat)
     download_sentence_transformers_model()
+
+    # Download BART model for summarization (critical for summaries)
+    download_bart_model()
 
     # Download PANNs model (optional)
     download_panns_model()
