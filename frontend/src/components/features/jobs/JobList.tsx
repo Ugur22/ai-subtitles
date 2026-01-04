@@ -9,9 +9,10 @@ import { Job } from "../../../types/job";
 interface JobListProps {
   jobs: Job[];
   onViewTranscript?: (job: Job) => void;
+  onCancel?: (jobId: string) => void;
 }
 
-export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript }) => {
+export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript, onCancel }) => {
   if (jobs.length === 0) {
     return null;
   }
@@ -19,7 +20,12 @@ export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript }) => {
   return (
     <div className="space-y-3">
       {jobs.map((job) => (
-        <JobCard key={job.job_id} job={job} onViewTranscript={onViewTranscript} />
+        <JobCard
+          key={job.job_id}
+          job={job}
+          onViewTranscript={onViewTranscript}
+          onCancel={onCancel}
+        />
       ))}
     </div>
   );

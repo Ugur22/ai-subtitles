@@ -14,6 +14,7 @@ from services.gcs_service import gcs_service
 from services.audio_service import AudioService
 from services.speaker_service import SpeakerService
 from services.subtitle_service import SubtitleService
+from services.translation_service import TranslationService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from dependencies import get_whisper_model, get_speaker_diarizer
@@ -271,14 +272,23 @@ class BackgroundWorker:
 
             normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
-            # For simplicity in background worker, we'll set translation = text for English
-            # and leave it empty for other languages (can be translated later via API)
+            # Translate non-English content to English
             if normalized_lang in ['en', 'english']:
+                # For English, translation equals original text
                 for segment in formatted_segments:
                     segment['translation'] = segment['text']
             else:
-                for segment in formatted_segments:
-                    segment['translation'] = None
+                # Translate to English using MarianMT
+                JobQueueService.update_progress(job_id, 87, "translating", "Translating to English...")
+                try:
+                    print(f"[Worker] Translating {len(formatted_segments)} segments from {normalized_lang} to English")
+                    formatted_segments = TranslationService.translate_segments(formatted_segments, normalized_lang)
+                    print(f"[Worker] Translation completed")
+                except Exception as e:
+                    print(f"[Worker] Translation failed: {e}")
+                    # If translation fails, set placeholder translations
+                    for segment in formatted_segments:
+                        segment['translation'] = None
 
             # Generate SRT and VTT
             srt_content = SubtitleService.generate_srt(formatted_segments, use_translation=False)
@@ -302,6 +312,7 @@ class BackgroundWorker:
                 "gcs_path": gcs_path,
                 "file_size_bytes": file_size_bytes,
                 "video_hash": video_hash,
+                "video_url": f"/video/{video_hash}",
                 "transcription": {
                     "language": detected_language,
                     "segments": formatted_segments,
