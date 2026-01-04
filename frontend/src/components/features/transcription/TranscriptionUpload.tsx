@@ -1400,6 +1400,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           setSummaries={setSummaries}
                           loading={summaryLoading}
                           generateSummaries={generateSummaries}
+                          videoHash={transcription?.video_hash}
                         />
                       </div>
                     )}
