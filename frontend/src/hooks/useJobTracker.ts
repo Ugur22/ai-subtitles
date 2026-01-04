@@ -108,6 +108,7 @@ export const useJobTracker = () => {
     console.debug(`Subscribing to real-time updates for ${activeJobIds.length} active job(s)`);
 
     // Create a real-time subscription for active jobs
+    // Note: Database column is 'id', but frontend uses 'job_id' for the same value
     const subscription = supabase
       .channel('active-jobs-tracker')
       .on(
@@ -116,7 +117,7 @@ export const useJobTracker = () => {
           event: 'UPDATE',
           schema: 'public',
           table: 'jobs',
-          filter: `job_id=in.(${activeJobIds.join(',')})`,
+          filter: `id=in.(${activeJobIds.join(',')})`,
         },
         (payload: { new: Record<string, unknown> }) => {
           const updatedJob = payload.new as unknown as Job;
