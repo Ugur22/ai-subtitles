@@ -20,7 +20,7 @@ av==13.1.0
 scipy>=1.11.0  # For speaker recognition similarity calculations
 
 # LLM and RAG dependencies
-sentence-transformers==2.2.2
+sentence-transformers>=3.0.0
 chromadb==0.4.22
 groq==0.4.2
 
