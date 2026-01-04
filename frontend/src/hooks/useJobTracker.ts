@@ -49,19 +49,28 @@ export const useJobTracker = () => {
       const tokens = storedJobs.map(j => j.access_token);
       const response = await getJobs(tokens, page, JOBS_PER_PAGE);
 
-      setJobs(response.jobs);
+      // Create a map of job_id -> access_token from stored jobs
+      const tokenMap = new Map(storedJobs.map(j => [j.job_id, j.access_token]));
+
+      // Merge access_token into fetched jobs (backend doesn't return tokens for security)
+      const jobsWithTokens = response.jobs.map(job => ({
+        ...job,
+        access_token: tokenMap.get(job.job_id) || '',
+      }));
+
+      setJobs(jobsWithTokens);
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / JOBS_PER_PAGE));
 
-      // Cache jobs for offline fallback
+      // Cache jobs for offline fallback (with tokens for cancel/retry actions)
       try {
-        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(response.jobs));
+        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(jobsWithTokens));
       } catch (e) {
         console.warn('Failed to cache jobs:', e);
       }
 
       // Silent cleanup of jobs that no longer exist (404s)
-      const validIds = new Set(response.jobs.map((j: Job) => j.job_id));
+      const validIds = new Set(jobsWithTokens.map((j: Job) => j.job_id));
       const invalidIds = storedJobs
         .filter(s => !validIds.has(s.job_id))
         .map(s => s.job_id);
@@ -122,9 +131,11 @@ export const useJobTracker = () => {
         (payload: { new: Record<string, unknown> }) => {
           const updatedJob = payload.new as unknown as Job;
 
-          // Update job in state
+          // Update job in state, preserving the access_token from the existing job
           setJobs(prev =>
-            prev.map(j => j.job_id === updatedJob.job_id ? updatedJob : j)
+            prev.map(j => j.job_id === updatedJob.job_id
+              ? { ...updatedJob, access_token: j.access_token }
+              : j)
           );
 
           // Send notification on completion (if not previously notified)
