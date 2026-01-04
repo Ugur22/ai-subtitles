@@ -6,6 +6,56 @@ from fastapi import APIRouter, HTTPException, Request
 
 from database import get_transcription
 from dependencies import _last_transcription_data
+
+
+def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
+    """
+    Get transcription from any available source:
+    1. First check legacy database (SQLite/Firestore)
+    2. If not found, check Supabase jobs table
+
+    Args:
+        video_hash: The video hash to look up
+
+    Returns:
+        Transcription data dict or None if not found
+    """
+    # Try legacy database first
+    transcription = get_transcription(video_hash)
+    if transcription:
+        return transcription
+
+    # Try Supabase jobs table
+    try:
+        from services.supabase_service import supabase
+        client = supabase()
+
+        # Look for completed job with this video_hash
+        response = (
+            client.table("jobs")
+            .select("result_json, filename, gcs_path")
+            .eq("video_hash", video_hash)
+            .eq("status", "completed")
+            .limit(1)
+            .execute()
+        )
+
+        if response.data and len(response.data) > 0:
+            job = response.data[0]
+            result_json = job.get("result_json")
+
+            if result_json:
+                # The result_json from jobs already has the right structure
+                # It contains: filename, gcs_path, video_hash, transcription (with segments)
+                print(f"[Chat] Found transcription in Supabase job for video_hash={video_hash}")
+                return result_json
+
+    except Exception as e:
+        print(f"[Chat] Error checking Supabase for transcription: {e}")
+
+    return None
+
+
 from models import (
     IndexVideoResponse,
     IndexImagesResponse,
@@ -81,7 +131,7 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     # Also check for SPEAKER_XX labels in segments
     # This handles cases where segments use labels like "SPEAKER_19"
     try:
-        transcription = get_transcription(video_hash)
+        transcription = get_transcription_from_any_source(video_hash)
         if transcription:
             segments = transcription.get('transcription', {}).get('segments', [])
 
@@ -124,9 +174,9 @@ async def index_video_for_chat(video_hash: str = None) -> IndexVideoResponse:
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
 
     try:
-        # Get transcription data
+        # Get transcription data from any available source (legacy DB or Supabase jobs)
         if video_hash:
-            transcription = get_transcription(video_hash)
+            transcription = get_transcription_from_any_source(video_hash)
             if not transcription:
                 raise HTTPException(status_code=404, detail="Transcription not found")
         else:
@@ -202,7 +252,7 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         # Check if video is indexed
         if not vector_store.collection_exists(video_hash):
             # Auto-index if not already indexed
-            transcription = get_transcription(video_hash)
+            transcription = get_transcription_from_any_source(video_hash)
             if transcription:
                 segments = transcription.get('transcription', {}).get('segments', [])
                 print(f"Auto-indexing video {video_hash}...")
@@ -301,7 +351,7 @@ async def chat_with_video(request: ChatRequest) -> Dict:
                         print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
 
                         # Get speaker segments from transcript
-                        transcription = get_transcription(video_hash)
+                        transcription = get_transcription_from_any_source(video_hash)
                         if transcription:
                             segments = transcription.get('transcription', {}).get('segments', [])
 
@@ -742,9 +792,9 @@ async def index_video_images(video_hash: str = None, force_reindex: bool = False
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
 
     try:
-        # Get transcription data
+        # Get transcription data from any available source (legacy DB or Supabase jobs)
         if video_hash:
-            transcription = get_transcription(video_hash)
+            transcription = get_transcription_from_any_source(video_hash)
             if not transcription:
                 raise HTTPException(status_code=404, detail="Transcription not found")
         else:
