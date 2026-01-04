@@ -272,6 +272,26 @@ export const JobCard: React.FC<JobCardProps> = ({
                 </a>
               </div>
             </div>
+            <button
+              onClick={() => onCancel?.(job.job_id)}
+              className="p-2 border border-gray-300 rounded-md hover:bg-red-50 hover:border-red-300 transition-colors"
+              title="Remove from list"
+              aria-label="Remove from list"
+            >
+              <svg
+                className="w-4 h-4 text-gray-500 hover:text-red-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
           </div>
         )}
 
@@ -298,27 +318,49 @@ export const JobCard: React.FC<JobCardProps> = ({
                 </p>
               </div>
             </div>
-            <button
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="text-sm text-blue-600 hover:text-blue-700 hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-              aria-label="Retry job"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            <div className="flex items-center justify-between">
+              <button
+                onClick={handleRetry}
+                disabled={isRetrying}
+                className="text-sm text-blue-600 hover:text-blue-700 hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                aria-label="Retry job"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              {isRetrying ? "Retrying..." : "Retry with same settings"}
-            </button>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                {isRetrying ? "Retrying..." : "Retry"}
+              </button>
+              <button
+                onClick={() => onCancel?.(job.job_id)}
+                className="text-sm text-gray-500 hover:text-red-600 hover:underline flex items-center gap-1"
+                aria-label="Remove from list"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+                Remove
+              </button>
+            </div>
           </div>
         )}
 
