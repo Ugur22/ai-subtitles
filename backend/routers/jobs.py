@@ -194,7 +194,7 @@ async def submit_job(
 
     try:
         # Create job (checks queue limit and deduplication)
-        result = await JobQueueService.create_job(
+        result = JobQueueService.create_job(
             filename=request.filename,
             gcs_path=request.gcs_path,
             file_size_bytes=request.file_size_bytes,
@@ -210,17 +210,24 @@ async def submit_job(
         if not result.get('cached', False):
             background_tasks.add_task(
                 BackgroundWorker.process_job,
-                result['job_id']
+                result['id']
             )
 
             # Get estimated duration if available
-            estimated_duration = await JobQueueService.get_estimated_duration(
+            estimated_duration = JobQueueService.get_estimated_duration(
                 request.file_size_bytes
             )
             if estimated_duration:
                 result['estimated_duration_seconds'] = estimated_duration
 
-        return JobSubmitResponse(**result)
+        # Map 'id' to 'job_id' for response
+        return JobSubmitResponse(
+            job_id=result['id'],
+            access_token=result['access_token'],
+            cached=result.get('cached', False),
+            cached_at=result.get('cached_at'),
+            estimated_duration_seconds=result.get('estimated_duration_seconds')
+        )
 
     except HTTPException:
         raise
@@ -259,12 +266,31 @@ async def get_job_status(
     try:
         from services.job_queue_service import JobQueueService
 
-        job = await JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job(job_id)
 
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        return JobStatusResponse(**job)
+        # Map database fields to response model
+        return JobStatusResponse(
+            job_id=job['id'],
+            status=job['status'],
+            filename=job['filename'],
+            file_size_bytes=job['file_size_bytes'],
+            progress=job['progress'],
+            progress_stage=job.get('stage'),
+            progress_message=job.get('message'),
+            error_message=job.get('error_message'),
+            error_code=job.get('error_code'),
+            result_json=job.get('result_json'),
+            result_srt=job.get('result_srt'),
+            result_vtt=job.get('result_vtt'),
+            created_at=job['created_at'],
+            started_at=job.get('started_at'),
+            completed_at=job.get('completed_at'),
+            cached=job.get('cached'),
+            cached_at=job.get('cached_at')
+        )
 
     except HTTPException:
         raise
@@ -303,14 +329,39 @@ async def list_jobs(
             return JobListResponse(jobs=[], total=0, page=page, per_page=per_page)
 
         # Get jobs for these tokens
-        jobs, total = await JobQueueService.get_jobs_by_tokens(
+        result = JobQueueService.get_jobs_by_tokens(
             tokens=token_list,
             page=page,
             per_page=per_page
         )
+        jobs = result['jobs']
+        total = result['total']
+
+        # Map jobs to response format
+        mapped_jobs = []
+        for job in jobs:
+            mapped_jobs.append(JobStatusResponse(
+                job_id=job['id'],
+                status=job['status'],
+                filename=job['filename'],
+                file_size_bytes=job['file_size_bytes'],
+                progress=job['progress'],
+                progress_stage=job.get('stage'),
+                progress_message=job.get('message'),
+                error_message=job.get('error_message'),
+                error_code=job.get('error_code'),
+                result_json=job.get('result_json'),
+                result_srt=job.get('result_srt'),
+                result_vtt=job.get('result_vtt'),
+                created_at=job['created_at'],
+                started_at=job.get('started_at'),
+                completed_at=job.get('completed_at'),
+                cached=job.get('cached'),
+                cached_at=job.get('cached_at')
+            ))
 
         return JobListResponse(
-            jobs=[JobStatusResponse(**job) for job in jobs],
+            jobs=mapped_jobs,
             total=total,
             page=page,
             per_page=per_page
@@ -351,7 +402,7 @@ async def cancel_job(
         from services.job_queue_service import JobQueueService
 
         # Check job exists
-        job = await JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -363,7 +414,7 @@ async def cancel_job(
             )
 
         # Cancel the job
-        success = await JobQueueService.cancel_job(job_id)
+        success = JobQueueService.cancel_job(job_id)
 
         if not success:
             raise HTTPException(
@@ -417,7 +468,7 @@ async def retry_job(
         from services.background_worker import BackgroundWorker
 
         # Check job exists and is failed
-        job = await JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -428,7 +479,7 @@ async def retry_job(
             )
 
         # Retry the job
-        success = await JobQueueService.retry_job(job_id)
+        success = JobQueueService.retry_job(job_id)
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to retry job")
@@ -483,7 +534,7 @@ async def get_share_link(
         from services.job_queue_service import JobQueueService
 
         # Verify job exists
-        job = await JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -519,7 +570,7 @@ async def check_stale_jobs(background_tasks: BackgroundTasks):
     try:
         from services.job_queue_service import JobQueueService
 
-        processed = await JobQueueService.check_and_recover_stale_jobs(background_tasks)
+        processed = JobQueueService.check_and_recover_stale_jobs()
 
         message = "No stale jobs found" if processed == 0 else f"Recovered {processed} stale job(s)"
 
@@ -580,7 +631,7 @@ async def download_result(
         from services.job_queue_service import JobQueueService
 
         # Get job
-        job = await JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
