@@ -185,7 +185,7 @@ async def submit_job(
     """
     try:
         from services.job_queue_service import JobQueueService
-        from services.background_worker import BackgroundWorker
+        from services.background_worker import background_worker
     except ImportError:
         raise HTTPException(
             status_code=503,
@@ -209,7 +209,7 @@ async def submit_job(
         # If not cached, trigger background processing
         if not result.get('cached', False):
             background_tasks.add_task(
-                BackgroundWorker.process_job,
+                background_worker.process_job,
                 result['id']
             )
 
@@ -465,7 +465,7 @@ async def retry_job(
 
     try:
         from services.job_queue_service import JobQueueService
-        from services.background_worker import BackgroundWorker
+        from services.background_worker import background_worker
 
         # Check job exists and is failed
         job = JobQueueService.get_job(job_id)
@@ -486,7 +486,7 @@ async def retry_job(
 
         # Trigger background processing
         if background_tasks:
-            background_tasks.add_task(BackgroundWorker.process_job, job_id)
+            background_tasks.add_task(background_worker.process_job, job_id)
 
         return JobRetryResponse(
             job_id=job_id,
