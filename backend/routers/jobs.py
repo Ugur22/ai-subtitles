@@ -676,3 +676,77 @@ async def download_result(
     except Exception as e:
         print(f"[Jobs] Error downloading result: {e}")
         raise HTTPException(status_code=500, detail="Failed to download result")
+
+
+@router.get("/{job_id}/video")
+async def stream_job_video(
+    job_id: str,
+    token: Optional[str] = Query(None, description="Access token for this job")
+):
+    """
+    Stream the video file for a completed job.
+
+    Generates a signed URL for the video stored in GCS and redirects to it.
+    The signed URL is valid for 1 hour.
+
+    Args:
+        job_id: The unique job identifier
+        token: Access token (query parameter)
+
+    Returns:
+        Redirect to signed GCS URL for video streaming
+
+    Raises:
+        400: Job not completed or token missing
+        403: Invalid token
+        404: Job not found or video not available
+    """
+    from fastapi.responses import RedirectResponse
+    from services.gcs_service import gcs_service
+
+    # Verify access
+    require_token(job_id, token)
+
+    try:
+        from services.job_queue_service import JobQueueService
+
+        # Get job
+        job = JobQueueService.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Check if completed
+        if job['status'] != 'completed':
+            raise HTTPException(
+                status_code=400,
+                detail=f"Job is not completed (current status: {job['status']})"
+            )
+
+        # Get GCS path from result
+        result_json = job.get('result_json')
+        if not result_json:
+            raise HTTPException(status_code=404, detail="Job result not available")
+
+        gcs_path = result_json.get('gcs_path')
+        if not gcs_path:
+            raise HTTPException(status_code=404, detail="Video file path not found in job result")
+
+        # Verify file exists in GCS
+        if not gcs_service.file_exists(gcs_path):
+            raise HTTPException(status_code=404, detail="Video file not found in storage")
+
+        # Generate signed URL (valid for 1 hour)
+        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+
+        print(f"[Jobs] Generated video stream URL for job {job_id}")
+
+        # Redirect to signed URL
+        return RedirectResponse(url=signed_url, status_code=302)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Jobs] Error streaming video: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to stream video")
