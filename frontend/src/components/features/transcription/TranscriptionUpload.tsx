@@ -1567,6 +1567,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           // Load the job result as the current transcription
           if (job.result_json) {
             setTranscription(job.result_json);
+            // Set video URL from result to enable video playback
+            if (job.result_json.video_url) {
+              setVideoUrl(job.result_json.video_url);
+            }
             setShowJobPanel(false);
           }
         }}

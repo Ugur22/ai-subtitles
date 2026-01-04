@@ -7,16 +7,19 @@ import { useState } from "react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
 import { ShareJobDialog } from "./ShareJobDialog";
 import { Job, JobStatus } from "../../../types/job";
+import { cancelJob } from "../../../services/api";
 
 interface JobCardProps {
   job: Job;
   onViewTranscript?: (job: Job) => void;
+  onCancel?: (jobId: string) => void;
   estimatedRemaining?: number;
 }
 
 export const JobCard: React.FC<JobCardProps> = ({
   job,
   onViewTranscript,
+  onCancel,
   estimatedRemaining,
 }) => {
   const [showShare, setShowShare] = useState(false);
@@ -54,19 +57,12 @@ export const JobCard: React.FC<JobCardProps> = ({
   const handleCancel = async () => {
     setIsCancelling(true);
     try {
-      const response = await fetch(
-        `/api/jobs/${job.job_id}?token=${job.access_token}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to cancel job");
-      }
+      await cancelJob(job.job_id, job.access_token);
+      // Successfully cancelled - notify parent to remove from list
+      onCancel?.(job.job_id);
     } catch (error) {
       console.error("Failed to cancel job:", error);
-    } finally {
+      // Reset state so user can try again
       setIsCancelling(false);
     }
   };
