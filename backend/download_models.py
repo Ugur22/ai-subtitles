@@ -131,6 +131,34 @@ def download_panns_model():
         print("  PANNs will auto-download on first use if needed")
 
 
+def download_sentence_transformers_model():
+    """Download sentence-transformers model for embeddings."""
+    print("="*50)
+    print("Downloading Sentence-Transformers model...")
+    print("="*50)
+
+    model_name = "all-MiniLM-L6-v2"
+
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        print(f"Downloading sentence-transformers/{model_name}...")
+        model = SentenceTransformer(model_name)
+        print(f"  OK: Sentence-transformers model downloaded successfully")
+
+        # Test that it works
+        print("  Verifying model works...")
+        test_embedding = model.encode(["Test sentence"])
+        print(f"  OK: Embedding dimension: {len(test_embedding[0])}")
+        del model  # Free memory
+
+    except Exception as e:
+        print(f"  ERROR: Sentence-transformers model failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise  # This is critical for the chat feature
+
+
 def download_emotion_model():
     """Download wav2vec2 emotion recognition model to prevent runtime downloads."""
     print("="*50)
@@ -178,6 +206,9 @@ def download_translation_models():
 def main():
     # Download Whisper model first (critical)
     download_whisper_model()
+
+    # Download sentence-transformers model (critical for chat)
+    download_sentence_transformers_model()
 
     # Download PANNs model (optional)
     download_panns_model()
