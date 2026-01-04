@@ -299,7 +299,7 @@ async def get_job_status(
         raise HTTPException(status_code=500, detail="Failed to retrieve job status")
 
 
-@router.get("/", response_model=JobListResponse)
+@router.get("", response_model=JobListResponse)
 async def list_jobs(
     tokens: str = Query(..., description="Comma-separated access tokens"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
