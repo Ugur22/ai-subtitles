@@ -3,7 +3,9 @@
  * Features: Active jobs, Completed jobs, Failed jobs, Pagination, Offline warning
  */
 
+import { useCallback } from "react";
 import { useJobTracker } from "../../../hooks/useJobTracker";
+import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
 import { Job } from "../../../types/job";
 
@@ -20,6 +22,13 @@ export const JobPanel: React.FC<JobPanelProps> = ({
 }) => {
   const { jobs, isLoading, isOffline, page, totalPages, setPage, refetch } =
     useJobTracker();
+  const { removeJob } = useJobStorage();
+
+  // Handle job cancellation - remove from storage and refresh list
+  const handleCancelJob = useCallback((jobId: string) => {
+    removeJob(jobId);
+    refetch();
+  }, [removeJob, refetch]);
 
   // Split jobs by status
   const activeJobs = jobs.filter(
@@ -154,7 +163,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                       {activeJobs.length}
                     </span>
                   </div>
-                  <JobList jobs={activeJobs} onViewTranscript={onViewTranscript} />
+                  <JobList jobs={activeJobs} onViewTranscript={onViewTranscript} onCancel={handleCancelJob} />
                 </section>
               )}
 
@@ -172,6 +181,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                   <JobList
                     jobs={completedJobs}
                     onViewTranscript={onViewTranscript}
+                    onCancel={handleCancelJob}
                   />
                 </section>
               )}
@@ -187,7 +197,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                       {failedJobs.length}
                     </span>
                   </div>
-                  <JobList jobs={failedJobs} onViewTranscript={onViewTranscript} />
+                  <JobList jobs={failedJobs} onViewTranscript={onViewTranscript} onCancel={handleCancelJob} />
                 </section>
               )}
 
@@ -205,6 +215,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                   <JobList
                     jobs={cancelledJobs}
                     onViewTranscript={onViewTranscript}
+                    onCancel={handleCancelJob}
                   />
                 </section>
               )}
