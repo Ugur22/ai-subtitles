@@ -54,6 +54,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
     fetchInitialJob();
 
     // Subscribe to real-time updates via Supabase
+    // Note: Database column is 'id', but frontend uses 'job_id' for the same value
     subscription = supabase
       .channel(`job:${jobId}`)
       .on(
@@ -62,7 +63,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
           event: 'UPDATE',
           schema: 'public',
           table: 'jobs',
-          filter: `job_id=eq.${jobId}`,
+          filter: `id=eq.${jobId}`,
         },
         (payload: { new: Record<string, unknown> }) => {
           // Update job state with real-time data

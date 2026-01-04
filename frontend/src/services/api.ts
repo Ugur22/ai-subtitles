@@ -1,11 +1,20 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
 
+console.log('[API] Creating axios instance with baseURL:', API_BASE_URL);
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// Log all outgoing requests for debugging
+api.interceptors.request.use((config) => {
+  const fullUrl = `${config.baseURL}${config.url}`;
+  console.log(`[API] Request: ${config.method?.toUpperCase()} ${fullUrl}`);
+  return config;
 });
 
 // Add response interceptor for error handling
