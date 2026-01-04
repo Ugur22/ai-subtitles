@@ -49,6 +49,9 @@ app = FastAPI(
     title=settings.API_TITLE,
     version=settings.API_VERSION,
     description=settings.API_DESCRIPTION,
+    # Disable automatic trailing slash redirects to prevent HTTP redirect issues
+    # (Cloud Run generates http:// redirect URLs instead of https://)
+    redirect_slashes=False,
     openapi_tags=[
         {
             "name": "Transcription",
