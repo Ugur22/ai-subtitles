@@ -253,6 +253,10 @@ async def generate_summary(
     segments = transcription['transcription']['segments']
     print(f"Found {len(segments)} segments for summarization")
 
+    # Debug: Check if segments have screenshot_url
+    segments_with_screenshots = sum(1 for seg in segments if seg.get('screenshot_url'))
+    print(f"[Summary Debug] Segments with screenshot_url: {segments_with_screenshots}/{len(segments)}")
+
     # Group segments into logical sections (roughly 1-3 minutes each)
     sections = []
     current_section = []
@@ -331,20 +335,39 @@ async def generate_summary(
             # Generate descriptive title
             title = f"Section {section['start']}-{section['end']}"
 
+            # Get screenshot_url from first segment of the section
+            screenshot_url = None
+            for seg in section["segments"]:
+                if seg.get("screenshot_url"):
+                    screenshot_url = seg["screenshot_url"]
+                    break
+
+            # Debug log for first few sections
+            if section_index < 3:
+                print(f"[Summary Debug] Section {section_index}: screenshot_url={screenshot_url}")
+
             summaries.append({
                 "title": title,
                 "start": section["start"],
                 "end": section["end"],
-                "summary": summary
+                "summary": summary,
+                "screenshot_url": screenshot_url
             })
         except Exception as e:
             print(f"Error generating summary for section {section['start']}-{section['end']}: {e}")
+            # Get screenshot_url even for failed summaries
+            screenshot_url = None
+            for seg in section["segments"]:
+                if seg.get("screenshot_url"):
+                    screenshot_url = seg["screenshot_url"]
+                    break
             # Add a placeholder for failed summaries
             summaries.append({
                 "title": f"Section {section['start']}-{section['end']}",
                 "start": section["start"],
                 "end": section["end"],
-                "summary": "Summary generation failed. Please try again."
+                "summary": "Summary generation failed. Please try again.",
+                "screenshot_url": screenshot_url
             })
 
     # Log summary generation results
@@ -444,6 +467,158 @@ async def analyze_audio_for_video(video_hash: str, force_reindex: bool = False):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Audio analysis failed: {str(e)}")
+
+
+@router.post(
+    "/regenerate_screenshots/{video_hash}",
+    summary="Regenerate screenshots for existing video",
+    description="Extract and upload screenshots for an already-transcribed video without re-transcribing",
+    tags=["Transcription"]
+)
+async def regenerate_screenshots_for_video(video_hash: str):
+    """
+    Regenerate screenshots for an existing transcription.
+
+    This is useful when:
+    - Screenshots were lost (e.g., stored on ephemeral storage)
+    - GCS uploads were not enabled during original transcription
+    - Screenshots need to be refreshed
+
+    Args:
+        video_hash: The video hash to regenerate screenshots for
+    """
+    try:
+        from services.supabase_service import supabase
+        from services.gcs_service import GCSService as gcs_service
+
+        # Check if GCS uploads are enabled
+        if not settings.ENABLE_GCS_UPLOADS:
+            raise HTTPException(
+                status_code=400,
+                detail="GCS uploads must be enabled for screenshot regeneration. Set ENABLE_GCS_UPLOADS=true"
+            )
+
+        # Get job data from Supabase
+        client = supabase()
+        response = (
+            client.table("jobs")
+            .select("id, result_json, filename, gcs_path")
+            .eq("video_hash", video_hash)
+            .eq("status", "completed")
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data or len(response.data) == 0:
+            raise HTTPException(status_code=404, detail="No completed job found for this video_hash")
+
+        job = response.data[0]
+        job_id = job.get("id")
+        result_json = job.get("result_json")
+        gcs_path = job.get("gcs_path") or (result_json.get("gcs_path") if result_json else None)
+
+        if not result_json:
+            raise HTTPException(status_code=404, detail="Job result not available")
+
+        if not gcs_path:
+            raise HTTPException(status_code=404, detail="Video file path not found in job result")
+
+        # Verify file exists in GCS
+        if not gcs_service.file_exists(gcs_path):
+            raise HTTPException(status_code=404, detail="Video file not found in storage")
+
+        # Get segments from transcription
+        segments = result_json.get("transcription", {}).get("segments", [])
+        if not segments:
+            raise HTTPException(status_code=400, detail="No segments found in transcription")
+
+        print(f"[Screenshots] Regenerating screenshots for {len(segments)} segments, video_hash={video_hash}")
+
+        # Generate signed URL for video (valid for 1 hour)
+        video_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+
+        # Get timestamps for all segments
+        timestamps = [seg.get("start", 0) for seg in segments]
+
+        # Create temp directory for screenshots
+        screenshots_dir = os.path.join(settings.SCREENSHOTS_DIR, video_hash)
+        os.makedirs(screenshots_dir, exist_ok=True)
+
+        print(f"[Screenshots] Extracting {len(timestamps)} screenshots from video URL...")
+
+        # Extract screenshots in batches using parallel extraction
+        batch_size = 20
+        screenshot_results = {}
+
+        for batch_start in range(0, len(timestamps), batch_size):
+            batch_timestamps = timestamps[batch_start:batch_start + batch_size]
+
+            batch_results = VideoService.extract_screenshots_parallel_from_url(
+                source_url=video_url,
+                timestamps=batch_timestamps,
+                output_dir=screenshots_dir,
+                video_hash=video_hash,
+                max_workers=4
+            )
+            screenshot_results.update(batch_results)
+
+            print(f"[Screenshots] Extracted batch {batch_start // batch_size + 1}: {len([v for v in batch_results.values() if v])} successful")
+
+        # Upload screenshots to GCS
+        print(f"[Screenshots] Uploading {len(screenshot_results)} screenshots to GCS...")
+
+        gcs_urls = gcs_service.upload_screenshots_batch(
+            screenshot_paths=screenshot_results,
+            video_hash=video_hash
+        )
+
+        # Update segments with new screenshot URLs
+        screenshot_count = 0
+        for segment in segments:
+            ts = segment.get("start", 0)
+            gcs_url = gcs_urls.get(ts)
+            if gcs_url:
+                segment["screenshot_url"] = gcs_url
+                screenshot_count += 1
+            else:
+                segment["screenshot_url"] = None
+
+        print(f"[Screenshots] Updated {screenshot_count}/{len(segments)} segments with GCS URLs")
+
+        # Update result_json in Supabase
+        result_json["transcription"]["segments"] = segments
+
+        update_response = (
+            client.table("jobs")
+            .update({"result_json": result_json})
+            .eq("id", job_id)
+            .execute()
+        )
+
+        print(f"[Screenshots] Updated job {job_id} in Supabase")
+
+        # Clean up local screenshots
+        try:
+            shutil.rmtree(screenshots_dir)
+            print(f"[Screenshots] Cleaned up local screenshots directory")
+        except Exception as e:
+            print(f"[Screenshots] Warning: Failed to clean up local screenshots: {e}")
+
+        return {
+            "success": True,
+            "video_hash": video_hash,
+            "total_segments": len(segments),
+            "screenshots_generated": screenshot_count,
+            "message": f"Successfully regenerated {screenshot_count} screenshots for {len(segments)} segments"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error regenerating screenshots: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Screenshot regeneration failed: {str(e)}")
 
 
 # Helper function wrappers for service modules (to maintain compatibility with endpoint code)
