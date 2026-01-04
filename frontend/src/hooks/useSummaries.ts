@@ -31,17 +31,13 @@ export const useSummaries = (options: UseSummariesOptions) => {
     summaryData: SummarySection[]
   ): Promise<SummarySection[]> => {
     try {
-      // Get the current transcription data
-      const response = await axios.get(
-        `${API_BASE_URL}/current_transcription/`
-      );
-
-      if (response.status !== 200) {
-        console.error(`Error fetching transcription data: ${response.status}`);
+      // Use local transcription data instead of API call (works with stateless Cloud Run)
+      if (!transcription?.transcription?.segments) {
+        console.warn("No transcription segments available for screenshots");
         return summaryData;
       }
 
-      const segments = response.data.transcription.segments;
+      const segments = transcription.transcription.segments;
 
       // Match summary sections with segment screenshots
       const enhancedSummaries = summaryData.map((summary: SummarySection) => {
@@ -102,10 +98,16 @@ export const useSummaries = (options: UseSummariesOptions) => {
   const generateSummaries = async () => {
     setSummaryLoading(true);
     try {
-      console.log("Generating summaries...");
-      const response = await axios.post(
-        `${API_BASE_URL}/generate_summary/`
-      );
+      // Extract video_hash from transcription for stateless Cloud Run compatibility
+      const videoHash = transcription?.video_hash;
+      console.log("Generating summaries...", videoHash ? `for video_hash=${videoHash}` : "(no video_hash)");
+
+      // Build URL with video_hash query parameter if available
+      const url = videoHash
+        ? `${API_BASE_URL}/generate_summary/?video_hash=${encodeURIComponent(videoHash)}`
+        : `${API_BASE_URL}/generate_summary/`;
+
+      const response = await axios.post(url);
 
       const summaryData = response.data.summaries || [];
       const responseFilename = response.data.filename;

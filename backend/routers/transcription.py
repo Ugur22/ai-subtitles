@@ -10,8 +10,8 @@ import uuid
 import json
 from pathlib import Path
 from datetime import timedelta
-from typing import Dict, List
-from fastapi import APIRouter, UploadFile, HTTPException, Request, Form
+from typing import Dict, List, Optional
+from fastapi import APIRouter, UploadFile, HTTPException, Request, Form, Query
 from fastapi.responses import StreamingResponse
 
 from config import settings
@@ -34,6 +34,52 @@ from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp, format_eta, time_to_seconds, time_diff_minutes
 
 router = APIRouter(tags=["Transcription"])
+
+
+def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
+    """
+    Get transcription from any available source:
+    1. First check legacy database (SQLite/Firestore)
+    2. If not found, check Supabase jobs table
+
+    Args:
+        video_hash: The video hash to look up
+
+    Returns:
+        Transcription data dict or None if not found
+    """
+    # Try legacy database first
+    transcription = get_transcription(video_hash)
+    if transcription:
+        return transcription
+
+    # Try Supabase jobs table
+    try:
+        from services.supabase_service import supabase
+        client = supabase()
+
+        # Look for completed job with this video_hash
+        response = (
+            client.table("jobs")
+            .select("result_json, filename, gcs_path")
+            .eq("video_hash", video_hash)
+            .eq("status", "completed")
+            .limit(1)
+            .execute()
+        )
+
+        if response.data and len(response.data) > 0:
+            job = response.data[0]
+            result_json = job.get("result_json")
+
+            if result_json:
+                print(f"[Summary] Found transcription in Supabase job for video_hash={video_hash}")
+                return result_json
+
+    except Exception as e:
+        print(f"[Summary] Error checking Supabase for transcription: {e}")
+
+    return None
 
 
 @router.get(
@@ -170,13 +216,35 @@ async def translate_local_endpoint(request: TranslationRequest) -> TranslationRe
         404: {"model": ErrorResponse, "description": "No transcription available"}
     }
 )
-async def generate_summary(request: Request) -> Dict:
-    """Generate section summaries from transcription using local model"""
-    if not hasattr(request.app.state, 'last_transcription'):
-        raise HTTPException(status_code=404, detail="No transcription available. Please transcribe a video first.")
+async def generate_summary(
+    request: Request,
+    video_hash: Optional[str] = Query(None, description="Video hash to load transcription from database")
+) -> Dict:
+    """Generate section summaries from transcription using local model.
 
-    # Get the latest transcription data
-    transcription = request.app.state.last_transcription
+    Supports multiple ways to get transcription data:
+    1. If video_hash is provided, loads from database (SQLite/Supabase)
+    2. Falls back to in-memory last_transcription (for local dev)
+    """
+    transcription = None
+
+    # Priority 1: Load from database if video_hash provided
+    if video_hash:
+        transcription = get_transcription_from_any_source(video_hash)
+        if transcription:
+            print(f"[Summary] Loaded transcription from database for video_hash={video_hash}")
+
+    # Priority 2: Fall back to in-memory state (for local development)
+    if not transcription and hasattr(request.app.state, 'last_transcription'):
+        transcription = request.app.state.last_transcription
+        print("[Summary] Using in-memory last_transcription")
+
+    # Error if no transcription found
+    if not transcription:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcription available. Please provide video_hash or transcribe a video first."
+        )
 
     # Include the filename in the response
     filename = transcription.get('filename', 'unknown_filename')
