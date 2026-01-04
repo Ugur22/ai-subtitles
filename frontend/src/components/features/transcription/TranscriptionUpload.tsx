@@ -1568,8 +1568,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           if (job.result_json) {
             setTranscription(job.result_json);
             // Set video URL from result to enable video playback
+            // video_url is relative (/video/hash), need to prepend API_BASE_URL
             if (job.result_json.video_url) {
-              setVideoUrl(job.result_json.video_url);
+              setVideoUrl(`${API_BASE_URL}${job.result_json.video_url}`);
+            } else if (job.result_json.video_hash) {
+              // Fallback: construct URL from video_hash
+              setVideoUrl(`${API_BASE_URL}/video/${job.result_json.video_hash}`);
             }
             setShowJobPanel(false);
           }
