@@ -4,7 +4,9 @@
  */
 
 // API base URL - defaults to localhost for development
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Force https:// if the env var has http://
+const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_BASE_URL = rawApiUrl.replace(/^http:\/\/(?!localhost)/, 'https://');
 
 // Helper to construct full API URLs
 export const getApiUrl = (path: string): string => {
