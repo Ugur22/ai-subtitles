@@ -3,13 +3,10 @@ import axios from "axios";
 import ReactMarkdown from "react-markdown";
 import { useTransition, animated } from "react-spring";
 import { API_BASE_URL } from "../../../config";
+import { formatScreenshotUrlSafe } from "../../../utils/url";
 
-// Helper to format screenshot URLs - handles both local paths and full GCS URLs
-const formatScreenshotUrl = (url: string | undefined): string => {
-  if (!url) return "";
-  if (url.startsWith("http")) return url;
-  return `${API_BASE_URL}${url}`;
-};
+// Alias for backward compatibility within this file
+const formatScreenshotUrl = formatScreenshotUrlSafe;
 
 interface Source {
   start_time: string;

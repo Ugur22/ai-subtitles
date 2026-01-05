@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { useSpring, animated, config, useTransition } from "react-spring";
 import { API_BASE_URL } from "../../../config";
+import { formatScreenshotUrl } from "../../../utils/url";
 
 interface SummarySection {
   title: string;
@@ -201,20 +202,6 @@ export const SummaryPanel = ({
     if (onSeekTo) {
       onSeekTo(time);
     }
-  };
-
-  const formatScreenshotUrl = (
-    url: string | null | undefined
-  ): string | undefined => {
-    if (!url) return undefined;
-
-    // If URL already starts with http, return as is
-    if (url.startsWith("http")) {
-      return url;
-    }
-
-    // Otherwise, prepend the API server URL
-    return `${API_BASE_URL}${url}`;
   };
 
   const openImageModal = (imageUrl: string | undefined) => {

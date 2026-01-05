@@ -1,17 +1,6 @@
 import React from "react";
 import { useSpring, animated } from "react-spring";
-import { API_BASE_URL } from "../../../config";
-
-// Helper to format screenshot URLs - handles both local paths and full GCS URLs
-const formatScreenshotUrl = (url: string | undefined): string | undefined => {
-  if (!url) return undefined;
-  // If URL already starts with http, return as is (GCS signed URL)
-  if (url.startsWith("http")) {
-    return url;
-  }
-  // Otherwise, prepend the API server URL (local path)
-  return `${API_BASE_URL}${url}`;
-};
+import { formatScreenshotUrl } from "../../../utils/url";
 
 interface Segment {
   id: string;
