@@ -7,13 +7,7 @@ import {
   autoIdentifySpeakers,
 } from "../../../services/api";
 import { API_BASE_URL } from "../../../config";
-
-// Helper to format screenshot URLs - handles both local paths and full GCS URLs
-const formatScreenshotUrl = (url: string | undefined | null): string | null => {
-  if (!url) return null;
-  if (url.startsWith("http")) return url;
-  return `${API_BASE_URL}${url}`;
-};
+import { formatScreenshotUrl, formatScreenshotUrlSafe } from "../../../utils/url";
 import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
@@ -1043,7 +1037,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               }
                             }
                             return closest && closest.screenshot_url
-                              ? formatScreenshotUrl(closest.screenshot_url)
+                              ? formatScreenshotUrl(closest.screenshot_url) ?? null
                               : null;
                           }}
                           onSeek={(time: number) => {
@@ -1422,11 +1416,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                   className="relative group cursor-pointer"
                                   onClick={() =>
                                     summary.screenshot_url &&
-                                    openImageModal(summary.screenshot_url)
+                                    openImageModal(formatScreenshotUrlSafe(summary.screenshot_url))
                                   }
                                 >
                                   <img
-                                    src={summary.screenshot_url}
+                                    src={formatScreenshotUrlSafe(summary.screenshot_url)}
                                     alt={`Screenshot at ${summary.start}`}
                                     className="w-full h-auto rounded-lg shadow-sm hover:shadow-md transition-shadow"
                                   />

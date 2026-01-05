@@ -1,13 +1,6 @@
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import { API_BASE_URL } from "../../../config";
-
-// Helper to format screenshot URLs - handles both local paths and full GCS URLs
-const formatScreenshotUrl = (url: string | undefined): string => {
-  if (!url) return "";
-  if (url.startsWith("http")) return url;
-  return `${API_BASE_URL}${url}`;
-};
+import { formatScreenshotUrlSafe } from "../../../utils/url";
 
 interface Source {
   start_time: string;
@@ -103,7 +96,7 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
             onClick={() => setSelectedImageIndex(idx)}
           >
             <img
-              src={formatScreenshotUrl(screenshot.screenshot_url)}
+              src={formatScreenshotUrlSafe(screenshot.screenshot_url)}
               alt={`Screenshot at ${screenshot.start_time}`}
               className="w-full h-24 object-cover rounded-lg border-2 border-gray-200 hover:border-purple-400 transition-all duration-200 group-hover:shadow-lg"
             />
@@ -151,7 +144,7 @@ const ScreenshotGallery: React.FC<ScreenshotGalleryProps> = ({
         >
           <div className="relative max-w-5xl max-h-full" onClick={(e) => e.stopPropagation()}>
             <img
-              src={formatScreenshotUrl(currentScreenshot.screenshot_url)}
+              src={formatScreenshotUrlSafe(currentScreenshot.screenshot_url)}
               alt={`Screenshot at ${currentScreenshot.start_time}`}
               className="max-w-full max-h-[90vh] object-contain rounded-lg"
             />
