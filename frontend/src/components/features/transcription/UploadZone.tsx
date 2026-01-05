@@ -1,6 +1,5 @@
 import React from "react";
 import { match } from "ts-pattern";
-import { SavedTranscriptionsPanel } from "./SavedTranscriptionsPanel";
 
 interface ProcessingStatus {
   stage:
@@ -32,10 +31,6 @@ interface UploadZoneProps {
   transcriptionMethod: string;
   setTranscriptionMethod: React.Dispatch<React.SetStateAction<"local" | "background">>;
   handleStartTranscriptionClick: () => void;
-  showSavedTranscriptions: boolean;
-  handleSavedTranscriptionsClick: () => void;
-  handleTranscriptionLoaded: (videoHash?: string) => Promise<void>;
-  openImageModal: (url: string) => void;
   isNewTranscription: boolean;
   processingStatus: ProcessingStatus | null;
   elapsedTime: number;
@@ -57,10 +52,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     transcriptionMethod,
     setTranscriptionMethod,
     handleStartTranscriptionClick,
-    showSavedTranscriptions,
-    handleSavedTranscriptionsClick,
-    handleTranscriptionLoaded,
-    openImageModal,
     isNewTranscription: _isNewTranscription,
     processingStatus: _processingStatus,
     elapsedTime: _elapsedTime,
@@ -349,37 +340,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
               </div>
             )}
 
-            {/* Load Saved Button */}
-            <div className="mt-3 text-center">
-              <button
-                onClick={handleSavedTranscriptionsClick}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center justify-center mx-auto"
-                disabled={isTranscribing}
-              >
-                <svg
-                  className="w-4 h-4 mr-1"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
-                </svg>
-                {showSavedTranscriptions
-                  ? "Hide Saved"
-                  : "Load Saved Transcription"}
-              </button>
-            </div>
-
-            {/* Saved Transcriptions Panel */}
-            {showSavedTranscriptions && (
-              <div className="mt-4 max-w-lg mx-auto">
-                <SavedTranscriptionsPanel
-                  onTranscriptionLoaded={handleTranscriptionLoaded}
-                  onImageClick={openImageModal}
-                />
-              </div>
-            )}
 
             {/* File Format Info */}
             <div className="mt-4 flex justify-center gap-3">
