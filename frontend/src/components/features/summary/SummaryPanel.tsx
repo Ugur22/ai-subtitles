@@ -29,6 +29,13 @@ interface ImageModalProps {
 }
 
 const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
+  // Phase 4: Focus management - handle escape key
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      onClose();
+    }
+  };
+
   // Prevent closing modal when clicking on the image itself
   const handleImageClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -36,28 +43,34 @@ const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 animate-fadeIn"
       onClick={onClose} // Close when clicking backdrop
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image preview modal"
     >
       <div
-        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh]"
+        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh] animate-scaleIn"
         onClick={handleImageClick} // Prevent closing on image container click
       >
         <img
           src={imageUrl}
           alt="Enlarged screenshot"
-          className="block w-[900px] max-h-[85vh] object-contain rounded-xl"
+          className="block w-full sm:w-[900px] max-h-[85vh] object-contain rounded-xl"
         />
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 bg-white rounded-full p-1 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          className="absolute top-2 right-2 bg-white rounded-full p-2 text-gray-700 hover:bg-gray-200 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg"
           aria-label="Close image modal"
+          autoFocus
         >
           <svg
             className="w-5 h-5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
+            aria-hidden="true"
           >
             <path
               strokeLinecap="round"
@@ -215,14 +228,16 @@ export const SummaryPanel = ({
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col h-full">
-      <div className="px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-        <h3 className="text-sm font-medium text-gray-800">Content Summary</h3>
+      {/* Phase 1: Typography improvements - text-base font-semibold for consistency */}
+      <div className="px-4 sm:px-5 py-3 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+        <h3 className="text-base font-semibold text-gray-900">Content Summary</h3>
         {(!summaries.length || summaries.length > 0) && !loading && !screenshotLoading && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {!summaries.length ? (
               <button
                 onClick={generateSummaries}
-                className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                aria-label="Generate content summary"
               >
                 Generate Summary
               </button>
@@ -231,14 +246,16 @@ export const SummaryPanel = ({
                 <button
                   onClick={regenerateScreenshots}
                   disabled={!videoHash}
-                  className="px-3 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 hover:shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
                   title={!videoHash ? "Video hash not available" : "Regenerate screenshots from video"}
+                  aria-label="Regenerate screenshots"
                 >
                   Regenerate Screenshots
                 </button>
                 <button
                   onClick={generateSummaries}
-                  className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                  aria-label="Regenerate content summary"
                 >
                   Regenerate Summary
                 </button>
@@ -248,21 +265,22 @@ export const SummaryPanel = ({
         )}
       </div>
 
+      {/* Phase 4: Better loading states */}
       {loading && (
-        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
-          <div className="inline-block animate-spin h-8 w-8 border-4 border-indigo-500 border-t-transparent rounded-full mb-4"></div>
-          <p className="text-gray-900 font-medium">Generating summary...</p>
-          <p className="text-sm text-gray-500 mt-1">
+        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center" role="status" aria-live="polite">
+          <div className="inline-block animate-spin h-10 w-10 border-4 border-indigo-500 border-t-transparent rounded-full mb-4" aria-hidden="true"></div>
+          <p className="text-base font-semibold text-gray-900">Generating summary...</p>
+          <p className="text-sm text-gray-500 mt-1.5 max-w-sm">
             Analyzing video content and extracting key points
           </p>
         </div>
       )}
 
       {screenshotLoading && (
-        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
-          <div className="inline-block animate-spin h-8 w-8 border-4 border-indigo-500 border-t-transparent rounded-full mb-4"></div>
-          <p className="text-gray-900 font-medium">Regenerating screenshots...</p>
-          <p className="text-sm text-gray-500 mt-1">
+        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center" role="status" aria-live="polite">
+          <div className="inline-block animate-spin h-10 w-10 border-4 border-indigo-500 border-t-transparent rounded-full mb-4" aria-hidden="true"></div>
+          <p className="text-base font-semibold text-gray-900">Regenerating screenshots...</p>
+          <p className="text-sm text-gray-500 mt-1.5 max-w-sm">
             Extracting frames from video and uploading to storage
           </p>
         </div>
@@ -270,12 +288,13 @@ export const SummaryPanel = ({
 
       {!loading && !screenshotLoading && summaries.length === 0 && !error && (
         <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
             <svg
-              className="w-8 h-8 text-gray-400"
+              className="w-8 h-8 text-indigo-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -285,16 +304,17 @@ export const SummaryPanel = ({
               />
             </svg>
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
+          <h3 className="text-base font-semibold text-gray-900 mb-2">
             No Summary Yet
           </h3>
-          <p className="text-gray-500 mb-6 max-w-sm">
+          <p className="text-sm text-gray-600 mb-6 max-w-sm leading-relaxed">
             Generate a summary to get a quick overview of the key topics and
             segments in this video.
           </p>
           <button
             onClick={generateSummaries}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-sm"
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 font-medium shadow-sm hover:shadow-md active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            aria-label="Generate content summary"
           >
             Generate Summary
           </button>
@@ -302,14 +322,22 @@ export const SummaryPanel = ({
       )}
 
       {error && !loading && (
-        <div className="p-4 text-red-600 text-sm">
-          {error}
-          <button
-            className="block mt-2 text-rose-500 hover:text-rose-600"
-            onClick={() => setError(null)}
-          >
-            Dismiss
-          </button>
+        <div className="mx-4 sm:mx-5 my-4 p-4 bg-red-50 border border-red-200 rounded-lg" role="alert" aria-live="assertive">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-800">{error}</p>
+              <button
+                className="mt-2 text-sm text-red-600 hover:text-red-800 underline focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                onClick={() => setError(null)}
+                aria-label="Dismiss error message"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -317,54 +345,73 @@ export const SummaryPanel = ({
         <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
           {transitions((style, section, _, index) => (
             <animated.div style={style} className="hover:bg-gray-50">
-              <div
-                className="flex items-start px-5 py-3 cursor-pointer"
-                onClick={() =>
-                  setExpandedSection(expandedSection === index ? null : index)
-                }
-              >
+              <div className="flex flex-col sm:flex-row items-start gap-3 sm:gap-4 px-4 sm:px-5 py-4">
+                {/* Phase 3: Thumbnail size reduction 128px -> 96px, Phase 2: Split click zones */}
                 {section.screenshot_url ? (
-                  <div className="flex-shrink-0 mr-3">
+                  <div className="flex-shrink-0 w-full sm:w-24">
                     <img
                       src={formatScreenshotUrl(section.screenshot_url)}
                       alt={`Screenshot for ${section.title}`}
-                      className="w-32 h-32 object-cover rounded-md shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                      className="w-full sm:w-24 h-24 object-cover rounded-lg shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer hover:scale-105 border border-gray-200"
                       onClick={(e) => {
                         e.stopPropagation();
                         openImageModal(
                           formatScreenshotUrl(section.screenshot_url)
                         );
                       }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openImageModal(formatScreenshotUrl(section.screenshot_url));
+                        }
+                      }}
+                      aria-label={`View full screenshot for ${section.title}`}
                     />
                   </div>
                 ) : (
-                  <div className="flex-shrink-0 mr-3 w-32 h-32 bg-gray-100 rounded-md flex items-center justify-center">
-                    <span className="text-xs text-gray-400">[No preview]</span>
+                  <div className="flex-shrink-0 w-full sm:w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200">
+                    <span className="text-xs text-gray-400" aria-label="No preview available">[No preview]</span>
                   </div>
                 )}
 
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <h4 className="text-sm font-medium text-gray-900">
+                {/* Phase 2: Separate click zone for accordion expansion */}
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() =>
+                    setExpandedSection(expandedSection === index ? null : index)
+                  }
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setExpandedSection(expandedSection === index ? null : index);
+                    }
+                  }}
+                  aria-expanded={expandedSection === index}
+                  aria-label={`${expandedSection === index ? 'Collapse' : 'Expand'} section: ${section.title}`}
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    {/* Phase 1: Typography improvements - text-base font-semibold */}
+                    <h4 className="text-base font-semibold text-gray-900 leading-snug">
                       {section.title}
                     </h4>
-                    <div className="ml-2 flex-shrink-0">
+                    {/* Phase 2: Improved hover states */}
+                    <div className="flex-shrink-0 transition-transform duration-200 hover:bg-gray-100 rounded-full p-1">
                       <Chevron rotation={expandedSection === index ? 180 : 0} />
                     </div>
                   </div>
-                  <p
-                    className="mt-1 text-xs text-gray-500 cursor-pointer hover:text-rose-600 hover:underline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSeekTo(section.start);
-                    }}
-                  >
+
+                  {/* Phase 1: Better spacing and color consistency */}
+                  <p className="mt-1.5 text-xs font-medium text-gray-500">
                     {section.start} - {section.end}
                   </p>
 
-                  {/* Collapsed summary preview */}
+                  {/* Collapsed summary preview - Phase 4: Smooth animations */}
                   <div
-                    className={`mt-1 text-sm text-gray-700 overflow-hidden transition-all duration-300 ${
+                    className={`mt-2 text-sm text-gray-700 leading-relaxed overflow-hidden transition-all duration-300 ease-in-out ${
                       expandedSection === index
                         ? "opacity-0 h-0"
                         : "opacity-100"
@@ -373,17 +420,46 @@ export const SummaryPanel = ({
                     <p className="line-clamp-2">{section.summary}</p>
                   </div>
                 </div>
+
+                {/* Phase 2: Persistent "Jump to section" button - always visible */}
+                <div className="flex-shrink-0 self-start">
+                  <button
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-100 hover:bg-indigo-200 text-indigo-700 hover:text-indigo-800 rounded-lg transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSeekTo(section.start);
+                    }}
+                    aria-label={`Jump to ${section.title} at ${section.start}`}
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span className="hidden sm:inline">Jump</span>
+                  </button>
+                </div>
               </div>
 
+              {/* Phase 4: Improved accordion animation */}
               <AccordionContent isOpen={expandedSection === index}>
-                <div className="px-5 py-2 bg-gray-50">
-                  <p className="text-sm text-gray-700">{section.summary}</p>
-                  <button
-                    className="mt-2 text-xs text-rose-600 hover:text-rose-800"
-                    onClick={() => handleSeekTo(section.start)}
-                  >
-                    Jump to this section
-                  </button>
+                <div className="px-4 sm:px-5 py-3 bg-gray-50 border-t border-gray-100">
+                  <p className="text-sm text-gray-700 leading-relaxed">{section.summary}</p>
                 </div>
               </AccordionContent>
             </animated.div>
