@@ -1,0 +1,102 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ai-subs-backend
+  namespace: 'ai-subs-poc'
+  labels:
+    cloud.googleapis.com/location: us-central1
+    app: ai-subs-backend
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Scaling configuration
+        autoscaling.knative.dev/minScale: '0'
+        autoscaling.knative.dev/maxScale: '3'
+
+        # CPU allocation
+        run.googleapis.com/cpu-throttling: 'false'
+
+        # Startup probe for longer cold start times
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      # Service account for Secret Manager and GCS access
+      serviceAccountName: 1052285886390-compute@developer.gserviceaccount.com
+
+      # Container timeout
+      timeoutSeconds: 300
+
+      containers:
+      - name: ai-subs-backend
+        image: us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest
+
+        ports:
+        - name: http1
+          containerPort: 8000
+
+        # Resource limits
+        resources:
+          limits:
+            cpu: '2'
+            memory: 8Gi
+
+        # Environment variables
+        env:
+        # CORS Configuration - frontend URL
+        - name: CORS_ORIGINS
+          value: '["https://REDACTED_FRONTEND_URL"]'
+
+        # GCS Configuration - Required for Cloud Run (ephemeral storage)
+        - name: ENABLE_GCS_UPLOADS
+          value: 'true'
+        - name: GCS_BUCKET_NAME
+          value: 'ai-subs-uploads'
+
+        # Supabase Configuration
+        - name: SUPABASE_URL
+          value: 'https://REDACTED_SUPABASE_URL'
+
+        # Secrets from Secret Manager
+        - name: SUPABASE_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: supabase-service-key
+              key: latest
+
+        - name: APP_PASSWORD_HASH
+          valueFrom:
+            secretKeyRef:
+              name: app-password-hash
+              key: latest
+
+        - name: HUGGINGFACE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface-token
+              key: latest
+
+        # Health check probes
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        startupProbe:
+          httpGet:
+            path: /
+            port: 8000
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30  # Allow 5 minutes for cold start (30 * 10s)
+
+  traffic:
+  - percent: 100
+    latestRevision: true

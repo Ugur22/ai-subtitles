@@ -11,26 +11,13 @@
 - **Repository Name**: `ai-subs-repo` (NOT `ai-subs`)
 - **Full Image Path**: `us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest`
 
-### Build & Deploy Commands
+### Deploy Backend
 
 ```bash
-# Build and push Docker image
-cd backend
-gcloud builds submit --tag us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest --project=ai-subs-poc
-
-# Deploy to Cloud Run
-gcloud run deploy ai-subs-backend \
-  --image=us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest \
-  --region=us-central1 \
-  --project=ai-subs-poc
+cd backend && ./deploy.sh
 ```
 
-### Secrets Configuration
-- `huggingface-token` - HuggingFace API token (linked to Cloud Run as `HUGGINGFACE_TOKEN`)
-
-### Required Environment Variables
-- `ENABLE_GCS_UPLOADS=true` - Required for screenshots to persist (Cloud Run storage is ephemeral)
-- `GCS_BUCKET_NAME=ai-subs-uploads` - GCS bucket for video uploads and screenshots
+See `.claude/deployment.md` for full deployment details (secrets, env vars, resources).
 
 ### GCS Storage
 - **Bucket**: `ai-subs-uploads`
