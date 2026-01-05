@@ -7,6 +7,13 @@ import {
   autoIdentifySpeakers,
 } from "../../../services/api";
 import { API_BASE_URL } from "../../../config";
+
+// Helper to format screenshot URLs - handles both local paths and full GCS URLs
+const formatScreenshotUrl = (url: string | undefined | null): string | null => {
+  if (!url) return null;
+  if (url.startsWith("http")) return url;
+  return `${API_BASE_URL}${url}`;
+};
 import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
@@ -1036,7 +1043,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               }
                             }
                             return closest && closest.screenshot_url
-                              ? `${API_BASE_URL}${closest.screenshot_url}`
+                              ? formatScreenshotUrl(closest.screenshot_url)
                               : null;
                           }}
                           onSeek={(time: number) => {

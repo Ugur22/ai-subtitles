@@ -2,6 +2,17 @@ import React from "react";
 import { useSpring, animated } from "react-spring";
 import { API_BASE_URL } from "../../../config";
 
+// Helper to format screenshot URLs - handles both local paths and full GCS URLs
+const formatScreenshotUrl = (url: string | undefined): string | undefined => {
+  if (!url) return undefined;
+  // If URL already starts with http, return as is (GCS signed URL)
+  if (url.startsWith("http")) {
+    return url;
+  }
+  // Otherwise, prepend the API server URL (local path)
+  return `${API_BASE_URL}${url}`;
+};
+
 interface Segment {
   id: string;
   start_time: string;
@@ -148,7 +159,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                       className={segment.is_silent ? "w-full" : "flex-shrink-0"}
                     >
                       <img
-                        src={`${API_BASE_URL}${segment.screenshot_url}`}
+                        src={formatScreenshotUrl(segment.screenshot_url)}
                         alt={`Screenshot at ${segment.start_time}`}
                         className={`object-cover rounded-lg shadow-sm hover:shadow-lg transition-shadow hover:scale-105   cursor-pointer border ${
                           segment.is_silent
@@ -158,7 +169,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                         onClick={(e) => {
                           e.stopPropagation();
                           openImageModal(
-                            `${API_BASE_URL}${segment.screenshot_url}`
+                            formatScreenshotUrl(segment.screenshot_url) || ""
                           );
                         }}
                       />

@@ -4,6 +4,13 @@ import ReactMarkdown from "react-markdown";
 import { useTransition, animated } from "react-spring";
 import { API_BASE_URL } from "../../../config";
 
+// Helper to format screenshot URLs - handles both local paths and full GCS URLs
+const formatScreenshotUrl = (url: string | undefined): string => {
+  if (!url) return "";
+  if (url.startsWith("http")) return url;
+  return `${API_BASE_URL}${url}`;
+};
+
 interface Source {
   start_time: string;
   end_time: string;
@@ -697,14 +704,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               onClick={() => {
                                 if (source.screenshot_url) {
                                   const visualSources = message.sources!.filter((s) => s.screenshot_url);
-                                  const screenshots = visualSources.map((s) => `${API_BASE_URL}${s.screenshot_url}`);
+                                  const screenshots = visualSources.map((s) => formatScreenshotUrl(s.screenshot_url));
                                   setScreenshotModal({ screenshots, currentIndex: idx, sources: visualSources });
                                 }
                               }}
                               className="group relative aspect-video bg-white rounded-lg overflow-hidden border-2 border-purple-200 hover:border-purple-400 transition-all hover:shadow-lg cursor-pointer"
                             >
                               <img
-                                src={`${API_BASE_URL}${source.screenshot_url}`}
+                                src={formatScreenshotUrl(source.screenshot_url)}
                                 alt={`Screenshot at ${source.start_time}`}
                                 className="w-full h-full object-cover"
                                 onError={(e) => {
