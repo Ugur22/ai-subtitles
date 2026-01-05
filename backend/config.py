@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
+    # App Password Protection
+    # Generate hash with: python -c "import hashlib; print(hashlib.sha256('your_password'.encode()).hexdigest())"
+    # Leave empty to disable password protection
+    APP_PASSWORD_HASH: Optional[str] = os.getenv("APP_PASSWORD_HASH")
+
     class Config:
         case_sensitive = True
         env_file = ".env"
