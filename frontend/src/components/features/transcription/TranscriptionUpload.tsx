@@ -14,7 +14,6 @@ import { SearchPanel } from "../search/SearchPanel";
 import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
 import { ChatPanel } from "../chat/ChatPanel";
-import axios from "axios";
 import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
 import {
@@ -58,7 +57,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [progressSimulation] = useState<NodeJS.Timeout | null>(null); // Unused but kept for future use
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [isNewTranscription, setIsNewTranscription] = useState(false);
-  const [showSavedTranscriptions, setShowSavedTranscriptions] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
@@ -469,57 +467,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setShowSearch(!showSearch);
   };
 
-  const handleSavedTranscriptionsClick = () => {
-    setShowSavedTranscriptions(!showSavedTranscriptions);
-  };
-
-  // Handle when a saved transcription is loaded
-  const handleTranscriptionLoaded = async (videoHash?: string) => {
-    try {
-      let data;
-      if (videoHash) {
-        // Load a specific saved transcription
-        const response = await axios.get(
-          `${API_BASE_URL}/transcription/${videoHash}`
-        );
-        data = response.data;
-      } else {
-        // Load the current transcription
-        const response = await axios.get(
-          `${API_BASE_URL}/current_transcription/`
-        );
-        data = response.data;
-      }
-      console.log("Loaded transcription data:", data);
-      // No translation logic needed, just set the transcription
-      setTranscription(data);
-      // Note: file is managed by useFileUpload hook, no need to clear it
-      setProcessingStatus({ stage: "complete", progress: 100 });
-      setShowSavedTranscriptions(false);
-      setSummaries([]);
-      if (data.video_hash) {
-        const videoPath = `${API_BASE_URL}/video/${data.video_hash}`;
-        setVideoUrl(videoPath);
-      } else if (data.file_path) {
-        const pathParts = data.file_path.split("/");
-        const fileName = pathParts[pathParts.length - 1];
-        const hashMatch = fileName.match(/^([a-f0-9]+)\./i);
-        if (hashMatch && hashMatch[1]) {
-          const extractedHash = hashMatch[1];
-          const videoPath = `${API_BASE_URL}/video/${extractedHash}`;
-          setVideoUrl(videoPath);
-        } else {
-          setError("Could not load video: Missing video identifier");
-        }
-      } else {
-        setError("Could not load video: Missing file information");
-      }
-    } catch (error) {
-      console.error("Error loading transcription:", error);
-      setError("Failed to load the transcription. Please try again.");
-    }
-  };
-
   // Create and add subtitles to video
   // Subtitle-related logic now handled by useSubtitles hook
 
@@ -694,10 +641,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
             transcriptionMethod={transcriptionMethod}
             setTranscriptionMethod={setTranscriptionMethod}
             handleStartTranscriptionClick={handleStartTranscriptionClick}
-            showSavedTranscriptions={showSavedTranscriptions}
-            handleSavedTranscriptionsClick={handleSavedTranscriptionsClick}
-            handleTranscriptionLoaded={handleTranscriptionLoaded}
-            openImageModal={openImageModal}
             isNewTranscription={isNewTranscription}
             processingStatus={processingStatus}
             elapsedTime={elapsedTime}

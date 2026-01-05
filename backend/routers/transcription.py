@@ -15,11 +15,10 @@ from fastapi import APIRouter, UploadFile, HTTPException, Request, Form, Query
 from fastapi.responses import StreamingResponse
 
 from config import settings
-from database import get_transcription, store_transcription, list_transcriptions, delete_transcription as db_delete_transcription
+from database import get_transcription, store_transcription, delete_transcription as db_delete_transcription
 from dependencies import get_whisper_model, get_speaker_diarizer, _last_transcription_data
 import dependencies
 from models import (
-    TranscriptionListResponse,
     TranslationRequest,
     TranslationResponse,
     ErrorResponse
@@ -103,25 +102,6 @@ async def get_current_transcription(request: Request) -> Dict:
 
     print(f"Sending transcription data: {segment_count} segments total, {screenshots_count} with screenshots")
     return dependencies._last_transcription_data
-
-
-@router.get(
-    "/transcriptions/",
-    response_model=TranscriptionListResponse,
-    summary="List all transcriptions",
-    description="Get a list of all saved transcriptions with metadata",
-    responses={
-        500: {"model": ErrorResponse, "description": "Failed to list transcriptions"}
-    }
-)
-async def list_all_transcriptions() -> TranscriptionListResponse:
-    """List all saved transcriptions with additional metadata"""
-    try:
-        transcriptions = list_transcriptions()
-        return TranscriptionListResponse(transcriptions=transcriptions)
-    except Exception as e:
-        print(f"Error listing transcriptions: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to list transcriptions")
 
 
 @router.get(

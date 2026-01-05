@@ -281,28 +281,6 @@ export const getSubtitles = async (language: 'original' | 'english', videoHash?:
   return response.data;
 };
 
-export interface SavedTranscription {
-  video_hash: string;
-  filename: string;
-  created_at: string;
-  file_path: string | null;
-  thumbnail_url?: string | null;
-}
-
-export const getSavedTranscriptions = async (): Promise<{ transcriptions: SavedTranscription[] }> => {
-  const response = await api.get('/transcriptions/');
-  return response.data;
-};
-
-export const loadSavedTranscription = async (videoHash: string): Promise<TranscriptionResponse> => {
-  const response = await api.get<TranscriptionResponse>(`/transcription/${videoHash}`);
-  return response.data;
-};
-
-export const deleteTranscription = async (videoHash: string): Promise<{ success: boolean; message: string }> => {
-  const response = await api.delete(`/transcription/${videoHash}`);
-  return response.data;
-};
 
 // ============================================================================
 // Speaker Recognition API
