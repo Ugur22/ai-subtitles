@@ -19,6 +19,13 @@ export const formatScreenshotUrl = (
 ): string | undefined => {
   if (!url) return undefined;
 
+  // Debug: log first few char codes to detect invisible characters
+  const firstChars = url.substring(0, 10);
+  const charCodes = Array.from(firstChars).map(c => c.charCodeAt(0));
+  if (url.includes("storage.goo") && !url.match(/^https?:\/\//)) {
+    console.warn("[formatScreenshotUrl] Raw URL first chars:", firstChars, "codes:", charCodes);
+  }
+
   // Trim whitespace and remove common invisible characters
   let cleanUrl = url
     .trim()
