@@ -13,11 +13,11 @@ import torch
 # Must be set BEFORE importing pyannote
 os.environ.setdefault("TORCH_FORCE_WEIGHTS_ONLY_LOAD", "0")
 
-# Monkey-patch torch.load to use weights_only=False for pyannote compatibility
+# Monkey-patch torch.load to FORCE weights_only=False for pyannote compatibility
+# lightning_fabric passes weights_only=True explicitly, so we must override it
 _original_torch_load = torch.load
 def _patched_torch_load(*args, **kwargs):
-    if 'weights_only' not in kwargs:
-        kwargs['weights_only'] = False
+    kwargs['weights_only'] = False  # Force it, don't check if exists
     return _original_torch_load(*args, **kwargs)
 torch.load = _patched_torch_load
 

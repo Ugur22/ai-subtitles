@@ -1,5 +1,46 @@
 # AI-Subs Project Notes
 
+## Claude Behavior Rules
+
+### CRITICAL: Plan Mode Required
+For ANY non-trivial task, Claude MUST:
+1. Enter plan mode FIRST using `EnterPlanMode`
+2. Explore and understand the issue
+3. Write a detailed plan
+4. Get explicit user approval before implementing
+
+**Non-trivial tasks include:**
+- Bug fixes
+- Code changes
+- Feature additions
+- Refactoring
+- Configuration changes
+- ANY deployment
+
+**Only skip plan mode for:**
+- Simple questions/explanations
+- Reading files for information
+- Trivial typo fixes (single character)
+
+### NEVER Do Without Approval
+- NEVER make code changes without presenting a plan first
+- NEVER deploy to GCloud (`./deploy.sh`, `gcloud run deploy`, `gcloud builds submit`)
+- NEVER commit to git without explicit approval
+- NEVER assume the user wants changes implemented - always confirm
+
+### Required Workflow
+1. User requests something
+2. Claude enters plan mode (if non-trivial)
+3. Claude explores the codebase
+4. Claude writes a plan with specific changes
+5. Claude asks user: "Ready to implement this plan?"
+6. WAIT for explicit approval
+7. Only then implement changes
+8. After changes, ask: "Deploy to GCloud?" - WAIT for approval
+9. Only deploy after explicit "yes"
+
+---
+
 ## Google Cloud Deployment
 
 ### Project Details
