@@ -77,6 +77,44 @@ See `.claude/deployment.md` for full deployment details (secrets, env vars, reso
 | `groq-api-key` | `GROQ_API_KEY` | Groq LLM chat |
 | `xai-api-key` | `XAI_API_KEY` | Grok LLM chat |
 
+### Environment Variables (REQUIRED for deployment)
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `CORS_ORIGINS` | `["https://REDACTED_FRONTEND_URL"]` | Frontend URL for CORS |
+| `ENABLE_GCS_UPLOADS` | `true` | Enable GCS for persistent storage |
+| `GCS_BUCKET_NAME` | `ai-subs-uploads` | GCS bucket name |
+| `SUPABASE_URL` | `https://REDACTED_SUPABASE_URL` | Supabase instance URL |
+
+### Resource Configuration (Cloud Run)
+| Setting | Value |
+|---------|-------|
+| Memory | `8Gi` |
+| CPU | `2` |
+| Timeout | `300` seconds |
+| Min instances | `0` |
+| Max instances | `3` |
+| Port | `8000` |
+
+### Full Deploy Command Reference
+```bash
+gcloud run deploy ai-subs-backend \
+  --image=us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest \
+  --platform=managed \
+  --region=us-central1 \
+  --project=ai-subs-poc \
+  --service-account=1052285886390-compute@developer.gserviceaccount.com \
+  --memory=8Gi \
+  --cpu=2 \
+  --timeout=300 \
+  --min-instances=0 \
+  --max-instances=3 \
+  --port=8000 \
+  --allow-unauthenticated \
+  --set-env-vars="CORS_ORIGINS=[\"https://REDACTED_FRONTEND_URL\"],ENABLE_GCS_UPLOADS=true,GCS_BUCKET_NAME=ai-subs-uploads,SUPABASE_URL=https://REDACTED_SUPABASE_URL" \
+  --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest" \
+  --no-cpu-throttling
+```
+
 ### LLM Chat Configuration
 - **Default Provider**: `grok`
 - **Groq Model**: `llama-3.3-70b-versatile`
