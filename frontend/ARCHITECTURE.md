@@ -3,27 +3,32 @@
 ## 1. Technology Stack
 
 ### Core
+
 - **React 19.0** with TypeScript
 - **Vite 6.1** for build tooling and HMR
 - **TailwindCSS 3.3** for utility-first styling
 - **React Query 5.x** for API state management
 
 ### Real-time & API
+
 - **Axios** for HTTP requests
 - **Supabase Client** for real-time job updates
 - **Server-Sent Events (SSE)** for streaming transcription
 
 ### Media
+
 - **FFmpeg.wasm** for browser-based video processing
 - **React Player** for video playback
 
 ### UI Components
+
 - **Headless UI** for accessible components
 - **Heroicons** for icons
 - **React Spring** for animations
 - **React Markdown** for markdown rendering
 
 ### Deployment
+
 - **Netlify** for hosting (automatic deploys from main branch)
 - **Docker + Nginx** as alternative
 
@@ -232,7 +237,7 @@ export const useJobTracker = () => {
 
 ```tsx
 // lib/supabase.ts
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -246,14 +251,18 @@ export const useSupabaseRealtime = (jobId: string) => {
   useEffect(() => {
     const channel = supabase
       .channel(`job:${jobId}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'jobs',
-        filter: `id=eq.${jobId}`,
-      }, (payload) => {
-        setJob(payload.new as Job);
-      })
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "jobs",
+          filter: `id=eq.${jobId}`,
+        },
+        (payload) => {
+          setJob(payload.new as Job);
+        }
+      )
       .subscribe();
 
     return () => {
@@ -271,10 +280,10 @@ export const useSupabaseRealtime = (jobId: string) => {
 
 ```typescript
 // services/api.ts
-import axios from 'axios';
+import axios from "axios";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
   timeout: 3600000, // 1 hour for large uploads
 });
 
@@ -289,9 +298,10 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     // Handle various error formats
-    const message = error.response?.data?.detail
-      || error.response?.data?.message
-      || error.message;
+    const message =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message;
     return Promise.reject(new Error(message));
   }
 );
@@ -325,8 +335,8 @@ export const uploadToGCS = async (
       }
     };
 
-    xhr.open('PUT', signedUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", file.type);
     xhr.send(file);
   });
 };
@@ -341,15 +351,15 @@ Used for API data that needs caching and synchronization:
 ```tsx
 // Fetch transcriptions list
 const { data: transcriptions, isLoading } = useQuery({
-  queryKey: ['transcriptions'],
-  queryFn: () => api.get('/transcriptions/'),
+  queryKey: ["transcriptions"],
+  queryFn: () => api.get("/transcriptions/"),
 });
 
 // Mutation for transcription
 const mutation = useMutation({
   mutationFn: (file: File) => transcribeVideo(file),
   onSuccess: () => {
-    queryClient.invalidateQueries(['transcriptions']);
+    queryClient.invalidateQueries(["transcriptions"]);
   },
 });
 ```
@@ -372,12 +382,12 @@ Used for data that should survive page refreshes:
 // useJobStorage.ts
 export const useJobStorage = () => {
   const [jobs, setJobs] = useState<Job[]>(() => {
-    const stored = localStorage.getItem('jobs');
+    const stored = localStorage.getItem("jobs");
     return stored ? JSON.parse(stored) : [];
   });
 
   useEffect(() => {
-    localStorage.setItem('jobs', JSON.stringify(jobs));
+    localStorage.setItem("jobs", JSON.stringify(jobs));
   }, [jobs]);
 
   return { jobs, addJob, removeJob, updateJob };
@@ -394,7 +404,9 @@ export const useJobStorage = () => {
   segments={segments}
   currentTime={currentTime}
   onSegmentClick={(segment) => seekTo(segment.start)}
-  onSpeakerChange={(segmentId, newSpeaker) => updateSpeaker(segmentId, newSpeaker)}
+  onSpeakerChange={(segmentId, newSpeaker) =>
+    updateSpeaker(segmentId, newSpeaker)
+  }
 />
 ```
 
@@ -437,7 +449,7 @@ const Component2 = () => {
 Set in Netlify dashboard:
 
 ```
-VITE_API_URL=https://REDACTED_BACKEND_URL
+VITE_API_URL=
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
@@ -467,13 +479,13 @@ EXPOSE 80
 
 ```tsx
 // Lazy load heavy components
-const ChatPanel = lazy(() => import('./features/chat/ChatPanel'));
-const SearchPanel = lazy(() => import('./features/search/SearchPanel'));
+const ChatPanel = lazy(() => import("./features/chat/ChatPanel"));
+const SearchPanel = lazy(() => import("./features/search/SearchPanel"));
 
 // Use Suspense for loading states
 <Suspense fallback={<LoadingSpinner />}>
   <ChatPanel />
-</Suspense>
+</Suspense>;
 ```
 
 ### 8.2. Memoization
@@ -495,14 +507,10 @@ const SegmentItem = memo(({ segment, onClick }) => (
 
 ```tsx
 // Consider react-window for very long transcripts
-import { FixedSizeList } from 'react-window';
+import { FixedSizeList } from "react-window";
 
 const VirtualizedSegmentList = ({ segments }) => (
-  <FixedSizeList
-    height={600}
-    itemCount={segments.length}
-    itemSize={80}
-  >
+  <FixedSizeList height={600} itemCount={segments.length} itemSize={80}>
     {({ index, style }) => (
       <SegmentItem style={style} segment={segments[index]} />
     )}
@@ -523,7 +531,7 @@ const handleTranscribe = async (file: File) => {
     if (error instanceof Error) {
       toast.error(error.message);
     }
-    console.error('Transcription failed:', error);
+    console.error("Transcription failed:", error);
   }
 };
 ```
@@ -540,7 +548,9 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      return <ErrorFallback onReset={() => this.setState({ hasError: false })} />;
+      return (
+        <ErrorFallback onReset={() => this.setState({ hasError: false })} />
+      );
     }
     return this.props.children;
   }
@@ -553,8 +563,8 @@ class ErrorBoundary extends Component {
 
 ```tsx
 // hooks/useTranscription.test.ts
-describe('useTranscription', () => {
-  it('should initialize with empty segments', () => {
+describe("useTranscription", () => {
+  it("should initialize with empty segments", () => {
     const { result } = renderHook(() => useTranscription());
     expect(result.current.segments).toEqual([]);
   });
@@ -565,14 +575,16 @@ describe('useTranscription', () => {
 
 ```tsx
 // components/UploadZone.test.tsx
-describe('UploadZone', () => {
-  it('should call onFileSelect when file is dropped', async () => {
+describe("UploadZone", () => {
+  it("should call onFileSelect when file is dropped", async () => {
     const onFileSelect = vi.fn();
     render(<UploadZone onFileSelect={onFileSelect} />);
 
     // Simulate file drop
-    const file = new File(['content'], 'test.mp4', { type: 'video/mp4' });
-    fireEvent.drop(screen.getByRole('button'), { dataTransfer: { files: [file] } });
+    const file = new File(["content"], "test.mp4", { type: "video/mp4" });
+    fireEvent.drop(screen.getByRole("button"), {
+      dataTransfer: { files: [file] },
+    });
 
     expect(onFileSelect).toHaveBeenCalledWith(file);
   });

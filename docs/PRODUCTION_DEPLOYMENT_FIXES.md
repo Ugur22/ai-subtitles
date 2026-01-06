@@ -9,16 +9,6 @@ This document provides step-by-step instructions for configuring the AI-Subs pro
 - Access to the Netlify dashboard for the ai-subs site
 - Docker installed (for building images locally)
 
-## Service Information
-
-| Component | Platform | URL |
-|-----------|----------|-----|
-| Backend API | Cloud Run | `https://REDACTED_BACKEND_URL` |
-| Frontend | Netlify | `https://REDACTED_FRONTEND_URL` |
-| Region | GCP us-central1 | - |
-
----
-
 ## 1. Cloud Run CORS Configuration
 
 The backend needs CORS configured to allow requests from the Netlify frontend.
@@ -63,17 +53,6 @@ if cors_env:
 
 The frontend needs to know the backend API URL.
 
-### Setting via Netlify Dashboard
-
-1. Go to [Netlify Dashboard](https://app.netlify.com)
-2. Select the **ai-subs** site
-3. Navigate to **Site settings** > **Environment variables**
-4. Add or update the following variable:
-
-| Key | Value |
-|-----|-------|
-| `VITE_API_URL` | `https://REDACTED_BACKEND_URL` |
-
 ### Setting via Netlify CLI
 
 ```bash
@@ -87,8 +66,6 @@ netlify login
 cd /Users/ugurertas/projects/ai-subs/frontend
 netlify link
 
-# Set the environment variable
-netlify env:set VITE_API_URL "https://REDACTED_BACKEND_URL"
 ```
 
 ### Trigger a Rebuild
@@ -96,10 +73,12 @@ netlify env:set VITE_API_URL "https://REDACTED_BACKEND_URL"
 After setting the environment variable, you must trigger a new build for the changes to take effect:
 
 **Option A: Via Dashboard**
+
 1. Go to **Deploys** tab
 2. Click **Trigger deploy** > **Deploy site**
 
 **Option B: Via CLI**
+
 ```bash
 netlify deploy --build --prod
 ```
@@ -251,7 +230,7 @@ gcloud run services update ai-subs-backend \
 
 ### Step 4: Verify Deployment
 
-```bash
+````bash
 # Check service status
 gcloud run services describe ai-subs-backend \
   --region=us-central1 \
@@ -263,40 +242,28 @@ gcloud run revisions list \
   --region=us-central1 \
   --limit=3
 
-# Test the health endpoint
-curl -s https://REDACTED_BACKEND_URL/health | jq
-
-# Test CORS headers
-curl -s -I -X OPTIONS \
-  -H "Origin: https://REDACTED_FRONTEND_URL" \
-  -H "Access-Control-Request-Method: POST" \
-  https://REDACTED_BACKEND_URL/api/transcribe
-```
-
----
-
 ## 5. Complete Environment Variables Reference
 
 ### Required for Production
 
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `CORS_ORIGINS` | `["https://REDACTED_FRONTEND_URL","http://localhost:5173"]` | Allowed origins for CORS |
-| `DATABASE_TYPE` | `firestore` | Use Firestore for Cloud Run |
-| `FIRESTORE_COLLECTION` | `transcriptions` | Firestore collection name |
-| `HUGGINGFACE_TOKEN` | `hf_xxx...` | Required for speaker diarization |
+| Variable               | Value                                                     | Description                      |
+| ---------------------- | --------------------------------------------------------- | -------------------------------- |
+| `CORS_ORIGINS`         | `["","http://localhost:5173"]` | Allowed origins for CORS         |
+| `DATABASE_TYPE`        | `firestore`                                               | Use Firestore for Cloud Run      |
+| `FIRESTORE_COLLECTION` | `transcriptions`                                          | Firestore collection name        |
+| `HUGGINGFACE_TOKEN`    | `hf_xxx...`                                               | Required for speaker diarization |
 
 ### Optional Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ENABLE_GCS_UPLOADS` | `false` | Enable GCS for file uploads |
-| `GCS_BUCKET_NAME` | `ai-subs-uploads` | GCS bucket name |
-| `FASTWHISPER_MODEL` | `small` | Whisper model size |
-| `FASTWHISPER_DEVICE` | `cpu` | Device for inference |
-| `ENABLE_SPEAKER_DIARIZATION` | `true` | Enable speaker identification |
-| `DEFAULT_LLM_PROVIDER` | `ollama` | LLM provider for features |
-| `GROQ_API_KEY` | - | Groq API key for cloud LLM |
+| Variable                     | Default           | Description                   |
+| ---------------------------- | ----------------- | ----------------------------- |
+| `ENABLE_GCS_UPLOADS`         | `false`           | Enable GCS for file uploads   |
+| `GCS_BUCKET_NAME`            | `ai-subs-uploads` | GCS bucket name               |
+| `FASTWHISPER_MODEL`          | `small`           | Whisper model size            |
+| `FASTWHISPER_DEVICE`         | `cpu`             | Device for inference          |
+| `ENABLE_SPEAKER_DIARIZATION` | `true`            | Enable speaker identification |
+| `DEFAULT_LLM_PROVIDER`       | `ollama`          | LLM provider for features     |
+| `GROQ_API_KEY`               | -                 | Groq API key for cloud LLM    |
 
 ### Set All Variables at Once
 
@@ -314,7 +281,7 @@ FASTWHISPER_DEVICE=cpu,
 ENABLE_SPEAKER_DIARIZATION=true,
 DEFAULT_LLM_PROVIDER=groq
 '
-```
+````
 
 ---
 
@@ -325,6 +292,7 @@ DEFAULT_LLM_PROVIDER=groq
 **Symptom**: Browser console shows `Access-Control-Allow-Origin` errors
 
 **Solutions**:
+
 1. Verify `CORS_ORIGINS` is set correctly:
    ```bash
    gcloud run services describe ai-subs-backend --region=us-central1 --format='yaml(spec.template.spec.containers[0].env)'
@@ -340,6 +308,7 @@ DEFAULT_LLM_PROVIDER=groq
 **Symptom**: Database errors in logs
 
 **Solutions**:
+
 1. Verify Firestore API is enabled:
    ```bash
    gcloud services list --enabled | grep firestore
@@ -355,6 +324,7 @@ DEFAULT_LLM_PROVIDER=groq
 **Symptom**: Cloud Run deployment fails
 
 **Solutions**:
+
 1. Check build logs:
    ```bash
    gcloud builds list --limit=5
@@ -374,6 +344,7 @@ DEFAULT_LLM_PROVIDER=groq
 **Symptom**: Frontend still calling old API URL after changing `VITE_API_URL`
 
 **Solutions**:
+
 1. Trigger a new Netlify build (environment variables are baked in at build time)
 2. Clear browser cache or use incognito mode
 3. Verify the variable is set:
