@@ -15,6 +15,7 @@ from services.audio_service import AudioService
 from services.speaker_service import SpeakerService
 from services.subtitle_service import SubtitleService
 from services.translation_service import TranslationService
+from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from dependencies import get_whisper_model, get_speaker_diarizer
@@ -250,6 +251,91 @@ class BackgroundWorker:
                     seg['speaker'] = "SPEAKER_00"
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
 
+            # Calculate video hash early (used for screenshots and final result)
+            import hashlib
+            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
+
+            # Step 4.5: Screenshot extraction (75-80%)
+            # Check if file is a video format that supports screenshots
+            suffix = os.path.splitext(filename)[1].lower()
+            if suffix in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
+                try:
+                    JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
+
+                    screenshots_dir = os.path.join("static", "screenshots")
+                    os.makedirs(screenshots_dir, exist_ok=True)
+
+                    # Get timestamps for all segments
+                    timestamps = [seg['start'] for seg in formatted_segments]
+
+                    print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
+
+                    # Extract screenshots from GCS URL (streaming, no full download)
+                    screenshot_results = VideoService.extract_screenshots_parallel_from_url(
+                        source_url=read_url,
+                        timestamps=timestamps,
+                        output_dir=screenshots_dir,
+                        video_hash=video_hash,
+                        max_workers=4
+                    )
+
+                    JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
+
+                    # Upload to GCS and update segments
+                    if settings.ENABLE_GCS_UPLOADS:
+                        print(f"[Worker] Uploading {len(screenshot_results)} screenshots to GCS...")
+
+                        gcs_urls = gcs_service.upload_screenshots_batch(
+                            screenshot_paths=screenshot_results,
+                            video_hash=video_hash
+                        )
+
+                        screenshot_count = 0
+                        for seg in formatted_segments:
+                            ts = seg['start']
+                            gcs_url = gcs_urls.get(ts)
+                            if gcs_url:
+                                seg['screenshot_url'] = gcs_url
+                                screenshot_count += 1
+                            else:
+                                seg['screenshot_url'] = None
+
+                        print(f"[Worker] Uploaded {screenshot_count}/{len(formatted_segments)} screenshots to GCS")
+
+                        # Clean up local screenshots after upload
+                        for local_path in screenshot_results.values():
+                            if local_path and os.path.exists(local_path):
+                                try:
+                                    os.unlink(local_path)
+                                except Exception:
+                                    pass
+                    else:
+                        # Use local URLs (development mode)
+                        screenshot_count = 0
+                        for seg in formatted_segments:
+                            ts = seg['start']
+                            screenshot_path = screenshot_results.get(ts)
+                            if screenshot_path and os.path.exists(screenshot_path):
+                                screenshot_filename = os.path.basename(screenshot_path)
+                                seg['screenshot_url'] = f"/static/screenshots/{screenshot_filename}"
+                                screenshot_count += 1
+                            else:
+                                seg['screenshot_url'] = None
+
+                        print(f"[Worker] Extracted {screenshot_count}/{len(formatted_segments)} screenshots (local)")
+
+                    JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
+
+                except Exception as e:
+                    print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
+                    # Non-critical error - continue without screenshots
+                    for seg in formatted_segments:
+                        seg['screenshot_url'] = None
+            else:
+                print(f"[Worker] Skipping screenshots for audio-only file: {suffix}")
+                for seg in formatted_segments:
+                    seg['screenshot_url'] = None
+
             JobQueueService.update_progress(job_id, 80, "processing", "Finalizing transcription...")
 
             # Step 5: Generate SRT/VTT formats (80-95%)
@@ -278,11 +364,29 @@ class BackgroundWorker:
                 for segment in formatted_segments:
                     segment['translation'] = segment['text']
             else:
-                # Translate to English using MarianMT
+                # Translate to English using MarianMT with progress updates
                 JobQueueService.update_progress(job_id, 87, "translating", "Translating to English...")
                 try:
-                    print(f"[Worker] Translating {len(formatted_segments)} segments from {normalized_lang} to English")
-                    formatted_segments = TranslationService.translate_segments(formatted_segments, normalized_lang)
+                    total_segments = len(formatted_segments)
+                    print(f"[Worker] Translating {total_segments} segments from {normalized_lang} to English")
+
+                    # Progress callback to update job progress during translation (87% -> 92%)
+                    def translation_progress(translated: int, total: int):
+                        # Map translation progress to job progress (87% to 92%)
+                        progress = 87 + int((translated / total) * 5) if total > 0 else 87
+                        percent = int((translated / total) * 100) if total > 0 else 0
+                        JobQueueService.update_progress(
+                            job_id,
+                            progress,
+                            "translating",
+                            f"Translating to English... {translated}/{total} ({percent}%)"
+                        )
+
+                    formatted_segments = TranslationService.translate_segments(
+                        formatted_segments,
+                        normalized_lang,
+                        progress_callback=translation_progress
+                    )
                     print(f"[Worker] Translation completed")
                 except Exception as e:
                     print(f"[Worker] Translation failed: {e}")
@@ -296,14 +400,8 @@ class BackgroundWorker:
 
             JobQueueService.update_progress(job_id, 90, "processing", "Generating subtitle formats...")
 
-            # Step 6: Calculate video hash (90-95%)
-            JobQueueService.update_progress(job_id, 92, "processing", "Calculating video hash...")
-
-            # For GCS files, we use the GCS path as a stable identifier
-            # (since downloading just for hash would be wasteful)
-            import hashlib
-            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
-
+            # Step 6: Finalize results (90-95%)
+            # Note: video_hash was already calculated earlier for screenshot naming
             JobQueueService.update_progress(job_id, 95, "processing", "Finalizing results...")
 
             # Build result JSON

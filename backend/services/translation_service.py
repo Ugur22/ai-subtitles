@@ -1,7 +1,7 @@
 """
-Translation service using MarianMT models
+Translation service using MarianMT models with optimized batch processing
 """
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Callable
 from transformers import MarianMTModel, MarianTokenizer
 
 
@@ -66,45 +66,118 @@ class TranslationService:
             raise Exception(error_msg)
 
     @classmethod
-    def translate_segments(cls, segments: List[Dict], source_lang: str) -> List[Dict]:
-        """Translate a batch of segments using local MarianMT model, preserving original text"""
-        BATCH_SIZE = 10
-        for i in range(0, len(segments), BATCH_SIZE):
+    def translate_segments(
+        cls,
+        segments: List[Dict],
+        source_lang: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> List[Dict]:
+        """Translate segments using optimized batch processing.
+
+        Args:
+            segments: List of segment dictionaries with 'text' field
+            source_lang: Source language code (e.g., 'es', 'it')
+            progress_callback: Optional callback(translated_count, total_count) for progress updates
+
+        Returns:
+            Segments with 'translation' field populated
+        """
+        # Use larger batches for true batch processing (much faster than one-by-one)
+        BATCH_SIZE = 32  # Optimal for MarianMT on CPU
+
+        total_segments = len(segments)
+        translated_count = 0
+
+        print(f"[Translation] Starting batch translation of {total_segments} segments ({source_lang} -> en)")
+
+        # Load model once before processing
+        try:
+            tokenizer, model = cls.get_marian_model(source_lang)
+        except Exception as e:
+            print(f"[Translation] Failed to load model: {e}")
+            for segment in segments:
+                segment['translation'] = None
+            return segments
+
+        for i in range(0, total_segments, BATCH_SIZE):
             batch = segments[i:i + BATCH_SIZE]
-            # Only translate segments with non-empty text
-            batch_to_translate = [s for s in batch if s.get('text') and not s.get('text').isspace()]
-            if not batch_to_translate:
-                for segment in batch:
+            batch_num = (i // BATCH_SIZE) + 1
+            total_batches = (total_segments + BATCH_SIZE - 1) // BATCH_SIZE
+
+            # Collect texts to translate (filter empty)
+            texts_to_translate = []
+            segment_indices = []
+
+            for idx, segment in enumerate(batch):
+                text = segment.get('text', '').strip()
+                if text:
+                    texts_to_translate.append(text)
+                    segment_indices.append(idx)
+                else:
                     segment['translation'] = '[No speech detected]'
+
+            if not texts_to_translate:
+                translated_count += len(batch)
+                if progress_callback:
+                    progress_callback(translated_count, total_segments)
                 continue
 
             try:
-                # Use local translation model instead of OpenAI
-                tokenizer, model = cls.get_marian_model(source_lang)
+                # TRUE BATCH PROCESSING: tokenize and generate all at once
+                inputs = tokenizer(
+                    texts_to_translate,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=512
+                )
 
-                # Translate each segment individually to preserve accuracy
-                for segment in batch_to_translate:
-                    text = segment.get('text', '').strip()
-                    if not text:
-                        segment['translation'] = '[No speech detected]'
-                        continue
+                # Generate translations for entire batch at once
+                translated_ids = model.generate(
+                    **inputs,
+                    max_length=512,
+                    num_beams=4,
+                    early_stopping=True
+                )
 
-                    # Translate using MarianMT
-                    inputs = tokenizer(text, return_tensors="pt", padding=True)
-                    translated = model.generate(**inputs)
-                    translation = tokenizer.decode(translated[0], skip_special_tokens=True)
-                    segment['translation'] = translation.strip()
+                # Decode all translations
+                translations = tokenizer.batch_decode(translated_ids, skip_special_tokens=True)
 
-                print(f"Successfully translated {len(batch_to_translate)} segments using local model")
+                # Assign translations back to segments
+                for idx, translation in zip(segment_indices, translations):
+                    batch[idx]['translation'] = translation.strip()
+
+                translated_count += len(batch)
+
+                # Log progress every batch
+                print(f"[Translation] Batch {batch_num}/{total_batches}: translated {len(texts_to_translate)} segments ({translated_count}/{total_segments} total)")
+
+                # Call progress callback
+                if progress_callback:
+                    progress_callback(translated_count, total_segments)
+
             except Exception as e:
-                print(f"Error in translation process: {str(e)}")
-                # If translation fails, set placeholder translations
-                for segment in batch_to_translate:
-                    segment['translation'] = f"[Translation pending for: {segment['text']}]"
+                print(f"[Translation] Error in batch {batch_num}: {str(e)}")
+                # Fall back to individual translation for this batch
+                for idx in segment_indices:
+                    text = batch[idx].get('text', '').strip()
+                    try:
+                        inputs = tokenizer(text, return_tensors="pt", padding=True)
+                        translated = model.generate(**inputs)
+                        translation = tokenizer.decode(translated[0], skip_special_tokens=True)
+                        batch[idx]['translation'] = translation.strip()
+                    except Exception as inner_e:
+                        print(f"[Translation] Fallback failed for segment: {inner_e}")
+                        batch[idx]['translation'] = None
 
-        # Ensure all segments have a translation field
+                translated_count += len(batch)
+                if progress_callback:
+                    progress_callback(translated_count, total_segments)
+
+        # Ensure all segments have translation field
         for segment in segments:
-            if not segment.get('translation'):
+            if 'translation' not in segment:
                 segment['translation'] = '[No speech detected]'
 
+        print(f"[Translation] Completed: {translated_count}/{total_segments} segments translated")
         return segments
