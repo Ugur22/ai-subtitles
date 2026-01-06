@@ -1224,6 +1224,7 @@ async def transcribe_video(
                     segment_translation = segment.get('translation', None)
                     segment_screenshot_url = segment.get('screenshot_url', None)
                     segment_speaker = segment.get('speaker', 'SPEAKER_00')  # Get speaker label
+                    segment_is_silent = segment.get('is_silent', False)  # Get silent flag for visual sections
                     segment_dict = {
                         "id": segment_id,
                         "start": segment_start,
@@ -1232,7 +1233,8 @@ async def transcribe_video(
                         "end_time": format_timestamp(segment_end),
                         "text": segment_text,
                         "translation": segment_translation,  # Always include translation field
-                        "speaker": segment_speaker  # Add speaker field
+                        "speaker": segment_speaker,  # Add speaker field
+                        "is_silent": segment_is_silent  # Add silent flag for visual sections
                     }
                     if segment_screenshot_url:
                         segment_dict["screenshot_url"] = segment_screenshot_url

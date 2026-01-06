@@ -515,8 +515,18 @@ class VectorStore:
         formatted_results = []
         if results['documents'] and len(results['documents']) > 0:
             for i in range(len(results['documents'][0])):
+                # Convert absolute path back to URL for frontend/LLM use
+                abs_path = results['documents'][0][i]
+                if 'static/screenshots/' in abs_path:
+                    # Extract filename from absolute path
+                    filename = abs_path.split('static/screenshots/')[-1]
+                    screenshot_url = f"/static/screenshots/{filename}"
+                else:
+                    # Fallback: use as-is
+                    screenshot_url = abs_path
+
                 formatted_results.append({
-                    "screenshot_path": results['documents'][0][i],
+                    "screenshot_path": screenshot_url,  # Return URL, not absolute path
                     "metadata": results['metadatas'][0][i],
                     "distance": results['distances'][0][i] if 'distances' in results else None
                 })
