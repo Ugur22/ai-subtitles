@@ -243,13 +243,6 @@ flowchart LR
     C -.-> F
 ```
 
-## Production Deployment
-
-The application is deployed and available at:
-
-- **Frontend**: [https://REDACTED_FRONTEND_URL](https://REDACTED_FRONTEND_URL)
-- **Backend API**: `https://REDACTED_BACKEND_URL`
-
 ### Deployment Stack
 
 - **Frontend**: Netlify (automatic deploys from main branch)

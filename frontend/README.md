@@ -7,6 +7,7 @@ React + TypeScript frontend for the AI Subtitles application. Features a modern,
 ## Technology Stack
 
 ### Core
+
 - **React** 19.0.0 with TypeScript
 - **Vite** 6.1.0 - Fast build tool with Hot Module Replacement (HMR)
 - **TailwindCSS** 3.3.3 - Utility-first CSS framework
@@ -14,14 +15,17 @@ React + TypeScript frontend for the AI Subtitles application. Features a modern,
 - **React Router DOM** 7.2.0 - Client-side routing
 
 ### API & Real-time
+
 - **Axios** 1.7.9 - HTTP client for API communication
 - **Supabase** - Real-time job status updates
 
 ### Media
+
 - **FFmpeg.wasm** 0.12.15 - Browser-based video processing
 - **React Player** 2.16.0 - Video playback component
 
 ### UI
+
 - **React Spring** 10.0.3 - Animation library
 - **React Markdown** 9.0.1 - Markdown rendering
 - **Headless UI** 2.2.0 - Unstyled accessible components
@@ -70,30 +74,39 @@ The application will open at `http://localhost:5173` with hot reload enabled.
 ## Available Scripts
 
 ### Development
+
 ```bash
 npm run dev
 ```
+
 Starts the Vite development server with HMR on port 5173.
 
 ### Production Build
+
 ```bash
 npm run build
 ```
+
 Builds the app for production:
+
 1. Runs TypeScript compiler (`tsc -b`)
 2. Builds optimized bundle with Vite
 3. Output in `dist/` directory
 
 ### Preview Production Build
+
 ```bash
 npm run preview
 ```
+
 Locally preview the production build before deployment.
 
 ### Linting
+
 ```bash
 npm run lint
 ```
+
 Runs ESLint to check code quality and identify issues.
 
 ## Project Structure
@@ -177,6 +190,7 @@ frontend/
 ## Key Features
 
 ### Video Upload & Processing
+
 - Drag-and-drop file upload
 - Multiple format support (MP4, MP3, WAV, WebM, MKV, etc.)
 - **Direct GCS upload** for large files (bypasses 32MB limit)
@@ -185,6 +199,7 @@ frontend/
 - FFmpeg-based video processing in the browser
 
 ### Background Job Processing
+
 - **Async job submission** for large files
 - **Real-time status updates** via Supabase
 - Job queue with retry support
@@ -193,6 +208,7 @@ frontend/
 - Job history with localStorage persistence
 
 ### Transcription Display
+
 - Synchronized video playback with transcript
 - Speaker-labeled segments with color coding
 - Click-to-jump navigation
@@ -200,6 +216,7 @@ frontend/
 - Editable speaker names (propagates to vector store)
 
 ### Search Capabilities
+
 - **Semantic Search**: Find content by meaning using vector embeddings
 - **Visual Search**: Find moments by describing what you see (CLIP-powered)
 - **Full-text Search**: Traditional keyword search
@@ -207,24 +224,28 @@ frontend/
 - Jump-to-timestamp from search results
 
 ### AI-Powered Features
+
 - **RAG Chat**: Ask questions about video content (multi-modal)
 - **Summarization**: Generate AI summaries of transcripts
 - **Translation**: Multi-language translation support
 - **Audio Events**: Detect laughter, applause, music in chat context
 
 ### Subtitle Management
+
 - Export to WebVTT and SRT formats
 - Translation toggle
 - Speaker filtering
 - Downloadable subtitle files
 
 ### Speaker Management
+
 - Enroll speaker voice samples
 - Auto-identify speakers in new videos
 - Edit speaker names
 - Speaker-based filtering
 
 ### Analytics
+
 - Speaking time per speaker
 - Segment statistics
 - Word count analysis
@@ -233,18 +254,18 @@ frontend/
 
 The application uses several custom hooks for clean separation of concerns:
 
-| Hook | Purpose |
-|------|---------|
-| `useTranscription` | Transcription logic, processing status, timers |
-| `useVideoPlayer` | Video playback controls (play/pause, seek, volume) |
-| `useFileUpload` | File selection, drag-drop, file state |
-| `useSubtitles` | Subtitle generation and display toggle |
-| `useSummaries` | Summary generation and caching |
-| `useBackgroundJobSubmit` | Submit files for background processing |
-| `useJobTracker` | Track and fetch background jobs |
-| `useJobStorage` | Persist jobs to localStorage |
-| `useSupabaseRealtime` | Real-time updates from Supabase |
-| `useJobNotifications` | Browser notifications for job completion |
+| Hook                     | Purpose                                            |
+| ------------------------ | -------------------------------------------------- |
+| `useTranscription`       | Transcription logic, processing status, timers     |
+| `useVideoPlayer`         | Video playback controls (play/pause, seek, volume) |
+| `useFileUpload`          | File selection, drag-drop, file state              |
+| `useSubtitles`           | Subtitle generation and display toggle             |
+| `useSummaries`           | Summary generation and caching                     |
+| `useBackgroundJobSubmit` | Submit files for background processing             |
+| `useJobTracker`          | Track and fetch background jobs                    |
+| `useJobStorage`          | Persist jobs to localStorage                       |
+| `useSupabaseRealtime`    | Real-time updates from Supabase                    |
+| `useJobNotifications`    | Browser notifications for job completion           |
 
 ## API Integration
 
@@ -328,7 +349,7 @@ The app is deployed to Netlify with automatic deploys:
 
 1. Connect repository to Netlify
 2. Set environment variables:
-   - `VITE_API_URL=https://REDACTED_BACKEND_URL`
+   - `VITE_API_URL=`
    - `VITE_SUPABASE_URL=https://your-project.supabase.co`
    - `VITE_SUPABASE_ANON_KEY=your_anon_key`
 3. Build command: `npm run build`
@@ -353,11 +374,11 @@ docker run -p 80:80 ai-subs-frontend
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `VITE_API_URL` | Backend API URL | `http://localhost:8000` |
-| `VITE_SUPABASE_URL` | Supabase project URL | - |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon key | - |
+| Variable                 | Description          | Default                 |
+| ------------------------ | -------------------- | ----------------------- |
+| `VITE_API_URL`           | Backend API URL      | `http://localhost:8000` |
+| `VITE_SUPABASE_URL`      | Supabase project URL | -                       |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon key    | -                       |
 
 Note: Variables prefixed with `VITE_` are exposed to frontend code.
 
@@ -366,6 +387,7 @@ Note: Variables prefixed with `VITE_` are exposed to frontend code.
 ### Common Issues
 
 **Port 5173 already in use**
+
 ```bash
 lsof -ti:5173 | xargs kill -9
 # Or specify a different port
@@ -373,37 +395,44 @@ npm run dev -- --port 3000
 ```
 
 **Module not found errors**
+
 ```bash
 rm -rf node_modules package-lock.json
 npm install
 ```
 
 **TypeScript errors**
+
 ```bash
 npm run build
 ```
 
 **Vite cache issues**
+
 ```bash
 rm -rf node_modules/.vite
 npm run dev
 ```
 
 **CORS errors**
+
 - Ensure backend is running and allows frontend origin
 - Check that API URL in `.env` is correct
 
 **FFmpeg not loading**
+
 - Check browser console for errors
 - FFmpeg.wasm requires SharedArrayBuffer support
 - Ensure proper COOP/COEP headers in production
 
 **Large file upload fails**
+
 - Files >32MB require GCS upload (backend must have GCS configured)
 - Files >100MB use resumable upload protocol
 - Check browser console for upload errors
 
 **Background jobs not updating**
+
 - Verify Supabase credentials in `.env`
 - Check that Supabase real-time is enabled
 - Verify network connection to Supabase
