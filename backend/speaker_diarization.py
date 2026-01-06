@@ -5,9 +5,24 @@ This module provides speaker diarization functionality to identify
 different speakers in audio/video files.
 """
 
+import os
+import torch
+
+# Fix for PyTorch 2.6+ which changed weights_only default to True
+# This is needed for pyannote models to load properly
+# Must be set BEFORE importing pyannote
+os.environ.setdefault("TORCH_FORCE_WEIGHTS_ONLY_LOAD", "0")
+
+# Monkey-patch torch.load to use weights_only=False for pyannote compatibility
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
 from pyannote.audio import Pipeline
 from typing import List, Dict, Tuple
-import torch
 
 
 class SpeakerDiarizer:
