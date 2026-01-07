@@ -603,12 +603,13 @@ async def login(request: LoginRequest, response: Response):
             )
 
         # Set HttpOnly cookie (7 days)
+        # samesite="none" required for cross-origin (frontend on different domain)
         response.set_cookie(
             key="auth_token",
             value=access_token,
             httponly=True,
             secure=True,  # HTTPS only in production
-            samesite="lax",
+            samesite="none",  # Required for cross-origin cookies
             max_age=7 * 24 * 60 * 60,  # 7 days
             path="/"
         )

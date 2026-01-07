@@ -45,10 +45,10 @@ GPU_TYPE="nvidia-l4"
 GPU_ZONAL_REDUNDANCY="false"  # Requires less quota (10 vs 30 per instance)
 
 # Environment variables (non-sensitive)
-CORS_ORIGINS='["https://REDACTED_FRONTEND_URL"]'
+CORS_ORIGINS='["https://ai-subs.netlify.app"]'
 ENABLE_GCS_UPLOADS="true"
 GCS_BUCKET_NAME="ai-subs-uploads"
-SUPABASE_URL="https://REDACTED_SUPABASE_URL"
+SUPABASE_URL="https://ngfcjdxfhppnzpocgktw.supabase.co"
 XAI_MODEL="grok-4-1-fast-reasoning"
 
 # Ensure PATH includes gcloud
