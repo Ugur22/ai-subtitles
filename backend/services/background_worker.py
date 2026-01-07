@@ -326,6 +326,18 @@ class BackgroundWorker:
 
                     JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
 
+                    # Auto-index images into Supabase pgvector if GCS uploads are enabled
+                    if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:
+                        try:
+                            from services.image_embedding_service import image_embedding_service
+                            JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
+                            print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
+                            indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False)
+                            print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
+                        except Exception as e:
+                            print(f"[Worker] Image indexing failed (non-critical): {e}")
+                            # Non-critical - visual search just won't work until manually indexed
+
                 except Exception as e:
                     print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
                     # Non-critical error - continue without screenshots

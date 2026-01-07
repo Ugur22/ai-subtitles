@@ -85,15 +85,23 @@ See `.claude/deployment.md` for full deployment details (secrets, env vars, reso
 | `GCS_BUCKET_NAME` | `ai-subs-uploads` | GCS bucket name |
 | `SUPABASE_URL` | `https://REDACTED_SUPABASE_URL` | Supabase instance URL |
 
-### Resource Configuration (Cloud Run)
+### Resource Configuration (Cloud Run with GPU)
 | Setting | Value |
 |---------|-------|
-| Memory | `8Gi` |
-| CPU | `2` |
+| Memory | `16Gi` |
+| CPU | `4` |
+| GPU | `1x nvidia-l4` |
+| GPU Zonal Redundancy | `false` (requires less quota) |
 | Timeout | `300` seconds |
 | Min instances | `0` |
-| Max instances | `3` |
+| Max instances | `1` (requires 10 quota units per instance) |
 | Port | `8000` |
+
+### GPU Quota
+- **Quota Name**: `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`
+- **Default**: 3 units (need to request increase)
+- **Per Instance**: 10 units
+- **Request quota**: https://console.cloud.google.com/iam-admin/quotas?project=ai-subs-poc
 
 ### Full Deploy Command Reference
 ```bash
@@ -103,11 +111,14 @@ gcloud run deploy ai-subs-backend \
   --region=us-central1 \
   --project=ai-subs-poc \
   --service-account=1052285886390-compute@developer.gserviceaccount.com \
-  --memory=8Gi \
-  --cpu=2 \
+  --memory=16Gi \
+  --cpu=4 \
+  --gpu=1 \
+  --gpu-type=nvidia-l4 \
+  --no-gpu-zonal-redundancy \
   --timeout=300 \
   --min-instances=0 \
-  --max-instances=3 \
+  --max-instances=1 \
   --port=8000 \
   --allow-unauthenticated \
   --set-env-vars="CORS_ORIGINS=[\"https://REDACTED_FRONTEND_URL\"],ENABLE_GCS_UPLOADS=true,GCS_BUCKET_NAME=ai-subs-uploads,SUPABASE_URL=https://REDACTED_SUPABASE_URL" \

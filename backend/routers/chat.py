@@ -78,7 +78,26 @@ except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")
     LLM_AVAILABLE = False
 
+# Import Supabase image embedding service (new persistent storage)
+try:
+    from services.image_embedding_service import image_embedding_service
+    SUPABASE_IMAGES_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Supabase image embeddings not available: {e}")
+    SUPABASE_IMAGES_AVAILABLE = False
+
 router = APIRouter(prefix="/api", tags=["Chat & RAG"])
+
+
+def _use_supabase_for_images() -> bool:
+    """
+    Determine whether to use Supabase for image embeddings.
+    Uses Supabase when:
+    1. ENABLE_GCS_UPLOADS is true (production/Cloud Run)
+    2. Supabase image service is available
+    """
+    from config import settings
+    return SUPABASE_IMAGES_AVAILABLE and settings.ENABLE_GCS_UPLOADS
 
 
 def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
@@ -308,8 +327,15 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         if include_visuals:
             print(f"Visual analysis requested, searching for {n_images} relevant images...")
 
+            # Determine which image service to use
+            use_supabase = _use_supabase_for_images()
+            if use_supabase:
+                images_indexed = image_embedding_service.image_collection_exists(video_hash)
+            else:
+                images_indexed = vector_store.image_collection_exists(video_hash)
+
             # Check if images are indexed
-            if vector_store.image_collection_exists(video_hash):
+            if images_indexed:
                 try:
                     # Extract ALL speaker names from the query
                     speaker_names = _extract_all_speakers_from_query(question, video_hash)
@@ -338,12 +364,20 @@ async def chat_with_video(request: ChatRequest) -> Dict:
 
                     # Search for relevant images using the visual-optimized query
                     # No speaker filter - CLIP searches by visual similarity, not speaker metadata
-                    image_results = vector_store.search_images(
-                        video_hash,
-                        visual_query,
-                        n_results=n_images,
-                        speaker_filter=None  # Don't filter by speaker - let CLIP find visual matches
-                    )
+                    if use_supabase:
+                        image_results = image_embedding_service.search_images(
+                            video_hash,
+                            visual_query,
+                            n_results=n_images,
+                            speaker_filter=None
+                        )
+                    else:
+                        image_results = vector_store.search_images(
+                            video_hash,
+                            visual_query,
+                            n_results=n_images,
+                            speaker_filter=None  # Don't filter by speaker - let CLIP find visual matches
+                        )
 
                     # Phase 1: Temporal Correlation Scoring
                     # Score visual results by temporal overlap with speaker segments
@@ -810,15 +844,21 @@ async def index_video_images(video_hash: str = None, force_reindex: bool = False
         if not segments:
             raise HTTPException(status_code=400, detail="No segments found in transcription")
 
-        # Index images in vector database
-        print(f"Indexing images for video {video_hash} from {len(segments)} segments... (force_reindex={force_reindex})")
-        num_images = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
+        # Index images using appropriate service
+        use_supabase = _use_supabase_for_images()
+        storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
+        print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
+
+        if use_supabase:
+            num_images = image_embedding_service.index_video_images(video_hash, segments, force_reindex=force_reindex)
+        else:
+            num_images = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
 
         return IndexImagesResponse(
             success=True,
             video_hash=video_hash,
             images_indexed=num_images,
-            message=f"Successfully indexed {num_images} images from {len(segments)} segments"
+            message=f"Successfully indexed {num_images} images from {len(segments)} segments (storage: {storage_type})"
         )
     except HTTPException:
         raise
@@ -864,8 +904,16 @@ async def search_video_images(request: SearchImagesRequest) -> SearchImagesRespo
                 raise HTTPException(status_code=404, detail="No video available for image search")
             video_hash = _last_transcription_data.get('video_hash')
 
-        # Check if images are indexed
-        if not vector_store.image_collection_exists(video_hash):
+        # Determine which service to use
+        use_supabase = _use_supabase_for_images()
+
+        # Check if images are indexed in the appropriate store
+        if use_supabase:
+            images_exist = image_embedding_service.image_collection_exists(video_hash)
+        else:
+            images_exist = vector_store.image_collection_exists(video_hash)
+
+        if not images_exist:
             raise HTTPException(
                 status_code=404,
                 detail="Images not indexed for this video. Please index images first using /api/index_images/"
@@ -874,27 +922,41 @@ async def search_video_images(request: SearchImagesRequest) -> SearchImagesRespo
         # Check if the query mentions a specific speaker
         speaker_filter = _extract_speaker_from_query(query, video_hash)
 
-        # Search for images
-        print(f"Searching images for query: {query}")
-        search_results = vector_store.search_images(
-            video_hash,
-            query,
-            n_results=n_results,
-            speaker_filter=speaker_filter
-        )
+        # Search for images using appropriate service
+        storage_type = "Supabase" if use_supabase else "ChromaDB"
+        print(f"Searching images for query: {query} (using {storage_type})")
 
-        # Format results
+        if use_supabase:
+            search_results = image_embedding_service.search_images(
+                video_hash,
+                query,
+                n_results=n_results,
+                speaker_filter=speaker_filter
+            )
+        else:
+            search_results = vector_store.search_images(
+                video_hash,
+                query,
+                n_results=n_results,
+                speaker_filter=speaker_filter
+            )
+
+        # Format results (handle both Supabase and ChromaDB response formats)
         formatted_results = []
         for result in search_results:
             metadata = result['metadata']
+            # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
+            screenshot = result.get('screenshot_url') or result.get('screenshot_path')
+            # Supabase uses 'similarity' (0-1), ChromaDB uses 'distance' (lower = better)
+            score = result.get('similarity') or result.get('distance')
             formatted_results.append(
                 ImageSearchResult(
-                    screenshot_path=result['screenshot_path'],
+                    screenshot_path=screenshot,
                     segment_id=metadata['segment_id'],
                     start=metadata['start'],
                     end=metadata['end'],
                     speaker=metadata['speaker'],
-                    distance=result.get('distance')
+                    distance=score
                 )
             )
 

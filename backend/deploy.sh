@@ -31,13 +31,18 @@ SERVICE_NAME="ai-subs-backend"
 IMAGE_NAME="us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest"
 SERVICE_ACCOUNT="1052285886390-compute@developer.gserviceaccount.com"
 
-# Resource limits
-MEMORY="8Gi"
-CPU="2"
+# Resource limits (GPU requires minimum 4 CPU and 16Gi memory)
+MEMORY="16Gi"
+CPU="4"
 TIMEOUT="300"
 MIN_INSTANCES="0"
-MAX_INSTANCES="3"
+MAX_INSTANCES="1"  # Set to 1 for GPU quota (10 units per instance, request more quota for 3)
 PORT="8000"
+
+# GPU configuration
+GPU_COUNT="1"
+GPU_TYPE="nvidia-l4"
+GPU_ZONAL_REDUNDANCY="false"  # Requires less quota (10 vs 30 per instance)
 
 # Environment variables (non-sensitive)
 CORS_ORIGINS='["https://REDACTED_FRONTEND_URL"]'
@@ -94,10 +99,8 @@ build_and_push() {
     # Use Cloud Build for building (handles large images better)
     print_info "Using Cloud Build to build and push image..."
     if gcloud builds submit \
-        --tag "${IMAGE_NAME}" \
-        --project="${PROJECT_ID}" \
-        --timeout=20m \
-        --machine-type=e2-highcpu-8; then
+        --config=cloudbuild.yaml \
+        --project="${PROJECT_ID}"; then
         print_info "Docker image built and pushed successfully"
     else
         print_error "Failed to build and push Docker image"
@@ -109,7 +112,7 @@ build_and_push() {
 deploy_to_cloud_run() {
     print_step "Deploying to Cloud Run..."
 
-    # Deploy with all configurations
+    # Deploy with all configurations (GPU-enabled)
     if gcloud run deploy "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --platform=managed \
@@ -118,6 +121,9 @@ deploy_to_cloud_run() {
         --service-account="${SERVICE_ACCOUNT}" \
         --memory="${MEMORY}" \
         --cpu="${CPU}" \
+        --gpu="${GPU_COUNT}" \
+        --gpu-type="${GPU_TYPE}" \
+        --no-gpu-zonal-redundancy \
         --timeout="${TIMEOUT}" \
         --min-instances="${MIN_INSTANCES}" \
         --max-instances="${MAX_INSTANCES}" \
@@ -198,6 +204,8 @@ main() {
     print_info "Region: ${REGION}"
     print_info "Service: ${SERVICE_NAME}"
     print_info "Image: ${IMAGE_NAME}"
+    print_info "GPU: ${GPU_COUNT}x ${GPU_TYPE}"
+    print_info "Resources: ${CPU} vCPU, ${MEMORY} memory"
     echo ""
 
     # Confirm deployment
