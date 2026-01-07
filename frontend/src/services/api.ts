@@ -74,6 +74,7 @@ export interface TranscriptionResponse {
       translation?: string | null;
       screenshot_url?: string;  // Optional since it's only present for video files
       speaker?: string;  // Speaker label from diarization
+      is_silent?: boolean;  // True for visual-only segments (no speech)
     }>;
     processing_time?: string;
   };

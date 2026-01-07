@@ -1,8 +1,9 @@
 # Railway/Cloud Run optimized Dockerfile for FastAPI Backend
 # Includes pre-downloaded translation models for production reliability
+# GPU-enabled with CUDA 12.1 support for NVIDIA L4 on Cloud Run
 
-# Use Python 3.9 slim image as base
-FROM python:3.9-slim
+# Use NVIDIA CUDA base image with Python 3.9
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 # Set working directory
 WORKDIR /app
@@ -11,13 +12,25 @@ WORKDIR /app
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 
-# Install system dependencies including FFmpeg and wget (for PANNs model download)
+# Set CUDA environment variables
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+
+# Install Python 3.10 (native to Ubuntu 22.04) and system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    python3 \
+    python3-dev \
+    python3-venv \
+    python3-pip \
     ffmpeg \
     build-essential \
     wget \
-    && rm -rf /var/lib/apt/lists/*
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && python -m pip install --upgrade pip
 # Create directories for persistent data
 # Railway will mount volumes to these paths
 RUN mkdir -p /data/static/videos \
@@ -30,7 +43,11 @@ RUN mkdir -p /data/static/videos \
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install PyTorch with CUDA support first (before other requirements)
+# Using CUDA 11.8 wheels (forward-compatible with CUDA 12.1 runtime)
+RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu118
+
+# Install remaining Python dependencies
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 

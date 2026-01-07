@@ -70,6 +70,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [editSpeakerName, setEditSpeakerName] = useState("");
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
+  const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [showJobPanel, setShowJobPanel] = useState(false);
 
@@ -148,14 +149,22 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const isTranscribing =
     processingStatus !== null && processingStatus.stage !== "complete";
 
-  // Filter segments by selected speaker
+  // Filter segments by selected speaker, optionally including visual moments
   const displayedSegments = useMemo(() => {
     if (!transcription) return [];
-    if (!filteredSpeaker) return transcription.transcription.segments;
-    return transcription.transcription.segments.filter(
-      (seg) => seg.speaker === filteredSpeaker
+    const segments = transcription.transcription.segments;
+
+    // No speaker filter - show all, but respect visual moments toggle
+    if (!filteredSpeaker) {
+      if (showVisualMoments) return segments;
+      return segments.filter((seg) => !seg.is_silent);
+    }
+
+    // With speaker filter - include visual moments if toggle is on
+    return segments.filter(
+      (seg) => seg.speaker === filteredSpeaker || (showVisualMoments && seg.is_silent)
     );
-  }, [transcription, filteredSpeaker]);
+  }, [transcription, filteredSpeaker, showVisualMoments]);
 
   // Use a ref to track displayedSegments to avoid unnecessary effect re-runs
   const displayedSegmentsRef = useRef(displayedSegments);
@@ -1279,6 +1288,41 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 </div>
                               )}
                             </div>
+
+                            {/* Visual Moments Toggle */}
+                            <button
+                              onClick={() => setShowVisualMoments(!showVisualMoments)}
+                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
+                                showVisualMoments
+                                  ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-md hover:shadow-lg"
+                                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              }`}
+                              title="Toggle visibility of visual-only segments (scenes without speech)"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                                />
+                              </svg>
+                              <span>Visual Moments</span>
+                              {showVisualMoments ? (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
 
                             {/* Speaker Recognition Buttons */}
                             <button

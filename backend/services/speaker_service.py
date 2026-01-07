@@ -126,11 +126,34 @@ class SpeakerService:
                         print(f"Warning: Failed to delete temp file {temp_wav_path}: {e}")
 
         except Exception as e:
-            print(f"Error in speaker diarization: {str(e)}")
-            traceback.print_exc()
+            error_msg = str(e)
+            print(f"\n{'='*60}")
+            print(f"SPEAKER DIARIZATION FAILED")
+            print(f"{'='*60}")
+            print(f"Error: {error_msg}")
 
-            # If diarization fails, add default speaker to all segments
-            print("Falling back to single speaker...")
+            # Log more context about common failure modes
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print("CAUSE: Processing timed out - video may be too long for CPU processing")
+                print("SOLUTION: Consider enabling GPU or reducing video length")
+            elif "memory" in error_msg.lower() or "oom" in error_msg.lower():
+                print("CAUSE: Out of memory - video requires more RAM")
+                print("SOLUTION: Increase memory allocation or reduce video length")
+            elif "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
+                print("CAUSE: GPU/CUDA error")
+                print("SOLUTION: Check GPU availability or fall back to CPU")
+            elif "authentication" in error_msg.lower() or "token" in error_msg.lower():
+                print("CAUSE: HuggingFace authentication failed")
+                print("SOLUTION: Check HUGGINGFACE_TOKEN is set correctly")
+
+            print("\nFull traceback:")
+            traceback.print_exc()
+            print(f"{'='*60}\n")
+
+            # If diarization fails, mark all segments as UNKNOWN (not SPEAKER_00)
+            # This makes it clear in the UI that diarization failed
+            print("Falling back to UNKNOWN speaker labels...")
             for seg in segments:
-                seg['speaker'] = "SPEAKER_00"
+                seg['speaker'] = "UNKNOWN"
+                seg['diarization_failed'] = True  # Flag to indicate diarization failure
             return segments
