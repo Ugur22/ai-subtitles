@@ -44,6 +44,9 @@ except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")
     LLM_AVAILABLE = False
 
+# Disable docs in production for security
+is_production = os.getenv("ENVIRONMENT", "development") == "production"
+
 # Initialize FastAPI app with proper OpenAPI configuration
 app = FastAPI(
     title=app_settings.API_TITLE,
@@ -52,6 +55,10 @@ app = FastAPI(
     # Disable automatic trailing slash redirects to prevent HTTP redirect issues
     # (Cloud Run generates http:// redirect URLs instead of https://)
     redirect_slashes=False,
+    # Disable Swagger UI and ReDoc in production to prevent unauthorized API access
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
     openapi_tags=[
         {
             "name": "Transcription",

@@ -210,6 +210,7 @@ export const transcribeLocalStream = async (
     fetch(`${API_BASE_URL}/transcribe_local_stream/`, {
       method: 'POST',
       body: formData,
+      credentials: 'include',  // Send auth cookies for authenticated endpoints
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -391,6 +392,7 @@ export const transcribeGCSStream = async (
     fetch(`${API_BASE_URL}/transcribe_gcs_stream/`, {
       method: 'POST',
       body: formData,
+      credentials: 'include',  // Send auth cookies for authenticated endpoints
     })
       .then(async (response) => {
         if (!response.ok) {

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from database import get_transcription
 from dependencies import _last_transcription_data
+from middleware.auth import require_auth
 
 
 def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
@@ -182,7 +183,8 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
         404: {"model": ErrorResponse, "description": "Transcription not found"}
     }
 )
-async def index_video_for_chat(video_hash: str = None) -> IndexVideoResponse:
+@require_auth
+async def index_video_for_chat(request: Request, video_hash: str = None) -> IndexVideoResponse:
     """
     Index a video's transcription for chat/Q&A
 
@@ -242,7 +244,8 @@ async def index_video_for_chat(video_hash: str = None) -> IndexVideoResponse:
         400: {"model": ErrorResponse, "description": "Invalid request"}
     }
 )
-async def chat_with_video(request: ChatRequest) -> Dict:
+@require_auth
+async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
     """
     Chat with a video using RAG (Retrieval-Augmented Generation)
     """
@@ -250,13 +253,13 @@ async def chat_with_video(request: ChatRequest) -> Dict:
         raise HTTPException(status_code=503, detail="LLM features not available")
 
     try:
-        question = request.question
-        video_hash = request.video_hash
-        provider_name = request.provider
-        n_results = request.n_results or 8
-        include_visuals = request.include_visuals or False
-        n_images = request.n_images or 6
-        custom_instructions = request.custom_instructions
+        question = chat_request.question
+        video_hash = chat_request.video_hash
+        provider_name = chat_request.provider
+        n_results = chat_request.n_results or 8
+        include_visuals = chat_request.include_visuals or False
+        n_images = chat_request.n_images or 6
+        custom_instructions = chat_request.custom_instructions
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
@@ -747,7 +750,8 @@ Guidelines:
         503: {"model": ErrorResponse, "description": "LLM features not available"}
     }
 )
-async def list_llm_providers() -> Dict:
+@require_auth
+async def list_llm_providers(request: Request) -> Dict:
     """List all available LLM providers and their status"""
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
@@ -771,14 +775,15 @@ async def list_llm_providers() -> Dict:
         503: {"model": ErrorResponse, "description": "LLM features not available"}
     }
 )
-async def test_llm_provider(request: TestLLMRequest) -> TestLLMResponse:
+@require_auth
+async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> TestLLMResponse:
     """Test an LLM provider"""
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
 
     try:
-        provider_name = request.provider
-        test_prompt = request.prompt or "Hello! Please respond with 'OK' if you can read this."
+        provider_name = test_request.provider
+        test_prompt = test_request.prompt or "Hello! Please respond with 'OK' if you can read this."
 
         provider = llm_manager.get_provider(provider_name)
 
@@ -798,7 +803,7 @@ async def test_llm_provider(request: TestLLMRequest) -> TestLLMResponse:
     except Exception as e:
         return TestLLMResponse(
             success=False,
-            provider=request.provider,
+            provider=test_request.provider,
             response=None,
             error=str(e)
         )
@@ -814,7 +819,8 @@ async def test_llm_provider(request: TestLLMRequest) -> TestLLMResponse:
         404: {"model": ErrorResponse, "description": "Transcription not found"}
     }
 )
-async def index_video_images(video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
+@require_auth
+async def index_video_images(request: Request, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
     """
     Index video screenshots using CLIP embeddings for visual search
 
@@ -879,7 +885,8 @@ async def index_video_images(video_hash: str = None, force_reindex: bool = False
         404: {"model": ErrorResponse, "description": "Video not found or images not indexed"}
     }
 )
-async def search_video_images(request: SearchImagesRequest) -> SearchImagesResponse:
+@require_auth
+async def search_video_images(request: Request, search_request: SearchImagesRequest) -> SearchImagesResponse:
     """
     Search for video screenshots using text queries via CLIP embeddings
 
@@ -890,9 +897,9 @@ async def search_video_images(request: SearchImagesRequest) -> SearchImagesRespo
         raise HTTPException(status_code=503, detail="LLM features not available")
 
     try:
-        query = request.query
-        video_hash = request.video_hash
-        n_results = request.n_results or 5
+        query = search_request.query
+        video_hash = search_request.video_hash
+        n_results = search_request.n_results or 5
 
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")

@@ -3,11 +3,12 @@ Upload endpoints for GCS-based large file uploads.
 
 These endpoints enable direct-to-GCS uploads which bypass Cloud Run's 32MB request limit.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 from config import settings
+from middleware.auth import require_auth
 
 
 router = APIRouter(prefix="/api/upload", tags=["Upload"])
@@ -36,7 +37,8 @@ class UploadStatusResponse(BaseModel):
 
 
 @router.post("/signed-url", response_model=SignedUrlResponse)
-async def get_signed_upload_url(request: SignedUrlRequest):
+@require_auth
+async def get_signed_upload_url(request: Request, body: SignedUrlRequest):
     """
     Get a signed URL for uploading a file directly to GCS.
 
@@ -47,7 +49,8 @@ async def get_signed_upload_url(request: SignedUrlRequest):
     For files >= 100MB: Returns a resumable upload URL
 
     Args:
-        request: Contains filename, content_type, and optional file_size
+        request: FastAPI request object (injected by require_auth)
+        body: Contains filename, content_type, and optional file_size
 
     Returns:
         SignedUrlResponse with upload URL and GCS path
@@ -62,21 +65,21 @@ async def get_signed_upload_url(request: SignedUrlRequest):
         from services.gcs_service import gcs_service
 
         # Determine upload method based on file size
-        file_size = request.file_size or 0
+        file_size = body.file_size or 0
         threshold = 100 * 1024 * 1024  # 100MB
 
         if file_size >= threshold:
             # Use resumable upload for large files
             upload_url, gcs_path = gcs_service.generate_resumable_upload_url(
-                filename=request.filename,
-                content_type=request.content_type,
+                filename=body.filename,
+                content_type=body.content_type,
             )
             method = "POST"
         else:
             # Use simple signed URL for smaller files
             upload_url, gcs_path = gcs_service.generate_upload_signed_url(
-                filename=request.filename,
-                content_type=request.content_type,
+                filename=body.filename,
+                content_type=body.content_type,
             )
             method = "PUT"
 
@@ -95,7 +98,8 @@ async def get_signed_upload_url(request: SignedUrlRequest):
 
 
 @router.post("/resumable-url", response_model=SignedUrlResponse)
-async def get_resumable_upload_url(request: SignedUrlRequest):
+@require_auth
+async def get_resumable_upload_url(request: Request, body: SignedUrlRequest):
     """
     Get a resumable upload URL for very large files.
 
@@ -105,6 +109,10 @@ async def get_resumable_upload_url(request: SignedUrlRequest):
     - Progress tracking via Content-Range headers
 
     Use this for files > 100MB.
+
+    Args:
+        request: FastAPI request object (injected by require_auth)
+        body: Contains filename, content_type, and optional file_size
     """
     if not settings.ENABLE_GCS_UPLOADS:
         raise HTTPException(
@@ -116,8 +124,8 @@ async def get_resumable_upload_url(request: SignedUrlRequest):
         from services.gcs_service import gcs_service
 
         upload_url, gcs_path = gcs_service.generate_resumable_upload_url(
-            filename=request.filename,
-            content_type=request.content_type,
+            filename=body.filename,
+            content_type=body.content_type,
         )
 
         return SignedUrlResponse(
@@ -133,11 +141,13 @@ async def get_resumable_upload_url(request: SignedUrlRequest):
 
 
 @router.get("/status/{gcs_path:path}", response_model=UploadStatusResponse)
-async def check_upload_status(gcs_path: str):
+@require_auth
+async def check_upload_status(request: Request, gcs_path: str):
     """
     Check if a file was successfully uploaded to GCS.
 
     Args:
+        request: FastAPI request object (injected by require_auth)
         gcs_path: The GCS path returned from signed-url endpoint
 
     Returns:
@@ -164,11 +174,15 @@ async def check_upload_status(gcs_path: str):
 
 
 @router.get("/config")
-async def get_upload_config():
+@require_auth
+async def get_upload_config(request: Request):
     """
     Get client-side upload configuration.
 
     Returns information about upload limits and GCS availability.
+
+    Args:
+        request: FastAPI request object (injected by require_auth)
     """
     return {
         "gcs_enabled": settings.ENABLE_GCS_UPLOADS,
