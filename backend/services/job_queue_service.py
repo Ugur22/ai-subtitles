@@ -23,6 +23,7 @@ class JobQueueService:
         gcs_path: str,
         file_size_bytes: int,
         video_hash: str,
+        user_id: str = None,
         **params
     ) -> Dict:
         """
@@ -37,6 +38,7 @@ class JobQueueService:
             gcs_path: Path in GCS bucket
             file_size_bytes: Size of the file in bytes
             video_hash: Hash of the video content for deduplication
+            user_id: Optional user ID for job ownership (from authenticated user)
             **params: Additional parameters (num_speakers, min_speakers, max_speakers, language, force_language)
 
         Returns:
@@ -77,6 +79,7 @@ class JobQueueService:
         job_data = {
             "id": job_id,
             "access_token": access_token,
+            "user_id": user_id,  # Job ownership for authenticated users
             "filename": filename,
             "gcs_path": gcs_path,
             "file_size_bytes": file_size_bytes,
@@ -147,6 +150,49 @@ class JobQueueService:
             client.table("jobs")
             .select("*")
             .in_("access_token", tokens)
+            .order("created_at", desc=True)
+            .range(offset, offset + per_page - 1)
+            .execute()
+        )
+
+        jobs = response.data if response.data else []
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 0
+
+        return {
+            "jobs": jobs,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
+    def get_jobs_for_user(user_id: str, page: int = 1, per_page: int = 10) -> Dict:
+        """
+        Get jobs belonging to a specific user with pagination.
+
+        Args:
+            user_id: User ID to filter by
+            page: Page number (1-indexed)
+            per_page: Number of jobs per page
+
+        Returns:
+            Dict with 'jobs', 'total', 'page', 'per_page', 'total_pages'
+        """
+        client = supabase()
+
+        # Calculate offset
+        offset = (page - 1) * per_page
+
+        # Get total count for this user
+        count_response = client.table("jobs").select("id", count="exact").eq("user_id", user_id).execute()
+        total = count_response.count if hasattr(count_response, 'count') else 0
+
+        # Get paginated jobs
+        response = (
+            client.table("jobs")
+            .select("*")
+            .eq("user_id", user_id)
             .order("created_at", desc=True)
             .range(offset, offset + per_page - 1)
             .execute()

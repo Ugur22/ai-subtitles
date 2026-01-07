@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from config import settings
 from database import get_transcription, update_file_path, delete_transcription
+from middleware.auth import require_auth
 from models import (
     CleanupScreenshotsResponse,
     UpdateFilePathResponse,
@@ -28,7 +29,8 @@ router = APIRouter(tags=["Video & Utilities"])
     summary="Cleanup screenshot files",
     description="Delete all screenshots from the static/screenshots directory and clean up orphaned ChromaDB image collections"
 )
-async def cleanup_screenshots() -> CleanupScreenshotsResponse:
+@require_auth
+async def cleanup_screenshots(request: Request) -> CleanupScreenshotsResponse:
     """Delete all screenshots from the static/screenshots directory and clean up orphaned ChromaDB collections"""
     try:
         screenshots_dir = settings.SCREENSHOTS_DIR
@@ -116,7 +118,8 @@ def ranged_file_generator(file_path: str, start: int, end: int, chunk_size: int 
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def get_video_file(video_hash: str, request: Request):
+@require_auth
+async def get_video_file(request: Request, video_hash: str):
     """Serve the video file for a specific transcription by hash with range request support"""
     try:
         transcription = get_transcription(video_hash)
@@ -213,7 +216,8 @@ async def get_video_file(video_hash: str, request: Request):
         404: {"model": ErrorResponse, "description": "No transcription available"}
     }
 )
-async def get_subtitles(language: str):
+@require_auth
+async def get_subtitles(request: Request, language: str):
     """Generate SRT format subtitles from the last transcription"""
     # Import here to avoid circular import
     from dependencies import _last_transcription_data
@@ -262,7 +266,8 @@ async def get_subtitles(language: str):
         400: {"model": ErrorResponse, "description": "Invalid file format"}
     }
 )
-async def update_video_file_path(video_hash: str, file: UploadFile) -> UpdateFilePathResponse:
+@require_auth
+async def update_video_file_path(request: Request, video_hash: str, file: UploadFile) -> UpdateFilePathResponse:
     """Update an existing transcription with a new file"""
     try:
         # Check if transcription exists
@@ -316,7 +321,8 @@ async def update_video_file_path(video_hash: str, file: UploadFile) -> UpdateFil
         404: {"model": ErrorResponse, "description": "Transcription not found"}
     }
 )
-async def delete_transcription_endpoint(video_hash: str) -> DeleteTranscriptionResponse:
+@require_auth
+async def delete_transcription_endpoint(request: Request, video_hash: str) -> DeleteTranscriptionResponse:
     """Delete a transcription from the database by hash"""
     try:
         # Check if transcription exists

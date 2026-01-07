@@ -18,6 +18,7 @@ from config import settings
 from database import get_transcription, store_transcription, delete_transcription as db_delete_transcription
 from dependencies import get_whisper_model, get_speaker_diarizer, _last_transcription_data
 import dependencies
+from middleware.auth import require_auth
 from models import (
     TranslationRequest,
     TranslationResponse,
@@ -90,6 +91,7 @@ def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
         404: {"model": ErrorResponse, "description": "No transcription available"}
     }
 )
+@require_auth
 async def get_current_transcription(request: Request) -> Dict:
     """Return the current transcription data"""
     if not dependencies._last_transcription_data:
@@ -113,7 +115,8 @@ async def get_current_transcription(request: Request) -> Dict:
         404: {"model": ErrorResponse, "description": "Transcription not found"}
     }
 )
-async def get_saved_transcription(video_hash: str, request: Request) -> Dict:
+@require_auth
+async def get_saved_transcription(request: Request, video_hash: str) -> Dict:
     """Get a specific transcription by hash"""
     transcription = get_transcription(video_hash)
     if not transcription:
@@ -156,7 +159,8 @@ async def get_saved_transcription(video_hash: str, request: Request) -> Dict:
         400: {"model": ErrorResponse, "description": "Missing required fields"}
     }
 )
-async def translate_local_endpoint(request: TranslationRequest) -> TranslationResponse:
+@require_auth
+async def translate_local_endpoint(http_request: Request, request: TranslationRequest) -> TranslationResponse:
     """Translate text to English locally using MarianMT."""
     try:
         text = request.text
@@ -196,6 +200,7 @@ async def translate_local_endpoint(request: TranslationRequest) -> TranslationRe
         404: {"model": ErrorResponse, "description": "No transcription available"}
     }
 )
+@require_auth
 async def generate_summary(
     request: Request,
     video_hash: Optional[str] = Query(None, description="Video hash to load transcription from database")
@@ -366,7 +371,8 @@ async def generate_summary(
     description="Run audio analysis (events, emotions) on an already-transcribed video without re-transcribing",
     tags=["Transcription"]
 )
-async def analyze_audio_for_video(video_hash: str, force_reindex: bool = False):
+@require_auth
+async def analyze_audio_for_video(request: Request, video_hash: str, force_reindex: bool = False):
     """
     Analyze audio events and emotions for an existing transcription.
 
@@ -455,7 +461,8 @@ async def analyze_audio_for_video(video_hash: str, force_reindex: bool = False):
     description="Extract and upload screenshots for an already-transcribed video without re-transcribing",
     tags=["Transcription"]
 )
-async def regenerate_screenshots_for_video(video_hash: str):
+@require_auth
+async def regenerate_screenshots_for_video(request: Request, video_hash: str):
     """
     Regenerate screenshots for an existing transcription.
 
@@ -818,9 +825,10 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
 
 
 @router.post("/transcribe/")
+@require_auth
 async def transcribe_video(
-    file: UploadFile, 
-    request: Request, 
+    request: Request,
+    file: UploadFile,
     file_path: str = None,
     language: str = Form(None)  # Added language parameter
 ) -> Dict:
@@ -1290,9 +1298,10 @@ async def transcribe_video(
 
 
 @router.post("/transcribe_local/")
+@require_auth
 async def transcribe_local(
-    file: UploadFile,
     request: Request,
+    file: UploadFile,
     num_speakers: int = Form(None),
     min_speakers: int = Form(None),
     max_speakers: int = Form(None),
@@ -1670,9 +1679,10 @@ async def transcribe_local(
 
 
 @router.post("/transcribe_local_stream/")
+@require_auth
 async def transcribe_local_stream(
-    file: UploadFile,
     request: Request,
+    file: UploadFile,
     num_speakers: int = Form(None),
     min_speakers: int = Form(None),
     max_speakers: int = Form(None),
@@ -1981,6 +1991,7 @@ async def transcribe_local_stream(
 
 
 @router.post("/transcribe_gcs_stream/")
+@require_auth
 async def transcribe_gcs_stream(
     request: Request,
     gcs_path: str = Form(...),

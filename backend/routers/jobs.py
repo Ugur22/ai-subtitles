@@ -5,13 +5,14 @@ This router provides endpoints for managing asynchronous transcription jobs,
 allowing users to submit videos, track progress, and retrieve results without
 maintaining an active connection.
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
 from config import settings
+from middleware.auth import require_auth
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -152,13 +153,54 @@ def require_token(job_id: str, token: Optional[str]) -> None:
         )
 
 
+def require_job_access(job_id: str, token: Optional[str], user_id: Optional[str]) -> dict:
+    """
+    Verify access to a job via token OR ownership.
+
+    Access granted if:
+    1. Valid access token provided, OR
+    2. Job belongs to authenticated user (user_id matches)
+
+    Args:
+        job_id: The job ID to verify
+        token: Optional access token
+        user_id: Optional authenticated user ID
+
+    Returns:
+        Job dict if access granted
+
+    Raises:
+        HTTPException: 403 if no valid access, 404 if job not found
+    """
+    from services.job_queue_service import JobQueueService
+
+    job = JobQueueService.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Check token access (for shared links)
+    if token and verify_token(job_id, token):
+        return job
+
+    # Check ownership (authenticated user owns this job)
+    if user_id and job.get("user_id") == user_id:
+        return job
+
+    raise HTTPException(
+        status_code=403,
+        detail="Access denied. Provide valid token or access your own jobs."
+    )
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
 
 @router.post("/submit", response_model=JobSubmitResponse)
+@require_auth
 async def submit_job(
-    request: JobSubmitRequest,
+    request: Request,
+    job_request: JobSubmitRequest,
     background_tasks: BackgroundTasks
 ):
     """
@@ -167,19 +209,23 @@ async def submit_job(
     The job will be queued for background processing. Returns immediately with
     job_id and access_token for tracking progress.
 
+    **Authentication**: Requires authenticated user session.
+
     **Queue Limit**: Maximum 3 concurrent jobs globally. Returns 429 if queue is full.
 
     **Deduplication**: If a job with the same video_hash was already completed,
     returns the cached result immediately.
 
     Args:
-        request: Job parameters including file info and transcription settings
+        request: FastAPI request with authenticated user
+        job_request: Job parameters including file info and transcription settings
         background_tasks: FastAPI background tasks for async processing
 
     Returns:
         JobSubmitResponse with job_id, access_token, and cache status
 
     Raises:
+        401: Not authenticated
         429: Queue is full (3 jobs already processing)
         503: Job queue service not available
     """
@@ -192,18 +238,22 @@ async def submit_job(
             detail="Job queue service not available. Background processing not configured."
         )
 
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
     try:
         # Create job (checks queue limit and deduplication)
         result = JobQueueService.create_job(
-            filename=request.filename,
-            gcs_path=request.gcs_path,
-            file_size_bytes=request.file_size_bytes,
-            video_hash=request.video_hash,
-            num_speakers=request.num_speakers,
-            min_speakers=request.min_speakers,
-            max_speakers=request.max_speakers,
-            language=request.language,
-            force_language=request.force_language
+            filename=job_request.filename,
+            gcs_path=job_request.gcs_path,
+            file_size_bytes=job_request.file_size_bytes,
+            video_hash=job_request.video_hash,
+            user_id=user_id,  # Associate job with authenticated user
+            num_speakers=job_request.num_speakers,
+            min_speakers=job_request.min_speakers,
+            max_speakers=job_request.max_speakers,
+            language=job_request.language,
+            force_language=job_request.force_language
         )
 
         # If not cached, trigger background processing
@@ -215,7 +265,7 @@ async def submit_job(
 
             # Get estimated duration if available
             estimated_duration = JobQueueService.get_estimated_duration(
-                request.file_size_bytes
+                job_request.file_size_bytes
             )
             if estimated_duration:
                 result['estimated_duration_seconds'] = estimated_duration
@@ -239,37 +289,39 @@ async def submit_job(
 
 
 @router.get("/{job_id}", response_model=JobStatusResponse)
+@require_auth
 async def get_job_status(
+    request: Request,
     job_id: str,
-    token: Optional[str] = Query(None, description="Access token for this job")
+    token: Optional[str] = Query(None, description="Access token for shared links")
 ):
     """
     Get detailed status for a specific job.
 
-    Requires the access token that was returned when the job was submitted.
+    Access granted via:
+    - Ownership: Authenticated user owns the job
+    - Token: Valid access token provided (for shared links)
 
     Args:
+        request: FastAPI request with authenticated user
         job_id: The unique job identifier
-        token: Access token (query parameter)
+        token: Optional access token (for shared links)
 
     Returns:
         JobStatusResponse with complete job details
 
     Raises:
-        400: Token missing
-        403: Invalid token
+        401: Not authenticated
+        403: Not owner and no valid token
         404: Job not found
     """
-    # Verify access
-    require_token(job_id, token)
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
+    # Verify access via ownership OR token
+    job = require_job_access(job_id, token, user_id)
 
     try:
-        from services.job_queue_service import JobQueueService
-
-        job = JobQueueService.get_job(job_id)
-
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
 
         # Map database fields to response model
         return JobStatusResponse(
@@ -300,19 +352,21 @@ async def get_job_status(
 
 
 @router.get("", response_model=JobListResponse)
+@require_auth
 async def list_jobs(
-    tokens: str = Query(..., description="Comma-separated access tokens"),
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=50, description="Items per page (max 50)")
 ):
     """
-    List jobs that the user has access to.
+    List jobs belonging to the authenticated user.
 
-    Takes a comma-separated list of access tokens (from localStorage) and returns
-    all matching jobs with pagination.
+    Returns all jobs owned by the current user with pagination.
+
+    **Authentication**: Requires authenticated user session.
 
     Args:
-        tokens: Comma-separated access tokens
+        request: FastAPI request with authenticated user
         page: Page number (1-indexed)
         per_page: Items per page (max 50)
 
@@ -322,15 +376,12 @@ async def list_jobs(
     try:
         from services.job_queue_service import JobQueueService
 
-        # Parse tokens
-        token_list = [t.strip() for t in tokens.split(',') if t.strip()]
+        # Get authenticated user ID
+        user_id = request.state.user["id"]
 
-        if not token_list:
-            return JobListResponse(jobs=[], total=0, page=page, per_page=per_page)
-
-        # Get jobs for these tokens
-        result = JobQueueService.get_jobs_by_tokens(
-            tokens=token_list,
+        # Get jobs for this user
+        result = JobQueueService.get_jobs_for_user(
+            user_id=user_id,
             page=page,
             per_page=per_page
         )
@@ -373,9 +424,11 @@ async def list_jobs(
 
 
 @router.delete("/{job_id}", response_model=JobCancelResponse)
+@require_auth
 async def cancel_job(
+    request: Request,
     job_id: str,
-    token: Optional[str] = Query(None, description="Access token for this job")
+    token: Optional[str] = Query(None, description="Access token for shared links")
 ):
     """
     Cancel a pending job.
@@ -383,28 +436,30 @@ async def cancel_job(
     Only pending jobs can be cancelled. Jobs that are already processing or
     completed cannot be cancelled.
 
+    Access granted via ownership OR token.
+
     Args:
+        request: FastAPI request with authenticated user
         job_id: The unique job identifier
-        token: Access token (query parameter)
+        token: Optional access token (for shared links)
 
     Returns:
         JobCancelResponse with cancellation status
 
     Raises:
-        400: Job cannot be cancelled (not pending) or token missing
-        403: Invalid token
+        400: Job cannot be cancelled (not pending)
+        401: Not authenticated
+        403: Not owner and no valid token
         404: Job not found
     """
-    # Verify access
-    require_token(job_id, token)
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
+    # Verify access via ownership OR token (also fetches job)
+    job = require_job_access(job_id, token, user_id)
 
     try:
         from services.job_queue_service import JobQueueService
-
-        # Check job exists
-        job = JobQueueService.get_job(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
 
         # Check if job can be cancelled
         if job['status'] != 'pending':
@@ -436,9 +491,11 @@ async def cancel_job(
 
 
 @router.post("/{job_id}/retry", response_model=JobRetryResponse)
+@require_auth
 async def retry_job(
+    request: Request,
     job_id: str,
-    token: Optional[str] = Query(None, description="Access token for this job"),
+    token: Optional[str] = Query(None, description="Access token for shared links"),
     background_tasks: BackgroundTasks = None
 ):
     """
@@ -447,30 +504,32 @@ async def retry_job(
     Resets the job to pending status and re-queues it for processing.
     Settings cannot be modified during retry - use a new job submission to change settings.
 
+    Access granted via ownership OR token.
+
     Args:
+        request: FastAPI request with authenticated user
         job_id: The unique job identifier
-        token: Access token (query parameter)
+        token: Optional access token (for shared links)
         background_tasks: FastAPI background tasks for async processing
 
     Returns:
         JobRetryResponse with retry status
 
     Raises:
-        400: Job is not in failed status or token missing
-        403: Invalid token
+        400: Job is not in failed status
+        401: Not authenticated
+        403: Not owner and no valid token
         404: Job not found
     """
-    # Verify access
-    require_token(job_id, token)
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
+    # Verify access via ownership OR token (also fetches job)
+    job = require_job_access(job_id, token, user_id)
 
     try:
         from services.job_queue_service import JobQueueService
         from services.background_worker import background_worker
-
-        # Check job exists and is failed
-        job = JobQueueService.get_job(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
 
         if job['status'] != 'failed':
             raise HTTPException(
@@ -502,9 +561,11 @@ async def retry_job(
 
 
 @router.get("/{job_id}/share", response_model=ShareLinkResponse)
+@require_auth
 async def get_share_link(
+    request: Request,
     job_id: str,
-    token: Optional[str] = Query(None, description="Access token for this job")
+    token: Optional[str] = Query(None, description="Access token for shared links")
 ):
     """
     Generate a shareable link for a job.
@@ -515,33 +576,32 @@ async def get_share_link(
     **Security Note**: Anyone with this link can access the job. Only share with
     trusted parties.
 
+    Access granted via ownership OR token.
+
     Args:
+        request: FastAPI request with authenticated user
         job_id: The unique job identifier
-        token: Access token (query parameter)
+        token: Optional access token (for shared links)
 
     Returns:
         ShareLinkResponse with shareable URL
 
     Raises:
-        400: Token missing
-        403: Invalid token
+        401: Not authenticated
+        403: Not owner and no valid token
         404: Job not found
     """
-    # Verify access
-    require_token(job_id, token)
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
+    # Verify access via ownership OR token (also fetches job)
+    job = require_job_access(job_id, token, user_id)
 
     try:
-        from services.job_queue_service import JobQueueService
-
-        # Verify job exists
-        job = JobQueueService.get_job(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
-
-        # Generate shareable URL
+        # Generate shareable URL using the job's access token
         # Note: In production, this would use the actual frontend URL from settings
         base_url = "https://REDACTED_FRONTEND_URL"  # TODO: Get from settings
-        share_url = f"{base_url}/jobs/{job_id}?token={token}"
+        share_url = f"{base_url}/jobs/{job_id}?token={job['access_token']}"
 
         return ShareLinkResponse(share_url=share_url)
 

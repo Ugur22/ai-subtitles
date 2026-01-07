@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, Form, Request
 
 from database import get_transcription, store_transcription
 from dependencies import _last_transcription_data
+from middleware.auth import require_auth
 from models import (
     EnrollSpeakerResponse,
     ListSpeakersResponse,
@@ -29,7 +30,9 @@ router = APIRouter(prefix="/api/speaker", tags=["Speaker Recognition"])
         500: {"model": ErrorResponse, "description": "Enrollment failed"}
     }
 )
+@require_auth
 async def enroll_speaker_endpoint(
+    request: Request,
     speaker_name: str = Form(...),
     audio_file: UploadFile = None,
     video_hash: str = Form(None),
@@ -105,7 +108,8 @@ async def enroll_speaker_endpoint(
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def list_speakers() -> ListSpeakersResponse:
+@require_auth
+async def list_speakers(request: Request) -> ListSpeakersResponse:
     """Get list of all enrolled speakers"""
     try:
         from speaker_recognition import get_speaker_recognition_system
@@ -133,7 +137,9 @@ async def list_speakers() -> ListSpeakersResponse:
         500: {"model": ErrorResponse, "description": "Identification failed"}
     }
 )
+@require_auth
 async def identify_speaker_endpoint(
+    request: Request,
     audio_file: UploadFile = None,
     video_hash: str = Form(None),
     start_time: float = Form(None),
@@ -198,7 +204,8 @@ async def identify_speaker_endpoint(
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def delete_speaker(speaker_name: str) -> SuccessResponse:
+@require_auth
+async def delete_speaker(request: Request, speaker_name: str) -> SuccessResponse:
     """Remove a speaker from the database"""
     try:
         from speaker_recognition import get_speaker_recognition_system
@@ -231,7 +238,8 @@ async def delete_speaker(speaker_name: str) -> SuccessResponse:
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def auto_identify_speakers(video_hash: str, threshold: float = 0.7) -> Dict:
+@require_auth
+async def auto_identify_speakers(request: Request, video_hash: str, threshold: float = 0.7) -> Dict:
     """
     Automatically identify speakers in a transcription using enrolled voice prints
     """
@@ -321,7 +329,8 @@ async def auto_identify_speakers(video_hash: str, threshold: float = 0.7) -> Dic
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
-async def update_speaker_name(video_hash: str, request: Request) -> Dict:
+@require_auth
+async def update_speaker_name(request: Request, video_hash: str) -> Dict:
     """Update a speaker's name in a transcription"""
     try:
         body = await request.json()
