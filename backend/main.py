@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from config import settings
+from config import settings as app_settings
 from database import init_db, get_transcription, store_transcription
 from dependencies import get_whisper_model, get_speaker_diarizer
 import dependencies
@@ -33,7 +33,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, auth, diagnostics
+from routers import video, chat, speaker, transcription, upload, jobs, auth, diagnostics, auth_new, keys, admin, settings
 
 # Import LLM and vector store modules (optional)
 try:
@@ -46,9 +46,9 @@ except ImportError as e:
 
 # Initialize FastAPI app with proper OpenAPI configuration
 app = FastAPI(
-    title=settings.API_TITLE,
-    version=settings.API_VERSION,
-    description=settings.API_DESCRIPTION,
+    title=app_settings.API_TITLE,
+    version=app_settings.API_VERSION,
+    description=app_settings.API_DESCRIPTION,
     # Disable automatic trailing slash redirects to prevent HTTP redirect issues
     # (Cloud Run generates http:// redirect URLs instead of https://)
     redirect_slashes=False,
@@ -78,18 +78,18 @@ app = FastAPI(
 async def startup_event():
     """Initialize database and create static directories"""
     init_db()
-    os.makedirs(settings.VIDEOS_DIR, exist_ok=True)
-    os.makedirs(settings.SCREENSHOTS_DIR, exist_ok=True)
+    os.makedirs(app_settings.VIDEOS_DIR, exist_ok=True)
+    os.makedirs(app_settings.SCREENSHOTS_DIR, exist_ok=True)
     print("Application initialized successfully")
-    print(f"- Videos directory: {settings.VIDEOS_DIR}")
-    print(f"- Screenshots directory: {settings.SCREENSHOTS_DIR}")
+    print(f"- Videos directory: {app_settings.VIDEOS_DIR}")
+    print(f"- Screenshots directory: {app_settings.SCREENSHOTS_DIR}")
 
     # Clean up old GCS uploads if enabled
-    if settings.ENABLE_GCS_UPLOADS:
+    if app_settings.ENABLE_GCS_UPLOADS:
         try:
             from services.gcs_service import gcs_service
             deleted = gcs_service.cleanup_old_uploads(max_age_hours=24)
-            print(f"- GCS uploads enabled (bucket: {settings.GCS_BUCKET_NAME})")
+            print(f"- GCS uploads enabled (bucket: {app_settings.GCS_BUCKET_NAME})")
             if deleted > 0:
                 print(f"- Cleaned up {deleted} old GCS uploads")
         except Exception as e:
@@ -97,13 +97,13 @@ async def startup_event():
 
 
 # Mount static files
-app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
+app.mount("/static", StaticFiles(directory=app_settings.STATIC_DIR), name="static")
 
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=app_settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,8 +117,8 @@ class LargeUploadMiddleware(BaseHTTPMiddleware):
     """Middleware to handle large file uploads (up to 10GB)"""
     async def dispatch(self, request: Request, call_next):
         if request.method == 'POST' and '/transcribe' in request.url.path:
-            request._body_size_limit = settings.MAX_UPLOAD_SIZE
-            request.scope["max_content_size"] = settings.MAX_UPLOAD_SIZE
+            request._body_size_limit = app_settings.MAX_UPLOAD_SIZE
+            request.scope["max_content_size"] = app_settings.MAX_UPLOAD_SIZE
         return await call_next(request)
 
 
@@ -132,7 +132,11 @@ app.include_router(chat.router)
 app.include_router(video.router)
 app.include_router(upload.router)
 app.include_router(jobs.router)
-app.include_router(auth.router)
+# app.include_router(auth.router)  # OLD password gate - disabled
+app.include_router(auth_new.router)  # NEW email/password auth
+app.include_router(keys.router)      # API keys management
+app.include_router(admin.router)     # Admin panel
+app.include_router(settings.router)  # User settings
 app.include_router(diagnostics.router)
 
 
@@ -142,8 +146,8 @@ async def root():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": settings.API_TITLE,
-        "version": settings.API_VERSION
+        "service": app_settings.API_TITLE,
+        "version": app_settings.API_VERSION
     }
 
 
@@ -209,7 +213,7 @@ async def transcribe_video(
         with tempfile.TemporaryDirectory() as temp_dir:
             # Save uploaded file in chunks
             temp_input_path = os.path.join(temp_dir, file.filename)
-            screenshots_dir = settings.SCREENSHOTS_DIR
+            screenshots_dir = app_settings.SCREENSHOTS_DIR
             os.makedirs(screenshots_dir, exist_ok=True)
 
             print(f"Created temp directory: {temp_dir}")
@@ -223,7 +227,7 @@ async def transcribe_video(
                 with open(temp_input_path, "wb") as buffer:
                     while chunk := await file.read(CHUNK_SIZE):
                         total_size += len(chunk)
-                        if total_size > settings.MAX_UPLOAD_SIZE:
+                        if total_size > app_settings.MAX_UPLOAD_SIZE:
                             raise HTTPException(
                                 status_code=413,
                                 detail="File too large. Maximum size is 10GB."
@@ -250,14 +254,14 @@ async def transcribe_video(
             print("No existing transcription found. Processing video...")
 
             # Save a permanent copy
-            permanent_file_path = os.path.join(settings.VIDEOS_DIR, f"{video_hash}{file_extension}")
+            permanent_file_path = os.path.join(app_settings.VIDEOS_DIR, f"{video_hash}{file_extension}")
             if not os.path.exists(permanent_file_path):
                 shutil.copy2(temp_input_path, permanent_file_path)
                 print(f"Saved permanent copy to: {permanent_file_path}")
 
             # Convert MKV to MP4 if needed
             if file_extension == '.mkv':
-                mp4_path = os.path.join(settings.VIDEOS_DIR, f"{video_hash}.mp4")
+                mp4_path = os.path.join(app_settings.VIDEOS_DIR, f"{video_hash}.mp4")
                 if not os.path.exists(mp4_path):
                     print("\nConverting MKV to MP4...")
                     if VideoService.convert_mkv_to_mp4(permanent_file_path, mp4_path):
@@ -391,5 +395,5 @@ async def transcribe_video(
 # main.py lines 1920-2250 and 2251-2523.
 
 print("FastAPI application loaded successfully")
-print(f"API Title: {settings.API_TITLE}")
-print(f"API Version: {settings.API_VERSION}")
+print(f"API Title: {app_settings.API_TITLE}")
+print(f"API Version: {app_settings.API_VERSION}")
