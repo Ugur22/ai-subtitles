@@ -12,14 +12,10 @@ import secrets
 import time
 
 from config import settings
+from services.supabase_service import SupabaseService
 
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
-
-
-# In-memory session store (simple approach for single-instance)
-# token -> expiry_timestamp
-_sessions: dict[str, float] = {}
 
 SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60  # 7 days
 
@@ -60,12 +56,15 @@ def hash_password(password: str) -> str:
 
 
 def cleanup_expired_sessions() -> int:
-    """Remove expired sessions from memory. Returns count of removed sessions."""
-    now = time.time()
-    expired = [token for token, exp in _sessions.items() if exp < now]
-    for token in expired:
-        del _sessions[token]
-    return len(expired)
+    """Remove expired sessions from database. Returns count of removed sessions."""
+    now = int(time.time())
+    try:
+        client = SupabaseService.get_client()
+        response = client.table("sessions").delete().lt("expires_at", now).execute()
+        return len(response.data) if response.data else 0
+    except Exception as e:
+        print(f"Error cleaning up sessions: {e}")
+        return 0
 
 
 # =============================================================================
@@ -98,7 +97,17 @@ async def login(request: LoginRequest):
     cleanup_expired_sessions()
     session_token = secrets.token_urlsafe(32)
     expires_at = int(time.time() + SESSION_DURATION_SECONDS)
-    _sessions[session_token] = expires_at
+
+    # Store session in Supabase
+    try:
+        client = SupabaseService.get_client()
+        client.table("sessions").insert({
+            "token": session_token,
+            "expires_at": expires_at
+        }).execute()
+    except Exception as e:
+        print(f"Error storing session: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create session")
 
     return LoginResponse(
         session_token=session_token,
@@ -115,11 +124,17 @@ async def validate_session(session_token: str = Query(..., description="Session 
     """
     cleanup_expired_sessions()
 
-    if session_token in _sessions:
-        return ValidateResponse(
-            valid=True,
-            expires_at=int(_sessions[session_token])
-        )
+    try:
+        client = SupabaseService.get_client()
+        response = client.table("sessions").select("expires_at").eq("token", session_token).execute()
+
+        if response.data and len(response.data) > 0:
+            return ValidateResponse(
+                valid=True,
+                expires_at=response.data[0]["expires_at"]
+            )
+    except Exception as e:
+        print(f"Error validating session: {e}")
 
     return ValidateResponse(valid=False)
 
@@ -127,8 +142,11 @@ async def validate_session(session_token: str = Query(..., description="Session 
 @router.post("/logout")
 async def logout(session_token: str = Query(..., description="Session token to invalidate")):
     """Invalidate a session token."""
-    if session_token in _sessions:
-        del _sessions[session_token]
+    try:
+        client = SupabaseService.get_client()
+        client.table("sessions").delete().eq("token", session_token).execute()
+    except Exception as e:
+        print(f"Error deleting session: {e}")
     return {"success": True}
 
 
