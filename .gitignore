@@ -66,6 +66,12 @@ static/screenshots/
 transcriptions.db
 backend/transcriptions.db
 
+# .claude directory
+.claude/
+
+# claude md
+*claude.md
+
 # Vector database (ChromaDB)
 chroma_db/
 backend/chroma_db/
