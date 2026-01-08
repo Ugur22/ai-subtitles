@@ -74,7 +74,7 @@ class VectorStore:
         Returns:
             ChromaDB collection
         """
-        collection_name = f"video_{video_hash}"
+        collection_name = f"v_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
         try:
             collection = self.client.get_collection(name=collection_name)
             print(f"Retrieved existing collection: {collection_name}")
@@ -249,7 +249,7 @@ class VectorStore:
             True if successful, False otherwise
         """
         try:
-            collection_name = f"video_{video_hash}"
+            collection_name = f"v_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
             self.client.delete_collection(name=collection_name)
             print(f"Deleted collection: {collection_name}")
             return True
@@ -260,7 +260,7 @@ class VectorStore:
     def collection_exists(self, video_hash: str) -> bool:
         """Check if a collection exists for a video"""
         try:
-            collection_name = f"video_{video_hash}"
+            collection_name = f"v_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
             self.client.get_collection(name=collection_name)
             return True
         except:
@@ -276,7 +276,7 @@ class VectorStore:
         Returns:
             ChromaDB collection for images
         """
-        collection_name = f"video_{video_hash}_images"
+        collection_name = f"i_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
         try:
             collection = self.client.get_collection(name=collection_name)
             print(f"Retrieved existing image collection: {collection_name}")
@@ -360,7 +360,7 @@ class VectorStore:
         # Handle force re-indexing by deleting existing collection
         if force_reindex:
             try:
-                collection_name = f"images_{video_hash}"
+                collection_name = f"i_{video_hash[:60]}"  # Limit to 62 chars
                 self.chroma_client.delete_collection(collection_name)
                 print(f"Deleted existing image collection for force re-index: {collection_name}")
             except Exception as e:
@@ -534,7 +534,7 @@ class VectorStore:
             True if successful, False otherwise
         """
         try:
-            collection_name = f"video_{video_hash}_images"
+            collection_name = f"i_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
             self.client.delete_collection(name=collection_name)
             print(f"Deleted image collection: {collection_name}")
             return True
@@ -545,7 +545,7 @@ class VectorStore:
     def image_collection_exists(self, video_hash: str) -> bool:
         """Check if an image collection exists for a video AND has data"""
         try:
-            collection_name = f"video_{video_hash}_images"
+            collection_name = f"i_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
             collection = self.client.get_collection(name=collection_name)
             # Return True only if collection has items
             return collection.count() > 0
@@ -877,7 +877,7 @@ class VectorStore:
 
         # Update image collection (video_{hash}_images)
         try:
-            collection_name = f"video_{video_hash}_images"
+            collection_name = f"i_{video_hash[:60]}"  # Limit to 62 chars (ChromaDB max is 63)
             collection = self.client.get_collection(name=collection_name)
 
             # Get all items in the collection

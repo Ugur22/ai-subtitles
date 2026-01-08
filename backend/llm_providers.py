@@ -603,6 +603,53 @@ class GrokProvider(BaseLLMProvider):
             raise Exception(f"Grok vision generation failed: {str(e)}")
 
 
+class GrokProvider(BaseLLMProvider):
+    """xAI Grok cloud LLM provider"""
+
+    def __init__(self):
+        self.api_key = os.getenv("XAI_API_KEY")
+        self.model = os.getenv("XAI_MODEL", "grok-4-1-fast-reasoning")
+        self.base_url = "https://api.x.ai/v1"
+
+    async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """Generate response using xAI Grok"""
+        if not self.api_key:
+            raise Exception("xAI API key not configured")
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+            raise Exception(f"Grok generation failed: {str(e)}\nResponse: {error_detail}")
+        except Exception as e:
+            raise Exception(f"Grok generation failed: {str(e)}")
+
+    def is_available(self) -> bool:
+        """Check if xAI API key is configured"""
+        return bool(self.api_key)
+
+
 class LLMManager:
     """Manager for LLM providers"""
 
@@ -610,6 +657,7 @@ class LLMManager:
         self.providers = {
             "ollama": OllamaProvider(),
             "groq": GroqProvider(),
+            "grok": GrokProvider(),
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
             "grok": GrokProvider()
