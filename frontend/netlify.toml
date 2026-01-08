@@ -1,0 +1,9 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://ai-subs-backend-1052285886390.us-central1.run.app/api/:splat"
+  status = 200
+  force = true
