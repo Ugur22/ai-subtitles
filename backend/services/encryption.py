@@ -33,14 +33,14 @@ async def get_encryption_key() -> bytes:
     try:
         client = SupabaseService.get_client()
 
-        # Read secret from Supabase Vault
-        response = client.rpc("vault.read_secret", {"secret_name": "api_key_encryption"}).execute()
+        # Read secret from Supabase Vault via public wrapper function
+        response = client.rpc("get_vault_secret", {"secret_name_input": "api_key_encryption"}).execute()
 
-        if not response.data or "secret" not in response.data:
+        if not response.data or len(response.data) == 0 or response.data[0].get("secret") is None:
             raise Exception("Encryption key not found in Supabase Vault")
 
         # Convert hex string to bytes
-        key_hex = response.data["secret"]
+        key_hex = response.data[0]["secret"]
         key_bytes = bytes.fromhex(key_hex)
 
         if len(key_bytes) != 32:

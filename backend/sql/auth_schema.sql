@@ -25,6 +25,21 @@ SELECT vault.create_secret(
   'AES-256 encryption key for user API keys'
 );
 
+-- Create a wrapper function to read vault secrets via RPC
+-- (Supabase RPC can only call functions in the public schema)
+CREATE OR REPLACE FUNCTION get_vault_secret(secret_name_input TEXT)
+RETURNS TABLE(secret TEXT) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT decrypted_secret::TEXT
+  FROM vault.decrypted_secrets
+  WHERE name = secret_name_input
+  LIMIT 1;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION get_vault_secret(TEXT) TO service_role;
+
 -- ========================================
 -- STEP 2: Create Tables
 -- ========================================
