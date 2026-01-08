@@ -3,7 +3,7 @@
  * Handles playback, volume, seeking, and keyboard shortcuts
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 interface UseVideoPlayerOptions {
   onJumpToTimeRequest?: () => void;
@@ -12,7 +12,20 @@ interface UseVideoPlayerOptions {
 export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
   const { onJumpToTimeRequest } = options;
 
-  const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null);
+  const videoRefInternal = useRef<HTMLVideoElement | null>(null);
+  const [videoRef, setVideoRefState] = useState<HTMLVideoElement | null>(null);
+
+  // Use a stable callback ref to avoid re-renders when the video element mounts
+  const setVideoRef = useCallback((element: HTMLVideoElement | null) => {
+    videoRefInternal.current = element;
+    // Only update state if the element actually changed
+    setVideoRefState((prev) => {
+      if (prev !== element) {
+        return element;
+      }
+      return prev;
+    });
+  }, []);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -55,7 +68,11 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
     if (!videoRef) return;
 
     const handleSeeking = () => setIsVideoSeeking(true);
-    const handleSeeked = () => setIsVideoSeeking(false);
+    const handleSeeked = () => {
+      setIsVideoSeeking(false);
+      // Update currentTime immediately after seek completes (especially when paused)
+      setCurrentTime(videoRef.currentTime);
+    };
 
     videoRef.addEventListener("seeking", handleSeeking);
     videoRef.addEventListener("seeked", handleSeeked);
@@ -69,7 +86,8 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!videoRef) return;
+      const video = videoRefInternal.current;
+      if (!video) return;
 
       // Ctrl+J to open Jump to Time
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
@@ -81,14 +99,14 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
       switch (e.key) {
         case "ArrowRight":
           e.preventDefault();
-          videoRef.currentTime = Math.min(
-            videoRef.duration,
-            videoRef.currentTime + 5
+          video.currentTime = Math.min(
+            video.duration,
+            video.currentTime + 5
           );
           break;
         case "ArrowLeft":
           e.preventDefault();
-          videoRef.currentTime = Math.max(0, videoRef.currentTime - 5);
+          video.currentTime = Math.max(0, video.currentTime - 5);
           break;
         // Removed 'P' key shortcut - was interfering with typing
       }
@@ -96,49 +114,54 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [videoRef, onJumpToTimeRequest]);
+  }, [onJumpToTimeRequest]);
 
   const handlePlayPause = useCallback(() => {
-    if (videoRef) {
-      if (videoRef.paused) {
-        videoRef.play();
+    const video = videoRefInternal.current;
+    if (video) {
+      if (video.paused) {
+        video.play();
       } else {
-        videoRef.pause();
+        video.pause();
       }
     }
-  }, [videoRef]);
+  }, []);
 
   const handleVolumeChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newVolume = parseFloat(e.target.value);
       setVolume(newVolume);
-      if (videoRef) {
-        videoRef.volume = newVolume;
+      const video = videoRefInternal.current;
+      if (video) {
+        video.volume = newVolume;
       }
     },
-    [videoRef]
+    []
   );
 
   const seek = useCallback(
     (seconds: number) => {
-      if (videoRef) {
-        videoRef.currentTime = seconds;
+      const video = videoRefInternal.current;
+      if (video) {
+        video.currentTime = seconds;
       }
     },
-    [videoRef]
+    []
   );
 
   const play = useCallback(() => {
-    if (videoRef) {
-      videoRef.play().catch((err) => console.error("Error playing video:", err));
+    const video = videoRefInternal.current;
+    if (video) {
+      video.play().catch((err) => console.error("Error playing video:", err));
     }
-  }, [videoRef]);
+  }, []);
 
   const pause = useCallback(() => {
-    if (videoRef) {
-      videoRef.pause();
+    const video = videoRefInternal.current;
+    if (video) {
+      video.pause();
     }
-  }, [videoRef]);
+  }, []);
 
   return {
     videoRef,

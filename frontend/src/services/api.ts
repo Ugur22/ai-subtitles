@@ -14,7 +14,26 @@ api.interceptors.response.use(
     if (error.response) {
       // The request was made and the server responded with a status code
       // that falls out of the range of 2xx
-      const message = error.response.data.detail || 'An error occurred';
+      let message = 'An error occurred';
+
+      // Handle different error response formats
+      if (error.response.data) {
+        if (typeof error.response.data === 'string') {
+          message = error.response.data;
+        } else if (error.response.data.detail) {
+          // FastAPI typically uses 'detail' field
+          message = typeof error.response.data.detail === 'string'
+            ? error.response.data.detail
+            : JSON.stringify(error.response.data.detail);
+        } else if (error.response.data.message) {
+          // Some APIs use 'message' field
+          message = error.response.data.message;
+        } else if (error.response.data.error) {
+          // Others use 'error' field
+          message = error.response.data.error;
+        }
+      }
+
       throw new Error(message);
     } else if (error.request) {
       // The request was made but no response was received
@@ -275,6 +294,50 @@ export const deleteTranscription = async (videoHash: string): Promise<{ success:
   return response.data;
 };
 
+// ============================================================================
+// Speaker Recognition API
+// ============================================================================
+
+export interface SpeakerInfo {
+  name: string;
+  samples_count: number;
+  embedding_shape: number[];
+}
+
+export const enrollSpeaker = async (
+  speakerName: string,
+  videoHash: string,
+  startTime: number,
+  endTime: number
+): Promise<{ success: boolean; message: string; speaker_info: SpeakerInfo }> => {
+  const formData = new FormData();
+  formData.append('speaker_name', speakerName);
+  formData.append('video_hash', videoHash);
+  formData.append('start_time', startTime.toString());
+  formData.append('end_time', endTime.toString());
+
+  const response = await api.post('/api/speaker/enroll', formData);
+  return response.data;
+};
+
+export const listSpeakers = async (): Promise<{ speakers: SpeakerInfo[]; count: number }> => {
+  const response = await api.get('/api/speaker/list');
+  return response.data;
+};
+
+export const deleteSpeaker = async (speakerName: string): Promise<{ success: boolean; message: string }> => {
+  const response = await api.delete(`/api/speaker/${speakerName}`);
+  return response.data;
+};
+
+export const autoIdentifySpeakers = async (
+  videoHash: string,
+  threshold: number = 0.7
+): Promise<{ success: boolean; total_segments: number; identified_segments: number; message: string }> => {
+  const response = await api.post(`/api/speaker/transcription/${videoHash}/auto_identify_speakers?threshold=${threshold}`);
+  return response.data;
+};
+
 export const translateLocalText = async (text: string, sourceLang: string): Promise<string> => {
   const response = await api.post('/translate_local/', {
     text,
@@ -298,7 +361,7 @@ export const updateSpeakerName = async (
     message: string;
     updated_count: number;
     video_hash: string;
-  }>(`/transcription/${videoHash}/speaker`, {
+  }>(`/api/speaker/transcription/${videoHash}/speaker`, {
     original_speaker: originalSpeaker,
     new_speaker_name: newSpeakerName,
   });
