@@ -51,8 +51,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await authService.login(email, password);
-        setUser(response.user);
+        await authService.login(email, password);
+        // Fetch user data from /api/auth/me after successful login
+        await fetchUser();
         toast.success('Logged in successfully!');
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Login failed';
@@ -63,7 +64,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setIsLoading(false);
       }
     },
-    []
+    [fetchUser]
   );
 
   const logout = useCallback(async () => {
