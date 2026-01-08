@@ -3,7 +3,7 @@
  * Handles transcription API calls, processing status, and state management
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { match, P } from "ts-pattern";
 import {
   transcribeLocalStream,
@@ -54,6 +54,13 @@ export const useTranscription = () => {
     setElapsedTime(0);
     stopTimer();
   };
+
+  // Cleanup effect to ensure timer is stopped when component unmounts
+  useEffect(() => {
+    return () => {
+      stopTimer();
+    };
+  }, []);
 
   const handleStartTranscription = async (
     file: File,

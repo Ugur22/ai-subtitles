@@ -49,15 +49,32 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
       .with("complete", () => "Your transcription is ready!")
       .exhaustive();
 
-  const getStageLabel = (stage: ProcessingStatus["stage"], isActive: boolean) =>
-    match({ stage, isActive })
-      .with({ stage: "uploading", isActive: true }, () => "Uploading...")
-      .with({ stage: "uploading", isActive: false }, () => "Upload complete")
-      .with({ stage: "extracting", isActive: true }, () => "Extracting audio...")
-      .with({ stage: "extracting", isActive: false }, () => "Prepare audio")
-      .with({ stage: "transcribing", isActive: true }, () => "Transcribing speech...")
-      .with({ stage: "transcribing", isActive: false }, () => "Transcription complete")
-      .otherwise(() => "Transcribe audio");
+  // Get the label for each step based on its own completion status
+  const getStepLabel = (
+    stepStage: "uploading" | "extracting" | "transcribing",
+    currentStage: ProcessingStatus["stage"]
+  ) => {
+    const stageOrder = ["uploading", "extracting", "transcribing", "translating", "complete"];
+    const currentIndex = stageOrder.indexOf(currentStage);
+    const stepIndex = stageOrder.indexOf(stepStage);
+
+    const isActive = currentStage === stepStage;
+    const isCompleted = currentIndex > stepIndex;
+
+    return match({ stepStage, isActive, isCompleted })
+      // Upload step
+      .with({ stepStage: "uploading", isActive: true }, () => "Uploading file...")
+      .with({ stepStage: "uploading", isCompleted: true }, () => "File uploaded")
+      // Extract step
+      .with({ stepStage: "extracting", isActive: true }, () => "Extracting audio...")
+      .with({ stepStage: "extracting", isCompleted: true }, () => "Audio extracted")
+      .with({ stepStage: "extracting" }, () => "Extract audio")
+      // Transcribe step
+      .with({ stepStage: "transcribing", isActive: true }, () => "Transcribing speech...")
+      .with({ stepStage: "transcribing", isCompleted: true }, () => "Speech transcribed")
+      .with({ stepStage: "transcribing" }, () => "Transcribe speech")
+      .otherwise(() => "Processing...");
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md">
@@ -134,8 +151,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
                     : "text-gray-600"
                 }`}
               >
-                {processingStatus?.stage &&
-                  getStageLabel(processingStatus.stage, processingStatus.stage === "uploading")}
+                {processingStatus?.stage && getStepLabel("uploading", processingStatus.stage)}
               </p>
             </div>
           </div>
@@ -190,8 +206,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
                     : "text-gray-400"
                 }`}
               >
-                {processingStatus?.stage &&
-                  getStageLabel(processingStatus.stage, processingStatus.stage === "extracting")}
+                {processingStatus?.stage && getStepLabel("extracting", processingStatus.stage)}
               </p>
             </div>
           </div>
@@ -237,8 +252,7 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
                     : "text-gray-400"
                 }`}
               >
-                {processingStatus?.stage &&
-                  getStageLabel(processingStatus.stage, processingStatus.stage === "transcribing")}
+                {processingStatus?.stage && getStepLabel("transcribing", processingStatus.stage)}
               </p>
             </div>
           </div>
@@ -284,14 +298,21 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
           </div>
         )}
 
-        {/* Progress Bar */}
-        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300"
-            style={{
-              width: `${processingStatus?.progress || 0}%`,
-            }}
-          />
+        {/* Progress Bar - Indeterminate pulsing animation */}
+        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden relative">
+          {processingStatus?.stage === "complete" ? (
+            // Solid bar when complete
+            <div className="h-full w-full bg-gradient-to-r from-green-500 to-emerald-500" />
+          ) : (
+            // Animated indeterminate bar while processing
+            <div
+              className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 absolute animate-progress-indeterminate"
+              style={{
+                width: "40%",
+                backgroundSize: "200% 100%",
+              }}
+            />
+          )}
         </div>
 
         {/* Helpful Tip */}
