@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     ENABLE_SPEAKER_DIARIZATION: bool = os.getenv("ENABLE_SPEAKER_DIARIZATION", "true").lower() == "true"
     HUGGINGFACE_TOKEN: Optional[str] = os.getenv("HUGGINGFACE_TOKEN")
     MIN_SPEAKERS: int = int(os.getenv("MIN_SPEAKERS", "1"))
-    MAX_SPEAKERS: int = int(os.getenv("MAX_SPEAKERS", "25"))  # Increased from 5 for multi-speaker videos
+    MAX_SPEAKERS: int = int(os.getenv("MAX_SPEAKERS", "5"))
 
     # LLM Configuration
     DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
