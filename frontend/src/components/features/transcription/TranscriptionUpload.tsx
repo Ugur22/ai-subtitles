@@ -7,7 +7,10 @@ import {
   autoIdentifySpeakers,
 } from "../../../services/api";
 import { API_BASE_URL } from "../../../config";
-import { formatScreenshotUrl, formatScreenshotUrlSafe } from "../../../utils/url";
+import {
+  formatScreenshotUrl,
+  formatScreenshotUrlSafe,
+} from "../../../utils/url";
 import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
@@ -61,7 +64,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [transcriptionMethod, setTranscriptionMethod] =
-    useState<TranscriptionMethod>("local");
+    useState<TranscriptionMethod>("background");
   // Note: pollingIntervalRef removed - was unused after hook integration
   const [translationMethod] = useState<TranslationMethod>("none");
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
@@ -162,7 +165,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
     // With speaker filter - include visual moments if toggle is on
     return segments.filter(
-      (seg) => seg.speaker === filteredSpeaker || (showVisualMoments && seg.is_silent)
+      (seg) =>
+        seg.speaker === filteredSpeaker || (showVisualMoments && seg.is_silent)
     );
   }, [transcription, filteredSpeaker, showVisualMoments]);
 
@@ -251,18 +255,19 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
     // Convert language name to ISO code
     const languageCodeMap: Record<string, string> = {
-      'spanish': 'es',
-      'italian': 'it',
-      'french': 'fr',
-      'german': 'de',
-      'english': 'en',
-      'portuguese': 'pt',
-      'russian': 'ru',
-      'chinese': 'zh',
-      'japanese': 'ja',
-      'korean': 'ko',
+      spanish: "es",
+      italian: "it",
+      french: "fr",
+      german: "de",
+      english: "en",
+      portuguese: "pt",
+      russian: "ru",
+      chinese: "zh",
+      japanese: "ja",
+      korean: "ko",
     };
-    const languageCode = languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
+    const languageCode =
+      languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
 
     // Handle background processing mode
     if (transcriptionMethod === "background") {
@@ -284,13 +289,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         }
       } catch (error) {
         // Error is already set in backgroundJobSubmit state
-        console.error('Background job submission failed:', error);
+        console.error("Background job submission failed:", error);
       }
       return;
     }
 
     // Use the hook's handleStartTranscription for local processing
-    await handleStartTranscription(file, transcriptionMethod as "local", selectedLanguage);
+    await handleStartTranscription(
+      file,
+      transcriptionMethod as "local",
+      selectedLanguage
+    );
   };
 
   const startNewTranscription = () => {
@@ -970,7 +979,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </div>
                         <CustomProgressBar
                           videoRef={videoRef}
-                          duration={videoRef && videoRef.duration > 0 ? videoRef.duration : 0}
+                          duration={
+                            videoRef && videoRef.duration > 0
+                              ? videoRef.duration
+                              : 0
+                          }
                           currentTime={currentTime}
                           segments={displayedSegments}
                           getScreenshotUrlForTime={(time) => {
@@ -989,7 +1002,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               }
                             }
                             return closest && closest.screenshot_url
-                              ? formatScreenshotUrl(closest.screenshot_url) ?? null
+                              ? formatScreenshotUrl(closest.screenshot_url) ??
+                                  null
                               : null;
                           }}
                           onSeek={(time: number) => {
@@ -1010,7 +1024,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           onJump={(seconds) => {
                             seek(seconds);
                           }}
-                          duration={videoRef && videoRef.duration > 0 ? videoRef.duration : 0}
+                          duration={
+                            videoRef && videoRef.duration > 0
+                              ? videoRef.duration
+                              : 0
+                          }
                           currentTime={currentTime}
                         />
                       </>
@@ -1291,7 +1309,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                             {/* Visual Moments Toggle */}
                             <button
-                              onClick={() => setShowVisualMoments(!showVisualMoments)}
+                              onClick={() =>
+                                setShowVisualMoments(!showVisualMoments)
+                              }
                               className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
                                 showVisualMoments
                                   ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-md hover:shadow-lg"
@@ -1314,12 +1334,28 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               </svg>
                               <span>Visual Moments</span>
                               {showVisualMoments ? (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                <svg
+                                  className="w-4 h-4"
+                                  fill="currentColor"
+                                  viewBox="0 0 20 20"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                    clipRule="evenodd"
+                                  />
                                 </svg>
                               ) : (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                <svg
+                                  className="w-4 h-4"
+                                  fill="currentColor"
+                                  viewBox="0 0 20 20"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                                    clipRule="evenodd"
+                                  />
                                 </svg>
                               )}
                             </button>
@@ -1403,11 +1439,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                   className="relative group cursor-pointer"
                                   onClick={() =>
                                     summary.screenshot_url &&
-                                    openImageModal(formatScreenshotUrlSafe(summary.screenshot_url))
+                                    openImageModal(
+                                      formatScreenshotUrlSafe(
+                                        summary.screenshot_url
+                                      )
+                                    )
                                   }
                                 >
                                   <img
-                                    src={formatScreenshotUrlSafe(summary.screenshot_url)}
+                                    src={formatScreenshotUrlSafe(
+                                      summary.screenshot_url
+                                    )}
                                     alt={`Screenshot at ${summary.start}`}
                                     className="w-full h-auto rounded-lg shadow-sm hover:shadow-md transition-shadow"
                                   />
@@ -1505,18 +1547,36 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       <button
         onClick={() => setShowJobPanel(!showJobPanel)}
         className={`fixed bottom-6 right-6 z-40 p-4 rounded-full shadow-lg transition-all duration-200 flex items-center gap-2 ${
-          jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length > 0
-            ? 'bg-indigo-600 hover:bg-indigo-700'
-            : 'bg-gray-700 hover:bg-gray-800'
+          jobTracker.jobs.filter(
+            (j) => j.status === "processing" || j.status === "pending"
+          ).length > 0
+            ? "bg-indigo-600 hover:bg-indigo-700"
+            : "bg-gray-700 hover:bg-gray-800"
         } text-white`}
         title="View background jobs"
       >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+        <svg
+          className="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 6h16M4 10h16M4 14h16M4 18h16"
+          />
         </svg>
-        {jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length > 0 && (
+        {jobTracker.jobs.filter(
+          (j) => j.status === "processing" || j.status === "pending"
+        ).length > 0 && (
           <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-            {jobTracker.jobs.filter(j => j.status === 'processing' || j.status === 'pending').length}
+            {
+              jobTracker.jobs.filter(
+                (j) => j.status === "processing" || j.status === "pending"
+              ).length
+            }
           </span>
         )}
       </button>
@@ -1525,24 +1585,33 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       {backgroundJobSubmit.isSubmitting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Submitting Job</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              Submitting Job
+            </h3>
             <div className="mb-4">
               <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>{backgroundJobSubmit.progress?.message || 'Preparing...'}</span>
+                <span>
+                  {backgroundJobSubmit.progress?.message || "Preparing..."}
+                </span>
                 <span>{backgroundJobSubmit.progress?.progress || 0}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div
                   className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${backgroundJobSubmit.progress?.progress || 0}%` }}
+                  style={{
+                    width: `${backgroundJobSubmit.progress?.progress || 0}%`,
+                  }}
                 />
               </div>
             </div>
             <p className="text-sm text-gray-500">
-              {backgroundJobSubmit.progress?.stage === 'hashing' && 'Calculating file fingerprint...'}
-              {backgroundJobSubmit.progress?.stage === 'uploading' && 'Uploading to cloud storage...'}
-              {backgroundJobSubmit.progress?.stage === 'submitting' && 'Queuing for processing...'}
-              {backgroundJobSubmit.progress?.stage === 'complete' && 'Done!'}
+              {backgroundJobSubmit.progress?.stage === "hashing" &&
+                "Calculating file fingerprint..."}
+              {backgroundJobSubmit.progress?.stage === "uploading" &&
+                "Uploading to cloud storage..."}
+              {backgroundJobSubmit.progress?.stage === "submitting" &&
+                "Queuing for processing..."}
+              {backgroundJobSubmit.progress?.stage === "complete" && "Done!"}
             </p>
           </div>
         </div>
@@ -1557,7 +1626,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           if (job.result_json) {
             setTranscription(job.result_json);
             // Set video URL from job video endpoint (streams from GCS)
-            setVideoUrl(`${API_BASE_URL}/api/jobs/${job.job_id}/video?token=${job.access_token}`);
+            setVideoUrl(
+              `${API_BASE_URL}/api/jobs/${job.job_id}/video?token=${job.access_token}`
+            );
             setShowJobPanel(false);
           }
         }}
