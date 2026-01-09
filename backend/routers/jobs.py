@@ -654,21 +654,21 @@ async def delete_job_permanent(
             if video_path:
                 print(f"[Jobs] Using video path from result_json: {video_path}")
 
-        # Delete video file from GCS if path exists
+        # Delete video file from GCS if path exists (non-blocking)
         if video_path:
-            deleted_resources["video"] = gcs_service.delete_file(video_path)
+            deleted_resources["video"] = await _run_in_executor(gcs_service.delete_file, video_path)
 
-        # Delete screenshots folder from GCS if video_hash exists
+        # Delete screenshots folder from GCS if video_hash exists (non-blocking)
         video_hash = job.get('video_hash')
         if video_hash:
             screenshots_prefix = f"screenshots/{video_hash}/"
-            deleted_count = gcs_service.delete_folder(screenshots_prefix)
+            deleted_count = await _run_in_executor(gcs_service.delete_folder, screenshots_prefix)
             deleted_resources["screenshots"] = deleted_count
 
-        # Delete job record from Supabase
+        # Delete job record from Supabase (non-blocking)
         try:
             client = supabase()
-            client.table("jobs").delete().eq("id", job_id).execute()
+            await _run_in_executor(lambda: client.table("jobs").delete().eq("id", job_id).execute())
             deleted_resources["database"] = True
             print(f"[Jobs] Deleted job record from database: {job_id}")
         except Exception as e:
