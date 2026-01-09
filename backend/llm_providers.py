@@ -17,6 +17,78 @@ load_dotenv()
 BACKEND_DIR = Path(__file__).parent.absolute()
 
 
+def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
+    """
+    Load an image from a URL or local path and return as base64.
+
+    Args:
+        img_path: URL (http/https) or local file path
+
+    Returns:
+        Tuple of (base64_data, media_type) or None if failed
+    """
+    try:
+        # Check if it's a URL
+        if img_path.startswith('http://') or img_path.startswith('https://'):
+            # Download from URL
+            import httpx
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(img_path)
+                response.raise_for_status()
+                image_bytes = response.content
+
+                # Detect media type from content-type header or URL
+                content_type = response.headers.get('content-type', 'image/jpeg')
+                if 'jpeg' in content_type or 'jpg' in content_type:
+                    media_type = 'image/jpeg'
+                elif 'png' in content_type:
+                    media_type = 'image/png'
+                elif 'gif' in content_type:
+                    media_type = 'image/gif'
+                elif 'webp' in content_type:
+                    media_type = 'image/webp'
+                else:
+                    media_type = 'image/jpeg'  # Default
+
+                encoded = base64.b64encode(image_bytes).decode('utf-8')
+                return (encoded, media_type)
+        else:
+            # Local file path
+            if img_path.startswith('./') or img_path.startswith('static/'):
+                abs_path = BACKEND_DIR / img_path.lstrip('./')
+            elif img_path.startswith('/static/'):
+                abs_path = BACKEND_DIR / img_path.lstrip('/')
+            else:
+                abs_path = Path(img_path)
+
+            if not abs_path.exists():
+                print(f"Warning: Image file does not exist: {abs_path}")
+                return None
+
+            with open(abs_path, "rb") as image_file:
+                image_bytes = image_file.read()
+
+            # Detect media type from extension
+            ext = str(abs_path).lower().split('.')[-1]
+            if ext in ['jpeg', 'jpg']:
+                media_type = 'image/jpeg'
+            elif ext == 'png':
+                media_type = 'image/png'
+            elif ext == 'gif':
+                media_type = 'image/gif'
+            elif ext == 'webp':
+                media_type = 'image/webp'
+            else:
+                media_type = 'image/jpeg'  # Default
+
+            encoded = base64.b64encode(image_bytes).decode('utf-8')
+            return (encoded, media_type)
+
+    except Exception as e:
+        print(f"Warning: Failed to load image {img_path}: {str(e)}")
+        return None
+
+
 class BaseLLMProvider(ABC):
     """Base class for all LLM providers"""
 
@@ -222,28 +294,16 @@ class OpenAIProvider(BaseLLMProvider):
             raise Exception("OpenAI API key not configured")
 
         try:
-            # Convert images to base64
+            # Convert images to base64 (supports both URLs and local paths)
             image_data = []
             failed_images = []
             for img_path in image_paths:
-                try:
-                    # Convert relative paths to absolute paths
-                    if img_path.startswith('./') or img_path.startswith('static/'):
-                        abs_path = BACKEND_DIR / img_path.lstrip('./')
-                    else:
-                        abs_path = Path(img_path)
-
-                    if not abs_path.exists():
-                        print(f"Warning: Image file does not exist: {abs_path}")
-                        failed_images.append(str(abs_path))
-                        continue
-
-                    with open(abs_path, "rb") as image_file:
-                        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-                        image_data.append(encoded_image)
-                except Exception as e:
-                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
-                    failed_images.append(str(img_path))
+                result = _load_image_as_base64(img_path)
+                if result:
+                    encoded_image, _ = result
+                    image_data.append(encoded_image)
+                else:
+                    failed_images.append(img_path)
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
@@ -372,34 +432,19 @@ class AnthropicProvider(BaseLLMProvider):
             raise Exception("Anthropic API key not configured")
 
         try:
-            # Convert images to base64
+            # Convert images to base64 (supports both URLs and local paths)
             image_data = []
             failed_images = []
             for img_path in image_paths:
-                try:
-                    # Convert relative paths to absolute paths
-                    if img_path.startswith('./') or img_path.startswith('static/'):
-                        abs_path = BACKEND_DIR / img_path.lstrip('./')
-                    else:
-                        abs_path = Path(img_path)
-
-                    if not abs_path.exists():
-                        print(f"Warning: Image file does not exist: {abs_path}")
-                        failed_images.append(str(abs_path))
-                        continue
-
-                    with open(abs_path, "rb") as image_file:
-                        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-                        # Detect image type
-                        ext = str(abs_path).lower().split('.')[-1]
-                        media_type = f"image/{ext}" if ext in ['jpeg', 'jpg', 'png', 'gif', 'webp'] else "image/jpeg"
-                        image_data.append({
-                            "data": encoded_image,
-                            "media_type": media_type
-                        })
-                except Exception as e:
-                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
-                    failed_images.append(str(img_path))
+                result = _load_image_as_base64(img_path)
+                if result:
+                    encoded_image, media_type = result
+                    image_data.append({
+                        "data": encoded_image,
+                        "media_type": media_type
+                    })
+                else:
+                    failed_images.append(img_path)
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
@@ -528,28 +573,16 @@ class GrokProvider(BaseLLMProvider):
             raise Exception("xAI API key not configured")
 
         try:
-            # Convert images to base64
+            # Convert images to base64 (supports both URLs and local paths)
             image_data = []
             failed_images = []
             for img_path in image_paths:
-                try:
-                    # Convert relative paths to absolute paths
-                    if img_path.startswith('./') or img_path.startswith('static/'):
-                        abs_path = BACKEND_DIR / img_path.lstrip('./')
-                    else:
-                        abs_path = Path(img_path)
-
-                    if not abs_path.exists():
-                        print(f"Warning: Image file does not exist: {abs_path}")
-                        failed_images.append(str(abs_path))
-                        continue
-
-                    with open(abs_path, "rb") as image_file:
-                        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-                        image_data.append(encoded_image)
-                except Exception as e:
-                    print(f"Warning: Failed to load image {img_path} (resolved to {abs_path}): {str(e)}")
-                    failed_images.append(str(img_path))
+                result = _load_image_as_base64(img_path)
+                if result:
+                    encoded_image, _ = result
+                    image_data.append(encoded_image)
+                else:
+                    failed_images.append(img_path)
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "

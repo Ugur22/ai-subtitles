@@ -159,6 +159,35 @@ def download_sentence_transformers_model():
         raise  # This is critical for the chat feature
 
 
+def download_clip_model():
+    """Download CLIP model for image embeddings (visual search)."""
+    print("="*50)
+    print("Downloading CLIP model for visual search...")
+    print("="*50)
+
+    model_name = "clip-ViT-B-32"
+
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        print(f"Downloading sentence-transformers/{model_name}...")
+        model = SentenceTransformer(model_name)
+        print(f"  OK: CLIP model downloaded successfully")
+
+        # Test that it works with text
+        print("  Verifying model works with text...")
+        test_embedding = model.encode(["A photo of a cat"])
+        print(f"  OK: Text embedding dimension: {len(test_embedding[0])}")
+        del model  # Free memory
+
+    except Exception as e:
+        print(f"  WARNING: CLIP model download failed: {e}")
+        import traceback
+        traceback.print_exc()
+        # Don't raise - visual search is optional
+        print("  Visual search will be unavailable if CLIP model fails")
+
+
 def download_bart_model():
     """Download BART model for summarization to prevent runtime downloads."""
     print("="*50)
@@ -242,6 +271,9 @@ def main():
 
     # Download sentence-transformers model (critical for chat)
     download_sentence_transformers_model()
+
+    # Download CLIP model for visual search
+    download_clip_model()
 
     # Download BART model for summarization (critical for summaries)
     download_bart_model()
