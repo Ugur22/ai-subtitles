@@ -29,7 +29,9 @@ interface UploadZoneProps {
   selectedLanguage: string;
   handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   transcriptionMethod: string;
-  setTranscriptionMethod: React.Dispatch<React.SetStateAction<"local" | "background">>;
+  setTranscriptionMethod: React.Dispatch<
+    React.SetStateAction<"local" | "background">
+  >;
   handleStartTranscriptionClick: () => void;
   isNewTranscription: boolean;
   processingStatus: ProcessingStatus | null;
@@ -103,32 +105,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
     return (
       <div className="mx-auto max-w-5xl">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center">
-              <svg
-                className="w-6 h-6 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-4xl font-bold text-gray-900">AI Subs</h1>
-              <p className="text-sm text-gray-500">
-                Intelligent Transcription & Subtitle Generation
-              </p>
-            </div>
-          </div>
-        </div>
-
         <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
           <div className="p-8 md:p-10">
             <div className="text-center mb-10">
@@ -264,7 +240,13 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                   ⚡ Processing Method
                 </label>
                 <div className="space-y-2">
-                  <div className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${transcriptionMethod === "local" ? "border-indigo-500 bg-indigo-50" : "border-gray-300 hover:border-indigo-400"}`}>
+                  <div
+                    className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${
+                      transcriptionMethod === "local"
+                        ? "border-indigo-500 bg-indigo-50"
+                        : "border-gray-300 hover:border-indigo-400"
+                    }`}
+                  >
                     <input
                       type="radio"
                       id="local-method"
@@ -273,7 +255,9 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                       value="local"
                       checked={transcriptionMethod === "local"}
                       onChange={(e) =>
-                        setTranscriptionMethod(e.target.value as "local" | "background")
+                        setTranscriptionMethod(
+                          e.target.value as "local" | "background"
+                        )
                       }
                     />
                     <label
@@ -283,7 +267,13 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                       Real-time (Stay on page)
                     </label>
                   </div>
-                  <div className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${transcriptionMethod === "background" ? "border-indigo-500 bg-indigo-50" : "border-gray-300 hover:border-indigo-400"}`}>
+                  <div
+                    className={`flex items-center h-11 px-4 border-2 rounded-lg bg-white transition-colors ${
+                      transcriptionMethod === "background"
+                        ? "border-indigo-500 bg-indigo-50"
+                        : "border-gray-300 hover:border-indigo-400"
+                    }`}
+                  >
                     <input
                       type="radio"
                       id="background-method"
@@ -292,7 +282,9 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                       value="background"
                       checked={transcriptionMethod === "background"}
                       onChange={(e) =>
-                        setTranscriptionMethod(e.target.value as "local" | "background")
+                        setTranscriptionMethod(
+                          e.target.value as "local" | "background"
+                        )
                       }
                     />
                     <label
@@ -339,7 +331,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                 </button>
               </div>
             )}
-
 
             {/* File Format Info */}
             <div className="mt-4 flex justify-center gap-3">
