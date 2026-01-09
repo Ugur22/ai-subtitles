@@ -6,7 +6,26 @@ import asyncio
 import tempfile
 import shutil
 import traceback
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable, Any
+from concurrent.futures import ThreadPoolExecutor
+
+# Single worker executor for CPU/GPU-bound tasks
+# This prevents blocking the event loop while allowing other requests (auth, status) to be served
+_transcription_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="transcribe")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """
+    Run a blocking function in a thread pool to avoid blocking the event loop.
+    This ensures that login/auth requests can be processed even during transcription.
+    """
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(
+            _transcription_executor,
+            lambda: func(*args, **kwargs)
+        )
+    return await loop.run_in_executor(_transcription_executor, func, *args)
 
 from config import settings
 from services.job_queue_service import JobQueueService
@@ -114,7 +133,9 @@ class BackgroundWorker:
             print(f"[Worker] Created temp directory for audio: {temp_dir}")
 
             try:
-                audio_chunks = AudioService.extract_audio_streaming(
+                # Run in executor to avoid blocking event loop
+                audio_chunks = await _run_in_executor(
+                    AudioService.extract_audio_streaming,
                     source_url=read_url,
                     output_dir=temp_dir,
                     segment_duration=300  # 5-minute segments
@@ -162,7 +183,9 @@ class BackgroundWorker:
 
                 print(f"[Worker] Transcribing chunk {i+1}/{total_chunks}: {chunk_path}")
 
-                segments, info = whisper_model.transcribe(
+                # Run in executor to avoid blocking event loop (critical for auth responsiveness)
+                segments, info = await _run_in_executor(
+                    whisper_model.transcribe,
                     chunk_path,
                     **transcribe_params
                 )
@@ -222,7 +245,9 @@ class BackgroundWorker:
                         # For better accuracy, you could concatenate chunks or process separately
                         print(f"[Worker] Performing speaker diarization...")
 
-                        formatted_segments = SpeakerService.add_speaker_labels(
+                        # Run in executor to avoid blocking event loop
+                        formatted_segments = await _run_in_executor(
+                            SpeakerService.add_speaker_labels,
                             audio_path=audio_chunks[0],
                             segments=formatted_segments,
                             diarizer=diarizer,
@@ -271,7 +296,9 @@ class BackgroundWorker:
                     print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
 
                     # Extract screenshots from GCS URL (streaming, no full download)
-                    screenshot_results = VideoService.extract_screenshots_parallel_from_url(
+                    # Run in executor to avoid blocking event loop
+                    screenshot_results = await _run_in_executor(
+                        VideoService.extract_screenshots_parallel_from_url,
                         source_url=read_url,
                         timestamps=timestamps,
                         output_dir=screenshots_dir,
@@ -394,7 +421,9 @@ class BackgroundWorker:
                             f"Translating to English... {translated}/{total} ({percent}%)"
                         )
 
-                    formatted_segments = TranslationService.translate_segments(
+                    # Run in executor to avoid blocking event loop
+                    formatted_segments = await _run_in_executor(
+                        TranslationService.translate_segments,
                         formatted_segments,
                         normalized_lang,
                         progress_callback=translation_progress
