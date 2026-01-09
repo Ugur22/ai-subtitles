@@ -19,6 +19,10 @@ export const useAPIKeys = () => {
     queryKey: ['apiKeys'],
     queryFn: keysService.getAPIKeys,
     retry: 1,
+    refetchInterval: (query) => {
+      const hasPendingKeys = query.state.data?.some(key => key.is_valid === null);
+      return hasPendingKeys ? 2000 : false;
+    },
   });
 
   // Add API key mutation
