@@ -379,7 +379,15 @@ class GCSService:
 
     @classmethod
     def delete_file(cls, gcs_path: str) -> bool:
-        """Delete a file from GCS."""
+        """
+        Delete a single file from GCS.
+
+        Args:
+            gcs_path: Path to the file in GCS (e.g., "uploads/uuid_filename.mp4")
+
+        Returns:
+            True if deleted successfully, False if not found or error occurred
+        """
         try:
             bucket = cls._get_bucket()
             blob = bucket.blob(gcs_path)
@@ -389,6 +397,43 @@ class GCSService:
         except Exception as e:
             print(f"[GCS] Failed to delete {gcs_path}: {e}")
             return False
+
+    @classmethod
+    def delete_folder(cls, prefix: str) -> int:
+        """
+        Delete all files with a given prefix (folder).
+
+        Args:
+            prefix: Path prefix to delete (e.g., "screenshots/abc123/")
+
+        Returns:
+            Count of files deleted
+        """
+        try:
+            bucket = cls._get_bucket()
+            deleted_count = 0
+
+            # List all blobs with the prefix
+            blobs = bucket.list_blobs(prefix=prefix)
+
+            # Delete each blob
+            for blob in blobs:
+                try:
+                    blob.delete()
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"[GCS] Failed to delete {blob.name}: {e}")
+
+            if deleted_count > 0:
+                print(f"[GCS] Deleted folder '{prefix}': {deleted_count} files removed")
+            else:
+                print(f"[GCS] No files found with prefix '{prefix}'")
+
+            return deleted_count
+
+        except Exception as e:
+            print(f"[GCS] Failed to delete folder '{prefix}': {e}")
+            return 0
 
     @classmethod
     def cleanup_old_uploads(cls, max_age_hours: int = 24) -> int:

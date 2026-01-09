@@ -10,9 +10,10 @@ interface JobListProps {
   jobs: Job[];
   onViewTranscript?: (job: Job) => void;
   onCancel?: (jobId: string) => void;
+  onDelete?: (jobId: string, token: string) => void;
 }
 
-export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript, onCancel }) => {
+export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript, onCancel, onDelete }) => {
   if (jobs.length === 0) {
     return null;
   }
@@ -25,6 +26,7 @@ export const JobList: React.FC<JobListProps> = ({ jobs, onViewTranscript, onCanc
           job={job}
           onViewTranscript={onViewTranscript}
           onCancel={onCancel}
+          onDelete={onDelete}
         />
       ))}
     </div>

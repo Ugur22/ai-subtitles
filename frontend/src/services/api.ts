@@ -600,6 +600,15 @@ export const getShareUrl = async (jobId: string, token: string): Promise<JobShar
 };
 
 /**
+ * Permanently delete a job and all associated data
+ * This removes the job from database and deletes files from GCS
+ * Only works for completed or failed jobs
+ */
+export const deleteJobPermanent = async (jobId: string, token: string): Promise<void> => {
+  await api.delete(`/api/jobs/${jobId}/permanent`, { params: { token } });
+};
+
+/**
  * Submission progress stages
  */
 export type SubmissionStage = 'hashing' | 'uploading' | 'submitting' | 'complete';

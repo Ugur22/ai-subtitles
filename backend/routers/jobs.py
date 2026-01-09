@@ -577,6 +577,134 @@ async def retry_job(
         raise HTTPException(status_code=500, detail="Failed to retry job")
 
 
+@router.delete("/{job_id}/permanent")
+@require_auth
+async def delete_job_permanent(
+    request: Request,
+    job_id: str,
+    token: Optional[str] = Query(None, description="Access token for shared links")
+):
+    """
+    Permanently delete a job and all associated files.
+
+    Deletes:
+    - Video file from GCS (if exists)
+    - Screenshots folder from GCS (if exists)
+    - Job record from database
+
+    **Warning**: This action is irreversible. All job data and results will be lost.
+
+    Access granted via ownership OR token.
+
+    Args:
+        request: FastAPI request with authenticated user
+        job_id: The unique job identifier
+        token: Optional access token (for shared links)
+
+    Returns:
+        Success message with details about deleted resources
+
+    Raises:
+        401: Not authenticated
+        403: Not owner and no valid token
+        404: Job not found
+    """
+    from services.gcs_service import gcs_service
+    from services.job_queue_service import JobQueueService
+    from services.supabase_service import supabase
+
+    # Get authenticated user ID
+    user_id = request.state.user["id"]
+
+    # Verify access via ownership OR token (also fetches job)
+    job = require_job_access(job_id, token, user_id)
+
+    try:
+        deleted_resources = {
+            "video": False,
+            "screenshots": 0,
+            "database": False
+        }
+
+        # Extract video path from video_url if available
+        video_path = None
+        video_url = job.get('video_url')
+        if video_url:
+            # video_url is a signed URL like:
+            # https://storage.googleapis.com/bucket/path/to/file?signature...
+            # Extract the path after the bucket name
+            try:
+                # Parse GCS path from signed URL
+                import re
+                # Pattern: bucket-name/path/to/file
+                match = re.search(r'/([^/]+/[^?]+)', video_url)
+                if match:
+                    full_path = match.group(1)
+                    # Remove bucket name (first segment)
+                    parts = full_path.split('/', 1)
+                    if len(parts) > 1:
+                        video_path = parts[1]
+                        print(f"[Jobs] Extracted video path: {video_path}")
+            except Exception as e:
+                print(f"[Jobs] Failed to extract video path from URL: {e}")
+
+        # Alternatively, try to get from result_json.gcs_path
+        if not video_path and job.get('result_json'):
+            video_path = job['result_json'].get('gcs_path')
+            if video_path:
+                print(f"[Jobs] Using video path from result_json: {video_path}")
+
+        # Delete video file from GCS if path exists
+        if video_path:
+            deleted_resources["video"] = gcs_service.delete_file(video_path)
+
+        # Delete screenshots folder from GCS if video_hash exists
+        video_hash = job.get('video_hash')
+        if video_hash:
+            screenshots_prefix = f"screenshots/{video_hash}/"
+            deleted_count = gcs_service.delete_folder(screenshots_prefix)
+            deleted_resources["screenshots"] = deleted_count
+
+        # Delete job record from Supabase
+        try:
+            client = supabase()
+            client.table("jobs").delete().eq("id", job_id).execute()
+            deleted_resources["database"] = True
+            print(f"[Jobs] Deleted job record from database: {job_id}")
+        except Exception as e:
+            print(f"[Jobs] Failed to delete job from database: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete job from database: {str(e)}"
+            )
+
+        # Build response message
+        message_parts = ["Job deleted permanently"]
+        if deleted_resources["video"]:
+            message_parts.append("video file removed")
+        if deleted_resources["screenshots"] > 0:
+            message_parts.append(f"{deleted_resources['screenshots']} screenshots removed")
+
+        message = ". ".join(message_parts) + "."
+
+        return {
+            "success": True,
+            "message": message,
+            "deleted_resources": deleted_resources
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Jobs] Error permanently deleting job: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to permanently delete job: {str(e)}"
+        )
+
+
 @router.get("/{job_id}/share", response_model=ShareLinkResponse)
 @require_auth
 async def get_share_link(
