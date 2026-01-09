@@ -33,7 +33,8 @@ CREATE TABLE jobs (
     completed_at TIMESTAMP WITH TIME ZONE,
     failed_at TIMESTAMP WITH TIME ZONE,
     cancelled_at TIMESTAMP WITH TIME ZONE,
-    last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    user_id UUID REFERENCES auth.users(id)
 );
 
 -- Enable real-time for jobs
@@ -45,11 +46,28 @@ CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 CREATE INDEX idx_jobs_access_token ON jobs(access_token);
 CREATE INDEX idx_jobs_video_hash ON jobs(video_hash);
 CREATE INDEX idx_jobs_last_seen ON jobs(last_seen);
+CREATE INDEX idx_jobs_user_id ON jobs(user_id);
 
 -- Row Level Security (RLS)
--- Using service role key bypasses RLS, but we enable it for safety
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Full access" ON jobs FOR ALL USING (true) WITH CHECK (true);
+
+-- 1. Authenticated users can fully manage their own jobs
+CREATE POLICY "Users manage own jobs" ON jobs
+  FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- 2. Legacy jobs (no user_id) are read-only for all authenticated users
+CREATE POLICY "Legacy jobs read-only" ON jobs
+  FOR SELECT
+  USING (user_id IS NULL AND auth.uid() IS NOT NULL);
+
+-- 3. Service role has full access (backend operations)
+CREATE POLICY "Service role full access" ON jobs
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
 
 -- Comment on table
 COMMENT ON TABLE jobs IS 'Background transcription job queue with status tracking';
