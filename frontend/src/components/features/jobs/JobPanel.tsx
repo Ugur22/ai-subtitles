@@ -8,6 +8,8 @@ import { useJobTracker } from "../../../hooks/useJobTracker";
 import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
 import { Job } from "../../../types/job";
+import { deleteJobPermanent } from "../../../services/api";
+import toast from "react-hot-toast";
 
 interface JobPanelProps {
   isOpen: boolean;
@@ -28,6 +30,19 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   const handleCancelJob = useCallback((jobId: string) => {
     removeJob(jobId);
     refetch();
+  }, [removeJob, refetch]);
+
+  // Handle permanent job deletion - delete from database/GCS, then remove from storage
+  const handleDeleteJob = useCallback(async (jobId: string, token: string) => {
+    try {
+      await deleteJobPermanent(jobId, token);
+      removeJob(jobId);
+      refetch();
+      toast.success("Job deleted successfully");
+    } catch (error) {
+      console.error("Failed to delete job:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to delete job");
+    }
   }, [removeJob, refetch]);
 
   // Split jobs by status
@@ -181,7 +196,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                   <JobList
                     jobs={completedJobs}
                     onViewTranscript={onViewTranscript}
-                    onCancel={handleCancelJob}
+                    onDelete={handleDeleteJob}
                   />
                 </section>
               )}
@@ -197,7 +212,11 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                       {failedJobs.length}
                     </span>
                   </div>
-                  <JobList jobs={failedJobs} onViewTranscript={onViewTranscript} onCancel={handleCancelJob} />
+                  <JobList
+                    jobs={failedJobs}
+                    onViewTranscript={onViewTranscript}
+                    onDelete={handleDeleteJob}
+                  />
                 </section>
               )}
 
@@ -215,7 +234,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
                   <JobList
                     jobs={cancelledJobs}
                     onViewTranscript={onViewTranscript}
-                    onCancel={handleCancelJob}
+                    onDelete={handleDeleteJob}
                   />
                 </section>
               )}

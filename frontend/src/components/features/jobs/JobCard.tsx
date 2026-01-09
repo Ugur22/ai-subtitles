@@ -13,6 +13,7 @@ interface JobCardProps {
   job: Job;
   onViewTranscript?: (job: Job) => void;
   onCancel?: (jobId: string) => void;
+  onDelete?: (jobId: string, token: string) => void;
   estimatedRemaining?: number;
 }
 
@@ -20,11 +21,13 @@ export const JobCard: React.FC<JobCardProps> = ({
   job,
   onViewTranscript,
   onCancel,
+  onDelete,
   estimatedRemaining,
 }) => {
   const [showShare, setShowShare] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const statusStyles: Record<JobStatus, string> = {
     pending: "bg-gray-100 text-gray-700",
@@ -64,6 +67,18 @@ export const JobCard: React.FC<JobCardProps> = ({
       console.error("Failed to cancel job:", error);
       // Reset state so user can try again
       setIsCancelling(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await onDelete?.(job.job_id, job.access_token);
+      // Successfully deleted - parent will handle removal from list
+    } catch (error) {
+      console.error("Failed to delete job:", error);
+      // Reset state so user can try again
+      setIsDeleting(false);
     }
   };
 
@@ -273,10 +288,11 @@ export const JobCard: React.FC<JobCardProps> = ({
               </div>
             </div>
             <button
-              onClick={() => onCancel?.(job.job_id)}
-              className="p-2 border border-gray-300 rounded-md hover:bg-red-50 hover:border-red-300 transition-colors"
-              title="Remove from list"
-              aria-label="Remove from list"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="p-2 border border-gray-300 rounded-md hover:bg-red-50 hover:border-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Delete job permanently"
+              aria-label="Delete job permanently"
             >
               <svg
                 className="w-4 h-4 text-gray-500 hover:text-red-600"
@@ -341,9 +357,10 @@ export const JobCard: React.FC<JobCardProps> = ({
                 {isRetrying ? "Retrying..." : "Retry"}
               </button>
               <button
-                onClick={() => onCancel?.(job.job_id)}
-                className="text-sm text-gray-500 hover:text-red-600 hover:underline flex items-center gap-1"
-                aria-label="Remove from list"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="text-sm text-gray-500 hover:text-red-600 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Delete job permanently"
               >
                 <svg
                   className="w-4 h-4"
@@ -358,7 +375,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                   />
                 </svg>
-                Remove
+                {isDeleting ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>
