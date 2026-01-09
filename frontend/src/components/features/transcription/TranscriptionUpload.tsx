@@ -25,7 +25,7 @@ import {
   timeToSeconds,
 } from "../../../utils/time";
 import { formatSpeakerLabel, getSpeakerColor } from "../../../utils/speaker";
-import { ImageModal } from "../../common/ImageModal";
+import { DraggableImageModal } from "../../common/DraggableImageModal";
 import { JumpToTimeModal } from "./JumpToTimeModal";
 import { ProcessingOverlay } from "./ProcessingOverlay";
 import { TranscriptSegmentList } from "./TranscriptSegmentList";
@@ -1526,7 +1526,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {/* Image Modal */}
         {isModalOpen && modalImageUrl && (
-          <ImageModal
+          <DraggableImageModal
             imageUrl={modalImageUrl}
             onClose={() => setIsModalOpen(false)}
           />
