@@ -3,12 +3,19 @@ Authentication middleware for FastAPI with Supabase Auth integration.
 
 Provides decorators for protecting routes with authentication and admin checks.
 Implements token verification caching (5 min TTL) for performance.
+Uses ThreadPoolExecutor to prevent blocking the event loop during GPU processing.
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import Request, HTTPException, Response
 from services.supabase_service import SupabaseService
+
+# Executor for non-blocking auth database operations
+# This prevents Supabase calls from blocking the event loop during heavy GPU processing
+_auth_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="auth_db")
 
 # Token verification cache (5 min TTL)
 # Format: {token: {"user": {...}, "profile": {...}, "expires": datetime}}
@@ -121,6 +128,34 @@ def _get_user_profile(user_id: str) -> Optional[Dict]:
         return None
 
 
+async def _verify_supabase_token_async(token: str) -> Optional[Dict]:
+    """
+    Non-blocking token verification using executor.
+
+    Args:
+        token: JWT token from cookie
+
+    Returns:
+        User data dict or None if invalid
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_auth_executor, _verify_supabase_token, token)
+
+
+async def _get_user_profile_async(user_id: str) -> Optional[Dict]:
+    """
+    Non-blocking profile fetch using executor.
+
+    Args:
+        user_id: User UUID
+
+    Returns:
+        Profile data dict or None if not found
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_auth_executor, _get_user_profile, user_id)
+
+
 def require_auth(func):
     """
     Decorator to require authentication for an endpoint.
@@ -156,8 +191,8 @@ def require_auth(func):
             request.state.profile = cached["profile"]
             return await func(request, *args, **kwargs)
 
-        # Verify with Supabase
-        user = _verify_supabase_token(token)
+        # Verify with Supabase (non-blocking)
+        user = await _verify_supabase_token_async(token)
         if not user:
             raise HTTPException(
                 status_code=401,
@@ -171,8 +206,8 @@ def require_auth(func):
                 detail="Email not verified. Please verify your email to continue."
             )
 
-        # Get user profile
-        profile = _get_user_profile(user["id"])
+        # Get user profile (non-blocking)
+        profile = await _get_user_profile_async(user["id"])
         if not profile:
             raise HTTPException(
                 status_code=403,

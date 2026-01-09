@@ -38,6 +38,7 @@ from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from dependencies import get_whisper_model, get_speaker_diarizer
+from routers.transcription import create_silent_segments_for_gaps
 
 
 # Configuration
@@ -352,6 +353,52 @@ class BackgroundWorker:
                         print(f"[Worker] Extracted {screenshot_count}/{len(formatted_segments)} screenshots (local)")
 
                     JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
+
+                    # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
+                    JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
+                    print(f"[Worker] Detecting timeline gaps and creating silent segments...")
+
+                    # Run in executor to avoid blocking event loop
+                    formatted_segments = await _run_in_executor(
+                        create_silent_segments_for_gaps,
+                        segments=formatted_segments,
+                        video_path=None,
+                        video_hash=video_hash,
+                        min_gap_duration=2.0,
+                        silent_chunk_duration=10.0,
+                        source_url=read_url  # Use GCS URL for streaming screenshot extraction
+                    )
+
+                    # Upload silent segment screenshots to GCS
+                    silent_segments = [s for s in formatted_segments if s.get('is_silent')]
+                    if silent_segments and settings.ENABLE_GCS_UPLOADS:
+                        print(f"[Worker] Uploading {len(silent_segments)} silent segment screenshots to GCS...")
+                        silent_screenshot_count = 0
+
+                        for seg in silent_segments:
+                            screenshot_url = seg.get('screenshot_url', '')
+                            # Check if it's a local path that needs GCS upload
+                            if screenshot_url and screenshot_url.startswith('/static/screenshots/'):
+                                local_filename = screenshot_url.replace('/static/screenshots/', '')
+                                local_path = os.path.join('static', 'screenshots', local_filename)
+
+                                if os.path.exists(local_path):
+                                    try:
+                                        gcs_url = gcs_service.upload_screenshot(
+                                            local_path=local_path,
+                                            video_hash=video_hash,
+                                            timestamp=seg['start']
+                                        )
+                                        seg['screenshot_url'] = gcs_url
+                                        silent_screenshot_count += 1
+
+                                        # Clean up local file after upload
+                                        os.unlink(local_path)
+                                    except Exception as e:
+                                        print(f"[Worker] Failed to upload silent screenshot at {seg['start']:.2f}s: {e}")
+
+                        print(f"[Worker] Uploaded {silent_screenshot_count}/{len(silent_segments)} silent screenshots to GCS")
+                        screenshot_count += silent_screenshot_count
 
                     # Auto-index images into Supabase pgvector if GCS uploads are enabled
                     if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:

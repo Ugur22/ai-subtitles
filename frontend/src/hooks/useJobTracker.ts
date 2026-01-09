@@ -194,7 +194,7 @@ export const useJobTracker = () => {
    * - Each processing stage (transcription, diarization) takes 30+ seconds
    * - Real-time subscription is the primary update mechanism (instant)
    * - Polling is just a fallback for when WebSocket fails
-   * - 15 seconds = half of heartbeat interval, good balance between responsiveness and efficiency
+   * - 4 minutes = reduced to prevent server overload on Cloud Run
    */
   useEffect(() => {
     const hasActiveJobs = jobs.some(
@@ -205,7 +205,7 @@ export const useJobTracker = () => {
 
     const intervalId = setInterval(() => {
       fetchJobs();
-    }, 15000); // Poll every 15 seconds (was 3s, reduced to minimize unnecessary API calls)
+    }, 240000); // Poll every 4 minutes (reduced from 15s to prevent server throttling)
 
     return () => clearInterval(intervalId);
   }, [jobs, fetchJobs]);
