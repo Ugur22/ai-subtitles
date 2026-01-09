@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { useSpring, animated, config, useTransition } from "react-spring";
 import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrl } from "../../../utils/url";
+import { DraggableImageModal } from "../../common/DraggableImageModal";
 
 interface SummarySection {
   title: string;
@@ -21,69 +22,6 @@ interface SummaryPanelProps {
   generateSummaries: () => Promise<void>;
   videoHash?: string | null;
 }
-
-// Simple Image Modal Component
-interface ImageModalProps {
-  imageUrl: string;
-  onClose: () => void;
-}
-
-const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => {
-  // Phase 4: Focus management - handle escape key
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  };
-
-  // Prevent closing modal when clicking on the image itself
-  const handleImageClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
-
-  return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 animate-fadeIn"
-      onClick={onClose} // Close when clicking backdrop
-      onKeyDown={handleKeyDown}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Image preview modal"
-    >
-      <div
-        className="relative bg-white p-2 rounded-lg shadow-xl max-w-6xl max-h-[90vh] animate-scaleIn"
-        onClick={handleImageClick} // Prevent closing on image container click
-      >
-        <img
-          src={imageUrl}
-          alt="Enlarged screenshot"
-          className="block w-full sm:w-[900px] max-h-[85vh] object-contain rounded-xl"
-        />
-        <button
-          onClick={onClose}
-          className="absolute top-2 right-2 bg-white rounded-full p-2 text-gray-700 hover:bg-gray-200 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg"
-          aria-label="Close image modal"
-          autoFocus
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-};
 
 // Animated Accordion Content Component
 const AccordionContent = ({
@@ -469,7 +407,7 @@ export const SummaryPanel = ({
 
       {/* Image Modal */}
       {isModalOpen && modalImageUrl && (
-        <ImageModal
+        <DraggableImageModal
           imageUrl={modalImageUrl}
           onClose={() => setIsModalOpen(false)}
         />
