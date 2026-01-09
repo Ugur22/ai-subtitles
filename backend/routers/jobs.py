@@ -5,14 +5,30 @@ This router provides endpoints for managing asynchronous transcription jobs,
 allowing users to submit videos, track progress, and retrieve results without
 maintaining an active connection.
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, List, Callable, Any
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
 
 from config import settings
 from middleware.auth import require_auth
+
+
+# Executor for non-blocking database operations
+# This prevents Supabase calls from blocking the event loop during heavy GPU processing
+_jobs_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="jobs_db")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """Run blocking function in executor to avoid blocking event loop."""
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(_jobs_executor, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(_jobs_executor, func, *args)
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -379,8 +395,9 @@ async def list_jobs(
         # Get authenticated user ID
         user_id = request.state.user["id"]
 
-        # Get jobs for this user
-        result = JobQueueService.get_jobs_for_user(
+        # Get jobs for this user (run in executor to avoid blocking during GPU processing)
+        result = await _run_in_executor(
+            JobQueueService.get_jobs_for_user,
             user_id=user_id,
             page=page,
             per_page=per_page

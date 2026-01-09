@@ -3,14 +3,33 @@ Authentication router with Supabase Auth integration.
 
 Handles user registration, login, email verification, password reset.
 Uses HttpOnly cookies for session management (7 days).
+Uses ThreadPoolExecutor to prevent blocking the event loop during GPU processing.
 """
-from fastapi import APIRouter, HTTPException, Response, Request
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Callable, Any
 from datetime import datetime, timedelta
 import secrets
 
+from fastapi import APIRouter, HTTPException, Response, Request
+from pydantic import BaseModel, EmailStr
+
 from services.supabase_service import SupabaseService
+
+
+# Executor for non-blocking auth database operations
+# This prevents Supabase calls from blocking the event loop during heavy GPU processing
+_auth_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="auth_login")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """Run blocking function in executor to avoid blocking event loop."""
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(_auth_executor, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(_auth_executor, func, *args)
+
+
 from services.email import (
     generate_verification_code,
     send_verification_email,
@@ -556,25 +575,50 @@ async def resend_verification(request: ResendVerificationRequest):
         )
 
 
+def _sign_in_with_password(email: str, password: str):
+    """Blocking sign in - runs in executor."""
+    client = SupabaseService.get_client()
+    return client.auth.sign_in_with_password({
+        "email": email,
+        "password": password
+    })
+
+
+def _check_email_verified(user_id: str):
+    """Blocking profile check - runs in executor."""
+    client = SupabaseService.get_client()
+    return client.table("user_profiles").select("email_verified").eq("id", user_id).single().execute()
+
+
+def _log_login_event(user_id: str, email: str):
+    """Blocking usage log - runs in executor."""
+    client = SupabaseService.get_client()
+    client.table("usage_logs").insert({
+        "user_id": user_id,
+        "action": "login",
+        "metadata": {"email": email}
+    }).execute()
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, response: Response):
     """
     Login with email and password.
 
     Sets HttpOnly cookie with auth token (7 days).
+    Uses executor to prevent blocking event loop during GPU processing.
 
     Raises:
         401: Invalid credentials or email not verified
     """
     try:
-        client = SupabaseService.get_client()
-
-        # Attempt sign in with Supabase
+        # Attempt sign in with Supabase (non-blocking)
         try:
-            auth_response = client.auth.sign_in_with_password({
-                "email": request.email,
-                "password": request.password
-            })
+            auth_response = await _run_in_executor(
+                _sign_in_with_password,
+                request.email,
+                request.password
+            )
 
             if not auth_response.user or not auth_response.session:
                 raise HTTPException(
@@ -585,6 +629,8 @@ async def login(request: LoginRequest, response: Response):
             user_id = auth_response.user.id
             access_token = auth_response.session.access_token
 
+        except HTTPException:
+            raise
         except Exception as e:
             # Generic error for security (don't reveal if email exists)
             print(f"[Auth] Login failed for {request.email}: {e}")
@@ -593,8 +639,8 @@ async def login(request: LoginRequest, response: Response):
                 detail="Invalid credentials"
             )
 
-        # Check if email verified
-        profile_response = client.table("user_profiles").select("email_verified").eq("id", user_id).single().execute()
+        # Check if email verified (non-blocking)
+        profile_response = await _run_in_executor(_check_email_verified, user_id)
 
         if not profile_response.data or not profile_response.data.get("email_verified", False):
             raise HTTPException(
@@ -614,13 +660,9 @@ async def login(request: LoginRequest, response: Response):
             path="/"
         )
 
-        # Log login event
+        # Log login event (non-blocking, fire and forget)
         try:
-            client.table("usage_logs").insert({
-                "user_id": user_id,
-                "action": "login",
-                "metadata": {"email": request.email}
-            }).execute()
+            await _run_in_executor(_log_login_event, user_id, request.email)
         except Exception as e:
             print(f"[Auth] Failed to log login event: {e}")
 

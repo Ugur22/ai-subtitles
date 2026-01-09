@@ -448,18 +448,24 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
                     if image_results:
                         print(f"Found {len(image_results)} relevant images")
-                        image_paths = [result['screenshot_path'] for result in image_results]
+                        # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
+                        image_paths = [result.get('screenshot_url') or result.get('screenshot_path') for result in image_results]
 
                         # Build visual context description and sources
                         visual_parts = []
                         for i, img_result in enumerate(image_results):
                             metadata = img_result['metadata']
-                            screenshot_path = img_result['screenshot_path']
+                            # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
+                            screenshot_path = img_result.get('screenshot_url') or img_result.get('screenshot_path', '')
 
                             # Convert local path to URL
                             # screenshot_path can be absolute like "/path/to/backend/static/screenshots/hash_123.45.jpg"
                             # or relative like "./static/screenshots/hash_123.45.jpg"
-                            if 'static/screenshots/' in screenshot_path:
+                            # or already a GCS signed URL (https://...)
+                            if screenshot_path.startswith('https://'):
+                                # Already a full URL (GCS signed URL)
+                                screenshot_url = screenshot_path
+                            elif 'static/screenshots/' in screenshot_path:
                                 # Extract the filename from the path
                                 filename = screenshot_path.split('static/screenshots/')[-1]
                                 screenshot_url = f"/static/screenshots/{filename}"
