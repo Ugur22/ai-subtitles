@@ -185,6 +185,32 @@ export const useJobTracker = () => {
   }, [fetchJobs]);
 
   /**
+   * Poll jobs when there are active jobs (pending/processing)
+   * Provides fallback when Supabase real-time fails
+   *
+   * Polling interval rationale:
+   * - Backend progress updates happen at major milestones (5%, 10%, 15%, etc.)
+   * - Backend heartbeat interval is 30 seconds
+   * - Each processing stage (transcription, diarization) takes 30+ seconds
+   * - Real-time subscription is the primary update mechanism (instant)
+   * - Polling is just a fallback for when WebSocket fails
+   * - 15 seconds = half of heartbeat interval, good balance between responsiveness and efficiency
+   */
+  useEffect(() => {
+    const hasActiveJobs = jobs.some(
+      j => j.status === 'pending' || j.status === 'processing'
+    );
+
+    if (!hasActiveJobs) return;
+
+    const intervalId = setInterval(() => {
+      fetchJobs();
+    }, 15000); // Poll every 15 seconds (was 3s, reduced to minimize unnecessary API calls)
+
+    return () => clearInterval(intervalId);
+  }, [jobs, fetchJobs]);
+
+  /**
    * Refetch jobs manually (useful after submission)
    */
   const refetch = useCallback(() => {
