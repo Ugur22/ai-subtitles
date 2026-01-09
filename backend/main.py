@@ -47,7 +47,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, auth, diagnostics, auth_new, keys, admin, settings
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings
 
 # Import LLM and vector store modules (optional)
 try:
@@ -153,8 +153,7 @@ app.include_router(chat.router)
 app.include_router(video.router)
 app.include_router(upload.router)
 app.include_router(jobs.router)
-# app.include_router(auth.router)  # OLD password gate - disabled
-app.include_router(auth_new.router)  # NEW email/password auth
+app.include_router(auth_new.router)  # Email/password auth
 app.include_router(keys.router)      # API keys management
 app.include_router(admin.router)     # Admin panel
 app.include_router(settings.router)  # User settings

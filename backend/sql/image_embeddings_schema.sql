@@ -43,7 +43,47 @@ CREATE INDEX idx_image_embeddings_hnsw ON image_embeddings
 
 -- Row Level Security (RLS)
 ALTER TABLE image_embeddings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Full access" ON image_embeddings FOR ALL USING (true) WITH CHECK (true);
+
+-- 1. Users can only search embeddings for videos they own
+CREATE POLICY "Users search own video embeddings" ON image_embeddings
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM jobs
+      WHERE jobs.video_hash = image_embeddings.video_hash
+      AND jobs.user_id = auth.uid()
+    )
+  );
+
+-- 2. Legacy: Allow access to embeddings for videos without user_id
+CREATE POLICY "Legacy video embeddings read-only" ON image_embeddings
+  FOR SELECT
+  USING (
+    auth.uid() IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM jobs
+      WHERE jobs.video_hash = image_embeddings.video_hash
+      AND jobs.user_id IS NULL
+    )
+  );
+
+-- 3. Only service role can write embeddings
+CREATE POLICY "Service role write access" ON image_embeddings
+  FOR INSERT
+  TO service_role
+  WITH CHECK (true);
+
+-- 4. Only service role can update embeddings
+CREATE POLICY "Service role update access" ON image_embeddings
+  FOR UPDATE
+  TO service_role
+  USING (true);
+
+-- 5. Only service role can delete embeddings
+CREATE POLICY "Service role delete access" ON image_embeddings
+  FOR DELETE
+  TO service_role
+  USING (true);
 
 -- Function to search images by text embedding
 CREATE OR REPLACE FUNCTION search_images_by_embedding(
