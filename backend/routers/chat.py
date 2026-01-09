@@ -1,8 +1,22 @@
 """
 Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
-from typing import Dict, Optional, List
+import asyncio
+from typing import Dict, Optional, List, Callable, Any
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, Request
+
+# Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
+# This prevents blocking the event loop during visual search and chat operations
+_chat_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chat_embed")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """Run blocking function in executor to avoid blocking event loop."""
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(_chat_executor, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(_chat_executor, func, *args)
 
 from database import get_transcription
 from dependencies import _last_transcription_data
@@ -213,9 +227,9 @@ async def index_video_for_chat(request: Request, video_hash: str = None) -> Inde
         if not segments:
             raise HTTPException(status_code=400, detail="No segments found in transcription")
 
-        # Index in vector database
+        # Index in vector database (run in executor to avoid blocking)
         print(f"Indexing video {video_hash} with {len(segments)} segments...")
-        num_chunks = vector_store.index_transcription(video_hash, segments)
+        num_chunks = await _run_in_executor(vector_store.index_transcription, video_hash, segments)
 
         return IndexVideoResponse(
             success=True,
@@ -278,16 +292,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
             if transcription:
                 segments = transcription.get('transcription', {}).get('segments', [])
                 print(f"Auto-indexing video {video_hash}...")
-                vector_store.index_transcription(video_hash, segments)
+                await _run_in_executor(vector_store.index_transcription, video_hash, segments)
             else:
                 raise HTTPException(
                     status_code=404,
                     detail="Video not indexed. Please index it first using /api/index_video/"
                 )
 
-        # Retrieve relevant context using vector search
+        # Retrieve relevant context using vector search (run in executor - embedding generation)
         print(f"Searching for relevant context for question: {question}")
-        search_results = vector_store.search(video_hash, question, n_results=n_results)
+        search_results = await _run_in_executor(vector_store.search, video_hash, question, n_results=n_results)
 
         if not search_results:
             return {
@@ -367,15 +381,18 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
                     # Search for relevant images using the visual-optimized query
                     # No speaker filter - CLIP searches by visual similarity, not speaker metadata
+                    # Run in executor - CLIP encoding is CPU/GPU intensive
                     if use_supabase:
-                        image_results = image_embedding_service.search_images(
+                        image_results = await _run_in_executor(
+                            image_embedding_service.search_images,
                             video_hash,
                             visual_query,
                             n_results=n_images,
                             speaker_filter=None
                         )
                     else:
-                        image_results = vector_store.search_images(
+                        image_results = await _run_in_executor(
+                            vector_store.search_images,
                             video_hash,
                             visual_query,
                             n_results=n_images,
@@ -484,7 +501,9 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
         if vector_store.audio_collection_exists(video_hash):
             try:
-                audio_results = vector_store.search_audio_events(
+                # Run in executor - embedding generation is CPU intensive
+                audio_results = await _run_in_executor(
+                    vector_store.search_audio_events,
                     video_hash,
                     question,
                     n_results=5
@@ -855,10 +874,15 @@ async def index_video_images(request: Request, video_hash: str = None, force_rei
         storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
         print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
 
+        # Run in executor - CLIP batch encoding is very CPU/GPU intensive
         if use_supabase:
-            num_images = image_embedding_service.index_video_images(video_hash, segments, force_reindex=force_reindex)
+            num_images = await _run_in_executor(
+                image_embedding_service.index_video_images, video_hash, segments, force_reindex=force_reindex
+            )
         else:
-            num_images = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
+            num_images = await _run_in_executor(
+                vector_store.index_video_images, video_hash, segments, force_reindex=force_reindex
+            )
 
         return IndexImagesResponse(
             success=True,
@@ -930,18 +954,21 @@ async def search_video_images(request: Request, search_request: SearchImagesRequ
         speaker_filter = _extract_speaker_from_query(query, video_hash)
 
         # Search for images using appropriate service
+        # Run in executor - CLIP encoding is CPU/GPU intensive
         storage_type = "Supabase" if use_supabase else "ChromaDB"
         print(f"Searching images for query: {query} (using {storage_type})")
 
         if use_supabase:
-            search_results = image_embedding_service.search_images(
+            search_results = await _run_in_executor(
+                image_embedding_service.search_images,
                 video_hash,
                 query,
                 n_results=n_results,
                 speaker_filter=speaker_filter
             )
         else:
-            search_results = vector_store.search_images(
+            search_results = await _run_in_executor(
+                vector_store.search_images,
                 video_hash,
                 query,
                 n_results=n_results,

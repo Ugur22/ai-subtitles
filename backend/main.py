@@ -3,6 +3,7 @@ FastAPI Application - Video Transcription API
 Refactored with organized structure, Pydantic models, and proper documentation
 """
 import os
+import asyncio
 import tempfile
 import shutil
 import time
@@ -10,7 +11,20 @@ import subprocess
 import uuid
 from pathlib import Path
 from datetime import timedelta
-from typing import Dict
+from typing import Dict, Callable, Any
+from concurrent.futures import ThreadPoolExecutor
+
+# Executor for CPU-bound tasks in legacy endpoints
+_legacy_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="legacy_transcribe")
+
+
+async def _run_blocking(func: Callable, *args, **kwargs) -> Any:
+    """Run blocking function in executor to avoid blocking event loop."""
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(_legacy_executor, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(_legacy_executor, func, *args)
+
 from fastapi import FastAPI, UploadFile, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -271,13 +285,18 @@ async def transcribe_video(
                 mp4_path = os.path.join(app_settings.VIDEOS_DIR, f"{video_hash}.mp4")
                 if not os.path.exists(mp4_path):
                     print("\nConverting MKV to MP4...")
-                    if VideoService.convert_mkv_to_mp4(permanent_file_path, mp4_path):
+                    converted = await _run_blocking(
+                        VideoService.convert_mkv_to_mp4, permanent_file_path, mp4_path
+                    )
+                    if converted:
                         permanent_file_path = mp4_path
                         temp_input_path = mp4_path
 
             # Extract and process audio in chunks
             print("\nExtracting audio chunks...")
-            audio_chunks = AudioService.extract_audio(temp_input_path, chunk_duration=300, overlap=5)
+            audio_chunks = await _run_blocking(
+                AudioService.extract_audio, temp_input_path, chunk_duration=300, overlap=5
+            )
 
             if not audio_chunks:
                 raise Exception("Failed to extract audio")
@@ -296,7 +315,8 @@ async def transcribe_video(
             for i, chunk_path in enumerate(audio_chunks):
                 print(f"\nProcessing chunk {i+1}/{total_chunks}")
 
-                segments, info = whisper_model.transcribe(
+                segments, info = await _run_blocking(
+                    whisper_model.transcribe,
                     chunk_path,
                     task="transcribe",
                     language=language if language else None,
@@ -323,7 +343,9 @@ async def transcribe_video(
             # Translate if needed
             if response_language.lower() not in ['en', 'english']:
                 print(f"\nTranslating from {response_language}...")
-                all_segments = TranslationService.translate_segments(all_segments, response_language)
+                all_segments = await _run_blocking(
+                    TranslationService.translate_segments, all_segments, response_language
+                )
 
             # Extract screenshots for video files
             if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
@@ -332,14 +354,18 @@ async def transcribe_video(
                     screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
                     screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
 
-                    if VideoService.extract_screenshot(temp_input_path, segment['start'], screenshot_path):
+                    result = await _run_blocking(
+                        VideoService.extract_screenshot, temp_input_path, segment['start'], screenshot_path
+                    )
+                    if result:
                         segment['screenshot_url'] = f"/static/screenshots/{screenshot_filename}"
 
             # Add speaker diarization
             diarizer = get_speaker_diarizer()
             if diarizer:
                 print("\nAdding speaker labels...")
-                all_segments = SpeakerService.add_speaker_labels(
+                all_segments = await _run_blocking(
+                    SpeakerService.add_speaker_labels,
                     temp_input_path,
                     all_segments,
                     diarizer
