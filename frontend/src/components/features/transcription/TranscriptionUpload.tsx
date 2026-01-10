@@ -1478,10 +1478,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
 
                   <div className="p-4 overflow-y-auto h-full">
-                    <SearchPanel onSeekToTimestamp={seekToTimestamp} videoHash={transcription?.video_hash} />
-                    <div className="mt-4">
-                      <AnalyticsPanel onSeekToTimestamp={seekToTimestamp} videoHash={transcription?.video_hash} />
-                    </div>
+                    <SearchPanel
+                      onSeekToTimestamp={seekToTimestamp}
+                      videoHash={transcription?.video_hash}
+                    />
+                    {/* <div className="mt-4">
+                      <AnalyticsPanel
+                        onSeekToTimestamp={seekToTimestamp}
+                        videoHash={transcription?.video_hash}
+                      />
+                    </div> */}
                   </div>
                 </div>
               )}
