@@ -14,7 +14,7 @@ import {
 import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
-import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
+// import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
 import { ChatPanel } from "../chat/ChatPanel";
 import CustomProgressBar from "./CustomProgressBar";
@@ -1482,12 +1482,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       onSeekToTimestamp={seekToTimestamp}
                       videoHash={transcription?.video_hash}
                     />
-                    {/* <div className="mt-4">
-                      <AnalyticsPanel
-                        onSeekToTimestamp={seekToTimestamp}
-                        videoHash={transcription?.video_hash}
-                      />
-                    </div> */}
                   </div>
                 </div>
               )}
