@@ -13,9 +13,12 @@ from datetime import datetime, timedelta
 from fastapi import Request, HTTPException, Response
 from services.supabase_service import SupabaseService
 
+# Timeout for Supabase API calls to prevent indefinite hanging
+SUPABASE_TIMEOUT = 10  # seconds
+
 # Executor for non-blocking auth database operations
 # This prevents Supabase calls from blocking the event loop during heavy GPU processing
-_auth_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="auth_db")
+_auth_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="auth_db")
 
 # Token verification cache (5 min TTL)
 # Format: {token: {"user": {...}, "profile": {...}, "expires": datetime}}
@@ -130,30 +133,44 @@ def _get_user_profile(user_id: str) -> Optional[Dict]:
 
 async def _verify_supabase_token_async(token: str) -> Optional[Dict]:
     """
-    Non-blocking token verification using executor.
+    Non-blocking token verification using executor with timeout.
 
     Args:
         token: JWT token from cookie
 
     Returns:
-        User data dict or None if invalid
+        User data dict or None if invalid/timeout
     """
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_auth_executor, _verify_supabase_token, token)
+    try:
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(_auth_executor, _verify_supabase_token, token),
+            timeout=SUPABASE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        print(f"[Auth] Supabase token verification timed out after {SUPABASE_TIMEOUT}s")
+        return None
 
 
 async def _get_user_profile_async(user_id: str) -> Optional[Dict]:
     """
-    Non-blocking profile fetch using executor.
+    Non-blocking profile fetch using executor with timeout.
 
     Args:
         user_id: User UUID
 
     Returns:
-        Profile data dict or None if not found
+        Profile data dict or None if not found/timeout
     """
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_auth_executor, _get_user_profile, user_id)
+    try:
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(_auth_executor, _get_user_profile, user_id),
+            timeout=SUPABASE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        print(f"[Auth] User profile fetch timed out after {SUPABASE_TIMEOUT}s")
+        return None
 
 
 def require_auth(func):

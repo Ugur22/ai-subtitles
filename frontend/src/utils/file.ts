@@ -3,9 +3,11 @@
  * Provides file hashing and size formatting utilities
  */
 
+import { createSHA256 } from 'hash-wasm';
+
 /**
- * Generate a SHA-256 hash of a file using Web Crypto API.
- * Reads the file in chunks to handle large files efficiently.
+ * Generate a SHA-256 hash of a file using streaming hash algorithm.
+ * Reads the file in chunks to handle large files efficiently without duplicating in memory.
  *
  * @param file - The File object to hash
  * @param onProgress - Optional progress callback (0-100)
@@ -16,37 +18,24 @@ export async function generateFileHash(
   onProgress?: (progress: number) => void
 ): Promise<string> {
   const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB chunks
-  const chunks: ArrayBuffer[] = [];
+  const hasher = await createSHA256();
+  hasher.init();
+
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-  // Read file in chunks
   for (let i = 0; i < totalChunks; i++) {
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, file.size);
     const chunk = file.slice(start, end);
     const buffer = await chunk.arrayBuffer();
-    chunks.push(buffer);
+    hasher.update(new Uint8Array(buffer));
 
     if (onProgress) {
       onProgress(Math.round(((i + 1) / totalChunks) * 100));
     }
   }
 
-  // Combine all chunks
-  const totalSize = chunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
-  const combined = new Uint8Array(totalSize);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(new Uint8Array(chunk), offset);
-    offset += chunk.byteLength;
-  }
-
-  // Generate SHA-256 hash
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-  return hashHex;
+  return hasher.digest('hex');
 }
 
 /**

@@ -28,17 +28,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [error, setError] = useState<string | null>(null);
 
   // Fetch current user from cookie session
-  const fetchUser = useCallback(async () => {
-    try {
-      const userData = await authService.getCurrentUser();
-      setUser(userData);
-      setError(null);
-    } catch (err) {
-      setUser(null);
-      // Don't set error here - being logged out is normal
-    } finally {
-      setIsLoading(false);
+  const fetchUser = useCallback(async (retries = 3) => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const userData = await authService.getCurrentUser();
+        setUser(userData);
+        setError(null);
+        setIsLoading(false);
+        return;
+      } catch (err: unknown) {
+        // Extract status code from error
+        const status = (err as { status?: number; response?: { status?: number } })?.status
+          || (err as { response?: { status?: number } })?.response?.status;
+
+        // Only logout on actual auth failures (401/403)
+        if (status === 401 || status === 403) {
+          setUser(null);
+          setIsLoading(false);
+          return;
+        }
+
+        // For 5xx errors or network errors, retry with exponential backoff
+        if (attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        // After all retries fail with server error, keep existing user state
+        // Don't logout - the session token is still valid, server is just having issues
+      }
     }
+    setIsLoading(false);
   }, []);
 
   // Check auth on mount
