@@ -38,7 +38,8 @@ from services.translation_service import TranslationService
 from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
-from dependencies import get_whisper_model, get_speaker_diarizer
+from utils.memory_utils import clear_gpu_memory, log_gpu_memory
+from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer
 
@@ -288,6 +289,12 @@ class BackgroundWorker:
 
             print(f"[Worker] Combined {len(formatted_segments)} segments from {total_chunks} chunks")
 
+            # === MEMORY CLEANUP: Unload Whisper before diarization ===
+            print("[Worker] Cleaning up GPU memory before diarization...")
+            log_gpu_memory("Worker:BeforeWhisperUnload")
+            unload_whisper_model()
+            clear_gpu_memory("Worker:AfterWhisperUnload")
+
             # Step 4: Speaker diarization (50-80%)
             JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
 
@@ -320,6 +327,11 @@ class BackgroundWorker:
 
                         # Apply speaker labels to transcription segments
                         formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+
+                        # Clean up chunked diarizer to free GPU memory
+                        chunked_diarizer.unload_pipeline()
+                        del chunked_diarizer
+                        clear_gpu_memory("Worker:AfterChunkedDiarization")
 
                         JobQueueService.update_progress(job_id, 75, "diarizing", "Chunked diarization completed")
 
@@ -366,6 +378,9 @@ class BackgroundWorker:
                                 min_speakers=min_speakers,
                                 max_speakers=max_speakers
                             )
+
+                            # Clean up standard diarizer
+                            clear_gpu_memory("Worker:AfterStandardDiarization")
 
                             JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
                         else:
