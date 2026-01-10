@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     MIN_SPEAKERS: int = int(os.getenv("MIN_SPEAKERS", "1"))
     MAX_SPEAKERS: int = int(os.getenv("MAX_SPEAKERS", "0"))  # 0 = unlimited/auto-detect
 
+    # Chunked Diarization Configuration
+    # For long videos, process diarization in chunks to reduce memory usage
+    DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "900"))  # 15 minutes in seconds
+    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.7"))  # Speaker embedding similarity threshold
+    USE_CHUNKED_DIARIZATION_ABOVE: int = int(os.getenv("USE_CHUNKED_DIARIZATION_ABOVE", "1800"))  # 30 minutes - use chunked processing for videos longer than this
+
     # LLM Configuration
     DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
