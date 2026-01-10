@@ -1,6 +1,8 @@
 """
 FastAPI dependency injection for model instances
 """
+import gc
+import torch
 from typing import Optional
 from faster_whisper import WhisperModel
 
@@ -107,3 +109,48 @@ def get_audio_analyzer() -> Optional['AudioAnalyzer']:
             return None
 
     return _audio_analyzer
+
+
+def unload_whisper_model():
+    """Unload Whisper model to free GPU memory."""
+    global _whisper_model
+
+    if _whisper_model is not None:
+        print("[Dependencies] Unloading Whisper model from GPU...")
+        del _whisper_model
+        _whisper_model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("[Dependencies] Whisper model unloaded successfully")
+
+
+def unload_speaker_diarizer():
+    """Unload speaker diarizer to free GPU memory."""
+    global _speaker_diarizer
+
+    if _speaker_diarizer is not None:
+        print("[Dependencies] Unloading speaker diarization pipeline...")
+        if hasattr(_speaker_diarizer, 'pipeline') and _speaker_diarizer.pipeline is not None:
+            del _speaker_diarizer.pipeline
+            _speaker_diarizer.pipeline = None
+        del _speaker_diarizer
+        _speaker_diarizer = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("[Dependencies] Speaker diarizer unloaded successfully")
+
+
+def unload_audio_analyzer():
+    """Unload audio analyzer to free memory."""
+    global _audio_analyzer
+
+    if _audio_analyzer is not None:
+        print("[Dependencies] Unloading audio analyzer...")
+        del _audio_analyzer
+        _audio_analyzer = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("[Dependencies] Audio analyzer unloaded successfully")

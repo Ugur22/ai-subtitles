@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.7"))  # Speaker embedding similarity threshold
     USE_CHUNKED_DIARIZATION_ABOVE: int = int(os.getenv("USE_CHUNKED_DIARIZATION_ABOVE", "1800"))  # 30 minutes - use chunked processing for videos longer than this
 
+    # Memory Management Configuration
+    EMBEDDING_SEGMENTS_PER_SPEAKER: int = int(os.getenv("EMBEDDING_SEGMENTS_PER_SPEAKER", "5"))
+    ENABLE_MEMORY_LOGGING: bool = os.getenv("ENABLE_MEMORY_LOGGING", "true").lower() == "true"
+
     # LLM Configuration
     DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

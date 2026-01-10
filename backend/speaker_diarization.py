@@ -233,11 +233,16 @@ class ChunkedSpeakerDiarizer:
         self.use_auth_token = use_auth_token
         self.pipeline = None
         self.embedding_model = None
+        self.device = None
 
     def load_pipeline(self):
-        """Load the diarization pipeline and embedding model (lazy loading)"""
+        """Load the diarization pipeline (lazy loading, embedding model loaded separately for memory efficiency)"""
         if self.pipeline is None:
-            print("Loading speaker diarization pipeline for chunked processing...")
+            from utils.memory_utils import log_gpu_memory
+
+            print("[ChunkedDiarizer] Loading speaker diarization pipeline for chunked processing...")
+            log_gpu_memory("ChunkedDiarizer:BeforePipeline")
+
             try:
                 # Load diarization pipeline
                 self.pipeline = Pipeline.from_pretrained(
@@ -245,30 +250,78 @@ class ChunkedSpeakerDiarizer:
                     use_auth_token=self.use_auth_token
                 )
 
-                # Load embedding model (used for speaker matching)
-                print("Loading speaker embedding model...")
-                self.embedding_model = Model.from_pretrained(
-                    "pyannote/embedding",
-                    use_auth_token=self.use_auth_token
-                )
-
                 # Use GPU if available
                 if torch.cuda.is_available():
-                    device = torch.device("cuda")
-                    print("Using CUDA (NVIDIA) for chunked diarization")
+                    self.device = torch.device("cuda")
+                    print("[ChunkedDiarizer] Using CUDA (NVIDIA) for chunked diarization")
                 elif torch.backends.mps.is_available():
-                    device = torch.device("mps")
-                    print("Using MPS (Apple Silicon) for chunked diarization")
+                    self.device = torch.device("mps")
+                    print("[ChunkedDiarizer] Using MPS (Apple Silicon) for chunked diarization")
                 else:
-                    device = torch.device("cpu")
-                    print("Using CPU for chunked diarization")
+                    self.device = torch.device("cpu")
+                    print("[ChunkedDiarizer] Using CPU for chunked diarization")
 
-                self.pipeline.to(device)
-                self.embedding_model.to(device)
-                print(f"Chunked diarization pipeline loaded on {device}")
+                self.pipeline.to(self.device)
+
+                log_gpu_memory("ChunkedDiarizer:PipelineLoaded")
+                print(f"[ChunkedDiarizer] Diarization pipeline loaded on {self.device}")
             except Exception as e:
-                print(f"Error loading chunked diarization pipeline: {str(e)}")
+                print(f"[ChunkedDiarizer] Error loading chunked diarization pipeline: {str(e)}")
                 raise
+
+    def load_embedding_model(self):
+        """Load embedding model on demand (separate from pipeline for memory efficiency)."""
+        if self.embedding_model is None:
+            from utils.memory_utils import log_gpu_memory
+
+            print("[ChunkedDiarizer] Loading speaker embedding model...")
+            log_gpu_memory("ChunkedDiarizer:BeforeEmbedding")
+
+            self.embedding_model = Model.from_pretrained(
+                "pyannote/embedding",
+                use_auth_token=self.use_auth_token
+            )
+
+            # Ensure device is set (in case embedding model is loaded before pipeline)
+            if self.device is None:
+                if torch.cuda.is_available():
+                    self.device = torch.device("cuda")
+                elif torch.backends.mps.is_available():
+                    self.device = torch.device("mps")
+                else:
+                    self.device = torch.device("cpu")
+
+            self.embedding_model.to(self.device)
+
+            log_gpu_memory("ChunkedDiarizer:EmbeddingLoaded")
+            print("[ChunkedDiarizer] Speaker embedding model loaded")
+
+    def unload_embedding_model(self):
+        """Unload embedding model to free GPU memory."""
+        if self.embedding_model is not None:
+            from utils.memory_utils import clear_gpu_memory
+
+            print("[ChunkedDiarizer] Unloading embedding model...")
+            del self.embedding_model
+            self.embedding_model = None
+            clear_gpu_memory("ChunkedDiarizer:EmbeddingUnloaded")
+
+    def unload_pipeline(self):
+        """Unload entire pipeline to free GPU memory."""
+        from utils.memory_utils import clear_gpu_memory
+
+        print("[ChunkedDiarizer] Unloading diarization pipeline...")
+
+        if self.embedding_model is not None:
+            del self.embedding_model
+            self.embedding_model = None
+
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
+
+        clear_gpu_memory("ChunkedDiarizer:FullUnload")
+        print("[ChunkedDiarizer] Diarization pipeline fully unloaded")
 
     def diarize_chunked(
         self,
@@ -281,6 +334,14 @@ class ChunkedSpeakerDiarizer:
         """
         Diarize audio in chunks and unify speaker labels across chunks.
 
+        Uses phased memory management:
+        1. Phase 1: Diarize all chunks (pipeline only)
+        2. Phase 2: Unload pipeline to free GPU memory
+        3. Phase 3: Load embedding model
+        4. Phase 4: Extract embeddings from all chunks
+        5. Phase 5: Unload embedding model
+        6. Phase 6: Match speakers (CPU only)
+
         Args:
             audio_chunks: List of paths to audio chunk files (typically 5-min chunks)
             chunk_duration: Duration of each input audio chunk in seconds (default: 300)
@@ -292,21 +353,25 @@ class ChunkedSpeakerDiarizer:
             List of speaker segments with unified global labels
             Format: [{"start": 0.5, "end": 3.2, "speaker": "SPEAKER_00"}, ...]
         """
+        from utils.memory_utils import clear_gpu_memory
+
+        # Ensure pipeline is loaded
         if self.pipeline is None:
             self.load_pipeline()
 
-        print(f"Starting chunked diarization for {len(audio_chunks)} audio chunks")
-        print(f"Target diarization chunk duration: {self.chunk_duration}s, input chunk duration: {chunk_duration}s")
+        print(f"[ChunkedDiarizer] Starting chunked diarization for {len(audio_chunks)} audio chunks")
+        print(f"[ChunkedDiarizer] Target diarization chunk duration: {self.chunk_duration}s, input chunk duration: {chunk_duration}s")
 
         # Group small chunks into larger diarization groups
         diarization_groups = self._group_chunks(audio_chunks, chunk_duration)
-        print(f"Created {len(diarization_groups)} diarization groups")
+        print(f"[ChunkedDiarizer] Created {len(diarization_groups)} diarization groups")
 
-        # Diarize each group and extract embeddings
+        # PHASE 1: Diarize all groups (pipeline only, no embeddings)
+        print("\n=== PHASE 1: Diarizing all chunks ===")
         chunk_results = []
         for i, group in enumerate(diarization_groups):
-            print(f"\n[Chunk {i+1}/{len(diarization_groups)}] Processing group with {len(group['chunks'])} audio files...")
-            result = self._diarize_group(
+            print(f"\n[Chunk {i+1}/{len(diarization_groups)}] Diarizing group with {len(group['chunks'])} audio files...")
+            result = self._diarize_group_segments_only(
                 group['chunks'],
                 group['time_offset'],
                 num_speakers=num_speakers,
@@ -315,15 +380,63 @@ class ChunkedSpeakerDiarizer:
             )
             chunk_results.append(result)
 
-        # Match speakers across chunks using embeddings
-        print("\nMatching speakers across chunks...")
+            # Clear GPU cache after each chunk to prevent fragmentation
+            clear_gpu_memory(f"Chunk{i+1}Complete")
+
+        # PHASE 2: Unload pipeline to free GPU memory
+        print("\n=== PHASE 2: Unloading diarization pipeline ===")
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
+            clear_gpu_memory("PipelineUnloaded")
+
+        # PHASE 3: Load embedding model
+        print("\n=== PHASE 3: Loading embedding model ===")
+        self.load_embedding_model()
+
+        # PHASE 4: Extract embeddings from all chunks
+        print("\n=== PHASE 4: Extracting embeddings from all chunks ===")
+        try:
+            for i, result in enumerate(chunk_results):
+                print(f"\n[Chunk {i+1}/{len(chunk_results)}] Extracting embeddings for {len(set(s['speaker'] for s in result['segments']))} speakers...")
+                speaker_embeddings = self._extract_speaker_embeddings(result['audio_path'], result['segments'])
+                result['speaker_embeddings'] = speaker_embeddings
+
+                # Clear GPU cache after each chunk
+                clear_gpu_memory(f"EmbeddingChunk{i+1}Complete")
+
+                # Clean up temporary audio file immediately after embedding extraction
+                if result.get('is_temp', False):
+                    try:
+                        import os
+                        os.unlink(result['audio_path'])
+                        print(f"  Cleaned up temp file: {result['audio_path']}")
+                    except Exception as e:
+                        print(f"  Warning: Could not delete temp file {result['audio_path']}: {e}")
+        finally:
+            # Ensure we clean up any remaining temp files even if extraction fails
+            for result in chunk_results:
+                if result.get('is_temp', False):
+                    try:
+                        import os
+                        if os.path.exists(result['audio_path']):
+                            os.unlink(result['audio_path'])
+                    except Exception:
+                        pass
+
+        # PHASE 5: Unload embedding model
+        print("\n=== PHASE 5: Unloading embedding model ===")
+        self.unload_embedding_model()
+
+        # PHASE 6: Match speakers across chunks (CPU only)
+        print("\n=== PHASE 6: Matching speakers across chunks (CPU) ===")
         chunk_to_global_map, global_speaker_count = self._match_speakers(chunk_results)
 
         # Build unified segment list with global speaker labels
-        print(f"Unifying segments with {global_speaker_count} global speakers...")
+        print(f"[ChunkedDiarizer] Unifying segments with {global_speaker_count} global speakers...")
         unified_segments = self._unify_segments(chunk_results, chunk_to_global_map)
 
-        print(f"Chunked diarization complete. Total segments: {len(unified_segments)}, Unique speakers: {global_speaker_count}")
+        print(f"\n[ChunkedDiarizer] Chunked diarization complete. Total segments: {len(unified_segments)}, Unique speakers: {global_speaker_count}")
         return unified_segments
 
     def _group_chunks(self, audio_chunks: List[str], chunk_duration: int) -> List[Dict]:
@@ -350,6 +463,81 @@ class ChunkedSpeakerDiarizer:
             })
 
         return groups
+
+    def _diarize_group_segments_only(
+        self,
+        chunk_paths: List[str],
+        time_offset: float,
+        num_speakers: int = None,
+        min_speakers: int = None,
+        max_speakers: int = None
+    ) -> Dict:
+        """
+        Concatenate audio chunks and perform diarization on the group (segments only, no embeddings).
+
+        This method performs diarization and returns segments along with the audio path
+        for later embedding extraction. This enables phased memory management where
+        the pipeline can be unloaded before loading the embedding model.
+
+        Args:
+            chunk_paths: List of paths to audio files in this group
+            time_offset: Time offset in seconds for this group (start time in full video)
+            num_speakers: Exact number of speakers (optional)
+            min_speakers: Minimum number of speakers (optional)
+            max_speakers: Maximum number of speakers (optional)
+
+        Returns:
+            Dict containing diarization segments and audio path for embedding extraction
+        """
+        # If single chunk, use it directly
+        if len(chunk_paths) == 1:
+            concat_audio_path = chunk_paths[0]
+            temp_file = None
+            is_temp = False
+        else:
+            # Concatenate chunks using ffmpeg
+            temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            concat_audio_path = temp_file.name
+            temp_file.close()
+            is_temp = True
+
+            print(f"  Concatenating {len(chunk_paths)} chunks...")
+            self._concatenate_audio_files(chunk_paths, concat_audio_path)
+
+        # Prepare diarization parameters
+        diarization_params = {}
+        if num_speakers is not None:
+            diarization_params["num_speakers"] = num_speakers
+        else:
+            if min_speakers is not None:
+                diarization_params["min_speakers"] = min_speakers
+            if max_speakers is not None:
+                diarization_params["max_speakers"] = max_speakers
+
+        # Run diarization
+        print(f"  Running diarization...")
+        diarization = self.pipeline(concat_audio_path, **diarization_params)
+
+        # Convert to segments list
+        segments = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({
+                "start": turn.start + time_offset,  # Adjust for global timeline
+                "end": turn.end + time_offset,
+                "speaker": speaker,
+                "local_start": turn.start,  # Keep local time for embedding extraction
+                "local_end": turn.end
+            })
+
+        print(f"  Diarization complete: {len(segments)} segments, {len(set(s['speaker'] for s in segments))} speakers")
+
+        return {
+            "time_offset": time_offset,
+            "segments": segments,
+            "audio_path": concat_audio_path,
+            "is_temp": is_temp,
+            "speaker_embeddings": {}  # Will be filled later in Phase 4
+        }
 
     def _diarize_group(
         self,
@@ -495,8 +683,9 @@ class ChunkedSpeakerDiarizer:
                 reverse=True
             )
 
-            # Use up to 10 segments for robust embedding (or all if fewer)
-            segments_to_use = speaker_segments_sorted[:min(10, len(speaker_segments_sorted))]
+            # Use up to 5 segments for robust embedding (or all if fewer)
+            # Reduced from 10 to 5 to save GPU memory during embedding extraction
+            segments_to_use = speaker_segments_sorted[:min(5, len(speaker_segments_sorted))]
 
             # Skip very short segments (< 0.5 seconds)
             segments_to_use = [
@@ -517,14 +706,27 @@ class ChunkedSpeakerDiarizer:
 
                     # Extract embedding using pyannote embedding model
                     # The model expects a dict with 'audio' key containing the file path
-                    embedding = self.embedding_model({
+                    result = self.embedding_model({
                         'audio': audio_path,
                         'segment': segment
                     })
 
+                    # Pyannote returns a dict with 'embeddings' key
+                    if isinstance(result, dict):
+                        embedding = result.get('embeddings', result.get('embedding'))
+                    else:
+                        embedding = result
+
                     # Convert to numpy array if needed
+                    if embedding is None:
+                        print(f"  Warning: No embedding in result for {speaker}")
+                        continue
                     if torch.is_tensor(embedding):
                         embedding = embedding.cpu().detach().numpy()
+
+                    # Handle case where embedding is 2D (batch dim)
+                    if embedding.ndim == 2:
+                        embedding = embedding.squeeze(0)
 
                     embeddings.append(embedding)
                 except Exception as e:
