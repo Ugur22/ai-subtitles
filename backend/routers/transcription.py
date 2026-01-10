@@ -1392,15 +1392,6 @@ async def transcribe_local(
             print(f"Error getting duration: {e}")
             duration_str = "Unknown"
 
-        # Intelligently determine max_speakers based on duration if not provided
-        if max_speakers is None and num_speakers is None:
-            if duration < 300: # Less than 5 minutes
-                print(f"Short video detected ({duration}s). Setting max_speakers=5.")
-                max_speakers = 5
-            else:
-                print(f"Long video detected ({duration}s). Setting max_speakers=5.")
-                max_speakers = 5
-
         start_time = time.time()
         
         # Convert to WAV first to avoid 'av' decoding issues with MP4
@@ -1743,8 +1734,6 @@ async def transcribe_local_stream(
 
             # Determine max_speakers
             computed_max_speakers = max_speakers
-            if computed_max_speakers is None and num_speakers is None:
-                computed_max_speakers = 5
 
             yield emit("extracting", 30, "Converting audio to WAV format...")
 
@@ -2101,8 +2090,6 @@ async def transcribe_gcs_stream(
 
             # Determine max_speakers
             computed_max_speakers = max_speakers
-            if computed_max_speakers is None and num_speakers is None:
-                computed_max_speakers = 5
 
             yield emit("transcribing", 30, "Processing audio chunks for transcription...")
 
