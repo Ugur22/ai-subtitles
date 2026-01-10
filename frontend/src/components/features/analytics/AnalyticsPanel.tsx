@@ -2,11 +2,15 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { searchTranscription, SearchResponse } from "../../../services/api";
 
+interface AnalyticsPanelProps {
+  onSeekToTimestamp?: (timestamp: string) => void;
+  videoHash?: string;
+}
+
 export const AnalyticsPanel = ({
   onSeekToTimestamp,
-}: {
-  onSeekToTimestamp?: (timestamp: string) => void;
-}) => {
+  videoHash,
+}: AnalyticsPanelProps) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(
     null
@@ -15,7 +19,7 @@ export const AnalyticsPanel = ({
 
   const searchMutation = useMutation({
     mutationFn: ({ topic, semantic }: { topic: string; semantic: boolean }) =>
-      searchTranscription(topic, semantic),
+      searchTranscription(topic, semantic, videoHash),
     onSuccess: (data) => {
       setSearchResults(data);
     },
