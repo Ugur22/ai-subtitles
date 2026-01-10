@@ -267,16 +267,24 @@ export const transcribeLocalStream = async (
 
 export const searchTranscription = async (
   topic: string,
-  semanticSearch: boolean = true
+  semanticSearch: boolean = true,
+  videoHash?: string
 ): Promise<SearchResponse> => {
-  const response = await api.post<SearchResponse>(`/search/?topic=${encodeURIComponent(topic)}&semantic_search=${semanticSearch}`);
-  
+  const params = new URLSearchParams({
+    topic,
+    semantic_search: semanticSearch.toString()
+  });
+  if (videoHash) {
+    params.append('video_hash', videoHash);
+  }
+  const response = await api.post<SearchResponse>(`/api/search/?${params.toString()}`);
+
   return response.data;
 };
 
 export const getSubtitles = async (language: 'original' | 'english', videoHash?: string): Promise<Blob> => {
   const params = videoHash ? { video_hash: videoHash } : {};
-  const response = await api.get(`/subtitles/${language}`, {
+  const response = await api.get(`/api/subtitles/${language}`, {
     responseType: 'blob',
     params,
   });
