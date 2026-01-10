@@ -2310,13 +2310,33 @@ async def transcribe_gcs_stream(
 
             yield emit("transcribing", 82, "Identifying speakers...")
 
-            # Speaker diarization - use first audio chunk for diarization
+            # Speaker diarization - concatenate all audio chunks for full video diarization
             try:
-                # Use the first audio chunk for speaker diarization
-                diarization_audio = audio_chunks[0] if audio_chunks else None
-                if diarization_audio:
+                if audio_chunks:
+                    # Concatenate all audio chunks so speakers from entire video are detected
+                    if len(audio_chunks) == 1:
+                        # Single chunk - use directly
+                        concat_audio_path = audio_chunks[0]
+                        print("[GCS Stream] Using single audio chunk for diarization")
+                    else:
+                        # Multiple chunks - concatenate them with ffmpeg
+                        concat_audio_path = os.path.join(temp_dir, "concat_for_diarization.wav")
+                        concat_list_path = os.path.join(temp_dir, "concat_list.txt")
+
+                        with open(concat_list_path, 'w') as f:
+                            for chunk in audio_chunks:
+                                f.write(f"file '{chunk}'\n")
+
+                        concat_cmd = [
+                            'ffmpeg', '-f', 'concat', '-safe', '0',
+                            '-i', concat_list_path,
+                            '-c', 'copy', concat_audio_path, '-y'
+                        ]
+                        subprocess.run(concat_cmd, check=True, capture_output=True)
+                        print(f"[GCS Stream] Concatenated {len(audio_chunks)} chunks for full-video diarization")
+
                     formatted_segments = add_speaker_labels(
-                        audio_path=diarization_audio,
+                        audio_path=concat_audio_path,
                         segments=formatted_segments,
                         num_speakers=num_speakers,
                         min_speakers=min_speakers,
@@ -2329,9 +2349,12 @@ async def transcribe_gcs_stream(
                             seg['speaker'] = "SPEAKER_00"
             except Exception as e:
                 print(f"Speaker diarization failed: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 for seg in formatted_segments:
                     if 'speaker' not in seg:
-                        seg['speaker'] = "SPEAKER_00"
+                        seg['speaker'] = "UNKNOWN"
+                    seg['diarization_failed'] = True
 
             # Audio analysis - use first audio chunk
             if settings.ENABLE_AUDIO_ANALYSIS:

@@ -2,6 +2,7 @@
 Background worker for processing transcription jobs
 """
 import os
+import subprocess
 import asyncio
 import tempfile
 import shutil
@@ -39,10 +40,63 @@ from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from dependencies import get_whisper_model, get_speaker_diarizer
 from routers.transcription import create_silent_segments_for_gaps
+from speaker_diarization import ChunkedSpeakerDiarizer
 
 
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
+
+
+def assign_speakers_to_segments(transcription_segments: list, speaker_segments: list) -> list:
+    """
+    Assign speaker labels from diarization to transcription segments based on time overlap.
+
+    Args:
+        transcription_segments: List of transcription segments with 'start' and 'end' times
+        speaker_segments: List of speaker diarization segments with 'start', 'end', and 'speaker'
+
+    Returns:
+        Transcription segments with added 'speaker' field
+    """
+    print(f"[Worker] Assigning speakers to {len(transcription_segments)} transcription segments...")
+
+    for trans_seg in transcription_segments:
+        # Get the start and end times of the transcription segment
+        trans_start = trans_seg.get('start', 0.0)
+        trans_end = trans_seg.get('end', 0.0)
+        trans_mid = (trans_start + trans_end) / 2
+
+        # Find the speaker segment with maximum overlap
+        best_speaker = "UNKNOWN"
+        max_overlap = 0
+
+        for spk_seg in speaker_segments:
+            spk_start = spk_seg['start']
+            spk_end = spk_seg['end']
+
+            # Calculate overlap
+            overlap_start = max(trans_start, spk_start)
+            overlap_end = min(trans_end, spk_end)
+            overlap = max(0, overlap_end - overlap_start)
+
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_speaker = spk_seg['speaker']
+
+            # Alternative: Check if midpoint falls within speaker segment
+            # This can be faster and often more accurate
+            if spk_start <= trans_mid <= spk_end:
+                best_speaker = spk_seg['speaker']
+                break
+
+        # Assign the speaker to the transcription segment
+        trans_seg['speaker'] = best_speaker
+
+    # Count speakers
+    unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
+    print(f"[Worker] Speaker assignment complete. Identified {len(unique_speakers)} unique speakers")
+
+    return transcription_segments
 
 
 class BackgroundWorker:
@@ -239,34 +293,91 @@ class BackgroundWorker:
 
             if settings.ENABLE_SPEAKER_DIARIZATION:
                 try:
-                    diarizer = get_speaker_diarizer()
+                    # Calculate total video duration to decide on chunked vs. standard diarization
+                    total_duration = len(audio_chunks) * 300  # 5 minutes per chunk
 
-                    if diarizer and len(audio_chunks) > 0:
-                        # Use first audio chunk for diarization (representative sample)
-                        # For better accuracy, you could concatenate chunks or process separately
-                        print(f"[Worker] Performing speaker diarization...")
+                    # Use chunked diarization for long videos (configurable threshold)
+                    if total_duration > settings.USE_CHUNKED_DIARIZATION_ABOVE:
+                        print(f"[Worker] Using chunked diarization for {total_duration}s ({total_duration/60:.1f} min) video")
+                        JobQueueService.update_progress(job_id, 60, "diarizing", "Using chunked diarization for long video...")
 
-                        # Run in executor to avoid blocking event loop
-                        formatted_segments = await _run_in_executor(
-                            SpeakerService.add_speaker_labels,
-                            audio_path=audio_chunks[0],
-                            segments=formatted_segments,
-                            diarizer=diarizer,
+                        # Initialize chunked diarizer
+                        chunked_diarizer = ChunkedSpeakerDiarizer(
+                            chunk_duration=settings.DIARIZATION_CHUNK_DURATION,
+                            similarity_threshold=settings.DIARIZATION_SIMILARITY_THRESHOLD,
+                            use_auth_token=settings.HUGGINGFACE_TOKEN
+                        )
+
+                        # Run chunked diarization in executor to avoid blocking event loop
+                        speaker_segments = await _run_in_executor(
+                            chunked_diarizer.diarize_chunked,
+                            audio_chunks=audio_chunks,
+                            chunk_duration=300,  # 5-min chunks
                             num_speakers=num_speakers,
                             min_speakers=min_speakers,
                             max_speakers=max_speakers
                         )
 
-                        JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
+                        # Apply speaker labels to transcription segments
+                        formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+
+                        JobQueueService.update_progress(job_id, 75, "diarizing", "Chunked diarization completed")
+
                     else:
-                        print("[Worker] Speaker diarization not available, skipping")
-                        # Add default speaker labels
-                        for seg in formatted_segments:
-                            seg['speaker'] = "SPEAKER_00"
-                        JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (not available)")
+                        # Standard full-video diarization for shorter videos
+                        print(f"[Worker] Using standard full-video diarization for {total_duration}s ({total_duration/60:.1f} min) video")
+
+                        diarizer = get_speaker_diarizer()
+
+                        if diarizer and len(audio_chunks) > 0:
+                            # Concatenate all audio chunks for full-video diarization
+                            print(f"[Worker] Performing speaker diarization on full video...")
+
+                            if len(audio_chunks) == 1:
+                                # Single chunk - use directly
+                                diarization_audio_path = audio_chunks[0]
+                                print("[Worker] Using single audio chunk for diarization")
+                            else:
+                                # Multiple chunks - concatenate them with ffmpeg
+                                concat_audio_path = os.path.join(temp_dir, "concat_for_diarization.wav")
+                                concat_list_path = os.path.join(temp_dir, "concat_list.txt")
+
+                                with open(concat_list_path, 'w') as f:
+                                    for chunk in audio_chunks:
+                                        f.write(f"file '{chunk}'\n")
+
+                                concat_cmd = [
+                                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                                    '-i', concat_list_path,
+                                    '-c', 'copy', concat_audio_path, '-y'
+                                ]
+                                subprocess.run(concat_cmd, check=True, capture_output=True)
+                                diarization_audio_path = concat_audio_path
+                                temp_files.append(concat_audio_path)
+                                print(f"[Worker] Concatenated {len(audio_chunks)} chunks for full-video diarization")
+
+                            # Run in executor to avoid blocking event loop
+                            formatted_segments = await _run_in_executor(
+                                SpeakerService.add_speaker_labels,
+                                audio_path=diarization_audio_path,
+                                segments=formatted_segments,
+                                diarizer=diarizer,
+                                num_speakers=num_speakers,
+                                min_speakers=min_speakers,
+                                max_speakers=max_speakers
+                            )
+
+                            JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
+                        else:
+                            print("[Worker] Speaker diarization not available, skipping")
+                            # Add default speaker labels
+                            for seg in formatted_segments:
+                                seg['speaker'] = "SPEAKER_00"
+                            JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (not available)")
 
                 except Exception as e:
                     print(f"[Worker] Speaker diarization failed: {e}")
+                    traceback.print_exc()
                     # Add default speaker labels
                     for seg in formatted_segments:
                         seg['speaker'] = "SPEAKER_00"
