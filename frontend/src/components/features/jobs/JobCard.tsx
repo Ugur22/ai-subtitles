@@ -264,27 +264,35 @@ export const JobCard: React.FC<JobCardProps> = ({
                 </svg>
               </button>
               <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg hidden group-hover:block z-10 min-w-[160px]">
-                <a
-                  href={`/api/jobs/${job.job_id}/download/srt?token=${job.access_token}`}
-                  className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors"
-                  download
-                >
-                  Download SRT
-                </a>
-                <a
-                  href={`/api/jobs/${job.job_id}/download/vtt?token=${job.access_token}`}
-                  className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors border-t border-gray-100"
-                  download
-                >
-                  Download VTT
-                </a>
-                <a
-                  href={`/api/jobs/${job.job_id}/download/json?token=${job.access_token}`}
-                  className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors border-t border-gray-100"
-                  download
-                >
-                  Download JSON
-                </a>
+                {job.access_token ? (
+                  <>
+                    <a
+                      href={`/api/jobs/${job.job_id}/download/srt?token=${job.access_token}`}
+                      className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors"
+                      download
+                    >
+                      Download SRT
+                    </a>
+                    <a
+                      href={`/api/jobs/${job.job_id}/download/vtt?token=${job.access_token}`}
+                      className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors border-t border-gray-100"
+                      download
+                    >
+                      Download VTT
+                    </a>
+                    <a
+                      href={`/api/jobs/${job.job_id}/download/json?token=${job.access_token}`}
+                      className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors border-t border-gray-100"
+                      download
+                    >
+                      Download JSON
+                    </a>
+                  </>
+                ) : (
+                  <span className="block px-4 py-2 text-sm text-gray-400">
+                    Token unavailable
+                  </span>
+                )}
               </div>
             </div>
             <button

@@ -2,17 +2,21 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { searchTranscription } from "../../../services/api";
 
+interface SearchPanelProps {
+  onSeekToTimestamp?: (timestamp: string) => void;
+  videoHash?: string;
+}
+
 export const SearchPanel = ({
   onSeekToTimestamp,
-}: {
-  onSeekToTimestamp?: (timestamp: string) => void;
-}) => {
+  videoHash,
+}: SearchPanelProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [useSemanticSearch, setUseSemanticSearch] = useState(true);
 
   const searchMutation = useMutation({
     mutationFn: (query: string) =>
-      searchTranscription(query, useSemanticSearch),
+      searchTranscription(query, useSemanticSearch, videoHash),
     onError: (error) => {
       console.error("Search failed:", error);
     },

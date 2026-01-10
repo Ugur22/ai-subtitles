@@ -2466,3 +2466,124 @@ async def transcribe_gcs_stream(
             yield f"data: {json.dumps({'stage': 'error', 'progress': 0, 'error': str(e)})}\n\n"
 
     return StreamingResponse(generate_progress(), media_type="text/event-stream")
+
+
+# =============================================================================
+# Search Endpoint
+# =============================================================================
+
+from models import SearchResponse, SearchMatch, SearchTimestamp, SearchContext
+
+@router.post(
+    "/api/search/",
+    response_model=SearchResponse,
+    summary="Search transcription",
+    description="Search the current transcription for keywords or semantic matches"
+)
+@require_auth
+async def search_transcription(
+    request: Request,
+    topic: str = Query(..., description="Search query"),
+    semantic_search: bool = Query(True, description="Use semantic search"),
+    video_hash: Optional[str] = Query(None, description="Video hash to search in")
+) -> SearchResponse:
+    """Search transcription for keywords or semantic matches"""
+
+    # Get transcription data
+    transcription_data = None
+
+    if video_hash:
+        transcription_data = get_transcription_from_any_source(video_hash)
+    else:
+        transcription_data = dependencies._last_transcription_data
+
+    if not transcription_data:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcription available. Please provide video_hash or transcribe a video first."
+        )
+
+    segments = transcription_data.get('transcription', {}).get('segments', [])
+    if not segments:
+        return SearchResponse(
+            topic=topic,
+            total_matches=0,
+            semantic_search_used=semantic_search,
+            matches=[]
+        )
+
+    matches = []
+    used_semantic = False
+
+    # Try semantic search first if requested
+    if semantic_search:
+        try:
+            from vector_store import vector_store
+
+            # Get video hash for collection lookup
+            v_hash = video_hash or transcription_data.get('video_hash')
+            if v_hash and vector_store.collection_exists(v_hash):
+                search_results = vector_store.search(v_hash, topic, n_results=10)
+                used_semantic = True
+
+                for result in search_results:
+                    metadata = result.get('metadata', {})
+                    segment_idx = metadata.get('segment_index', 0)
+
+                    # Find matching segment
+                    if segment_idx < len(segments):
+                        seg = segments[segment_idx]
+
+                        # Get context (1 segment before and after)
+                        before_ctx = []
+                        after_ctx = []
+
+                        if segment_idx > 0:
+                            before_ctx = [segments[segment_idx - 1].get('text', '')]
+                        if segment_idx < len(segments) - 1:
+                            after_ctx = [segments[segment_idx + 1].get('text', '')]
+
+                        matches.append(SearchMatch(
+                            timestamp=SearchTimestamp(
+                                start=seg.get('start_time', '00:00:00.000'),
+                                end=seg.get('end_time', '00:00:00.000')
+                            ),
+                            original_text=seg.get('text', ''),
+                            translated_text=seg.get('translation'),
+                            context=SearchContext(before=before_ctx, after=after_ctx)
+                        ))
+        except Exception as e:
+            print(f"Semantic search failed, falling back to keyword: {e}")
+            used_semantic = False
+
+    # Keyword search fallback (or if semantic not requested)
+    if not used_semantic or not matches:
+        topic_lower = topic.lower()
+
+        for idx, seg in enumerate(segments):
+            text = seg.get('text', '')
+            translation = seg.get('translation', '')
+
+            if topic_lower in text.lower() or (translation and topic_lower in translation.lower()):
+                # Get context
+                before_ctx = [segments[idx - 1].get('text', '')] if idx > 0 else []
+                after_ctx = [segments[idx + 1].get('text', '')] if idx < len(segments) - 1 else []
+
+                matches.append(SearchMatch(
+                    timestamp=SearchTimestamp(
+                        start=seg.get('start_time', '00:00:00.000'),
+                        end=seg.get('end_time', '00:00:00.000')
+                    ),
+                    original_text=text,
+                    translated_text=translation if translation else None,
+                    context=SearchContext(before=before_ctx, after=after_ctx)
+                ))
+
+        used_semantic = False
+
+    return SearchResponse(
+        topic=topic,
+        total_matches=len(matches),
+        semantic_search_used=used_semantic,
+        matches=matches
+    )

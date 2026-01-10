@@ -18,7 +18,11 @@ from models.transcription import (
     TranslationRequest,
     TranslationResponse,
     SummaryRequest,
-    SummaryResponse
+    SummaryResponse,
+    SearchTimestamp,
+    SearchContext,
+    SearchMatch,
+    SearchResponse
 )
 from models.speaker import (
     SpeakerInfo,
@@ -67,6 +71,11 @@ __all__ = [
     "TranslationResponse",
     "SummaryRequest",
     "SummaryResponse",
+    # Search
+    "SearchTimestamp",
+    "SearchContext",
+    "SearchMatch",
+    "SearchResponse",
     # Speaker
     "SpeakerInfo",
     "EnrollSpeakerResponse",

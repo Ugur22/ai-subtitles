@@ -5,7 +5,7 @@ import os
 import glob
 from typing import Dict, Optional
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, Request
+from fastapi import APIRouter, HTTPException, UploadFile, Request, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from config import settings
@@ -20,7 +20,7 @@ from models import (
 from services.subtitle_service import SubtitleService
 from services.video_service import VideoService
 
-router = APIRouter(tags=["Video & Utilities"])
+router = APIRouter(prefix="/api", tags=["Video & Utilities"])
 
 
 @router.post(
@@ -211,31 +211,50 @@ async def get_video_file(request: Request, video_hash: str):
 @router.get(
     "/subtitles/{language}",
     summary="Generate SRT subtitles",
-    description="Generate SRT format subtitles from the last transcription",
+    description="Generate SRT format subtitles from a transcription",
     responses={
         404: {"model": ErrorResponse, "description": "No transcription available"}
     }
 )
 @require_auth
-async def get_subtitles(request: Request, language: str):
-    """Generate SRT format subtitles from the last transcription"""
+async def get_subtitles(
+    request: Request,
+    language: str,
+    video_hash: Optional[str] = Query(None, description="Video hash to generate subtitles for")
+):
+    """Generate SRT format subtitles from a transcription"""
     # Import here to avoid circular import
+    from routers.transcription import get_transcription_from_any_source
     from dependencies import _last_transcription_data
 
-    if not _last_transcription_data:
-        raise HTTPException(
-            status_code=404,
-            detail="No transcription available. Please transcribe a video first."
-        )
+    transcription_data = None
+
+    # Priority 1: Use video_hash if provided
+    if video_hash:
+        transcription_data = get_transcription_from_any_source(video_hash)
+        if not transcription_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No transcription found for video hash: {video_hash}"
+            )
+    else:
+        # Priority 2: Fall back to last transcription
+        if _last_transcription_data:
+            transcription_data = _last_transcription_data
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="No transcription available. Please provide a video_hash or transcribe a video first."
+            )
 
     try:
         # Get segments from transcription
-        segments = _last_transcription_data.get('transcription', {}).get('segments', [])
+        segments = transcription_data.get('transcription', {}).get('segments', [])
         if not segments:
             raise HTTPException(status_code=404, detail="No segments found in transcription")
 
-        # Determine if we should use translations
-        use_translation = (language.lower() == 'en')
+        # Determine if we should use translations (accept both "english" and "en")
+        use_translation = (language.lower() in ['english', 'en'])
 
         # Generate SRT content
         srt_content = SubtitleService.generate_srt(segments, use_translation=use_translation)

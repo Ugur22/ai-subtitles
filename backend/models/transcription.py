@@ -191,3 +191,52 @@ class SummaryResponse(BaseModel):
             }
         }
     }
+
+
+class SearchTimestamp(BaseModel):
+    """Timestamp range for search match"""
+    start: str = Field(..., description="Start timestamp (HH:MM:SS.mmm)")
+    end: str = Field(..., description="End timestamp (HH:MM:SS.mmm)")
+
+
+class SearchContext(BaseModel):
+    """Context around a search match"""
+    before: List[str] = Field(default_factory=list, description="Text segments before the match")
+    after: List[str] = Field(default_factory=list, description="Text segments after the match")
+
+
+class SearchMatch(BaseModel):
+    """Single search result match"""
+    timestamp: SearchTimestamp = Field(..., description="Timestamp range of the match")
+    original_text: str = Field(..., description="Original transcribed text")
+    translated_text: Optional[str] = Field(None, description="English translation if available")
+    context: SearchContext = Field(..., description="Surrounding context segments")
+
+
+class SearchResponse(BaseModel):
+    """Search response with matches"""
+    topic: str = Field(..., description="Search query topic")
+    total_matches: int = Field(..., description="Total number of matches found")
+    semantic_search_used: bool = Field(..., description="Whether semantic search was used")
+    matches: List[SearchMatch] = Field(..., description="List of search matches")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "topic": "artificial intelligence",
+                "total_matches": 3,
+                "semantic_search_used": True,
+                "matches": [
+                    {
+                        "timestamp": {"start": "00:01:30.000", "end": "00:01:35.500"},
+                        "original_text": "AI is transforming how we work",
+                        "translated_text": "AI is transforming how we work",
+                        "context": {
+                            "before": ["Let me tell you about technology"],
+                            "after": ["This has major implications"]
+                        }
+                    }
+                ]
+            }
+        }
+    }
