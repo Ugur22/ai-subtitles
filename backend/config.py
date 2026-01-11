@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     ENABLE_MEMORY_LOGGING: bool = os.getenv("ENABLE_MEMORY_LOGGING", "true").lower() == "true"
 
     # LLM Configuration
-    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "ollama")
+    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")

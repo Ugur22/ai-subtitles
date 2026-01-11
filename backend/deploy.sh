@@ -135,8 +135,7 @@ deploy_to_cloud_run() {
         --port="${PORT}" \
         --allow-unauthenticated \
         --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS}" \
-        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest" \
-        --no-cpu-throttling; then
+        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest"; then
         print_info "Deployment successful"
     else
         print_error "Deployment failed"
