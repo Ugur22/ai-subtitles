@@ -392,6 +392,36 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             import traceback
             traceback.print_exc()
 
+        # Also update Supabase jobs table if the transcription came from there
+        try:
+            from services.supabase_service import supabase
+            client = supabase()
+
+            # Find the job for this video_hash
+            job_response = (
+                client.table("jobs")
+                .select("id")
+                .eq("video_hash", video_hash)
+                .eq("status", "completed")
+                .limit(1)
+                .execute()
+            )
+
+            if job_response.data and len(job_response.data) > 0:
+                job_id = job_response.data[0]["id"]
+
+                # Update result_json with new speaker names
+                update_response = (
+                    client.table("jobs")
+                    .update({"result_json": transcription_data})
+                    .eq("id", job_id)
+                    .execute()
+                )
+                print(f"[Speaker] Updated job {job_id} in Supabase with new speaker name")
+        except Exception as e:
+            # Don't fail the whole operation if Supabase update fails
+            print(f"[Speaker] Warning: Could not update Supabase jobs table: {e}")
+
         # Update global cache if it matches
         global _last_transcription_data
         if _last_transcription_data and _last_transcription_data.get("video_hash") == video_hash:
