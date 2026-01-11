@@ -158,6 +158,7 @@ class BackgroundWorker:
             filename = job["filename"]
             gcs_path = job["gcs_path"]
             file_size_bytes = job["file_size_bytes"]
+            user_id = job.get("user_id")  # For RLS policy compliance
             params = job.get("params", {})
 
             num_speakers = params.get("num_speakers")
@@ -421,6 +422,7 @@ class BackgroundWorker:
                     timestamps = [seg['start'] for seg in formatted_segments]
 
                     print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
+                    log_all_memory("Worker:BeforeScreenshotExtraction")
 
                     # Extract screenshots from GCS URL (streaming, no full download)
                     # Run in executor to avoid blocking event loop
@@ -433,11 +435,13 @@ class BackgroundWorker:
                         max_workers=4
                     )
 
+                    log_all_memory("Worker:AfterScreenshotExtraction")
                     JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
 
                     # Upload to GCS and update segments
                     if settings.ENABLE_GCS_UPLOADS:
                         print(f"[Worker] Uploading {len(screenshot_results)} screenshots to GCS...")
+                        log_all_memory("Worker:BeforeGCSUpload")
 
                         gcs_urls = gcs_service.upload_screenshots_batch(
                             screenshot_paths=screenshot_results,
@@ -455,6 +459,7 @@ class BackgroundWorker:
                                 seg['screenshot_url'] = None
 
                         print(f"[Worker] Uploaded {screenshot_count}/{len(formatted_segments)} screenshots to GCS")
+                        log_all_memory("Worker:AfterGCSUpload")
 
                         # Clean up local screenshots after upload
                         for local_path in screenshot_results.values():
@@ -483,6 +488,7 @@ class BackgroundWorker:
                     # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
                     JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
                     print(f"[Worker] Detecting timeline gaps and creating silent segments...")
+                    log_all_memory("Worker:BeforeSilentSegments")
 
                     # Run in executor to avoid blocking event loop
                     formatted_segments = await _run_in_executor(
@@ -494,6 +500,8 @@ class BackgroundWorker:
                         silent_chunk_duration=10.0,
                         source_url=read_url  # Use GCS URL for streaming screenshot extraction
                     )
+
+                    log_all_memory("Worker:AfterSilentSegments")
 
                     # Upload silent segment screenshots to GCS
                     silent_segments = [s for s in formatted_segments if s.get('is_silent')]
@@ -524,6 +532,7 @@ class BackgroundWorker:
                                         print(f"[Worker] Failed to upload silent screenshot at {seg['start']:.2f}s: {e}")
 
                         print(f"[Worker] Uploaded {silent_screenshot_count}/{len(silent_segments)} silent screenshots to GCS")
+                        log_all_memory("Worker:AfterSilentGCSUpload")
                         screenshot_count += silent_screenshot_count
 
                     # Auto-index images into Supabase pgvector if GCS uploads are enabled
@@ -532,7 +541,9 @@ class BackgroundWorker:
                             from services.image_embedding_service import image_embedding_service
                             JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
                             print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
-                            indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False)
+                            log_all_memory("Worker:BeforeImageIndexing")
+                            indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False, user_id=user_id)
+                            log_all_memory("Worker:AfterImageIndexing")
                             print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
                         except Exception as e:
                             print(f"[Worker] Image indexing failed (non-critical): {e}")

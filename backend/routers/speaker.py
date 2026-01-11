@@ -6,7 +6,8 @@ import tempfile
 from typing import Dict
 from fastapi import APIRouter, HTTPException, UploadFile, Form, Request
 
-from database import get_transcription, store_transcription
+from database import store_transcription
+from routers.transcription import get_transcription_from_any_source
 from dependencies import _last_transcription_data
 from middleware.auth import require_auth
 from models import (
@@ -59,7 +60,7 @@ async def enroll_speaker_endpoint(
                 audio_path = tmp.name
         elif video_hash:
             # Get video from existing transcription
-            transcription = get_transcription(video_hash)
+            transcription = get_transcription_from_any_source(video_hash)
             if not transcription or 'file_path' not in transcription:
                 raise HTTPException(status_code=404, detail="Video not found")
             audio_path = transcription['file_path']
@@ -160,7 +161,7 @@ async def identify_speaker_endpoint(
                 tmp.write(content)
                 audio_path = tmp.name
         elif video_hash:
-            transcription = get_transcription(video_hash)
+            transcription = get_transcription_from_any_source(video_hash)
             if not transcription or 'file_path' not in transcription:
                 raise HTTPException(status_code=404, detail="Video not found")
             audio_path = transcription['file_path']
@@ -248,7 +249,7 @@ async def auto_identify_speakers(request: Request, video_hash: str, threshold: f
         sr_system = get_speaker_recognition_system()
 
         # Get transcription
-        transcription = get_transcription(video_hash)
+        transcription = get_transcription_from_any_source(video_hash)
         if not transcription:
             raise HTTPException(status_code=404, detail="Transcription not found")
 
@@ -341,7 +342,7 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             raise HTTPException(status_code=400, detail="Missing original_speaker or new_speaker_name")
 
         # Get existing transcription
-        transcription_data = get_transcription(video_hash)
+        transcription_data = get_transcription_from_any_source(video_hash)
         if not transcription_data:
             raise HTTPException(status_code=404, detail="Transcription not found")
 

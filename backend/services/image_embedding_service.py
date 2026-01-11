@@ -101,7 +101,8 @@ class ImageEmbeddingService:
         self,
         video_hash: str,
         segments: List[Dict],
-        force_reindex: bool = False
+        force_reindex: bool = False,
+        user_id: Optional[str] = None
     ) -> int:
         """
         Index video screenshot images into Supabase using CLIP embeddings
@@ -110,6 +111,7 @@ class ImageEmbeddingService:
             video_hash: Unique hash of the video
             segments: List of transcription segments with screenshot_url field
             force_reindex: If True, delete existing embeddings and re-index
+            user_id: Optional user ID for RLS policy compliance
 
         Returns:
             Number of images indexed
@@ -186,7 +188,7 @@ class ImageEmbeddingService:
                     if embedding is None:
                         continue
 
-                    records.append({
+                    record = {
                         'video_hash': video_hash,
                         'segment_id': str(seg['segment_id']),
                         'start_time': seg['start'],
@@ -194,7 +196,11 @@ class ImageEmbeddingService:
                         'speaker': seg['speaker'],
                         'screenshot_url': seg['screenshot_url'],
                         'embedding': embedding
-                    })
+                    }
+                    # Include user_id for RLS policy compliance
+                    if user_id:
+                        record['user_id'] = user_id
+                    records.append(record)
 
                 if records:
                     # Upsert to handle duplicates gracefully
