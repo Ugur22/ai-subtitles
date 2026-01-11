@@ -56,6 +56,9 @@ ENVIRONMENT="production"
 MIN_SPEAKERS="1"
 MAX_SPEAKERS="0"  # 0 = unlimited/auto-detect speakers
 
+# Whisper settings
+FASTWHISPER_DEVICE="cuda"  # Use GPU for transcription (faster than CPU)
+
 # Ensure PATH includes gcloud
 export PATH="/opt/homebrew/share/google-cloud-sdk/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
 
@@ -134,7 +137,7 @@ deploy_to_cloud_run() {
         --max-instances="${MAX_INSTANCES}" \
         --port="${PORT}" \
         --allow-unauthenticated \
-        --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS}" \
+        --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}" \
         --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest"; then
         print_info "Deployment successful"
     else
