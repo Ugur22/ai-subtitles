@@ -238,10 +238,10 @@ class ChunkedSpeakerDiarizer:
     def load_pipeline(self):
         """Load the diarization pipeline (lazy loading, embedding model loaded separately for memory efficiency)"""
         if self.pipeline is None:
-            from utils.memory_utils import log_gpu_memory
+            from utils.memory_utils import log_all_memory
 
             print("[ChunkedDiarizer] Loading speaker diarization pipeline for chunked processing...")
-            log_gpu_memory("ChunkedDiarizer:BeforePipeline")
+            log_all_memory("ChunkedDiarizer:BeforePipeline")
 
             try:
                 # Load diarization pipeline
@@ -263,7 +263,7 @@ class ChunkedSpeakerDiarizer:
 
                 self.pipeline.to(self.device)
 
-                log_gpu_memory("ChunkedDiarizer:PipelineLoaded")
+                log_all_memory("ChunkedDiarizer:PipelineLoaded")
                 print(f"[ChunkedDiarizer] Diarization pipeline loaded on {self.device}")
             except Exception as e:
                 print(f"[ChunkedDiarizer] Error loading chunked diarization pipeline: {str(e)}")
@@ -516,7 +516,12 @@ class ChunkedSpeakerDiarizer:
 
         # Run diarization
         print(f"  Running diarization...")
+        from utils.memory_utils import log_all_memory
+        log_all_memory("BeforeDiarization")
+
         diarization = self.pipeline(concat_audio_path, **diarization_params)
+
+        log_all_memory("AfterDiarization")
 
         # Convert to segments list
         segments = []
