@@ -248,8 +248,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [providers, setProviders] = useState<LLMProvider[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState<string>("ollama");
+  const [selectedProvider, setSelectedProvider] = useState<string>("grok");
   const [includeVisuals, setIncludeVisuals] = useState(false);
+
+  // Models that support vision/scene search
+  const VISION_SUPPORTED_PROVIDERS = ['grok', 'openai', 'anthropic'];
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{ screenshots: string[], currentIndex: number, sources: Source[] } | null>(null);
   const [customInstructions, setCustomInstructions] = useState<string>("");
@@ -470,7 +473,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </label>
               <select
                 value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
+                onChange={(e) => {
+                  const newProvider = e.target.value;
+                  setSelectedProvider(newProvider);
+                  // Reset visual search if switching to non-vision provider
+                  if (!VISION_SUPPORTED_PROVIDERS.includes(newProvider)) {
+                    setIncludeVisuals(false);
+                  }
+                }}
                 className="text-sm px-3 py-1.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors cursor-pointer"
                 title="Select LLM Provider"
               >
@@ -487,10 +497,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </select>
             </div>
 
-            {/* Divider */}
-            <div className="h-6 w-px bg-gray-300"></div>
+            {/* Divider - only show if vision supported */}
+            {VISION_SUPPORTED_PROVIDERS.includes(selectedProvider) && (
+              <div className="h-6 w-px bg-gray-300"></div>
+            )}
 
-            {/* Visual Search Toggle */}
+            {/* Visual Search Toggle - only show for vision-capable models */}
+            {VISION_SUPPORTED_PROVIDERS.includes(selectedProvider) && (
             <div className="relative group flex items-center gap-2">
               <button
                 onClick={() => setIncludeVisuals(!includeVisuals)}
@@ -560,6 +573,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 </div>
               </div>
             </div>
+            )}
           </div>
         </div>
 

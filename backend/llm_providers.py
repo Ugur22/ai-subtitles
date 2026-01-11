@@ -333,7 +333,7 @@ class OpenAIProvider(BaseLLMProvider):
                 else:
                     formatted_messages.append(msg)
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=240.0) as client:  # Longer timeout for vision requests with multiple images
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -612,7 +612,7 @@ class GrokProvider(BaseLLMProvider):
                 else:
                     formatted_messages.append(msg)
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=240.0) as client:  # Longer timeout for vision requests with multiple images
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -647,7 +647,7 @@ class LLMManager:
             "anthropic": AnthropicProvider(),
             "grok": GrokProvider()
         }
-        self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "local")
+        self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
 
         # Map 'local' to 'ollama'
         if self.default_provider == "local":
