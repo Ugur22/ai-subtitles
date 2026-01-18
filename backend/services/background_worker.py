@@ -38,7 +38,7 @@ from services.translation_service import TranslationService
 from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
-from utils.memory_utils import clear_gpu_memory, log_gpu_memory
+from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer
