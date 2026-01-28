@@ -710,7 +710,9 @@ def fix_segment_durations(segments: List[Dict], max_duration_per_word: float = 2
 def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video_hash: str,
                                      min_gap_duration: float = 2.0,
                                      silent_chunk_duration: float = 10.0,
-                                     source_url: str = None) -> List[Dict]:
+                                     source_url: str = None,
+                                     max_screenshots: int = 50,
+                                     timeout_seconds: float = 300) -> List[Dict]:
     """
     Detect timeline gaps between speech segments and create silent segments with screenshots.
 
@@ -724,12 +726,17 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
         min_gap_duration: Minimum gap duration (in seconds) to create a silent segment
         silent_chunk_duration: Duration of each silent segment chunk (default: 10 seconds)
         source_url: Optional URL to stream video from (for GCS streaming, avoids downloading full video)
+        max_screenshots: Maximum number of silent segment screenshots to extract (default: 50)
+        timeout_seconds: Overall timeout for silent segment processing (default: 300s / 5 min)
 
     Returns:
         List of segments including both original and new silent segments, sorted by start time
     """
     if not segments:
         return segments
+
+    import time as time_module
+    start_time = time_module.time()
 
     # Sort segments by start time to ensure proper ordering
     sorted_segments = sorted(segments, key=lambda s: s['start'])
@@ -738,12 +745,26 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
     os.makedirs(screenshots_dir, exist_ok=True)
 
     print(f"\nDetecting silent gaps (minimum duration: {min_gap_duration}s, chunk size: {silent_chunk_duration}s)...")
+    print(f"  Limits: max_screenshots={max_screenshots}, timeout={timeout_seconds}s")
     gaps_found = 0
     total_silent_segments_created = 0
+    screenshots_extracted = 0
+    timed_out = False
+    hit_screenshot_limit = False
 
     for i in range(len(sorted_segments)):
         # Add the current speech segment
         result_segments.append(sorted_segments[i])
+
+        # Check timeout before processing gaps
+        elapsed = time_module.time() - start_time
+        if elapsed >= timeout_seconds:
+            timed_out = True
+            print(f"  [TIMEOUT] Silent segment processing timed out after {elapsed:.1f}s")
+            # Add remaining speech segments without gap processing
+            for j in range(i + 1, len(sorted_segments)):
+                result_segments.append(sorted_segments[j])
+            break
 
         # Check if there's a gap before the next segment
         if i < len(sorted_segments) - 1:
@@ -763,6 +784,36 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
 
                 # Create multiple silent segments for long gaps
                 for chunk_idx in range(num_chunks):
+                    # Check timeout inside inner loop
+                    elapsed = time_module.time() - start_time
+                    if elapsed >= timeout_seconds:
+                        timed_out = True
+                        print(f"  [TIMEOUT] Silent segment processing timed out after {elapsed:.1f}s (during gap {gaps_found})")
+                        break
+
+                    # Check screenshot limit
+                    if screenshots_extracted >= max_screenshots:
+                        if not hit_screenshot_limit:
+                            hit_screenshot_limit = True
+                            print(f"  [LIMIT] Reached max screenshot limit ({max_screenshots})")
+                        # Still create segment but skip screenshot extraction
+                        chunk_start = current_end + (chunk_idx * chunk_size)
+                        chunk_end = current_end + ((chunk_idx + 1) * chunk_size)
+                        silent_segment = {
+                            "id": str(uuid.uuid4()),
+                            "start": chunk_start,
+                            "end": chunk_end,
+                            "start_time": format_timestamp(chunk_start),
+                            "end_time": format_timestamp(chunk_end),
+                            "text": "[No speech]",
+                            "translation": "[No speech]",
+                            "speaker": "VISUAL",
+                            "is_silent": True
+                        }
+                        result_segments.append(silent_segment)
+                        total_silent_segments_created += 1
+                        continue
+
                     chunk_start = current_end + (chunk_idx * chunk_size)
                     chunk_end = current_end + ((chunk_idx + 1) * chunk_size)
                     chunk_midpoint = chunk_start + (chunk_size / 2)
@@ -778,6 +829,7 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
                         success = VideoService.extract_screenshot_from_url(source_url, chunk_midpoint, screenshot_path)
                         if success and os.path.exists(screenshot_path):
                             screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                            screenshots_extracted += 1
                         else:
                             print(f"    Chunk {chunk_idx + 1}/{num_chunks}: URL screenshot extraction failed at {chunk_midpoint:.2f}s")
                     elif video_path and os.path.exists(video_path):
@@ -785,6 +837,7 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
                         success = extract_screenshot(video_path, chunk_midpoint, screenshot_path)
                         if success and os.path.exists(screenshot_path):
                             screenshot_url = f"/static/screenshots/{screenshot_filename}"
+                            screenshots_extracted += 1
                         else:
                             print(f"    Chunk {chunk_idx + 1}/{num_chunks}: Screenshot extraction failed at {chunk_midpoint:.2f}s")
 
@@ -807,8 +860,23 @@ def create_silent_segments_for_gaps(segments: List[Dict], video_path: str, video
                     result_segments.append(silent_segment)
                     total_silent_segments_created += 1
 
+                # Break outer loop if timed out during inner loop
+                if timed_out:
+                    # Add remaining speech segments
+                    for j in range(i + 1, len(sorted_segments)):
+                        result_segments.append(sorted_segments[j])
+                    break
+
+    elapsed = time_module.time() - start_time
+    status_parts = [f"Created {total_silent_segments_created} silent segments across {gaps_found} timeline gaps"]
+    status_parts.append(f"(screenshots: {screenshots_extracted}, time: {elapsed:.1f}s)")
+    if timed_out:
+        status_parts.append("[TIMED OUT]")
+    if hit_screenshot_limit:
+        status_parts.append("[HIT SCREENSHOT LIMIT]")
+
     if gaps_found > 0:
-        print(f"Created {total_silent_segments_created} silent segments across {gaps_found} timeline gaps")
+        print(" ".join(status_parts))
     else:
         print("No significant gaps found between speech segments")
 

@@ -145,6 +145,11 @@ class LargeUploadMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(LargeUploadMiddleware)
 
+# Token refresh middleware - sets refreshed auth cookies on response
+# Must be added after CORS middleware so cookies are properly handled
+from middleware.token_refresh import TokenRefreshMiddleware
+app.add_middleware(TokenRefreshMiddleware)
+
 
 # Include routers
 app.include_router(transcription.router)
