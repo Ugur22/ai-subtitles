@@ -173,12 +173,76 @@ async def _get_user_profile_async(user_id: str) -> Optional[Dict]:
         return None
 
 
+def _refresh_supabase_session(refresh_token: str) -> Optional[Dict]:
+    """
+    Refresh an expired session using a refresh token.
+
+    Args:
+        refresh_token: The refresh token from cookie
+
+    Returns:
+        Dict with new tokens and user data, or None if refresh failed:
+        {
+            "access_token": str,
+            "refresh_token": str,
+            "user": {...}
+        }
+    """
+    try:
+        client = SupabaseService.get_client()
+
+        # Use Supabase's refresh_session method
+        response = client.auth.refresh_session(refresh_token)
+
+        if response and response.session and response.user:
+            return {
+                "access_token": response.session.access_token,
+                "refresh_token": response.session.refresh_token,
+                "user": {
+                    "id": response.user.id,
+                    "email": response.user.email,
+                    "email_confirmed_at": response.user.email_confirmed_at,
+                    "created_at": response.user.created_at
+                }
+            }
+
+        return None
+
+    except Exception as e:
+        print(f"[Auth] Session refresh failed: {e}")
+        return None
+
+
+async def _refresh_supabase_session_async(refresh_token: str) -> Optional[Dict]:
+    """
+    Non-blocking session refresh using executor with timeout.
+
+    Args:
+        refresh_token: The refresh token from cookie
+
+    Returns:
+        Dict with new tokens and user data, or None if refresh failed
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(_auth_executor, _refresh_supabase_session, refresh_token),
+            timeout=SUPABASE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        print(f"[Auth] Session refresh timed out after {SUPABASE_TIMEOUT}s")
+        return None
+
+
 def require_auth(func):
     """
     Decorator to require authentication for an endpoint.
 
     Checks HttpOnly cookie, verifies with Supabase, caches result for 5 min.
+    If the access token is expired, attempts to refresh using the refresh token.
     Adds request.state.user and request.state.profile to the request.
+    If tokens are refreshed, stores new tokens in request.state.refreshed_tokens
+    for the TokenRefreshMiddleware to set as cookies.
 
     Usage:
         @router.get("/protected")
@@ -210,11 +274,33 @@ def require_auth(func):
 
         # Verify with Supabase (non-blocking)
         user = await _verify_supabase_token_async(token)
+
+        # If token verification failed, try to refresh
         if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid or expired token"
-            )
+            refresh_token = request.cookies.get("auth_refresh_token")
+            if refresh_token:
+                print("[Auth] Access token expired, attempting refresh...")
+                refresh_result = await _refresh_supabase_session_async(refresh_token)
+
+                if refresh_result:
+                    user = refresh_result["user"]
+                    # Store refreshed tokens in request.state for middleware to set cookies
+                    request.state.refreshed_tokens = {
+                        "access_token": refresh_result["access_token"],
+                        "refresh_token": refresh_result["refresh_token"]
+                    }
+                    print(f"[Auth] Token refreshed successfully for user {user['id']}")
+                else:
+                    print("[Auth] Token refresh failed")
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Session expired. Please log in again."
+                    )
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired token"
+                )
 
         # Check email verification
         if not user.get("email_confirmed_at"):
@@ -238,8 +324,11 @@ def require_auth(func):
                 detail="Email not verified. Please verify your email to continue."
             )
 
-        # Cache result
-        _cache_token_verification(token, user, profile)
+        # Cache result with the new token if refreshed, otherwise with original token
+        cache_token = token
+        if hasattr(request.state, 'refreshed_tokens'):
+            cache_token = request.state.refreshed_tokens["access_token"]
+        _cache_token_verification(cache_token, user, profile)
 
         # Attach to request
         request.state.user = user

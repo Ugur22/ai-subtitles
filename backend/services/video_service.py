@@ -36,7 +36,7 @@ class VideoService:
                 '-y'  # Overwrite if exists
             ]
             print(f"Running FFmpeg command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
 
             # Verify output file was created
             if os.path.exists(output_path):
@@ -47,6 +47,9 @@ class VideoService:
                 print(f"ERROR: Screenshot file was not created at {output_path}")
                 return False
 
+        except subprocess.TimeoutExpired:
+            print(f"ERROR: FFmpeg screenshot extraction timed out after 60s at {timestamp}")
+            return False
         except subprocess.CalledProcessError as e:
             print(f"ERROR: FFmpeg failed to extract screenshot at {timestamp}")
             print(f"Return code: {e.returncode}")

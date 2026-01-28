@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import settings
-from middleware.auth import require_auth
+from middleware.auth import require_auth, require_admin
 
 
 # Executor for non-blocking database operations
@@ -758,12 +758,14 @@ async def get_share_link(
 
 
 @router.post("/check-stale", response_model=StaleJobCheckResponse)
-async def check_stale_jobs(background_tasks: BackgroundTasks):
+@require_admin
+async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
     """
-    Check for and recover stale jobs (internal endpoint).
+    Check for and recover stale jobs (admin-only endpoint).
 
     This endpoint is called by Cloud Scheduler every 5 minutes to detect jobs
     that are stuck in 'processing' state due to worker crashes.
+    Requires admin authentication to prevent unauthorized access.
 
     **Stale Detection**: Jobs with no heartbeat for 90+ seconds
     **Recovery**: Resets to pending and auto-retries (max 3 attempts)

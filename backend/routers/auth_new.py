@@ -628,6 +628,7 @@ async def login(request: LoginRequest, response: Response):
 
             user_id = auth_response.user.id
             access_token = auth_response.session.access_token
+            refresh_token = auth_response.session.refresh_token
 
         except HTTPException:
             raise
@@ -648,7 +649,7 @@ async def login(request: LoginRequest, response: Response):
                 detail="Email not verified. Please check your email for verification code."
             )
 
-        # Set HttpOnly cookie (7 days)
+        # Set HttpOnly cookie for access token (7 days)
         # samesite="none" required for cross-origin (frontend on different domain)
         response.set_cookie(
             key="auth_token",
@@ -656,6 +657,18 @@ async def login(request: LoginRequest, response: Response):
             httponly=True,
             secure=True,  # HTTPS only in production
             samesite="none",  # Required for cross-origin cookies
+            max_age=7 * 24 * 60 * 60,  # 7 days
+            path="/"
+        )
+
+        # Set HttpOnly cookie for refresh token (7 days)
+        # Used to automatically refresh expired access tokens
+        response.set_cookie(
+            key="auth_refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="none",
             max_age=7 * 24 * 60 * 60,  # 7 days
             path="/"
         )
@@ -707,9 +720,13 @@ async def logout(request: Request, response: Response):
             except Exception as e:
                 print(f"[Auth] Error signing out from Supabase: {e}")
 
-        # Clear cookie
+        # Clear both auth cookies
         response.delete_cookie(
             key="auth_token",
+            path="/"
+        )
+        response.delete_cookie(
+            key="auth_refresh_token",
             path="/"
         )
 
@@ -720,8 +737,9 @@ async def logout(request: Request, response: Response):
 
     except Exception as e:
         print(f"[Auth] Logout error: {e}")
-        # Don't fail logout even if there's an error
+        # Don't fail logout even if there's an error - clear both cookies
         response.delete_cookie(key="auth_token", path="/")
+        response.delete_cookie(key="auth_refresh_token", path="/")
 
         return LogoutResponse(
             success=True,

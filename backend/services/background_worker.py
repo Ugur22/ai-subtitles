@@ -7,6 +7,7 @@ import asyncio
 import tempfile
 import shutil
 import traceback
+import threading
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,6 +47,66 @@ from speaker_diarization import ChunkedSpeakerDiarizer
 
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
+
+
+class HeartbeatThread(threading.Thread):
+    """
+    Independent heartbeat thread that runs outside the asyncio event loop.
+
+    This ensures heartbeats continue even when the event loop is blocked by
+    heavy CPU/GPU operations (FFmpeg, Whisper, diarization). Unlike asyncio
+    tasks, this thread is not affected by event loop congestion.
+
+    Usage:
+        heartbeat = HeartbeatThread(job_id)
+        heartbeat.start()
+        # ... do work ...
+        heartbeat.stop()
+        heartbeat.join(timeout=5)
+    """
+
+    def __init__(self, job_id: str, interval: int = HEARTBEAT_INTERVAL):
+        """
+        Initialize heartbeat thread.
+
+        Args:
+            job_id: Job ID to send heartbeats for
+            interval: Seconds between heartbeats (default: 30)
+        """
+        super().__init__(daemon=True, name=f"heartbeat-{job_id[:8]}")
+        self.job_id = job_id
+        self.interval = interval
+        self.running = True
+        self._stop_event = threading.Event()
+
+    def run(self):
+        """Thread main loop - sends heartbeats at regular intervals."""
+        print(f"[HeartbeatThread] Started for job {self.job_id}")
+        heartbeat_count = 0
+
+        while self.running and not self._stop_event.is_set():
+            # Wait for interval or stop signal
+            stopped = self._stop_event.wait(timeout=self.interval)
+            if stopped:
+                break
+
+            # Send heartbeat via synchronous Supabase call
+            try:
+                success = JobQueueService.update_heartbeat(self.job_id)
+                heartbeat_count += 1
+                if success:
+                    print(f"[HeartbeatThread] Heartbeat #{heartbeat_count} sent for job {self.job_id}")
+                else:
+                    print(f"[HeartbeatThread] Heartbeat #{heartbeat_count} failed for job {self.job_id}")
+            except Exception as e:
+                print(f"[HeartbeatThread] Error sending heartbeat for job {self.job_id}: {e}")
+
+        print(f"[HeartbeatThread] Stopped for job {self.job_id} (sent {heartbeat_count} heartbeats)")
+
+    def stop(self):
+        """Signal the thread to stop gracefully."""
+        self.running = False
+        self._stop_event.set()
 
 
 def assign_speakers_to_segments(transcription_segments: list, speaker_segments: list) -> list:
@@ -105,7 +166,7 @@ class BackgroundWorker:
 
     def __init__(self):
         self.running = False
-        self._heartbeat_tasks = {}  # job_id -> asyncio.Task
+        self._heartbeat_threads = {}  # job_id -> HeartbeatThread
 
     async def process_job(self, job_id: str) -> bool:
         """
@@ -114,7 +175,7 @@ class BackgroundWorker:
         Workflow:
         1. Get job and verify pending status
         2. Mark as processing
-        3. Start heartbeat task
+        3. Start heartbeat thread (independent of asyncio event loop)
         4. Download from GCS (10% progress)
         5. Extract audio (30% progress)
         6. Transcribe (50% progress)
@@ -123,7 +184,7 @@ class BackgroundWorker:
         9. Calculate video hash
         10. Mark completed
         11. On error: mark failed with user-friendly message
-        12. Finally: cancel heartbeat, cleanup temp files
+        12. Finally: stop heartbeat thread, cleanup temp files
 
         Args:
             job_id: Job ID to process
@@ -133,7 +194,7 @@ class BackgroundWorker:
         """
         temp_files = []
         temp_dirs = []
-        heartbeat_task = None
+        heartbeat_thread = None
 
         try:
             # Get job
@@ -150,9 +211,11 @@ class BackgroundWorker:
             # Mark as processing
             JobQueueService.mark_processing(job_id)
 
-            # Start heartbeat task
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(job_id))
-            self._heartbeat_tasks[job_id] = heartbeat_task
+            # Start heartbeat thread (runs independently of asyncio event loop)
+            # This ensures heartbeats continue even when event loop is blocked by heavy processing
+            heartbeat_thread = HeartbeatThread(job_id)
+            heartbeat_thread.start()
+            self._heartbeat_threads[job_id] = heartbeat_thread
 
             # Extract job parameters
             filename = job["filename"]
@@ -490,16 +553,27 @@ class BackgroundWorker:
                     print(f"[Worker] Detecting timeline gaps and creating silent segments...")
                     log_all_memory("Worker:BeforeSilentSegments")
 
-                    # Run in executor to avoid blocking event loop
-                    formatted_segments = await _run_in_executor(
-                        create_silent_segments_for_gaps,
-                        segments=formatted_segments,
-                        video_path=None,
-                        video_hash=video_hash,
-                        min_gap_duration=2.0,
-                        silent_chunk_duration=10.0,
-                        source_url=read_url  # Use GCS URL for streaming screenshot extraction
-                    )
+                    # Run in executor with asyncio timeout wrapper (360s = 6 minutes)
+                    # The function itself has a 300s internal timeout, this is a safety net
+                    try:
+                        formatted_segments = await asyncio.wait_for(
+                            _run_in_executor(
+                                create_silent_segments_for_gaps,
+                                segments=formatted_segments,
+                                video_path=None,
+                                video_hash=video_hash,
+                                min_gap_duration=2.0,
+                                silent_chunk_duration=10.0,
+                                source_url=read_url,  # Use GCS URL for streaming screenshot extraction
+                                max_screenshots=50,  # Limit screenshots for long videos
+                                timeout_seconds=300  # 5-minute internal timeout
+                            ),
+                            timeout=360  # 6-minute asyncio timeout (safety net)
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"[Worker] Silent segment processing timed out after 360s (asyncio timeout)")
+                        print(f"[Worker] Continuing with existing {len(formatted_segments)} segments")
+                        # formatted_segments already contains speech segments, continue without silent segments
 
                     log_all_memory("Worker:AfterSilentSegments")
 
@@ -679,16 +753,15 @@ class BackgroundWorker:
             return False
 
         finally:
-            # Cancel heartbeat task
-            if heartbeat_task and not heartbeat_task.done():
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
+            # Stop heartbeat thread gracefully
+            if heartbeat_thread is not None:
+                heartbeat_thread.stop()
+                heartbeat_thread.join(timeout=5)  # Wait up to 5 seconds for thread to stop
+                if heartbeat_thread.is_alive():
+                    print(f"[Worker] Warning: Heartbeat thread for job {job_id} did not stop gracefully")
 
-            if job_id in self._heartbeat_tasks:
-                del self._heartbeat_tasks[job_id]
+            if job_id in self._heartbeat_threads:
+                del self._heartbeat_threads[job_id]
 
             # Cleanup temp files
             for temp_file in temp_files:
@@ -707,25 +780,6 @@ class BackgroundWorker:
                         print(f"[Worker] Cleaned up temp directory: {temp_dir}")
                 except Exception as e:
                     print(f"[Worker] Failed to cleanup temp directory {temp_dir}: {e}")
-
-    async def _heartbeat_loop(self, job_id: str):
-        """
-        Update heartbeat every 30 seconds to indicate the job is still processing.
-
-        Args:
-            job_id: Job ID
-        """
-        try:
-            while True:
-                await asyncio.sleep(HEARTBEAT_INTERVAL)
-                success = JobQueueService.update_heartbeat(job_id)
-                if success:
-                    print(f"[Worker] Heartbeat sent for job {job_id}")
-                else:
-                    print(f"[Worker] Failed to send heartbeat for job {job_id}")
-        except asyncio.CancelledError:
-            print(f"[Worker] Heartbeat loop cancelled for job {job_id}")
-            raise
 
     def _generate_vtt(self, segments: list, use_translation: bool = False) -> str:
         """
