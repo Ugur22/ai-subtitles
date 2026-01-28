@@ -68,8 +68,40 @@ static/screenshots/
 transcriptions.db
 backend/transcriptions.db
 
-# .claude files
+# AI/Agent tool configs
 .claude/
+.agent/
+.agents/
+.cline/
+.codebuddy/
+.codex/
+.commandcode/
+.continue/
+.crush/
+.cursor/
+.factory/
+.gemini/
+.goose/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.opencode/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.windsurf/
+.zencoder/
+skills/
+
+# Claude project files
 CLAUDE.md
 
 # Vector database (ChromaDB)
