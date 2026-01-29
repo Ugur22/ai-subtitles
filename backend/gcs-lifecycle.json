@@ -2,11 +2,24 @@
   "rule": [
     {
       "action": {"type": "Delete"},
-      "condition": {"age": 1, "matchesPrefix": ["uploads/"]}
+      "condition": {
+        "age": 1,
+        "matchesPrefix": ["uploads/"]
+      }
     },
     {
       "action": {"type": "Delete"},
-      "condition": {"age": 7, "matchesPrefix": ["processed/"]}
+      "condition": {
+        "age": 7,
+        "matchesPrefix": ["processed/"]
+      }
+    },
+    {
+      "action": {"type": "Delete"},
+      "condition": {
+        "age": 14,
+        "matchesPrefix": ["screenshots/"]
+      }
     }
   ]
 }
