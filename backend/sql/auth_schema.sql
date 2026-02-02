@@ -36,7 +36,7 @@ BEGIN
   WHERE name = secret_name_input
   LIMIT 1;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 GRANT EXECUTE ON FUNCTION get_vault_secret(TEXT) TO service_role;
 
@@ -303,11 +303,6 @@ CREATE POLICY usage_logs_own_read ON usage_logs
   FOR SELECT
   USING (auth.uid() = user_id);
 
--- Usage logs: backend service can insert logs
-CREATE POLICY usage_logs_insert ON usage_logs
-  FOR INSERT
-  WITH CHECK (TRUE); -- Allow inserts from service role
-
 -- Usage logs: admins can read all logs
 CREATE POLICY usage_logs_admin_read ON usage_logs
   FOR SELECT
@@ -323,28 +318,10 @@ CREATE POLICY rate_limits_own_read ON rate_limits
   FOR SELECT
   USING (auth.uid() = user_id);
 
--- Rate limits: backend service can manage limits
-CREATE POLICY rate_limits_service ON rate_limits
-  FOR ALL
-  USING (TRUE)
-  WITH CHECK (TRUE); -- Allow service role to manage rate limits
-
 -- Email verifications: users can read their own codes
 CREATE POLICY email_verifications_own ON email_verifications
   FOR SELECT
   USING (auth.uid() = user_id);
-
--- Email verifications: backend service can insert/delete codes
-CREATE POLICY email_verifications_service ON email_verifications
-  FOR ALL
-  USING (TRUE)
-  WITH CHECK (TRUE); -- Allow service role to manage verification codes
-
--- Password resets: backend service manages all operations
-CREATE POLICY password_resets_service ON password_resets
-  FOR ALL
-  USING (TRUE)
-  WITH CHECK (TRUE); -- Allow service role to manage reset codes
 
 -- Jobs table RLS (if it exists)
 DO $$
@@ -384,7 +361,7 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 -- Apply trigger to tables with updated_at column
 CREATE TRIGGER update_user_profiles_updated_at
@@ -413,7 +390,7 @@ BEGIN
   DELETE FROM email_verifications WHERE expires_at < NOW();
   DELETE FROM password_resets WHERE expires_at < NOW() OR used = TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 COMMENT ON FUNCTION cleanup_expired_codes IS 'Removes expired email verification and password reset codes';
 
@@ -426,7 +403,7 @@ BEGIN
     WHERE code = code_input AND used_by IS NULL
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 COMMENT ON FUNCTION is_invite_code_valid IS 'Checks if an invite code is valid (exists and unused)';
 
@@ -440,7 +417,7 @@ BEGIN
 
   RETURN FOUND;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 COMMENT ON FUNCTION use_invite_code IS 'Marks an invite code as used by a specific user';
 
