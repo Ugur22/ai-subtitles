@@ -69,6 +69,44 @@ backend/transcriptions.db
 # .claude directory
 .claude/
 
+# AI agent/IDE tool directories
+.agent/
+.agents/
+.cline/
+.codebuddy/
+.codex/
+.commandcode/
+.continue/
+.crush/
+.cursor/
+.factory/
+.gemini/
+.github/
+.goose/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.opencode/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.windsurf/
+.zencoder/
+
+# Skills
+skills/
+
+# Bugfix plans
+BUGFIX-PLAN.md
+
 # claude md
 *claude.md
 
