@@ -6,10 +6,12 @@ Supports multiple LLM providers: Ollama (local), Groq, OpenAI, Anthropic, Grok (
 import os
 import httpx
 import base64
+import io
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
 from pathlib import Path
+from PIL import Image
 
 load_dotenv()
 
@@ -17,9 +19,28 @@ load_dotenv()
 BACKEND_DIR = Path(__file__).parent.absolute()
 
 
+def _compress_image(image_bytes: bytes, max_dimension: int = 1024, quality: int = 85) -> bytes:
+    """Resize and compress an image to reduce payload size for vision APIs."""
+    img = Image.open(io.BytesIO(image_bytes))
+
+    # Convert RGBA/palette to RGB for JPEG output
+    if img.mode in ('RGBA', 'LA', 'P'):
+        img = img.convert('RGB')
+
+    # Resize if larger than max_dimension
+    w, h = img.size
+    if max(w, h) > max_dimension:
+        scale = max_dimension / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
+
+
 def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
     """
-    Load an image from a URL or local path and return as base64.
+    Load an image from a URL or local path, compress it, and return as base64.
 
     Args:
         img_path: URL (http/https) or local file path
@@ -36,22 +57,6 @@ def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
                 response = client.get(img_path)
                 response.raise_for_status()
                 image_bytes = response.content
-
-                # Detect media type from content-type header or URL
-                content_type = response.headers.get('content-type', 'image/jpeg')
-                if 'jpeg' in content_type or 'jpg' in content_type:
-                    media_type = 'image/jpeg'
-                elif 'png' in content_type:
-                    media_type = 'image/png'
-                elif 'gif' in content_type:
-                    media_type = 'image/gif'
-                elif 'webp' in content_type:
-                    media_type = 'image/webp'
-                else:
-                    media_type = 'image/jpeg'  # Default
-
-                encoded = base64.b64encode(image_bytes).decode('utf-8')
-                return (encoded, media_type)
         else:
             # Local file path
             if img_path.startswith('./') or img_path.startswith('static/'):
@@ -68,21 +73,10 @@ def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
             with open(abs_path, "rb") as image_file:
                 image_bytes = image_file.read()
 
-            # Detect media type from extension
-            ext = str(abs_path).lower().split('.')[-1]
-            if ext in ['jpeg', 'jpg']:
-                media_type = 'image/jpeg'
-            elif ext == 'png':
-                media_type = 'image/png'
-            elif ext == 'gif':
-                media_type = 'image/gif'
-            elif ext == 'webp':
-                media_type = 'image/webp'
-            else:
-                media_type = 'image/jpeg'  # Default
-
-            encoded = base64.b64encode(image_bytes).decode('utf-8')
-            return (encoded, media_type)
+        # Compress and resize to reduce payload
+        compressed = _compress_image(image_bytes)
+        encoded = base64.b64encode(compressed).decode('utf-8')
+        return (encoded, 'image/jpeg')
 
     except Exception as e:
         print(f"Warning: Failed to load image {img_path}: {str(e)}")
@@ -612,6 +606,10 @@ class GrokProvider(BaseLLMProvider):
                 else:
                     formatted_messages.append(msg)
 
+            # Use non-reasoning model for vision (reasoning adds unnecessary latency for image analysis)
+            vision_model = self.model.replace("-reasoning", "-non-reasoning") if "reasoning" in self.model.lower() else self.model
+            print(f"Using vision model: {vision_model} (base model: {self.model})")
+
             async with httpx.AsyncClient(timeout=240.0) as client:  # Longer timeout for vision requests with multiple images
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
@@ -620,7 +618,7 @@ class GrokProvider(BaseLLMProvider):
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": self.model,
+                        "model": vision_model,
                         "messages": formatted_messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens
