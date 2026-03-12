@@ -620,7 +620,7 @@ class GrokProvider(BaseLLMProvider):
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": self.model if "vision" in self.model.lower() else "grok-2-vision-1212",
+                        "model": self.model,
                         "messages": formatted_messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens
