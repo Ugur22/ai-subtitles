@@ -487,6 +487,16 @@ class BackgroundWorker:
                     print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
                     log_all_memory("Worker:BeforeScreenshotExtraction")
 
+                    # Progress callback to update job progress during extraction (76% -> 78%)
+                    def screenshot_progress(completed: int, total: int):
+                        progress = 76 + int((completed / total) * 2) if total > 0 else 76
+                        JobQueueService.update_progress(
+                            job_id,
+                            progress,
+                            "extracting",
+                            f"Extracting screenshots... {completed}/{total}"
+                        )
+
                     # Extract screenshots from GCS URL (streaming, no full download)
                     # Run in executor to avoid blocking event loop
                     screenshot_results = await _run_in_executor(
@@ -495,7 +505,8 @@ class BackgroundWorker:
                         timestamps=timestamps,
                         output_dir=screenshots_dir,
                         video_hash=video_hash,
-                        max_workers=4
+                        max_workers=4,
+                        progress_callback=screenshot_progress
                     )
 
                     log_all_memory("Worker:AfterScreenshotExtraction")

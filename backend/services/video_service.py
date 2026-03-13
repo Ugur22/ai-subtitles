@@ -5,7 +5,7 @@ import os
 import subprocess
 import traceback
 import concurrent.futures
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 class VideoService:
@@ -118,7 +118,8 @@ class VideoService:
         timestamps: List[float],
         output_dir: str,
         video_hash: str,
-        max_workers: int = 4
+        max_workers: int = 4,
+        progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> Dict[float, Optional[str]]:
         """
         Extract multiple screenshots in parallel from a video URL.
@@ -134,12 +135,18 @@ class VideoService:
             output_dir: Directory where screenshots will be saved
             video_hash: Video identifier for filenames
             max_workers: Maximum parallel FFmpeg processes (default 4)
+            progress_callback: Optional callback(completed, total) for progress updates
 
         Returns:
             Dict mapping timestamp -> screenshot_path (or None if failed)
         """
+        import time
+        start_time = time.monotonic()
+
         os.makedirs(output_dir, exist_ok=True)
         results: Dict[float, Optional[str]] = {}
+        total = len(timestamps)
+        completed = 0
 
         def extract_single(ts: float) -> Tuple[float, Optional[str]]:
             output_path = os.path.join(output_dir, f"{video_hash}_{ts:.2f}.jpg")
@@ -161,8 +168,15 @@ class VideoService:
                     print(f"Failed to extract screenshot at {ts}: {e}")
                     results[ts] = None
 
+                completed += 1
+                if completed % 25 == 0 or completed == total:
+                    print(f"[URL Screenshots] Progress: {completed}/{total} extracted...", flush=True)
+                    if progress_callback:
+                        progress_callback(completed, total)
+
+        elapsed = time.monotonic() - start_time
         success_count = sum(1 for v in results.values() if v is not None)
-        print(f"[URL Screenshots] Extracted {success_count}/{len(timestamps)} screenshots", flush=True)
+        print(f"[URL Screenshots] Extracted {success_count}/{total} screenshots in {elapsed:.1f}s", flush=True)
 
         return results
 

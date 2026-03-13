@@ -2,6 +2,7 @@
 Translation service using MarianMT models with optimized batch processing
 """
 from typing import List, Dict, Tuple, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from transformers import MarianMTModel, MarianTokenizer
 
 
@@ -132,13 +133,19 @@ class TranslationService:
                     max_length=512
                 )
 
-                # Generate translations for entire batch at once
-                translated_ids = model.generate(
-                    **inputs,
-                    max_length=512,
-                    num_beams=4,
-                    early_stopping=True
-                )
+                print(f"[Translation] Batch {batch_num}/{total_batches}: generating translations for {len(texts_to_translate)} segments...")
+
+                # Run model.generate() with a 60s timeout to prevent hanging
+                BATCH_TIMEOUT = 60
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        model.generate,
+                        **inputs,
+                        max_length=512,
+                        num_beams=2,
+                        early_stopping=True
+                    )
+                    translated_ids = future.result(timeout=BATCH_TIMEOUT)
 
                 # Decode all translations
                 translations = tokenizer.batch_decode(translated_ids, skip_special_tokens=True)
@@ -156,20 +163,20 @@ class TranslationService:
                 if progress_callback:
                     progress_callback(translated_count, total_segments)
 
-            except Exception as e:
-                print(f"[Translation] Error in batch {batch_num}: {str(e)}")
-                # Fall back to individual translation for this batch
-                for idx in segment_indices:
-                    text = batch[idx].get('text', '').strip()
-                    try:
-                        inputs = tokenizer(text, return_tensors="pt", padding=True)
-                        translated = model.generate(**inputs)
-                        translation = tokenizer.decode(translated[0], skip_special_tokens=True)
-                        batch[idx]['translation'] = translation.strip()
-                    except Exception as inner_e:
-                        print(f"[Translation] Fallback failed for segment: {inner_e}")
-                        batch[idx]['translation'] = None
+            except TimeoutError:
+                print(f"[Translation] Batch {batch_num}/{total_batches} timed out after {BATCH_TIMEOUT}s, falling back to individual segments")
+                cls._translate_segments_individually(
+                    batch, segment_indices, tokenizer, model
+                )
+                translated_count += len(batch)
+                if progress_callback:
+                    progress_callback(translated_count, total_segments)
 
+            except Exception as e:
+                print(f"[Translation] Error in batch {batch_num}: {str(e)}, falling back to individual segments")
+                cls._translate_segments_individually(
+                    batch, segment_indices, tokenizer, model
+                )
                 translated_count += len(batch)
                 if progress_callback:
                     progress_callback(translated_count, total_segments)
@@ -181,3 +188,34 @@ class TranslationService:
 
         print(f"[Translation] Completed: {translated_count}/{total_segments} segments translated")
         return segments
+
+    @classmethod
+    def _translate_segments_individually(
+        cls,
+        batch: List[Dict],
+        segment_indices: List[int],
+        tokenizer: MarianTokenizer,
+        model: MarianMTModel,
+    ) -> None:
+        """Translate segments one-by-one with a per-segment timeout. Used as fallback when batch translation fails or times out."""
+        SEGMENT_TIMEOUT = 30
+        for idx in segment_indices:
+            text = batch[idx].get('text', '').strip()
+            try:
+                inputs = tokenizer(text, return_tensors="pt", padding=True)
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        model.generate,
+                        **inputs,
+                        num_beams=4,
+                        early_stopping=True,
+                    )
+                    translated = future.result(timeout=SEGMENT_TIMEOUT)
+                translation = tokenizer.decode(translated[0], skip_special_tokens=True)
+                batch[idx]['translation'] = translation.strip()
+            except TimeoutError:
+                print(f"[Translation] Segment timed out after {SEGMENT_TIMEOUT}s, skipping: {text[:80]}...")
+                batch[idx]['translation'] = None
+            except Exception as inner_e:
+                print(f"[Translation] Fallback failed for segment: {inner_e}")
+                batch[idx]['translation'] = None
