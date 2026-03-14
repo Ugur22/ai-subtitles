@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import traceback
 import threading
+import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
@@ -100,6 +101,12 @@ class HeartbeatThread(threading.Thread):
                     print(f"[HeartbeatThread] Heartbeat #{heartbeat_count} failed for job {self.job_id}")
             except Exception as e:
                 print(f"[HeartbeatThread] Error sending heartbeat for job {self.job_id}: {e}")
+
+            # Self-ping to generate inbound HTTP traffic so Cloud Run keeps the instance alive
+            try:
+                httpx.get('http://localhost:8000/', timeout=5)
+            except Exception:
+                pass
 
         print(f"[HeartbeatThread] Stopped for job {self.job_id} (sent {heartbeat_count} heartbeats)")
 
@@ -238,13 +245,20 @@ class BackgroundWorker:
             if not gcs_service.file_exists(gcs_path):
                 raise Exception("Video file not found in cloud storage")
 
-            # Generate signed URL for streaming
+            # Generate signed URL for screenshot extraction later
             read_url = gcs_service.generate_download_signed_url(gcs_path)
             print(f"[Worker] Generated read URL for streaming: {gcs_path}")
 
-            JobQueueService.update_progress(job_id, 10, "downloading", "Download verified")
+            # Download video to local temp file for reliable FFmpeg extraction
+            temp_video_path = await _run_in_executor(
+                gcs_service.download_to_temp, gcs_path
+            )
+            temp_files.append(temp_video_path)
+            print(f"[Worker] Downloaded video to {temp_video_path}")
 
-            # Step 2: Extract audio via streaming (10-30%)
+            JobQueueService.update_progress(job_id, 10, "downloading", "Download complete")
+
+            # Step 2: Extract audio from local file (10-30%)
             JobQueueService.update_progress(job_id, 15, "extracting", "Extracting audio from video...")
 
             # Create temp directory for audio chunks
@@ -256,12 +270,18 @@ class BackgroundWorker:
                 # Run in executor to avoid blocking event loop
                 audio_chunks = await _run_in_executor(
                     AudioService.extract_audio_streaming,
-                    source_url=read_url,
+                    source_url=temp_video_path,  # Local path instead of URL
                     output_dir=temp_dir,
                     segment_duration=300  # 5-minute segments
                 )
                 temp_files.extend(audio_chunks)
                 print(f"[Worker] Extracted {len(audio_chunks)} audio chunks")
+
+                # Delete video immediately to free disk space
+                if os.path.exists(temp_video_path):
+                    os.unlink(temp_video_path)
+                    temp_files.remove(temp_video_path)
+                    print(f"[Worker] Deleted temp video to free disk space")
             except Exception as e:
                 raise Exception(f"Failed to extract audio: {str(e)}")
 
