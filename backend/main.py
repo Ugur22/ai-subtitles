@@ -109,7 +109,7 @@ async def startup_event():
     if app_settings.ENABLE_GCS_UPLOADS:
         try:
             from services.gcs_service import gcs_service
-            deleted = gcs_service.cleanup_old_uploads(max_age_hours=24)
+            deleted = gcs_service.cleanup_old_uploads(max_age_hours=168)
             print(f"- GCS uploads enabled (bucket: {app_settings.GCS_BUCKET_NAME})")
             if deleted > 0:
                 print(f"- Cleaned up {deleted} old GCS uploads")
