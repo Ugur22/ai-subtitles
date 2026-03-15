@@ -167,6 +167,67 @@ class JobQueueService:
         }
 
     @staticmethod
+    def get_jobs_for_user_or_tokens(user_id: str, tokens: List[str] = None, page: int = 1, per_page: int = 10) -> Dict:
+        """
+        Get jobs matching a user_id OR any of the provided access tokens.
+
+        Uses an OR filter so jobs are found regardless of whether user_id
+        was set correctly at creation time.
+
+        Args:
+            user_id: User ID to filter by
+            tokens: Optional list of access tokens
+            page: Page number (1-indexed)
+            per_page: Number of jobs per page
+
+        Returns:
+            Dict with 'jobs', 'total', 'page', 'per_page', 'total_pages'
+        """
+        client = supabase()
+        offset = (page - 1) * per_page
+
+        if tokens:
+            # Build OR filter: user_id match OR access_token in list
+            token_csv = ",".join(tokens)
+            or_filter = f"user_id.eq.{user_id},access_token.in.({token_csv})"
+
+            count_response = client.table("jobs").select("id", count="exact").or_(or_filter).execute()
+            total = count_response.count if hasattr(count_response, 'count') else 0
+
+            response = (
+                client.table("jobs")
+                .select("*")
+                .or_(or_filter)
+                .order("created_at", desc=True)
+                .range(offset, offset + per_page - 1)
+                .execute()
+            )
+        else:
+            # Fallback to user_id only when no tokens provided
+            count_response = client.table("jobs").select("id", count="exact").eq("user_id", user_id).execute()
+            total = count_response.count if hasattr(count_response, 'count') else 0
+
+            response = (
+                client.table("jobs")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at", desc=True)
+                .range(offset, offset + per_page - 1)
+                .execute()
+            )
+
+        jobs = response.data if response.data else []
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 0
+
+        return {
+            "jobs": jobs,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
     def get_jobs_for_user(user_id: str, page: int = 1, per_page: int = 10) -> Dict:
         """
         Get jobs belonging to a specific user with pagination.
