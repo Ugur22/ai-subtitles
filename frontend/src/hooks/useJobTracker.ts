@@ -33,19 +33,11 @@ export const useJobTracker = () => {
   const fetchJobs = useCallback(async () => {
     const storedJobs = getStoredJobs();
 
-    if (storedJobs.length === 0) {
-      setJobs([]);
-      setIsLoading(false);
-      setTotal(0);
-      setTotalPages(1);
-      return;
-    }
-
     try {
       setIsLoading(true);
       setIsOffline(false);
 
-      // Call the API with all stored tokens
+      // Call the API with stored tokens (backend also matches by user_id)
       const tokens = storedJobs.map(j => j.access_token);
       const response = await getJobs(tokens, page, JOBS_PER_PAGE);
 
