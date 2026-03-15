@@ -371,18 +371,22 @@ async def get_job_status(
 @require_auth
 async def list_jobs(
     request: Request,
+    tokens: Optional[str] = Query(None, description="Comma-separated access tokens"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=50, description="Items per page (max 50)")
 ):
     """
-    List jobs belonging to the authenticated user.
+    List jobs belonging to the authenticated user or matching provided access tokens.
 
-    Returns all jobs owned by the current user with pagination.
+    Returns jobs owned by the current user OR matching any of the provided
+    access tokens, with pagination. This ensures jobs are found regardless of
+    whether user_id was set correctly at creation time.
 
     **Authentication**: Requires authenticated user session.
 
     Args:
         request: FastAPI request with authenticated user
+        tokens: Optional comma-separated list of access tokens from localStorage
         page: Page number (1-indexed)
         per_page: Items per page (max 50)
 
@@ -395,10 +399,14 @@ async def list_jobs(
         # Get authenticated user ID
         user_id = request.state.user["id"]
 
-        # Get jobs for this user (run in executor to avoid blocking during GPU processing)
+        # Parse token list from comma-separated string
+        token_list = [t.strip() for t in tokens.split(",") if t.strip()] if tokens else []
+
+        # Get jobs matching user_id OR tokens (run in executor to avoid blocking during GPU processing)
         result = await _run_in_executor(
-            JobQueueService.get_jobs_for_user,
+            JobQueueService.get_jobs_for_user_or_tokens,
             user_id=user_id,
+            tokens=token_list,
             page=page,
             per_page=per_page
         )
