@@ -564,13 +564,14 @@ export const getJobs = async (
   page: number = 1,
   perPage: number = 10
 ): Promise<JobListResponse> => {
-  const response = await api.get<JobListResponse>('/api/jobs', {
-    params: {
-      tokens: tokens.join(','),
-      page,
-      per_page: perPage,
-    },
-  });
+  const params: Record<string, string | number> = {
+    page,
+    per_page: perPage,
+  };
+  if (tokens.length > 0) {
+    params.tokens = tokens.join(',');
+  }
+  const response = await api.get<JobListResponse>('/api/jobs', { params });
   return response.data;
 };
 
