@@ -438,12 +438,27 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                 result['overlap_score'] = overlap_score
                                 result['likely_speakers'] = overlapping_speakers
 
-                            # Sort by overlap score (highest first)
-                            image_results.sort(key=lambda x: x.get('overlap_score', 0), reverse=True)
+                            # Hybrid ranking: combine CLIP visual relevance with temporal overlap
+                            # 80% weight on visual match, 20% on speaker temporal correlation
+                            for result in image_results:
+                                # Get CLIP similarity score (normalize to 0-1)
+                                clip_score = result.get('similarity', 0)
+                                if clip_score == 0 and 'distance' in result:
+                                    clip_score = max(0, 1 - result['distance'])
 
-                            print(f"Scored {len(image_results)} visual results by speaker timeline overlap")
+                                # Normalize overlap score (cap at 3 for normalization)
+                                max_overlap = 3
+                                normalized_overlap = min(result.get('overlap_score', 0), max_overlap) / max_overlap
+
+                                result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
+
+                            image_results.sort(key=lambda x: x.get('hybrid_score', 0), reverse=True)
+
+                            print(f"Scored {len(image_results)} visual results with hybrid ranking (80% CLIP + 20% temporal)")
                             for i, result in enumerate(image_results[:3]):  # Log top 3
-                                print(f"  Result {i+1}: overlap_score={result.get('overlap_score', 0)}, "
+                                print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
+                                      f"clip={result.get('similarity', 0):.3f}, "
+                                      f"overlap={result.get('overlap_score', 0)}, "
                                       f"speakers={result.get('likely_speakers', [])}")
 
                     if image_results:
