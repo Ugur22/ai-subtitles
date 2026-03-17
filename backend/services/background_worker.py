@@ -42,7 +42,7 @@ from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
-from routers.transcription import create_silent_segments_for_gaps
+from routers.transcription import create_silent_segments_for_gaps, extract_silent_segment_screenshots
 from speaker_diarization import ChunkedSpeakerDiarizer
 
 
@@ -584,59 +584,64 @@ class BackgroundWorker:
                     print(f"[Worker] Detecting timeline gaps and creating silent segments...")
                     log_all_memory("Worker:BeforeSilentSegments")
 
-                    # Run in executor with asyncio timeout wrapper (360s = 6 minutes)
-                    # The function itself has a 300s internal timeout, this is a safety net
-                    try:
-                        formatted_segments = await asyncio.wait_for(
-                            _run_in_executor(
-                                create_silent_segments_for_gaps,
-                                segments=formatted_segments,
-                                video_path=None,
-                                video_hash=video_hash,
-                                min_gap_duration=2.0,
-                                silent_chunk_duration=10.0,
-                                source_url=read_url,  # Use GCS URL for streaming screenshot extraction
-                                max_screenshots=50,  # Limit screenshots for long videos
-                                timeout_seconds=300  # 5-minute internal timeout
-                            ),
-                            timeout=360  # 6-minute asyncio timeout (safety net)
-                        )
-                    except asyncio.TimeoutError:
-                        print(f"[Worker] Silent segment processing timed out after 360s (asyncio timeout)")
-                        print(f"[Worker] Continuing with existing {len(formatted_segments)} segments")
-                        # formatted_segments already contains speech segments, continue without silent segments
+                    # Pure gap detection (no I/O) - fast, no timeout needed
+                    formatted_segments = create_silent_segments_for_gaps(
+                        segments=formatted_segments,
+                        min_gap_duration=2.0,
+                        silent_chunk_duration=10.0
+                    )
 
                     log_all_memory("Worker:AfterSilentSegments")
 
-                    # Upload silent segment screenshots to GCS
-                    silent_segments = [s for s in formatted_segments if s.get('is_silent')]
-                    if silent_segments and settings.ENABLE_GCS_UPLOADS:
-                        print(f"[Worker] Uploading {len(silent_segments)} silent segment screenshots to GCS...")
+                    # Extract silent segment screenshots in parallel (same pattern as speech screenshots)
+                    silent_segs = [s for s in formatted_segments if s.get('is_silent') and s.get('screenshot_timestamp')]
+                    if silent_segs:
+                        silent_timestamps = [s['screenshot_timestamp'] for s in silent_segs]
+                        print(f"[Worker] Extracting {len(silent_timestamps)} silent segment screenshots in parallel...")
+
+                        silent_screenshot_results = await _run_in_executor(
+                            VideoService.extract_screenshots_parallel_from_url,
+                            source_url=read_url,
+                            timestamps=silent_timestamps,
+                            output_dir=screenshots_dir,
+                            video_hash=video_hash,
+                            max_workers=4
+                        )
+
+                        # Upload to GCS and map URLs back to segments
                         silent_screenshot_count = 0
+                        if settings.ENABLE_GCS_UPLOADS:
+                            print(f"[Worker] Uploading {len(silent_screenshot_results)} silent screenshots to GCS...")
 
-                        for seg in silent_segments:
-                            screenshot_url = seg.get('screenshot_url', '')
-                            # Check if it's a local path that needs GCS upload
-                            if screenshot_url and screenshot_url.startswith('/static/screenshots/'):
-                                local_filename = screenshot_url.replace('/static/screenshots/', '')
-                                local_path = os.path.join('static', 'screenshots', local_filename)
+                            gcs_urls = gcs_service.upload_screenshots_batch(
+                                screenshot_paths=silent_screenshot_results,
+                                video_hash=video_hash
+                            )
 
-                                if os.path.exists(local_path):
+                            for seg in silent_segs:
+                                ts = seg['screenshot_timestamp']
+                                gcs_url = gcs_urls.get(ts)
+                                if gcs_url:
+                                    seg['screenshot_url'] = gcs_url
+                                    silent_screenshot_count += 1
+
+                            # Clean up local silent screenshots after upload
+                            for local_path in silent_screenshot_results.values():
+                                if local_path and os.path.exists(local_path):
                                     try:
-                                        gcs_url = gcs_service.upload_screenshot(
-                                            local_path=local_path,
-                                            video_hash=video_hash,
-                                            timestamp=seg['start']
-                                        )
-                                        seg['screenshot_url'] = gcs_url
-                                        silent_screenshot_count += 1
-
-                                        # Clean up local file after upload
                                         os.unlink(local_path)
-                                    except Exception as e:
-                                        print(f"[Worker] Failed to upload silent screenshot at {seg['start']:.2f}s: {e}")
+                                    except Exception:
+                                        pass
+                        else:
+                            # Use local URLs (development mode)
+                            for seg in silent_segs:
+                                ts = seg['screenshot_timestamp']
+                                path = silent_screenshot_results.get(ts)
+                                if path and os.path.exists(path):
+                                    seg['screenshot_url'] = f"/static/screenshots/{os.path.basename(path)}"
+                                    silent_screenshot_count += 1
 
-                        print(f"[Worker] Uploaded {silent_screenshot_count}/{len(silent_segments)} silent screenshots to GCS")
+                        print(f"[Worker] Extracted {silent_screenshot_count}/{len(silent_segs)} silent screenshots")
                         log_all_memory("Worker:AfterSilentGCSUpload")
                         screenshot_count += silent_screenshot_count
 
