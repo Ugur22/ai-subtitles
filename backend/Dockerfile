@@ -25,6 +25,8 @@ RUN apt-get update && \
     python3-venv \
     python3-pip \
     ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     build-essential \
     wget \
     git \

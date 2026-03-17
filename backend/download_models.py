@@ -265,6 +265,32 @@ def download_translation_models():
             # Continue with other languages even if one fails
 
 
+def download_insightface_model():
+    """Download InsightFace buffalo_l model for face detection and embedding."""
+    print("="*50)
+    print("Downloading InsightFace buffalo_l model...")
+    print("="*50)
+
+    try:
+        import insightface
+        from insightface.app import FaceAnalysis
+
+        print("Initializing FaceAnalysis with buffalo_l...")
+        app = FaceAnalysis(
+            name='buffalo_l',
+            providers=['CPUExecutionProvider']
+        )
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+        print("  OK: InsightFace buffalo_l model downloaded and verified")
+        del app
+
+    except Exception as e:
+        print(f"  WARNING: InsightFace model download failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print("  Face tagging will be unavailable if model fails to load at runtime")
+
+
 def main():
     # Download Whisper model first (critical)
     download_whisper_model()
@@ -286,6 +312,9 @@ def main():
 
     # Download translation models
     download_translation_models()
+
+    # Download InsightFace buffalo_l model (face detection + embedding)
+    download_insightface_model()
 
     print("="*50)
     print("All model downloads complete!")

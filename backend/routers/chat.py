@@ -438,8 +438,62 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                 result['overlap_score'] = overlap_score
                                 result['likely_speakers'] = overlapping_speakers
 
-                            # Hybrid ranking: combine CLIP visual relevance with temporal overlap
-                            # 80% weight on visual match, 20% on speaker temporal correlation
+                            # Check if any mentioned speaker has face tags
+                            face_tags_available = False
+                            speaker_face_embeddings = {}  # speaker_name -> average embedding
+                            try:
+                                from services.supabase_service import supabase as get_supabase
+                                face_client = get_supabase()
+                                for name in speaker_names:
+                                    face_result = face_client.table("face_tags").select(
+                                        "embedding"
+                                    ).eq("video_hash", video_hash).eq(
+                                        "speaker_name", name
+                                    ).execute()
+                                    if face_result.data:
+                                        import numpy as np
+                                        embeddings = [row["embedding"] for row in face_result.data]
+                                        avg_emb = np.mean(embeddings, axis=0)
+                                        avg_emb = avg_emb / np.linalg.norm(avg_emb)  # L2 normalize
+                                        speaker_face_embeddings[name] = avg_emb.tolist()
+                                        face_tags_available = True
+                                        print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
+                            except Exception as e:
+                                print(f"  Face tags lookup failed (non-critical): {e}")
+
+                            # If face tags available, compute face scores for each result
+                            if face_tags_available:
+                                print("Computing face scores for visual results...")
+                                try:
+                                    from services.face_service import face_service
+                                    for result in image_results:
+                                        screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
+                                        if not screenshot_url:
+                                            result['face_score'] = 0.0
+                                            continue
+
+                                        # Detect faces in this candidate screenshot
+                                        detected = await _run_in_executor(face_service.detect_faces, screenshot_url)
+                                        if not detected:
+                                            result['face_score'] = 0.0
+                                            continue
+
+                                        # Find max similarity between any detected face and any speaker reference
+                                        max_sim = 0.0
+                                        for det_face in detected:
+                                            for speaker, ref_emb in speaker_face_embeddings.items():
+                                                sim = face_service.compute_face_similarity(
+                                                    det_face['embedding'], ref_emb
+                                                )
+                                                max_sim = max(max_sim, sim)
+                                        result['face_score'] = max(0.0, max_sim)
+                                except Exception as e:
+                                    print(f"  Face scoring failed (falling back to no face): {e}")
+                                    face_tags_available = False
+
+                            # Hybrid ranking: combine CLIP, temporal, and optionally face scores
+                            # With face tags: 60% CLIP + 15% temporal + 25% face match
+                            # Without face tags: 80% CLIP + 20% temporal (original)
                             for result in image_results:
                                 # Get CLIP similarity score (normalize to 0-1)
                                 clip_score = result.get('similarity', 0)
@@ -450,15 +504,21 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                 max_overlap = 3
                                 normalized_overlap = min(result.get('overlap_score', 0), max_overlap) / max_overlap
 
-                                result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
+                                if face_tags_available:
+                                    face_score = result.get('face_score', 0.0)
+                                    result['hybrid_score'] = 0.6 * clip_score + 0.15 * normalized_overlap + 0.25 * face_score
+                                else:
+                                    result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
 
                             image_results.sort(key=lambda x: x.get('hybrid_score', 0), reverse=True)
 
-                            print(f"Scored {len(image_results)} visual results with hybrid ranking (80% CLIP + 20% temporal)")
+                            ranking_mode = "60% CLIP + 15% temporal + 25% face" if face_tags_available else "80% CLIP + 20% temporal"
+                            print(f"Scored {len(image_results)} visual results with hybrid ranking ({ranking_mode})")
                             for i, result in enumerate(image_results[:3]):  # Log top 3
+                                face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
                                 print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
                                       f"clip={result.get('similarity', 0):.3f}, "
-                                      f"overlap={result.get('overlap_score', 0)}, "
+                                      f"overlap={result.get('overlap_score', 0)}{face_info}, "
                                       f"speakers={result.get('likely_speakers', [])}")
 
                     if image_results:

@@ -1,20 +1,27 @@
 /**
  * DraggableImageModal - Modal component for displaying enlarged images
- * that can be dragged around the screen for comparison with video
+ * that can be dragged around the screen for comparison with video.
+ * Supports face tagging when videoHash and speakers are provided.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSpring, animated } from "react-spring";
 import { animationConfig } from "../../utils/animations";
+import { detectFaces, DetectedFace, getFaceTagSpeakers } from "../../services/api";
+import { FaceTagOverlay } from "../features/face-tagging/FaceTagOverlay";
 
 interface DraggableImageModalProps {
   imageUrl: string;
   onClose: () => void;
+  videoHash?: string;
+  speakers?: string[];
 }
 
 export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
   imageUrl,
   onClose,
+  videoHash,
+  speakers = [],
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -22,6 +29,15 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
   const [isInitialized, setIsInitialized] = useState(false);
   const [isDimmed, setIsDimmed] = useState(true);
   const modalRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  // Face tagging state
+  const [isTagging, setIsTagging] = useState(false);
+  const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
+  const [detecting, setDetecting] = useState(false);
+  const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
+
+  const canTagFaces = !!videoHash && speakers.length > 0;
 
   // Center modal on mount
   useEffect(() => {
@@ -41,16 +57,36 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
     return () => clearTimeout(timer);
   }, [imageUrl]);
 
+  // Load face tag counts when modal opens
+  useEffect(() => {
+    if (videoHash) {
+      getFaceTagSpeakers(videoHash)
+        .then((data) => {
+          const counts: Record<string, number> = {};
+          data.speakers.forEach((s) => {
+            counts[s.speaker_name] = s.count;
+          });
+          setTagCounts(counts);
+        })
+        .catch(() => {});
+    }
+  }, [videoHash]);
+
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        if (isTagging) {
+          setIsTagging(false);
+          setDetectedFaces([]);
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, isTagging]);
 
   // Mouse event handlers
   const handleMouseDown = useCallback(
@@ -151,6 +187,44 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
     };
   }, [isDragging, handleTouchMove, handleTouchEnd]);
 
+  const handleTagFaces = async () => {
+    if (!videoHash) return;
+
+    if (isTagging) {
+      // Toggle off
+      setIsTagging(false);
+      setDetectedFaces([]);
+      return;
+    }
+
+    setDetecting(true);
+    setIsTagging(true);
+    try {
+      const result = await detectFaces(videoHash, imageUrl);
+      setDetectedFaces(result.faces);
+    } catch (error) {
+      console.error("Face detection failed:", error);
+      setDetectedFaces([]);
+    } finally {
+      setDetecting(false);
+    }
+  };
+
+  const handleTagSaved = () => {
+    // Refresh tag counts
+    if (videoHash) {
+      getFaceTagSpeakers(videoHash)
+        .then((data) => {
+          const counts: Record<string, number> = {};
+          data.speakers.forEach((s) => {
+            counts[s.speaker_name] = s.count;
+          });
+          setTagCounts(counts);
+        })
+        .catch(() => {});
+    }
+  };
+
   // Backdrop animation (less opaque to see video behind)
   const backdropAnimation = useSpring({
     opacity: 1,
@@ -167,6 +241,8 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
     immediate: isDragging,
     config: animationConfig.smooth,
   });
+
+  const totalTags = Object.values(tagCounts).reduce((a, b) => a + b, 0);
 
   return (
     <animated.div
@@ -213,6 +289,42 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Tag Faces Button */}
+            {canTagFaces && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleTagFaces();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                disabled={detecting}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  isTagging
+                    ? "bg-indigo-100 text-indigo-700 border-2 border-indigo-300"
+                    : "bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200"
+                } disabled:opacity-50`}
+                aria-label={isTagging ? "Stop tagging faces" : "Tag faces"}
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+                <span className="hidden sm:inline">
+                  {detecting ? "Detecting..." : isTagging ? "Done" : "Tag Faces"}
+                </span>
+              </button>
+            )}
+
             {/* Dimming Toggle */}
             <button
               onClick={(e) => {
@@ -290,14 +402,39 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
           </div>
         </div>
 
+        {/* Face tag status bar */}
+        {canTagFaces && totalTags > 0 && (
+          <div className="px-4 py-1.5 bg-indigo-50 border-b border-indigo-100 text-xs text-indigo-600 flex items-center gap-3">
+            {Object.entries(tagCounts).map(([name, count]) => (
+              <span key={name} className="flex items-center gap-1">
+                <span className="font-medium">{name}:</span>
+                <span>{count} tag{count !== 1 ? "s" : ""}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Image Content */}
-        <div className="p-3">
+        <div className="p-3 relative">
           <img
+            ref={imageRef}
             src={imageUrl}
             alt="Enlarged screenshot"
             className="block max-w-[800px] max-h-[70vh] object-contain rounded-lg"
             draggable={false}
           />
+
+          {/* Face tag overlay */}
+          {isTagging && videoHash && (
+            <FaceTagOverlay
+              faces={detectedFaces}
+              imageRef={imageRef}
+              videoHash={videoHash}
+              screenshotUrl={imageUrl}
+              speakers={speakers}
+              onTagSaved={handleTagSaved}
+            />
+          )}
         </div>
       </animated.div>
     </animated.div>

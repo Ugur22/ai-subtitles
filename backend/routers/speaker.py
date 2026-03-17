@@ -422,6 +422,21 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             # Don't fail the whole operation if Supabase update fails
             print(f"[Speaker] Warning: Could not update Supabase jobs table: {e}")
 
+        # Also update face_tags speaker names
+        try:
+            from services.supabase_service import supabase
+            face_client = supabase()
+            face_update = face_client.table("face_tags").update(
+                {"speaker_name": new_speaker_name}
+            ).eq("video_hash", video_hash).eq(
+                "speaker_name", original_speaker
+            ).execute()
+            face_count = len(face_update.data) if face_update.data else 0
+            if face_count > 0:
+                print(f"[Speaker] Updated {face_count} face tags from '{original_speaker}' to '{new_speaker_name}'")
+        except Exception as e:
+            print(f"[Speaker] Warning: Could not update face_tags: {e}")
+
         # Update global cache if it matches
         global _last_transcription_data
         if _last_transcription_data and _last_transcription_data.get("video_hash") == video_hash:

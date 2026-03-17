@@ -1529,6 +1529,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           <DraggableImageModal
             imageUrl={modalImageUrl}
             onClose={() => setIsModalOpen(false)}
+            videoHash={transcription?.video_hash}
+            speakers={uniqueSpeakers}
           />
         )}
 
