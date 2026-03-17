@@ -868,6 +868,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setLoading(true);
 
     try {
+      // Build conversation history from previous messages (last 10)
+      const history = messages.slice(-10).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
       const response = await axios.post(`${API_BASE_URL}/api/chat/`, {
         question: textToSend,
         video_hash: videoHash,
@@ -876,6 +882,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         include_visuals: includeVisuals,
         n_images: includeVisuals ? 6 : undefined,
         custom_instructions: customInstructions || undefined,
+        conversation_history: history.length > 0 ? history : undefined,
       });
 
       const assistantMessage: Message = {

@@ -48,6 +48,11 @@ class ChatRequest(BaseModel):
     include_visuals: Optional[bool] = Field(False, description="Include visual analysis from video screenshots (requires vision-capable model)")
     n_images: Optional[int] = Field(6, description="Number of relevant images to include when include_visuals=True")
     custom_instructions: Optional[str] = Field(None, description="Custom instructions for how the AI should respond (e.g., 'respond in Spanish', 'be brief')")
+    conversation_history: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description="Previous conversation messages for multi-turn context. "
+                    "List of {role: 'user'|'assistant', content: string}"
+    )
 
     model_config = {
         "json_schema_extra": {
