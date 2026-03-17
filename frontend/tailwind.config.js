@@ -1,3 +1,5 @@
+import typography from '@tailwindcss/typography';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -27,11 +29,57 @@ export default {
         DEFAULT: {
           css: {
             color: '#1f2937',
+            '--tw-prose-headings': '#111827',
             a: {
               color: '#6d28d9',
               '&:hover': {
                 color: '#5b21b6',
               },
+            },
+            h2: {
+              fontSize: '1rem',
+              fontWeight: '700',
+              marginTop: '1.25em',
+              marginBottom: '0.5em',
+              paddingBottom: '0.375em',
+              borderBottom: '1px solid #e5e7eb',
+            },
+            h3: {
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              marginTop: '1em',
+              marginBottom: '0.375em',
+            },
+            p: {
+              marginTop: '0.5em',
+              marginBottom: '0.5em',
+            },
+            ul: {
+              marginTop: '0.375em',
+              marginBottom: '0.375em',
+            },
+            ol: {
+              marginTop: '0.375em',
+              marginBottom: '0.375em',
+            },
+            li: {
+              marginTop: '0.125em',
+              marginBottom: '0.125em',
+            },
+            blockquote: {
+              fontStyle: 'normal',
+              borderLeftColor: '#818cf8',
+              backgroundColor: '#eef2ff',
+              borderRadius: '0 0.375rem 0.375rem 0',
+              padding: '0.5em 1em',
+              marginTop: '0.75em',
+              marginBottom: '0.75em',
+            },
+            'blockquote p:first-of-type::before': {
+              content: 'none',
+            },
+            'blockquote p:last-of-type::after': {
+              content: 'none',
             },
           },
         },
@@ -61,5 +109,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [typography],
 } 
