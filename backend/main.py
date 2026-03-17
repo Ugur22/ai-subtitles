@@ -47,7 +47,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags
 
 # Import LLM and vector store modules (optional)
 try:
@@ -163,6 +163,7 @@ app.include_router(keys.router)      # API keys management
 app.include_router(admin.router)     # Admin panel
 app.include_router(settings.router)  # User settings
 app.include_router(diagnostics.router)
+app.include_router(face_tags.router)  # Face tagging for scene search
 
 
 # Health check endpoint

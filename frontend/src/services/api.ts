@@ -711,4 +711,67 @@ export const submitBackgroundJob = async (
   report('complete', 100, response.cached ? 'Found cached result!' : 'Job submitted successfully');
 
   return response;
-}; 
+};
+
+// ============================================================================
+// Face Tagging (for scene search boosting)
+// ============================================================================
+
+export interface FaceBbox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface DetectedFace {
+  bbox: FaceBbox;
+  confidence: number;
+}
+
+export interface FaceTagSpeaker {
+  speaker_name: string;
+  count: number;
+}
+
+export const detectFaces = async (
+  videoHash: string,
+  screenshotUrl: string
+): Promise<{ faces: DetectedFace[]; count: number }> => {
+  const response = await api.post(`/api/face-tags/${videoHash}/detect`, {
+    screenshot_url: screenshotUrl,
+  });
+  return response.data;
+};
+
+export const tagFace = async (
+  videoHash: string,
+  screenshotUrl: string,
+  speakerName: string,
+  bbox: FaceBbox
+): Promise<{ success: boolean; face_tag_id: string; speaker_name: string }> => {
+  const response = await api.post(`/api/face-tags/${videoHash}/tag`, {
+    screenshot_url: screenshotUrl,
+    speaker_name: speakerName,
+    bbox_x: bbox.x,
+    bbox_y: bbox.y,
+    bbox_w: bbox.w,
+    bbox_h: bbox.h,
+  });
+  return response.data;
+};
+
+export const getFaceTagSpeakers = async (
+  videoHash: string
+): Promise<{ speakers: FaceTagSpeaker[]; total: number }> => {
+  const response = await api.get(`/api/face-tags/${videoHash}/speakers`);
+  return response.data;
+};
+
+export const deleteFaceTag = async (
+  videoHash: string,
+  faceTagId: string
+): Promise<{ success: boolean }> => {
+  const response = await api.delete(`/api/face-tags/${videoHash}/${faceTagId}`);
+  return response.data;
+};

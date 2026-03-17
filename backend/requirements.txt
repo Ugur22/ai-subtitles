@@ -46,5 +46,9 @@ email-validator>=2.0.0
 # Encryption (for API key encryption)
 cryptography>=41.0.0
 
+# Face detection & embedding (InsightFace/ArcFace)
+insightface>=0.7.3
+onnxruntime-gpu>=1.16.0
+
 # Memory monitoring
 psutil>=5.9.0
