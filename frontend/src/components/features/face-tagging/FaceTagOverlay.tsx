@@ -7,10 +7,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   DetectedFace,
-  FaceBbox,
   tagFace,
-  getFaceTagSpeakers,
-  FaceTagSpeaker,
 } from "../../../services/api";
 
 interface FaceTagOverlayProps {
