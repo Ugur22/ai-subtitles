@@ -1,12 +1,213 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { Components } from "react-markdown";
 import { useTransition, animated } from "react-spring";
+import { Disclosure, DisclosureButton, DisclosurePanel } from "@headlessui/react";
 import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
+
+// Timestamp pattern: [HH:MM:SS] or [HH:MM:SS - HH:MM:SS]
+const TIMESTAMP_REGEX = /\[(\d{1,2}:\d{2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}:\d{2}))?\]/g;
+
+// Section icon map for h2 headings
+const SECTION_ICONS: Record<string, string> = {
+  "direct answer": "sparkles",
+  "key analysis": "magnifying-glass",
+  "analysis": "magnifying-glass",
+  "visual observations": "eye",
+  "visual": "eye",
+  "summary": "document-text",
+  "context": "information-circle",
+  "speaker": "user",
+  "timeline": "clock",
+  "audio": "speaker-wave",
+};
+
+function getSectionIcon(heading: string): React.ReactNode {
+  const lower = heading.toLowerCase();
+  for (const [key, icon] of Object.entries(SECTION_ICONS)) {
+    if (lower.includes(key)) {
+      const iconMap: Record<string, React.ReactNode> = {
+        "sparkles": (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+          </svg>
+        ),
+        "magnifying-glass": (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        ),
+        "eye": (
+          <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        ),
+        "document-text": (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        ),
+        "information-circle": (
+          <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+        "user": (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        ),
+        "clock": (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+        "speaker-wave": (
+          <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+        ),
+      };
+      return iconMap[icon] || null;
+    }
+  }
+  return null;
+}
+
+/** Render text with timestamp badges inline */
+function renderWithTimestamps(
+  text: string,
+  onTimestampClick?: (ts: string) => void
+): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(TIMESTAMP_REGEX.source, "g");
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const startTs = match[1];
+    const endTs = match[2];
+    const label = endTs ? `${startTs} - ${endTs}` : startTs;
+    parts.push(
+      <button
+        key={`ts-${match.index}`}
+        onClick={() => onTimestampClick?.(startTs)}
+        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 bg-indigo-100 text-indigo-700 text-xs font-mono font-semibold rounded-md hover:bg-indigo-200 transition-colors cursor-pointer align-baseline"
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        {label}
+      </button>
+    );
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
+/** Process children nodes to inject timestamp badges */
+function processChildren(
+  children: React.ReactNode,
+  onTimestampClick?: (ts: string) => void
+): React.ReactNode {
+  if (typeof children === "string") {
+    return renderWithTimestamps(children, onTimestampClick);
+  }
+  if (Array.isArray(children)) {
+    return children.map((child, i) => (
+      typeof child === "string"
+        ? <span key={i}>{renderWithTimestamps(child, onTimestampClick)}</span>
+        : child
+    ));
+  }
+  return children;
+}
+
+/** Split markdown content into sections by ## headings */
+function splitIntoSections(content: string): { heading: string; body: string }[] {
+  const lines = content.split("\n");
+  const sections: { heading: string; body: string }[] = [];
+  let currentHeading = "";
+  let currentBody: string[] = [];
+
+  for (const line of lines) {
+    const h2Match = line.match(/^## (.+)/);
+    if (h2Match) {
+      if (currentHeading || currentBody.length > 0) {
+        sections.push({ heading: currentHeading, body: currentBody.join("\n").trim() });
+      }
+      currentHeading = h2Match[1];
+      currentBody = [];
+    } else {
+      currentBody.push(line);
+    }
+  }
+  if (currentHeading || currentBody.length > 0) {
+    sections.push({ heading: currentHeading, body: currentBody.join("\n").trim() });
+  }
+  return sections;
+}
+
+/** Build custom ReactMarkdown renderers */
+function buildMarkdownComponents(
+  onTimestampClick?: (ts: string) => void
+): Components {
+  return {
+    h2({ children }) {
+      const text = typeof children === "string" ? children : String(children);
+      const icon = getSectionIcon(text);
+      return (
+        <h2 className="flex items-center gap-2 text-base font-bold text-gray-900 mt-5 mb-2 pb-1.5 border-b border-gray-200">
+          {icon}
+          <span>{children}</span>
+        </h2>
+      );
+    },
+    h3({ children }) {
+      return (
+        <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1">
+          {children}
+        </h3>
+      );
+    },
+    p({ children }) {
+      return (
+        <p className="text-sm text-gray-800 my-1.5 leading-relaxed">
+          {processChildren(children, onTimestampClick)}
+        </p>
+      );
+    },
+    li({ children }) {
+      return (
+        <li className="text-sm text-gray-800 leading-relaxed marker:text-indigo-400">
+          {processChildren(children, onTimestampClick)}
+        </li>
+      );
+    },
+    blockquote({ children }) {
+      return (
+        <blockquote className="border-l-3 border-indigo-400 bg-indigo-50/60 rounded-r-lg px-4 py-2 my-3 not-italic">
+          {children}
+        </blockquote>
+      );
+    },
+    strong({ children }) {
+      return <strong className="font-semibold text-gray-900">{children}</strong>;
+    },
+  };
+}
 
 interface Source {
   start_time: string;
@@ -238,6 +439,110 @@ const getCategoryTheme = (category: string) => {
         icon: 'text-amber-600',
       };
   }
+};
+
+/** Renders assistant message content with Direct Answer highlight and collapsible sections */
+const AssistantMessageContent: React.FC<{
+  content: string;
+  role: "user" | "assistant";
+  onTimestampClick?: (ts: string) => void;
+}> = ({ content, role, onTimestampClick }) => {
+  const components = useMemo(() => buildMarkdownComponents(onTimestampClick), [onTimestampClick]);
+
+  if (role === "user") {
+    return (
+      <div className="prose prose-sm prose-invert max-w-none">
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  const sections = useMemo(() => splitIntoSections(content), [content]);
+  const hasMultipleSections = sections.filter(s => s.heading).length >= 2;
+  const totalLength = content.length;
+  const shouldCollapse = hasMultipleSections && totalLength > 1500;
+
+  // Find Direct Answer section
+  const directAnswerIdx = sections.findIndex(
+    s => s.heading.toLowerCase().includes("direct answer")
+  );
+
+  return (
+    <div className="space-y-1">
+      {sections.map((section, idx) => {
+        const isDirectAnswer = idx === directAnswerIdx;
+        const isPreHeading = !section.heading; // content before any heading
+        const shouldStartCollapsed = shouldCollapse && !isDirectAnswer && !isPreHeading;
+
+        // Direct Answer gets a highlight card
+        if (isDirectAnswer) {
+          return (
+            <div key={idx} className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg px-4 py-3 my-2">
+              <div className="flex items-center gap-2 mb-1.5">
+                <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+                <span className="text-sm font-bold text-indigo-900">{section.heading}</span>
+              </div>
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown components={components}>{section.body}</ReactMarkdown>
+              </div>
+            </div>
+          );
+        }
+
+        // Content before any heading — render inline
+        if (isPreHeading) {
+          if (!section.body) return null;
+          return (
+            <div key={idx} className="prose prose-sm max-w-none">
+              <ReactMarkdown components={components}>{section.body}</ReactMarkdown>
+            </div>
+          );
+        }
+
+        // Collapsible section
+        if (shouldStartCollapsed) {
+          return (
+            <Disclosure key={idx} defaultOpen={false}>
+              {({ open }) => (
+                <div className="border-b border-gray-100 last:border-b-0">
+                  <DisclosureButton className="flex items-center gap-2 w-full text-left py-2 group">
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    {getSectionIcon(section.heading)}
+                    <span className="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
+                      {section.heading}
+                    </span>
+                  </DisclosureButton>
+                  <DisclosurePanel className="pb-2 pl-6">
+                    <div className="prose prose-sm max-w-none">
+                      <ReactMarkdown components={components}>{section.body}</ReactMarkdown>
+                    </div>
+                  </DisclosurePanel>
+                </div>
+              )}
+            </Disclosure>
+          );
+        }
+
+        // Regular section (not collapsible)
+        return (
+          <div key={idx} className="prose prose-sm max-w-none">
+            <ReactMarkdown components={components}>
+              {`## ${section.heading}\n\n${section.body}`}
+            </ReactMarkdown>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -716,15 +1021,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
 
             <div
-              className={`max-w-3xl px-4 py-3 rounded-lg ${
+              className={`max-w-3xl rounded-xl ${
                 message.role === "user"
-                  ? "bg-indigo-600 text-white"
-                  : "bg-gray-100 text-gray-900"
+                  ? "px-4 py-3 bg-indigo-600 text-white"
+                  : "px-5 py-4 bg-white border border-gray-200 shadow-sm text-gray-900"
               }`}
             >
-              <div className="prose prose-sm max-w-none prose-headings:font-bold prose-p:text-gray-800 prose-ul:text-gray-800 prose-li:text-gray-800">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
-              </div>
+              <AssistantMessageContent
+                content={message.content}
+                role={message.role}
+                onTimestampClick={onTimestampClick}
+              />
 
               {/* Sources */}
               {message.sources && message.sources.length > 0 && (
