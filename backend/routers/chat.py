@@ -452,7 +452,15 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                     ).execute()
                                     if face_result.data:
                                         import numpy as np
-                                        embeddings = [row["embedding"] for row in face_result.data]
+                                        import json
+                                        raw_embeddings = []
+                                        for row in face_result.data:
+                                            emb = row["embedding"]
+                                            # Supabase returns vector as string, parse it
+                                            if isinstance(emb, str):
+                                                emb = json.loads(emb)
+                                            raw_embeddings.append(emb)
+                                        embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
                                         avg_emb = np.mean(embeddings, axis=0)
                                         avg_emb = avg_emb / np.linalg.norm(avg_emb)  # L2 normalize
                                         speaker_face_embeddings[name] = avg_emb.tolist()
