@@ -525,7 +525,18 @@ async def regenerate_screenshots_for_video(request: Request, video_hash: str):
         video_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
 
         # Get timestamps for all segments
-        timestamps = [seg.get("start", 0) for seg in segments]
+        # Silent segments use screenshot_timestamp (midpoint) for better thumbnails
+        timestamps = []
+        for seg in segments:
+            if seg.get("is_silent") and seg.get("screenshot_timestamp"):
+                timestamps.append(seg["screenshot_timestamp"])
+            elif seg.get("is_silent"):
+                # Legacy silent segments without screenshot_timestamp - use midpoint
+                midpoint = (seg.get("start", 0) + seg.get("end", 0)) / 2
+                seg["screenshot_timestamp"] = midpoint
+                timestamps.append(midpoint)
+            else:
+                timestamps.append(seg.get("start", 0))
 
         # Create temp directory for screenshots
         screenshots_dir = os.path.join(settings.SCREENSHOTS_DIR, video_hash)
@@ -562,7 +573,10 @@ async def regenerate_screenshots_for_video(request: Request, video_hash: str):
         # Update segments with new screenshot URLs
         screenshot_count = 0
         for segment in segments:
-            ts = segment.get("start", 0)
+            if segment.get("is_silent") and segment.get("screenshot_timestamp"):
+                ts = segment["screenshot_timestamp"]
+            else:
+                ts = segment.get("start", 0)
             gcs_url = gcs_urls.get(ts)
             if gcs_url:
                 segment["screenshot_url"] = gcs_url
