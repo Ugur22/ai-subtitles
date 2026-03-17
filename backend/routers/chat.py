@@ -808,8 +808,19 @@ Guidelines:
 
         messages = [
             {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message}
         ]
+
+        # Insert conversation history for multi-turn context (last 10 messages)
+        if chat_request.conversation_history:
+            history = chat_request.conversation_history[-10:]
+            for msg in history:
+                if msg.get("role") in ("user", "assistant"):
+                    messages.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+
+        messages.append({"role": "user", "content": user_message})
 
         # Get LLM provider and generate response
         try:
