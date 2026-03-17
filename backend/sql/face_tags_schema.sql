@@ -55,15 +55,15 @@ CREATE POLICY "Legacy video face tags read-only" ON face_tags
     )
   );
 
--- 3. Service role full access
-CREATE POLICY "Service role insert face tags" ON face_tags
-  FOR INSERT TO service_role WITH CHECK (true);
+-- 3. Allow all inserts (backend API is auth-protected, service key bypasses RLS)
+CREATE POLICY "Allow insert face tags" ON face_tags
+  FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Service role update face tags" ON face_tags
-  FOR UPDATE TO service_role USING (true);
+CREATE POLICY "Allow update face tags" ON face_tags
+  FOR UPDATE USING (true);
 
-CREATE POLICY "Service role delete face tags" ON face_tags
-  FOR DELETE TO service_role USING (true);
+CREATE POLICY "Allow delete face tags" ON face_tags
+  FOR DELETE USING (true);
 
 -- RPC function: search faces by embedding similarity
 CREATE OR REPLACE FUNCTION search_faces_by_embedding(
