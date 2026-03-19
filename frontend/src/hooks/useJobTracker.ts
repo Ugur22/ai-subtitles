@@ -197,7 +197,7 @@ export const useJobTracker = () => {
 
     const intervalId = setInterval(() => {
       fetchJobs();
-    }, 240000); // Poll every 4 minutes (reduced from 15s to prevent server throttling)
+    }, 30000); // Poll every 30s to keep Cloud Run instance alive during processing
 
     return () => clearInterval(intervalId);
   }, [jobs, fetchJobs]);
