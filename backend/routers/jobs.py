@@ -562,18 +562,20 @@ async def retry_job(
                 detail=f"Cannot retry job with status '{job['status']}'. Only failed jobs can be retried."
             )
 
-        # Retry the job
-        success = JobQueueService.retry_job(job_id)
+        # Retry the job (creates a new job with same params)
+        new_job = JobQueueService.retry_job(job_id)
 
-        if not success:
+        if not new_job:
             raise HTTPException(status_code=500, detail="Failed to retry job")
 
-        # Trigger background processing
+        new_job_id = new_job['id']
+
+        # Trigger background processing for the NEW job
         if background_tasks:
-            background_tasks.add_task(background_worker.process_job, job_id)
+            background_tasks.add_task(background_worker.process_job, new_job_id)
 
         return JobRetryResponse(
-            job_id=job_id,
+            job_id=new_job_id,
             status="pending",
             message="Job queued for retry"
         )
