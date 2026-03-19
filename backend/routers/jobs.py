@@ -456,10 +456,10 @@ async def cancel_job(
     token: Optional[str] = Query(None, description="Access token for shared links")
 ):
     """
-    Cancel a pending job.
+    Cancel a pending or processing job.
 
-    Only pending jobs can be cancelled. Jobs that are already processing or
-    completed cannot be cancelled.
+    Pending and processing jobs can be cancelled. Jobs that are already
+    completed, failed, or cancelled cannot be cancelled.
 
     Access granted via ownership OR token.
 
@@ -472,7 +472,7 @@ async def cancel_job(
         JobCancelResponse with cancellation status
 
     Raises:
-        400: Job cannot be cancelled (not pending)
+        400: Job cannot be cancelled (already completed/failed/cancelled)
         401: Not authenticated
         403: Not owner and no valid token
         404: Job not found
@@ -486,11 +486,11 @@ async def cancel_job(
     try:
         from services.job_queue_service import JobQueueService
 
-        # Check if job can be cancelled
-        if job['status'] != 'pending':
+        # Check if job can be cancelled (allow pending and processing)
+        if job['status'] not in ('pending', 'processing'):
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot cancel job with status '{job['status']}'. Only pending jobs can be cancelled."
+                detail=f"Cannot cancel job with status '{job['status']}'. Only pending or processing jobs can be cancelled."
             )
 
         # Cancel the job

@@ -464,7 +464,7 @@ class JobQueueService:
     @staticmethod
     def cancel_job(job_id: str) -> bool:
         """
-        Cancel a pending job (only pending jobs can be cancelled).
+        Cancel a pending or processing job.
 
         Args:
             job_id: Job ID
@@ -473,17 +473,17 @@ class JobQueueService:
             True if successful
 
         Raises:
-            Exception: If job is not in pending state
+            Exception: If job is not in a cancellable state
         """
         client = supabase()
 
-        # Verify job is pending
+        # Verify job is in a cancellable state
         job = JobQueueService.get_job(job_id)
         if not job:
             raise Exception(f"Job {job_id} not found")
 
-        if job["status"] != "pending":
-            raise Exception(f"Can only cancel pending jobs. Job {job_id} status: {job['status']}")
+        if job["status"] not in ("pending", "processing"):
+            raise Exception(f"Can only cancel pending or processing jobs. Job {job_id} status: {job['status']}")
 
         response = client.table("jobs").update({
             "status": "cancelled",
