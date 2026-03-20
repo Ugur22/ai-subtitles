@@ -44,6 +44,7 @@ from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps, extract_silent_segment_screenshots
 from speaker_diarization import ChunkedSpeakerDiarizer
+from services.audio_analysis_service import AudioAnalysisService
 
 
 # Configuration
@@ -487,9 +488,25 @@ class BackgroundWorker:
                     seg['speaker'] = "SPEAKER_00"
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
 
-            # Calculate video hash early (used for screenshots and final result)
+            # Calculate video hash early (used for audio analysis, screenshots and final result)
             import hashlib
             video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
+
+            # Step 4.25: Audio analysis (non-critical)
+            try:
+                audio_for_analysis = locals().get('diarization_audio_path') or (audio_chunks[0] if audio_chunks else None)
+                if audio_for_analysis and os.path.exists(audio_for_analysis):
+                    JobQueueService.update_progress(job_id, 76, "analyzing", "Analyzing audio events and emotions...")
+                    formatted_segments = await _run_in_executor(
+                        AudioAnalysisService.analyze_segments,
+                        audio_for_analysis,
+                        formatted_segments,
+                        video_hash
+                    )
+                    clear_gpu_memory("Worker:AfterAudioAnalysis")
+                    print(f"[Worker] Audio analysis completed for {len(formatted_segments)} segments")
+            except Exception as e:
+                print(f"[Worker] Audio analysis failed (non-critical): {e}")
 
             # Step 4.5: Screenshot extraction (75-80%)
             # Check if file is a video format that supports screenshots
