@@ -666,7 +666,9 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
                         audio_results.sort(key=lambda x: x.get('temporal_distance', float('inf')))
 
-                        print(f"Audio re-ranking: {len(temporal_anchors)} anchors, "
+                        n_text = sum(1 for sr in (search_results or []) if sr.get('metadata', {}).get('start') is not None)
+                        n_img = len(temporal_anchors) - n_text
+                        print(f"Audio re-ranking: {n_text} text + {n_img} image = {len(temporal_anchors)} anchors, "
                               f"closest={audio_results[0]['temporal_distance']:.1f}s, "
                               f"furthest={audio_results[-1]['temporal_distance']:.1f}s")
 
