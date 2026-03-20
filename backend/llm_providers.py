@@ -508,9 +508,9 @@ class AnthropicProvider(BaseLLMProvider):
 class GrokProvider(BaseLLMProvider):
     """xAI Grok cloud LLM provider (OpenAI-compatible API)"""
 
-    def __init__(self):
+    def __init__(self, model_override: str | None = None):
         self.api_key = os.getenv("XAI_API_KEY")
-        self.model = os.getenv("XAI_MODEL", "grok-beta")
+        self.model = model_override or os.getenv("XAI_MODEL", "grok-beta")
         self.base_url = "https://api.x.ai/v1"
 
     async def generate(
@@ -660,7 +660,8 @@ class LLMManager:
             "groq": GroqProvider(),
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
-            "grok": GrokProvider()
+            "grok": GrokProvider(),
+            "grok-deep": GrokProvider(model_override="grok-4-1")
         }
         self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
 
