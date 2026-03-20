@@ -9,6 +9,7 @@ import {
 } from "@headlessui/react";
 import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
+import { listSpeakers, getFaceTagSpeakers } from "../../../services/api";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
@@ -723,6 +724,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // @mention autocomplete state
+  const [speakers, setSpeakers] = useState<string[]>([]);
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
 
   // Message transitions
   const messageTransitions = useTransition(messages, {
@@ -910,7 +918,101 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
+  // Fetch speakers for @mention autocomplete
+  useEffect(() => {
+    if (!videoHash) return;
+    const fetchSpeakers = async () => {
+      try {
+        const [enrolled, faceTags] = await Promise.all([
+          listSpeakers().catch(() => ({ speakers: [] })),
+          getFaceTagSpeakers(videoHash).catch(() => ({ speakers: [] })),
+        ]);
+        const enrolledNames = enrolled.speakers.map((s) => s.name);
+        const faceNames = faceTags.speakers.map((s) => s.speaker_name);
+        setSpeakers(
+          [...new Set([...enrolledNames, ...faceNames])]
+            .filter(Boolean)
+            .sort()
+        );
+      } catch (e) {
+        console.error("Failed to fetch speakers:", e);
+      }
+    };
+    fetchSpeakers();
+  }, [videoHash]);
+
+  const filteredSpeakers = useMemo(() => {
+    if (!mentionFilter) return speakers;
+    const lower = mentionFilter.toLowerCase();
+    return speakers.filter((s) => s.toLowerCase().includes(lower));
+  }, [speakers, mentionFilter]);
+
+  const getMentionContext = (value: string, cursorPos: number) => {
+    // Look backwards from cursor for @ not preceded by a non-space char
+    const before = value.slice(0, cursorPos);
+    const match = before.match(/@(\S*)$/);
+    if (match) {
+      return { start: cursorPos - match[0].length, filter: match[1] };
+    }
+    return null;
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInput(value);
+    const cursorPos = e.target.selectionStart || value.length;
+    const ctx = getMentionContext(value, cursorPos);
+    if (ctx) {
+      setShowMentions(true);
+      setMentionFilter(ctx.filter);
+      setMentionIndex(0);
+    } else {
+      setShowMentions(false);
+    }
+  };
+
+  const selectMention = (speaker: string) => {
+    const el = inputRef.current;
+    const cursorPos = el?.selectionStart || input.length;
+    const ctx = getMentionContext(input, cursorPos);
+    if (ctx) {
+      const before = input.slice(0, ctx.start);
+      const after = input.slice(cursorPos);
+      const newValue = before + speaker + " " + after;
+      setInput(newValue);
+      setShowMentions(false);
+      // Focus and set cursor after inserted name
+      setTimeout(() => {
+        el?.focus();
+        const pos = before.length + speaker.length + 1;
+        el?.setSelectionRange(pos, pos);
+      }, 0);
+    }
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (showMentions && filteredSpeakers.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => Math.min(i + 1, filteredSpeakers.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectMention(filteredSpeakers[mentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowMentions(false);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -1617,13 +1719,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
 
         {/* Chat Input */}
-        <div className="flex gap-2">
+        <div className="relative flex gap-2">
+          {showMentions && filteredSpeakers.length > 0 && (
+            <div className="absolute bottom-full mb-1 left-0 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+              {filteredSpeakers.map((speaker, i) => (
+                <button
+                  key={speaker}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 ${
+                    i === mentionIndex
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-gray-700"
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectMention(speaker);
+                  }}
+                >
+                  <span className="text-gray-400 mr-1">@</span>
+                  {speaker}
+                </button>
+              ))}
+            </div>
+          )}
           <input
+            ref={inputRef}
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyPress}
-            placeholder="Ask a question about the video..."
+            placeholder="Ask about the video... (type @ to mention a speaker)"
             className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             disabled={loading}
           />

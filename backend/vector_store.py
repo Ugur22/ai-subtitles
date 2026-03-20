@@ -679,6 +679,12 @@ class VectorStore:
                     else:
                         speech_emotion = None
 
+                # If speech but no other events, index as "speech" for temporal coverage
+                if has_speech and not event_descriptions:
+                    event_descriptions.append("speech")
+                    if not primary_event:
+                        primary_event = "speech"
+
                 # Skip if no meaningful events
                 if not event_descriptions:
                     continue
