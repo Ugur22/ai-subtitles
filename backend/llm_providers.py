@@ -4,6 +4,7 @@ Supports multiple LLM providers: Ollama (local), Groq, OpenAI, Anthropic, Grok (
 """
 
 import os
+import asyncio
 import httpx
 import base64
 import io
@@ -610,26 +611,42 @@ class GrokProvider(BaseLLMProvider):
             vision_model = self.model.replace("-reasoning", "-non-reasoning") if "reasoning" in self.model.lower() else self.model
             print(f"Using vision model: {vision_model} (base model: {self.model})")
 
-            async with httpx.AsyncClient(timeout=240.0) as client:  # Longer timeout for vision requests with multiple images
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": vision_model,
-                        "messages": formatted_messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens
-                    }
-                )
-                response.raise_for_status()
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as e:
-            error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
-            raise Exception(f"Grok vision generation failed: {str(e)}\nResponse: {error_detail}")
+            max_retries = 2
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=240.0) as client:
+                        response = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self.api_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={
+                                "model": vision_model,
+                                "messages": formatted_messages,
+                                "temperature": temperature,
+                                "max_tokens": max_tokens
+                            }
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        return result["choices"][0]["message"]["content"]
+                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        print(f"Vision API timeout/connection error (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
+                        await asyncio.sleep(3)
+                    continue
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (502, 503, 504) and attempt < max_retries - 1:
+                        print(f"Vision API returned {e.response.status_code} (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
+                        await asyncio.sleep(3)
+                        last_exception = e
+                        continue
+                    error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+                    raise Exception(f"Grok vision generation failed: {str(e)}\nResponse: {error_detail}")
+            raise Exception(f"Grok vision generation failed after {max_retries} attempts: {str(last_exception)}")
         except Exception as e:
             raise Exception(f"Grok vision generation failed: {str(e)}")
 

@@ -231,6 +231,15 @@ async def index_video_for_chat(request: Request, video_hash: str = None) -> Inde
         print(f"Indexing video {video_hash} with {len(segments)} segments...")
         num_chunks = await _run_in_executor(vector_store.index_transcription, video_hash, segments)
 
+        # Also index audio events if segments contain audio analysis data
+        audio_indexed = 0
+        try:
+            audio_indexed = await _run_in_executor(vector_store.index_audio_events, video_hash, segments)
+            if audio_indexed > 0:
+                print(f"Audio events indexed: {audio_indexed}")
+        except Exception as e:
+            print(f"Audio indexing during chat index failed (non-critical): {str(e)}")
+
         return IndexVideoResponse(
             success=True,
             video_hash=video_hash,
