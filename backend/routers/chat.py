@@ -430,8 +430,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
                             # Score each visual result by overlap with speaker timelines
                             for result in image_results:
-                                img_start = result['metadata'].get('start', 0)
-                                img_end = result['metadata'].get('end', 0)
+                                img_start = float(result['metadata'].get('start', 0) or 0)
+                                img_end = float(result['metadata'].get('end', 0) or 0)
 
                                 overlap_score = 0
                                 overlapping_speakers = []
@@ -443,6 +443,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                             overlap_score += 1
                                             if speaker not in overlapping_speakers:
                                                 overlapping_speakers.append(speaker)
+
+                                # Debug: log overlap details for first few results
+                                if overlap_score == 0 and speaker_timelines:
+                                    first_speaker = list(speaker_timelines.keys())[0]
+                                    tl = speaker_timelines[first_speaker]
+                                    if tl:
+                                        print(f"  DEBUG overlap=0: img=[{img_start:.1f}-{img_end:.1f}], "
+                                              f"first segment=[{tl[0][0]:.1f}-{tl[0][1]:.1f}], "
+                                              f"last segment=[{tl[-1][0]:.1f}-{tl[-1][1]:.1f}], "
+                                              f"total={len(tl)} segments")
 
                                 result['overlap_score'] = overlap_score
                                 result['likely_speakers'] = overlapping_speakers

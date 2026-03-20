@@ -847,7 +847,8 @@ class VectorStore:
         """
         results = {
             "text_updated": 0,
-            "images_updated": 0
+            "images_updated": 0,
+            "audio_updated": 0
         }
 
         # Update text collection (video_{hash})
@@ -919,6 +920,32 @@ class VectorStore:
 
         except Exception as e:
             print(f"Error updating image collection: {str(e)}")
+
+        # Update audio collection (video_{hash}_audio)
+        try:
+            collection_name = f"video_{video_hash}_audio"
+            collection = self.client.get_collection(name=collection_name)
+
+            all_items = collection.get(include=["metadatas"])
+
+            if all_items and all_items['ids']:
+                ids_to_update = []
+                updated_metadatas = []
+
+                for i, metadata in enumerate(all_items['metadatas']):
+                    if metadata.get('speaker') == old_speaker:
+                        ids_to_update.append(all_items['ids'][i])
+                        new_metadata = metadata.copy()
+                        new_metadata['speaker'] = new_speaker
+                        updated_metadatas.append(new_metadata)
+
+                if ids_to_update:
+                    collection.update(ids=ids_to_update, metadatas=updated_metadatas)
+                    results['audio_updated'] = len(ids_to_update)
+                    print(f"Updated {len(ids_to_update)} audio events from '{old_speaker}' to '{new_speaker}'")
+
+        except Exception as e:
+            print(f"Error updating audio collection: {str(e)}")
 
         return results
 
