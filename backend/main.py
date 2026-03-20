@@ -105,6 +105,10 @@ async def startup_event():
     print(f"- Videos directory: {app_settings.VIDEOS_DIR}")
     print(f"- Screenshots directory: {app_settings.SCREENSHOTS_DIR}")
 
+    # Start background model preloading to avoid cold-start 504s
+    from model_preloader import start_preloading
+    start_preloading()
+
     # Clean up old GCS uploads if enabled
     if app_settings.ENABLE_GCS_UPLOADS:
         try:
@@ -175,6 +179,13 @@ async def root():
         "service": app_settings.API_TITLE,
         "version": app_settings.API_VERSION
     }
+
+
+@app.get("/api/preload-status", tags=["Health"])
+async def preload_status():
+    """Check model preloading status (diagnostic endpoint)"""
+    from model_preloader import get_preload_status
+    return get_preload_status()
 
 
 # ====================================================================================

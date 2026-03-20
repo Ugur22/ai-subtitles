@@ -275,6 +275,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
 
+    # Guard: wait for models to finish preloading on cold start
+    from model_preloader import models_ready, wait_for_models
+    if not models_ready():
+        if not wait_for_models(timeout=5.0):
+            return {
+                "answer": "The server just started and is still loading AI models. Please try again in about 30 seconds.",
+                "sources": [],
+                "provider_used": "none",
+            }
+
     try:
         question = chat_request.question
         video_hash = chat_request.video_hash
@@ -614,10 +624,54 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                     vector_store.search_audio_events,
                     video_hash,
                     question,
-                    n_results=5
+                    n_results=20  # Over-fetch for temporal re-ranking
                 )
 
                 if audio_results:
+                    # Collect temporal anchors from text and image results
+                    temporal_anchors = []
+
+                    if search_results:
+                        for sr in search_results:
+                            s = sr.get('metadata', {}).get('start')
+                            e = sr.get('metadata', {}).get('end')
+                            if s is not None and e is not None:
+                                temporal_anchors.append((float(s), float(e)))
+
+                    try:
+                        ir_list = image_results if include_visuals else []
+                    except NameError:
+                        ir_list = []
+                    if ir_list:
+                        for ir in ir_list:
+                            s = ir.get('metadata', {}).get('start')
+                            e = ir.get('metadata', {}).get('end')
+                            if s is not None and e is not None:
+                                temporal_anchors.append((float(s), float(e)))
+
+                    # Re-rank audio by temporal proximity if we have anchors
+                    if temporal_anchors:
+                        for audio_result in audio_results:
+                            a_start = float(audio_result['metadata'].get('start', 0) or 0)
+                            a_end = float(audio_result['metadata'].get('end', 0) or 0)
+                            a_mid = (a_start + a_end) / 2
+
+                            min_dist = float('inf')
+                            for anchor_start, anchor_end in temporal_anchors:
+                                anchor_mid = (anchor_start + anchor_end) / 2
+                                dist = abs(a_mid - anchor_mid)
+                                min_dist = min(min_dist, dist)
+
+                            audio_result['temporal_distance'] = min_dist
+
+                        audio_results.sort(key=lambda x: x.get('temporal_distance', float('inf')))
+
+                        print(f"Audio re-ranking: {len(temporal_anchors)} anchors, "
+                              f"closest={audio_results[0]['temporal_distance']:.1f}s, "
+                              f"furthest={audio_results[-1]['temporal_distance']:.1f}s")
+
+                    # Take top 5 after re-ranking
+                    audio_results = audio_results[:5]
                     print(f"Found {len(audio_results)} relevant audio events")
                     audio_parts = []
 
