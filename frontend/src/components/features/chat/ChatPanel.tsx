@@ -876,8 +876,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     try {
       await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
         params: { video_hash: videoHash, force_reindex: true },
+        timeout: 300000, // 5 min — re-indexing processes all images synchronously
       });
-      setReindexStatus("Re-indexing started in background. Search results will improve shortly.");
+      setReindexStatus("Re-indexing complete! Visual search is now updated.");
       setTimeout(() => setReindexStatus(null), 5000);
     } catch (error) {
       console.error("Failed to re-index images:", error);

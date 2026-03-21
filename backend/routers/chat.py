@@ -4,7 +4,7 @@ Chat and RAG (Retrieval-Augmented Generation) endpoints
 import asyncio
 from typing import Dict, Optional, List, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request
 
 # Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
 # This prevents blocking the event loop during visual search and chat operations
@@ -1032,7 +1032,7 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
     }
 )
 @require_auth
-async def index_video_images(request: Request, background_tasks: BackgroundTasks, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
+async def index_video_images(request: Request, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
     """
     Index video screenshots using CLIP embeddings for visual search
 
@@ -1067,38 +1067,13 @@ async def index_video_images(request: Request, background_tasks: BackgroundTasks
         storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
         print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
 
-        # For force_reindex, run in background thread to avoid 504 timeouts
-        if force_reindex:
-            import threading
-
-            # Get user_id from the transcription/job data for RLS compliance
-            user_id = transcription.get('user_id')
-
-            def _do_reindex():
-                try:
-                    if use_supabase:
-                        count = image_embedding_service.index_video_images(video_hash, segments, force_reindex=True, user_id=user_id)
-                    else:
-                        count = vector_store.index_video_images(video_hash, segments, force_reindex=True)
-                    print(f"[Background] Re-indexing complete for {video_hash}: {count} images")
-                except Exception as e:
-                    print(f"[Background] Re-indexing failed for {video_hash}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            thread = threading.Thread(target=_do_reindex, daemon=True)
-            thread.start()
-            return IndexImagesResponse(
-                success=True,
-                video_hash=video_hash,
-                images_indexed=0,
-                message=f"Re-indexing started in background for {len(segments)} segments (storage: {storage_type})"
-            )
+        # Get user_id from the transcription/job data for RLS compliance
+        user_id = transcription.get('user_id')
 
         # Run in executor - CLIP batch encoding is very CPU/GPU intensive
         if use_supabase:
             num_images = await _run_in_executor(
-                image_embedding_service.index_video_images, video_hash, segments, force_reindex=force_reindex
+                image_embedding_service.index_video_images, video_hash, segments, force_reindex=force_reindex, user_id=user_id
             )
         else:
             num_images = await _run_in_executor(
