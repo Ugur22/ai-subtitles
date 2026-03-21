@@ -48,7 +48,7 @@ def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
         # Look for completed job with this video_hash
         response = (
             client.table("jobs")
-            .select("result_json, filename, gcs_path")
+            .select("result_json, filename, gcs_path, user_id")
             .eq("video_hash", video_hash)
             .eq("status", "completed")
             .limit(1)
@@ -62,6 +62,9 @@ def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
             if result_json:
                 # The result_json from jobs already has the right structure
                 # It contains: filename, gcs_path, video_hash, transcription (with segments)
+                # Add user_id from job record for RLS compliance
+                if job.get("user_id"):
+                    result_json["user_id"] = job["user_id"]
                 print(f"[Chat] Found transcription in Supabase job for video_hash={video_hash}")
                 return result_json
 
@@ -1064,12 +1067,17 @@ async def index_video_images(request: Request, background_tasks: BackgroundTasks
         storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
         print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
 
-        # For force_reindex, run in background to avoid 504 timeouts
+        # For force_reindex, run in background thread to avoid 504 timeouts
         if force_reindex:
+            import threading
+
+            # Get user_id from the transcription/job data for RLS compliance
+            user_id = transcription.get('user_id')
+
             def _do_reindex():
                 try:
                     if use_supabase:
-                        count = image_embedding_service.index_video_images(video_hash, segments, force_reindex=True)
+                        count = image_embedding_service.index_video_images(video_hash, segments, force_reindex=True, user_id=user_id)
                     else:
                         count = vector_store.index_video_images(video_hash, segments, force_reindex=True)
                     print(f"[Background] Re-indexing complete for {video_hash}: {count} images")
@@ -1078,7 +1086,8 @@ async def index_video_images(request: Request, background_tasks: BackgroundTasks
                     import traceback
                     traceback.print_exc()
 
-            background_tasks.add_task(_do_reindex)
+            thread = threading.Thread(target=_do_reindex, daemon=True)
+            thread.start()
             return IndexImagesResponse(
                 success=True,
                 video_hash=video_hash,
