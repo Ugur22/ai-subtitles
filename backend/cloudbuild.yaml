@@ -1,8 +1,11 @@
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '--no-cache', '-t', 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest', '.']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest']
+  - name: 'gcr.io/kaniko-project/executor:latest'
+    args:
+      - '--destination=us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
+      - '--cache=true'
+      - '--cache-ttl=168h'
+      - '--context=.'
+      - '--dockerfile=Dockerfile'
 images:
   - 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
 timeout: '2700s'  # 45 minutes (large image with ML models)
