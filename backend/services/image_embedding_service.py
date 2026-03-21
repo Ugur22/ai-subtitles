@@ -6,7 +6,6 @@ Handles persistent storage of CLIP embeddings for video screenshots
 import os
 import tempfile
 import requests
-import numpy as np
 from typing import List, Dict, Optional
 from PIL import Image
 from sentence_transformers import SentenceTransformer
@@ -92,9 +91,8 @@ class ImageEmbeddingService:
             embedding = self.clip_model.encode(
                 [img],
                 convert_to_numpy=True
-            )[0]
-            embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
-            return embedding.tolist()
+            ).tolist()[0]
+            return embedding
         except Exception as e:
             print(f"[ImageEmbedding] Failed to generate embedding for {image_path}: {e}")
             return None
@@ -250,9 +248,7 @@ class ImageEmbeddingService:
         query_embedding = self.clip_model.encode(
             [query],
             convert_to_numpy=True
-        )[0]
-        query_embedding = query_embedding / (np.linalg.norm(query_embedding) + 1e-8)
-        query_embedding = query_embedding.tolist()
+        ).tolist()[0]
 
         # Use the Supabase RPC function for similarity search
         try:

@@ -106,6 +106,9 @@ LANGUAGE plpgsql
 SET search_path = public
 AS $$
 BEGIN
+    -- Increase HNSW search scope for better recall on large/similar image sets
+    SET LOCAL hnsw.ef_search = 200;
+
     RETURN QUERY
     SELECT
         ie.id,
