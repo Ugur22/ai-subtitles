@@ -2091,6 +2091,23 @@ async def transcribe_gcs_stream(
 
             yield emit("extracting", 25, f"Extracted {len(audio_chunks)} audio segments")
 
+            # Create full audio path for diarization and audio analysis
+            if len(audio_chunks) == 1:
+                full_audio_path = audio_chunks[0]
+            elif len(audio_chunks) > 1:
+                full_audio_path = os.path.join(temp_dir, "full_audio.wav")
+                concat_list_path = os.path.join(temp_dir, "concat_list.txt")
+                with open(concat_list_path, 'w') as f:
+                    for chunk in audio_chunks:
+                        f.write(f"file '{chunk}'\n")
+                subprocess.run([
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', concat_list_path, '-c', 'copy', full_audio_path, '-y'
+                ], check=True, capture_output=True)
+                print(f"[GCS Stream] Concatenated {len(audio_chunks)} chunks into full audio")
+            else:
+                full_audio_path = None
+
             # For screenshot extraction and video playback, we need to download the video
             # But we defer this until after transcription if needed
             temp_path = None
@@ -2332,33 +2349,11 @@ async def transcribe_gcs_stream(
 
             yield emit("transcribing", 82, "Identifying speakers...")
 
-            # Speaker diarization - concatenate all audio chunks for full video diarization
+            # Speaker diarization - use pre-concatenated full audio
             try:
-                if audio_chunks:
-                    # Concatenate all audio chunks so speakers from entire video are detected
-                    if len(audio_chunks) == 1:
-                        # Single chunk - use directly
-                        concat_audio_path = audio_chunks[0]
-                        print("[GCS Stream] Using single audio chunk for diarization")
-                    else:
-                        # Multiple chunks - concatenate them with ffmpeg
-                        concat_audio_path = os.path.join(temp_dir, "concat_for_diarization.wav")
-                        concat_list_path = os.path.join(temp_dir, "concat_list.txt")
-
-                        with open(concat_list_path, 'w') as f:
-                            for chunk in audio_chunks:
-                                f.write(f"file '{chunk}'\n")
-
-                        concat_cmd = [
-                            'ffmpeg', '-f', 'concat', '-safe', '0',
-                            '-i', concat_list_path,
-                            '-c', 'copy', concat_audio_path, '-y'
-                        ]
-                        subprocess.run(concat_cmd, check=True, capture_output=True)
-                        print(f"[GCS Stream] Concatenated {len(audio_chunks)} chunks for full-video diarization")
-
+                if full_audio_path:
                     formatted_segments = add_speaker_labels(
-                        audio_path=concat_audio_path,
+                        audio_path=full_audio_path,
                         segments=formatted_segments,
                         num_speakers=num_speakers,
                         min_speakers=min_speakers,
@@ -2378,12 +2373,12 @@ async def transcribe_gcs_stream(
                         seg['speaker'] = "UNKNOWN"
                     seg['diarization_failed'] = True
 
-            # Audio analysis - use first audio chunk
+            # Audio analysis - use full concatenated audio
             if settings.ENABLE_AUDIO_ANALYSIS:
                 try:
                     yield emit("transcribing", 86, "Analyzing audio events and emotions...")
 
-                    analysis_audio = audio_chunks[0] if audio_chunks else None
+                    analysis_audio = full_audio_path
                     if analysis_audio:
                         formatted_segments = AudioAnalysisService.analyze_segments(
                             audio_path=analysis_audio,

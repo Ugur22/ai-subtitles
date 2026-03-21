@@ -288,6 +288,24 @@ class BackgroundWorker:
 
             JobQueueService.update_progress(job_id, 30, "extracting", f"Extracted {len(audio_chunks)} audio segments")
 
+            # Create full audio path for diarization and audio analysis
+            if len(audio_chunks) == 1:
+                full_audio_path = audio_chunks[0]
+            elif len(audio_chunks) > 1:
+                full_audio_path = os.path.join(temp_dir, "full_audio.wav")
+                concat_list_path = os.path.join(temp_dir, "concat_list.txt")
+                with open(concat_list_path, 'w') as f:
+                    for chunk in audio_chunks:
+                        f.write(f"file '{chunk}'\n")
+                subprocess.run([
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', concat_list_path, '-c', 'copy', full_audio_path, '-y'
+                ], check=True, capture_output=True)
+                temp_files.append(full_audio_path)
+                print(f"[Worker] Concatenated {len(audio_chunks)} chunks into full audio")
+            else:
+                full_audio_path = None
+
             # Step 3: Transcribe (30-50%)
             JobQueueService.update_progress(job_id, 35, "transcribing", "Starting transcription...")
 
@@ -426,37 +444,14 @@ class BackgroundWorker:
 
                         diarizer = get_speaker_diarizer()
 
-                        if diarizer and len(audio_chunks) > 0:
-                            # Concatenate all audio chunks for full-video diarization
+                        if diarizer and full_audio_path:
+                            # Use pre-concatenated full audio for diarization
                             print(f"[Worker] Performing speaker diarization on full video...")
-
-                            if len(audio_chunks) == 1:
-                                # Single chunk - use directly
-                                diarization_audio_path = audio_chunks[0]
-                                print("[Worker] Using single audio chunk for diarization")
-                            else:
-                                # Multiple chunks - concatenate them with ffmpeg
-                                concat_audio_path = os.path.join(temp_dir, "concat_for_diarization.wav")
-                                concat_list_path = os.path.join(temp_dir, "concat_list.txt")
-
-                                with open(concat_list_path, 'w') as f:
-                                    for chunk in audio_chunks:
-                                        f.write(f"file '{chunk}'\n")
-
-                                concat_cmd = [
-                                    'ffmpeg', '-f', 'concat', '-safe', '0',
-                                    '-i', concat_list_path,
-                                    '-c', 'copy', concat_audio_path, '-y'
-                                ]
-                                subprocess.run(concat_cmd, check=True, capture_output=True)
-                                diarization_audio_path = concat_audio_path
-                                temp_files.append(concat_audio_path)
-                                print(f"[Worker] Concatenated {len(audio_chunks)} chunks for full-video diarization")
 
                             # Run in executor to avoid blocking event loop
                             formatted_segments = await _run_in_executor(
                                 SpeakerService.add_speaker_labels,
-                                audio_path=diarization_audio_path,
+                                audio_path=full_audio_path,
                                 segments=formatted_segments,
                                 diarizer=diarizer,
                                 num_speakers=num_speakers,
@@ -494,7 +489,7 @@ class BackgroundWorker:
 
             # Step 4.25: Audio analysis (non-critical)
             try:
-                audio_for_analysis = locals().get('diarization_audio_path') or (audio_chunks[0] if audio_chunks else None)
+                audio_for_analysis = full_audio_path
                 if audio_for_analysis and os.path.exists(audio_for_analysis):
                     JobQueueService.update_progress(job_id, 76, "analyzing", "Analyzing audio events and emotions...")
                     formatted_segments = await _run_in_executor(
