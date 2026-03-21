@@ -63,14 +63,17 @@ export const useJobTracker = () => {
       }
 
       // Silent cleanup of jobs that no longer exist (404s)
-      const validIds = new Set(jobsWithTokens.map((j: Job) => j.job_id));
-      const invalidIds = storedJobs
-        .filter(s => !validIds.has(s.job_id))
-        .map(s => s.job_id);
+      // Only clean up when we can see ALL jobs to avoid removing tokens for jobs on other pages
+      if (response.total <= JOBS_PER_PAGE) {
+        const validIds = new Set(jobsWithTokens.map((j: Job) => j.job_id));
+        const invalidIds = storedJobs
+          .filter(s => !validIds.has(s.job_id))
+          .map(s => s.job_id);
 
-      if (invalidIds.length > 0) {
-        console.debug(`Cleaning up ${invalidIds.length} expired job(s)`);
-        removeInvalidJobs(invalidIds);
+        if (invalidIds.length > 0) {
+          console.debug(`Cleaning up ${invalidIds.length} expired job(s)`);
+          removeInvalidJobs(invalidIds);
+        }
       }
 
     } catch (error) {

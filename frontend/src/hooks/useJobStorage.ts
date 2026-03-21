@@ -37,7 +37,13 @@ export const useJobStorage = () => {
 
       // Add to beginning (most recent first)
       jobs.unshift(job);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+      } catch {
+        // If quota exceeded, clear the jobs cache and retry
+        localStorage.removeItem('ai-subs-jobs-cache');
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+      }
     } catch (error) {
       console.error('Failed to add job to localStorage:', error);
     }
