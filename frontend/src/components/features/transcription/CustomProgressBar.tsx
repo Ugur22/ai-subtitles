@@ -36,14 +36,14 @@ function formatTime(seconds: number) {
 }
 
 const EMOTION_COLORS: Record<string, string> = {
-  happy: "rgba(250,204,21,0.45)",
-  sad: "rgba(96,165,250,0.45)",
-  angry: "rgba(248,113,113,0.45)",
-  fearful: "rgba(192,132,252,0.45)",
-  surprised: "rgba(251,146,60,0.45)",
-  disgust: "rgba(74,222,128,0.45)",
-  neutral: "rgba(156,163,175,0.25)",
-  calm: "rgba(156,163,175,0.25)",
+  happy: "rgba(250,204,21,0.7)",
+  sad: "rgba(96,165,250,0.7)",
+  angry: "rgba(248,113,113,0.7)",
+  fearful: "rgba(192,132,252,0.7)",
+  surprised: "rgba(251,146,60,0.7)",
+  disgust: "rgba(74,222,128,0.7)",
+  neutral: "rgba(156,163,175,0.35)",
+  calm: "rgba(156,163,175,0.35)",
 };
 
 const EMOTION_EMOJI: Record<string, string> = {
@@ -150,7 +150,9 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
       </div>
       <div
         ref={barRef}
-        className="relative h-3 bg-gray-700 rounded cursor-pointer group"
+        className={`relative bg-gray-700 rounded cursor-pointer group transition-all duration-200 ${
+          showEmotions && hasEmotionData ? "h-5" : "h-3"
+        }`}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
@@ -186,12 +188,12 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         )}
         {/* Progress fill */}
         <div
-          className="absolute top-0 left-0 h-3 bg-gradient-to-r from-orange-400 to-rose-500 rounded"
+          className="absolute top-0 left-0 h-full bg-gradient-to-r from-orange-400 to-rose-500 rounded"
           style={{ width: `${percent * 100}%` }}
         />
         {/* Thumb */}
         <div
-          className="absolute top-0 h-3 w-3 bg-white rounded-full shadow -translate-x-1/2 border border-orange-500"
+          className="absolute top-0 h-full w-3 bg-white rounded-full shadow -translate-x-1/2 border border-orange-500"
           style={{ left: `calc(${percent * 100}% )` }}
         />
         {/* Tooltip and Screenshot Preview */}
