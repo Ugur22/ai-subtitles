@@ -353,8 +353,6 @@ interface Message {
 interface ChatPanelProps {
   videoHash: string | null;
   onTimestampClick?: (timeString: string) => void;
-  initialInput?: string;
-  onInitialInputConsumed?: () => void;
 }
 
 interface LLMProvider {
@@ -706,8 +704,6 @@ const AssistantMessageContent: React.FC<{
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   videoHash,
   onTimestampClick,
-  initialInput,
-  onInitialInputConsumed,
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -730,14 +726,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Accept initial input from parent (e.g. "Ask about this moment")
-  useEffect(() => {
-    if (initialInput) {
-      setInput(initialInput);
-      onInitialInputConsumed?.();
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [initialInput]);
 
   // @mention autocomplete state
   const [speakers, setSpeakers] = useState<string[]>([]);
