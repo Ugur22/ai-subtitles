@@ -12,6 +12,8 @@ interface Segment {
     emotion: string;
     confidence: number;
   } | null;
+  audio_events?: Array<{ event_type: string; confidence: number }>;
+  is_silent?: boolean;
 }
 
 interface CustomProgressBarProps {
@@ -57,6 +59,52 @@ const EMOTION_EMOJI: Record<string, string> = {
   calm: "😌",
 };
 
+const AMBIENT_COLORS: Record<string, string> = {
+  music: "rgba(218,112,214,0.4)",
+  singing: "rgba(218,112,214,0.4)",
+  laughter: "rgba(255,223,186,0.4)",
+  crying: "rgba(135,206,250,0.4)",
+  rain: "rgba(0,191,255,0.4)",
+  water: "rgba(0,191,255,0.4)",
+  wind: "rgba(176,224,230,0.4)",
+  thunder: "rgba(72,61,139,0.4)",
+  fire: "rgba(255,99,71,0.4)",
+  applause: "rgba(255,215,0,0.4)",
+  cheering: "rgba(255,215,0,0.4)",
+  crowd: "rgba(244,164,96,0.4)",
+  screaming: "rgba(255,69,0,0.45)",
+  explosion: "rgba(255,69,0,0.45)",
+  gunshot: "rgba(255,69,0,0.45)",
+  siren: "rgba(255,0,0,0.45)",
+  alarm: "rgba(255,0,0,0.45)",
+  breathing: "rgba(156,163,175,0.25)",
+  silence: "rgba(156,163,175,0.2)",
+  ambient: "rgba(156,163,175,0.25)",
+};
+
+const AMBIENT_EMOJI: Record<string, string> = {
+  music: "🎵",
+  singing: "🎤",
+  laughter: "😄",
+  crying: "😭",
+  rain: "🌧️",
+  water: "💧",
+  wind: "💨",
+  thunder: "⛈️",
+  fire: "🔥",
+  applause: "👏",
+  cheering: "👏",
+  crowd: "👥",
+  screaming: "😱",
+  explosion: "💥",
+  gunshot: "💥",
+  siren: "🚨",
+  alarm: "🚨",
+  breathing: "🌬️",
+  silence: "🔇",
+  ambient: "🔈",
+};
+
 const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
   duration,
   currentTime,
@@ -75,23 +123,31 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
     screenshotUrl = getScreenshotUrlForTime(hoverTime);
   }
 
-  const hasEmotionData = useMemo(() => {
-    return segments?.some((seg) => seg.speech_emotion?.emotion) ?? false;
+  const hasOverlayData = useMemo(() => {
+    return segments?.some(
+      (seg) => seg.speech_emotion?.emotion || seg.audio_events?.length
+    ) ?? false;
   }, [segments]);
 
-  const getEmotionAtTime = (time: number) => {
+  const getOverlayAtTime = (time: number): { type: 'emotion' | 'ambient'; label: string; confidence: number } | null => {
     if (!segments) return null;
     for (const seg of segments) {
       const start = seg.start ?? timeToSeconds(seg.start_time);
       const end = seg.end ?? timeToSeconds(seg.end_time);
-      if (time >= start && time <= end && seg.speech_emotion?.emotion) {
-        return seg.speech_emotion;
+      if (time >= start && time <= end) {
+        if (seg.speech_emotion?.emotion) {
+          return { type: 'emotion', label: seg.speech_emotion.emotion, confidence: seg.speech_emotion.confidence };
+        }
+        if (seg.audio_events?.length) {
+          const top = seg.audio_events[0];
+          return { type: 'ambient', label: top.event_type, confidence: top.confidence };
+        }
       }
     }
     return null;
   };
 
-  const hoverEmotion = hoverTime !== null ? getEmotionAtTime(hoverTime) : null;
+  const hoverOverlay = hoverTime !== null ? getOverlayAtTime(hoverTime) : null;
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!barRef.current || !duration || duration <= 0) return;
@@ -130,7 +186,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         <span className="text-gray-200 font-semibold drop-shadow-sm p-2">
           {formatTime(currentTime)}
         </span>
-        {hasEmotionData && (
+        {hasOverlayData && (
           <button
             onClick={() => setShowEmotions((v) => !v)}
             className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
@@ -138,7 +194,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
                 ? "bg-orange-500/30 text-orange-300 hover:bg-orange-500/40"
                 : "bg-gray-700/50 text-gray-400 hover:bg-gray-700/70"
             }`}
-            title={showEmotions ? "Hide emotion overlay" : "Show emotion overlay"}
+            title={showEmotions ? "Hide sound overlay" : "Show sound overlay"}
           >
             🎭
           </button>
@@ -151,7 +207,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
       <div
         ref={barRef}
         className={`relative bg-gray-700 rounded cursor-pointer group transition-all duration-200 ${
-          showEmotions && hasEmotionData ? "h-5" : "h-3"
+          showEmotions && hasOverlayData ? "h-5" : "h-3"
         }`}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
@@ -160,11 +216,22 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         onMouseUp={handleMouseUp}
         style={{ userSelect: "none" }}
       >
-        {/* Emotion overlay — behind progress fill */}
-        {showEmotions && hasEmotionData && (
+        {/* Emotion + ambient overlay — behind progress fill */}
+        {showEmotions && hasOverlayData && (
           <div className="absolute inset-0 rounded overflow-hidden pointer-events-none">
             {segments?.map((seg) => {
-              if (!seg.speech_emotion?.emotion) return null;
+              let backgroundColor: string | null = null;
+              if (seg.speech_emotion?.emotion) {
+                backgroundColor =
+                  EMOTION_COLORS[seg.speech_emotion.emotion] ??
+                  EMOTION_COLORS.neutral;
+              } else if (seg.audio_events?.length) {
+                const topEvent = seg.audio_events[0].event_type;
+                backgroundColor =
+                  AMBIENT_COLORS[topEvent] ?? "rgba(156,163,175,0.3)";
+              }
+              if (!backgroundColor) return null;
+
               const start = seg.start ?? timeToSeconds(seg.start_time);
               const end = seg.end ?? timeToSeconds(seg.end_time);
               if (!duration) return null;
@@ -177,9 +244,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
                   style={{
                     left: `${left}%`,
                     width: `${width}%`,
-                    backgroundColor:
-                      EMOTION_COLORS[seg.speech_emotion.emotion] ??
-                      EMOTION_COLORS.neutral,
+                    backgroundColor,
                   }}
                 />
               );
@@ -221,10 +286,13 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
               style={{ marginTop: screenshotUrl ? 0 : 8 }}
             >
               {formatTime(hoverTime)}
-              {hoverEmotion && (
+              {hoverOverlay && (
                 <span className="ml-1 opacity-90">
-                  {EMOTION_EMOJI[hoverEmotion.emotion] ?? ""}{" "}
-                  {hoverEmotion.emotion}
+                  {hoverOverlay.type === 'emotion'
+                    ? (EMOTION_EMOJI[hoverOverlay.label] ?? "")
+                    : (AMBIENT_EMOJI[hoverOverlay.label] ?? "🔈")
+                  }{" "}
+                  {hoverOverlay.label}
                 </span>
               )}
             </div>

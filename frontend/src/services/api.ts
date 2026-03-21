@@ -80,7 +80,7 @@ export interface TranscriptionResponse {
         emotion: string;
         confidence: number;
       } | null;
-      audio_events?: Array<{ event: string; confidence: number }>;
+      audio_events?: Array<{ event_type: string; confidence: number }>;
       energy_level?: number;
     }>;
     processing_time?: string;
