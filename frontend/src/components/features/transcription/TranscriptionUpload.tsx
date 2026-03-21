@@ -35,6 +35,8 @@ import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
 import { useTranscription } from "../../../hooks/useTranscription";
 import { useSummaries } from "../../../hooks/useSummaries";
+import { useChapters } from "../../../hooks/useChapters";
+import { ChapterPanel } from "../chapters/ChapterPanel";
 import { useBackgroundJobSubmit } from "../../../hooks/useBackgroundJobSubmit";
 import { useJobTracker } from "../../../hooks/useJobTracker";
 import { JobPanel } from "../jobs";
@@ -76,6 +78,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [showJobPanel, setShowJobPanel] = useState(false);
+  const [showChapters, setShowChapters] = useState(false);
 
   // Initialize job tracker for background processing
   const jobTracker = useJobTracker();
@@ -147,6 +150,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   });
   const { summaries, setSummaries, summaryLoading, generateSummaries } =
     summariesHook;
+
+  const chaptersHook = useChapters({
+    videoHash: transcription?.video_hash,
+  });
 
   // Computed values
   const isTranscribing =
@@ -1008,6 +1015,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           onSeek={(time: number) => {
                             seek(time);
                           }}
+                          chapters={chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title }))}
                         />
                         <div className="flex justify-end px-4 pb-2">
                           <button
@@ -1042,9 +1050,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       onClick={() => {
                         setShowSummary(false);
                         setShowChat(false);
+                        setShowChapters(false);
                       }}
                       className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        !showSummary && !showChat
+                        !showSummary && !showChat && !showChapters
                           ? "text-indigo-600"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
@@ -1065,7 +1074,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </svg>
                         Transcript
                       </div>
-                      {!showSummary && !showChat && (
+                      {!showSummary && !showChat && !showChapters && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
                       )}
                     </button>
@@ -1073,6 +1082,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       onClick={() => {
                         setShowSummary(false);
                         setShowChat(true);
+                        setShowChapters(false);
                       }}
                       className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
                         showChat
@@ -1102,8 +1112,41 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     </button>
                     <button
                       onClick={() => {
+                        setShowSummary(false);
+                        setShowChat(false);
+                        setShowChapters(true);
+                      }}
+                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
+                        showChapters
+                          ? "text-indigo-600"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4 6h16M4 10h16M4 14h16M4 18h16"
+                          />
+                        </svg>
+                        Chapters
+                      </div>
+                      {showChapters && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
                         setShowSummary(true);
                         setShowChat(false);
+                        setShowChapters(false);
                       }}
                       className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
                         showSummary
@@ -1134,7 +1177,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
 
                   <div className="flex-grow overflow-auto relative">
-                    {!showSummary && !showChat && (
+                    {!showSummary && !showChat && !showChapters && (
                       <>
                         {/* Sticky Show Translation button */}
                         <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center flex-wrap gap-2">
@@ -1413,6 +1456,19 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       </div>
                     )}
 
+                    {/* Chapters Panel */}
+                    {showChapters && (
+                      <div className="h-full">
+                        <ChapterPanel
+                          chapters={chaptersHook.chapters}
+                          loading={chaptersHook.loading}
+                          error={chaptersHook.error}
+                          onGenerate={() => chaptersHook.generate()}
+                          onSeekTo={seekToTimestamp}
+                        />
+                      </div>
+                    )}
+
                     {/* Summary Panel */}
                     {showSummary && (
                       <div className="h-full">
@@ -1480,6 +1536,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     <SearchPanel
                       onSeekToTimestamp={seekToTimestamp}
                       videoHash={transcription?.video_hash}
+                      onImageClick={openImageModal}
                     />
                   </div>
                 </div>

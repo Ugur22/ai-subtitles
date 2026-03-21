@@ -16,12 +16,18 @@ interface Segment {
   is_silent?: boolean;
 }
 
+interface ChapterMarker {
+  start: number;
+  title: string;
+}
+
 interface CustomProgressBarProps {
   videoRef?: HTMLVideoElement;
   duration: number;
   currentTime: number;
   onSeek: (time: number) => void;
   segments?: Segment[];
+  chapters?: ChapterMarker[];
   getScreenshotUrlForTime?: (time: number) => string | null;
 }
 
@@ -110,6 +116,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
   currentTime,
   onSeek,
   segments,
+  chapters,
   getScreenshotUrlForTime,
 }) => {
   const barRef = useRef<HTMLDivElement>(null);
@@ -247,6 +254,27 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
                     backgroundColor,
                   }}
                 />
+              );
+            })}
+          </div>
+        )}
+        {/* Chapter markers */}
+        {chapters && chapters.length > 0 && duration > 0 && (
+          <div className="absolute inset-0 pointer-events-none z-[5]">
+            {chapters.map((ch, i) => {
+              if (i === 0) return null; // Skip first chapter (starts at 0)
+              const left = (ch.start / duration) * 100;
+              return (
+                <div
+                  key={i}
+                  className="absolute top-0 h-full group/ch pointer-events-auto"
+                  style={{ left: `${left}%` }}
+                >
+                  <div className="w-[2px] h-full bg-white/70" />
+                  <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 px-1.5 py-0.5 text-[10px] text-white bg-black/80 rounded whitespace-nowrap opacity-0 group-hover/ch:opacity-100 transition-opacity pointer-events-none">
+                    {ch.title}
+                  </div>
+                </div>
               );
             })}
           </div>
