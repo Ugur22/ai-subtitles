@@ -4,7 +4,7 @@ Chat and RAG (Retrieval-Augmented Generation) endpoints
 import asyncio
 from typing import Dict, Optional, List, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 
 # Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
 # This prevents blocking the event loop during visual search and chat operations
@@ -1029,13 +1029,13 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
     }
 )
 @require_auth
-async def index_video_images(request: Request, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
+async def index_video_images(request: Request, background_tasks: BackgroundTasks, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
     """
     Index video screenshots using CLIP embeddings for visual search
 
     Args:
         video_hash: Optional video hash. If not provided, uses last transcription
-        force_reindex: If True, delete existing index and re-index all images
+        force_reindex: If True, delete existing index and re-index all images (runs in background)
     """
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
@@ -1063,6 +1063,28 @@ async def index_video_images(request: Request, video_hash: str = None, force_rei
         use_supabase = _use_supabase_for_images()
         storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
         print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
+
+        # For force_reindex, run in background to avoid 504 timeouts
+        if force_reindex:
+            def _do_reindex():
+                try:
+                    if use_supabase:
+                        count = image_embedding_service.index_video_images(video_hash, segments, force_reindex=True)
+                    else:
+                        count = vector_store.index_video_images(video_hash, segments, force_reindex=True)
+                    print(f"[Background] Re-indexing complete for {video_hash}: {count} images")
+                except Exception as e:
+                    print(f"[Background] Re-indexing failed for {video_hash}: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            background_tasks.add_task(_do_reindex)
+            return IndexImagesResponse(
+                success=True,
+                video_hash=video_hash,
+                images_indexed=0,
+                message=f"Re-indexing started in background for {len(segments)} segments (storage: {storage_type})"
+            )
 
         # Run in executor - CLIP batch encoding is very CPU/GPU intensive
         if use_supabase:

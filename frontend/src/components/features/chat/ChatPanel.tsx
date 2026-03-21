@@ -727,6 +727,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexStatus, setReindexStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -864,6 +866,25 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       console.error("Failed to index video:", error);
       setIndexingStatus("Indexing failed (video may already be indexed)");
       setTimeout(() => setIndexingStatus(null), 3000);
+    }
+  };
+
+  const handleReindex = async () => {
+    if (!videoHash || reindexing) return;
+    setReindexing(true);
+    setReindexStatus(null);
+    try {
+      await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
+        params: { video_hash: videoHash, force_reindex: true },
+      });
+      setReindexStatus("Re-indexing started in background. Search results will improve shortly.");
+      setTimeout(() => setReindexStatus(null), 5000);
+    } catch (error) {
+      console.error("Failed to re-index images:", error);
+      setReindexStatus("Re-indexing failed. Please try again.");
+      setTimeout(() => setReindexStatus(null), 5000);
+    } finally {
+      setReindexing(false);
     }
   };
 
@@ -1289,10 +1310,41 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     </svg>
                   </div>
                 </div>
+
+                {/* Re-index button */}
+                <button
+                  onClick={handleReindex}
+                  disabled={reindexing || !videoHash}
+                  className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Re-index images (fixes visual search)"
+                  aria-label="Re-index images"
+                >
+                  {reindexing ? (
+                    <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                </button>
               </div>
             )}
           </div>
         </div>
+
+        {/* Re-index Status */}
+        {reindexStatus && (
+          <div className={`mt-2 px-3 py-2 rounded-lg flex items-center gap-2 text-sm ${
+            reindexStatus.includes("failed")
+              ? "bg-red-50 border border-red-200 text-red-700"
+              : "bg-green-50 border border-green-200 text-green-700"
+          }`}>
+            <span>{reindexStatus}</span>
+          </div>
+        )}
 
         {/* Indexing Status */}
         {indexingStatus && (
