@@ -140,6 +140,17 @@ export const VisualSearchPanel = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [indexingError, setIndexingError] = useState<string | null>(null);
 
+  const reindexMutation = useMutation({
+    mutationFn: async () => {
+      if (!videoHash) throw new Error("No video hash");
+      await indexImages(videoHash, true);
+    },
+    onError: (error) => {
+      console.error("[VisualSearch] Re-index failed:", error);
+      setIndexingError("Re-indexing failed. Please try again.");
+    },
+  });
+
   const searchMutation = useMutation({
     mutationFn: async (query: string) => {
       // Attempt search; if the index is missing the backend may return an empty
@@ -204,15 +215,50 @@ export const VisualSearchPanel = ({
             className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-violet-500 focus:border-violet-500 sm:text-sm"
           />
         </div>
-        <button
-          type="submit"
-          disabled={searchMutation.isPending || !searchQuery.trim()}
-          className="w-full btn-primary py-2.5 bg-violet-500 text-gray-900 rounded-md hover:bg-violet-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {searchMutation.isPending ? (
-            <>
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            disabled={searchMutation.isPending || !searchQuery.trim()}
+            className="flex-1 btn-primary py-2.5 bg-violet-500 text-gray-900 rounded-md hover:bg-violet-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {searchMutation.isPending ? (
+              <>
+                <svg
+                  className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-900 inline-block"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                Searching...
+              </>
+            ) : (
+              "Search"
+            )}
+          </button>
+          <button
+            type="button"
+            disabled={reindexMutation.isPending || !videoHash}
+            onClick={() => reindexMutation.mutate()}
+            className="px-3 py-2.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed text-sm"
+            title="Re-index images with updated embeddings"
+          >
+            {reindexMutation.isPending ? (
               <svg
-                className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-900 inline-block"
+                className="animate-spin h-4 w-4 text-gray-700"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -231,13 +277,21 @@ export const VisualSearchPanel = ({
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 />
               </svg>
-              Searching...
-            </>
-          ) : (
-            "Search"
-          )}
-        </button>
+            ) : (
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+              </svg>
+            )}
+          </button>
+        </div>
       </form>
+
+      {/* Re-index success message */}
+      {reindexMutation.isSuccess && (
+        <div className="mt-2 p-2 bg-green-50 border-l-4 border-green-400 text-green-700 text-xs rounded-md">
+          Re-indexing complete. Search again to see updated results.
+        </div>
+      )}
 
       {/* Loading skeleton */}
       {searchMutation.isPending && <LoadingSkeleton />}
