@@ -781,3 +781,78 @@ export const deleteFaceTag = async (
   const response = await api.delete(`/api/face-tags/${videoHash}/${faceTagId}`);
   return response.data;
 };
+
+// ============================================================================
+// Visual Scene Search API
+// ============================================================================
+
+export interface ImageSearchResult {
+  screenshot_path: string;
+  segment_id: string;
+  start: number;
+  end: number;
+  speaker: string;
+  distance: number | null;
+}
+
+export interface ImageSearchResponse {
+  results: ImageSearchResult[];
+  video_hash: string;
+  query: string;
+}
+
+export const searchImages = async (
+  query: string,
+  videoHash?: string,
+  nResults: number = 12
+): Promise<ImageSearchResponse> => {
+  const response = await api.post<ImageSearchResponse>('/api/search_images/', {
+    query,
+    video_hash: videoHash,
+    n_results: nResults,
+  });
+  return response.data;
+};
+
+export const indexImages = async (videoHash: string): Promise<void> => {
+  await api.post('/api/index_images/', null, {
+    params: { video_hash: videoHash },
+  });
+};
+
+// ============================================================================
+// Auto Chapter Markers API
+// ============================================================================
+
+export interface Chapter {
+  start: number;
+  end: number;
+  start_time: string;
+  end_time: string;
+  title: string;
+  summary: string;
+  segment_count: number;
+}
+
+export interface ChaptersResponse {
+  chapters: Chapter[];
+  video_hash: string;
+  total_duration: number;
+}
+
+export const generateChapters = async (
+  videoHash: string,
+  provider?: string,
+  minChapterDuration?: number
+): Promise<ChaptersResponse> => {
+  const params: Record<string, string | number> = {};
+  if (provider) params.provider = provider;
+  if (minChapterDuration) params.min_chapter_duration = minChapterDuration;
+
+  const response = await api.post<ChaptersResponse>(
+    `/api/chapters/generate/${videoHash}`,
+    null,
+    { params }
+  );
+  return response.data;
+};
