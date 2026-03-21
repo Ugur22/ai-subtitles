@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import traceback
 import threading
+import hashlib
 import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper
 from routers.transcription import create_silent_segments_for_gaps, extract_silent_segment_screenshots
 from speaker_diarization import ChunkedSpeakerDiarizer
 from services.audio_analysis_service import AudioAnalysisService
+from services.pipeline_cache_service import PipelineCacheService
 
 
 # Configuration
@@ -240,215 +242,265 @@ class BackgroundWorker:
 
             print(f"[Worker] Processing job {job_id}: {filename} ({file_size_bytes / (1024*1024):.1f} MB)")
 
-            # Step 1: Download from GCS (0-10%)
-            JobQueueService.update_progress(job_id, 5, "downloading", "Downloading video from cloud storage...")
+            # Calculate video hash early — used for caching, screenshots, and final result
+            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
 
-            if not gcs_service.file_exists(gcs_path):
-                raise Exception("Video file not found in cloud storage")
+            # Check what's already cached to decide what we need to download/process
+            cached_transcription = PipelineCacheService.get_cached(video_hash, "transcription")
+            cached_diarization = PipelineCacheService.get_cached(video_hash, "diarization")
 
-            # Generate signed URL for screenshot extraction later
-            read_url = gcs_service.generate_download_signed_url(gcs_path)
-            print(f"[Worker] Generated read URL for streaming: {gcs_path}")
+            # Build a diarization param hash so cache is invalidated when speaker settings change
+            diarization_param_key = f"{num_speakers}_{min_speakers}_{max_speakers}"
+            if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
+                print(f"[Worker] Diarization cache param mismatch, invalidating")
+                cached_diarization = None
 
-            # Download video to local temp file for reliable FFmpeg extraction
-            temp_video_path = await _run_in_executor(
-                gcs_service.download_to_temp, gcs_path
-            )
-            temp_files.append(temp_video_path)
-            print(f"[Worker] Downloaded video to {temp_video_path}")
+            suffix = os.path.splitext(filename)[1].lower()
+            is_video_format = suffix in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}
+            cached_screenshots = PipelineCacheService.get_cached(video_hash, "screenshots") if is_video_format else None
 
-            JobQueueService.update_progress(job_id, 10, "downloading", "Download complete")
+            # Determine if we need audio files at all
+            need_audio = not cached_transcription or (not cached_diarization and settings.ENABLE_SPEAKER_DIARIZATION)
 
-            # Step 2: Extract audio from local file (10-30%)
-            JobQueueService.update_progress(job_id, 15, "extracting", "Extracting audio from video...")
+            audio_chunks = []
+            full_audio_path = None
+            read_url = None
 
-            # Create temp directory for audio chunks
-            temp_dir = tempfile.mkdtemp()
-            temp_dirs.append(temp_dir)
-            print(f"[Worker] Created temp directory for audio: {temp_dir}")
+            if need_audio or is_video_format:
+                # Step 1: Download from GCS (0-10%)
+                JobQueueService.update_progress(job_id, 5, "downloading", "Downloading video from cloud storage...")
 
-            try:
-                # Run in executor to avoid blocking event loop
-                audio_chunks = await _run_in_executor(
-                    AudioService.extract_audio_streaming,
-                    source_url=temp_video_path,  # Local path instead of URL
-                    output_dir=temp_dir,
-                    segment_duration=300  # 5-minute segments
-                )
-                temp_files.extend(audio_chunks)
-                print(f"[Worker] Extracted {len(audio_chunks)} audio chunks")
+                if not gcs_service.file_exists(gcs_path):
+                    raise Exception("Video file not found in cloud storage")
 
-                # Delete video immediately to free disk space
-                if os.path.exists(temp_video_path):
-                    os.unlink(temp_video_path)
-                    temp_files.remove(temp_video_path)
-                    print(f"[Worker] Deleted temp video to free disk space")
-            except Exception as e:
-                raise Exception(f"Failed to extract audio: {str(e)}")
+                # Generate signed URL for screenshot extraction later
+                read_url = gcs_service.generate_download_signed_url(gcs_path)
+                print(f"[Worker] Generated read URL for streaming: {gcs_path}")
 
-            JobQueueService.update_progress(job_id, 30, "extracting", f"Extracted {len(audio_chunks)} audio segments")
+                if need_audio:
+                    # Download video to local temp file for reliable FFmpeg extraction
+                    temp_video_path = await _run_in_executor(
+                        gcs_service.download_to_temp, gcs_path
+                    )
+                    temp_files.append(temp_video_path)
+                    print(f"[Worker] Downloaded video to {temp_video_path}")
 
-            # Create full audio path for diarization and audio analysis
-            if len(audio_chunks) == 1:
-                full_audio_path = audio_chunks[0]
-            elif len(audio_chunks) > 1:
-                full_audio_path = os.path.join(temp_dir, "full_audio.wav")
-                concat_list_path = os.path.join(temp_dir, "concat_list.txt")
-                with open(concat_list_path, 'w') as f:
-                    for chunk in audio_chunks:
-                        f.write(f"file '{chunk}'\n")
-                subprocess.run([
-                    'ffmpeg', '-f', 'concat', '-safe', '0',
-                    '-i', concat_list_path, '-c', 'copy', full_audio_path, '-y'
-                ], check=True, capture_output=True)
-                temp_files.append(full_audio_path)
-                print(f"[Worker] Concatenated {len(audio_chunks)} chunks into full audio")
+                    JobQueueService.update_progress(job_id, 10, "downloading", "Download complete")
+
+                    # Step 2: Extract audio from local file (10-30%)
+                    JobQueueService.update_progress(job_id, 15, "extracting", "Extracting audio from video...")
+
+                    # Create temp directory for audio chunks
+                    temp_dir = tempfile.mkdtemp()
+                    temp_dirs.append(temp_dir)
+                    print(f"[Worker] Created temp directory for audio: {temp_dir}")
+
+                    try:
+                        audio_chunks = await _run_in_executor(
+                            AudioService.extract_audio_streaming,
+                            source_url=temp_video_path,
+                            output_dir=temp_dir,
+                            segment_duration=300
+                        )
+                        temp_files.extend(audio_chunks)
+                        print(f"[Worker] Extracted {len(audio_chunks)} audio chunks")
+
+                        # Delete video immediately to free disk space
+                        if os.path.exists(temp_video_path):
+                            os.unlink(temp_video_path)
+                            temp_files.remove(temp_video_path)
+                            print(f"[Worker] Deleted temp video to free disk space")
+                    except Exception as e:
+                        raise Exception(f"Failed to extract audio: {str(e)}")
+
+                    JobQueueService.update_progress(job_id, 30, "extracting", f"Extracted {len(audio_chunks)} audio segments")
+
+                    # Create full audio path for diarization and audio analysis
+                    if len(audio_chunks) == 1:
+                        full_audio_path = audio_chunks[0]
+                    elif len(audio_chunks) > 1:
+                        full_audio_path = os.path.join(temp_dir, "full_audio.wav")
+                        concat_list_path = os.path.join(temp_dir, "concat_list.txt")
+                        with open(concat_list_path, 'w') as f:
+                            for chunk in audio_chunks:
+                                f.write(f"file '{chunk}'\n")
+                        subprocess.run([
+                            'ffmpeg', '-f', 'concat', '-safe', '0',
+                            '-i', concat_list_path, '-c', 'copy', full_audio_path, '-y'
+                        ], check=True, capture_output=True)
+                        temp_files.append(full_audio_path)
+                        print(f"[Worker] Concatenated {len(audio_chunks)} chunks into full audio")
+                    else:
+                        full_audio_path = None
+                else:
+                    JobQueueService.update_progress(job_id, 30, "downloading", "Using cached results, skipping audio extraction")
+                    print(f"[Worker] Skipping download/extraction — transcription and diarization are cached")
             else:
-                full_audio_path = None
+                JobQueueService.update_progress(job_id, 30, "downloading", "All stages cached, skipping download")
+                print(f"[Worker] Skipping download entirely — all stages are cached")
 
             # Step 3: Transcribe (30-50%)
-            JobQueueService.update_progress(job_id, 35, "transcribing", "Starting transcription...")
+            if cached_transcription:
+                formatted_segments = cached_transcription["formatted_segments"]
+                detected_language = cached_transcription["detected_language"]
+                normalized_lang = cached_transcription.get("normalized_lang", detected_language)
+                print(f"[Worker] Using cached transcription: {len(formatted_segments)} segments, language={detected_language}")
+                JobQueueService.update_progress(job_id, 50, "transcribing", "Transcription loaded from cache")
+            else:
+                JobQueueService.update_progress(job_id, 35, "transcribing", "Starting transcription...")
 
-            # Get Whisper model
-            whisper_model = get_whisper_model()
+                # Get Whisper model
+                whisper_model = get_whisper_model()
 
-            # Build transcription parameters
-            transcribe_params = {
-                "task": "transcribe",
-                "beam_size": 5,
-                "vad_filter": settings.VAD_ENABLED,
-                "vad_parameters": dict(
-                    min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
-                    threshold=settings.VAD_THRESHOLD
-                )
-            }
+                # Build transcription parameters
+                transcribe_params = {
+                    "task": "transcribe",
+                    "beam_size": 5,
+                    "vad_filter": settings.VAD_ENABLED,
+                    "vad_parameters": dict(
+                        min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
+                        threshold=settings.VAD_THRESHOLD
+                    )
+                }
 
-            if language:
-                transcribe_params["language"] = language
-                print(f"[Worker] Using specified language: {language}")
+                if language:
+                    transcribe_params["language"] = language
+                    print(f"[Worker] Using specified language: {language}")
 
-            # Transcribe each audio chunk and combine results
-            all_segments = []
-            detected_language = None
-            chunk_duration_seconds = 300  # Must match segment_duration above
+                # Transcribe each audio chunk and combine results
+                all_segments = []
+                detected_language = None
+                chunk_duration_seconds = 300  # Must match segment_duration above
 
-            total_chunks = len(audio_chunks)
-            for i, chunk_path in enumerate(audio_chunks):
-                progress = 35 + int((i / total_chunks) * 15)  # 35-50% progress
-                JobQueueService.update_progress(
-                    job_id, progress, "transcribing",
-                    f"Transcribing chunk {i+1}/{total_chunks}..."
-                )
+                total_chunks = len(audio_chunks)
+                for i, chunk_path in enumerate(audio_chunks):
+                    progress = 35 + int((i / total_chunks) * 15)  # 35-50% progress
+                    JobQueueService.update_progress(
+                        job_id, progress, "transcribing",
+                        f"Transcribing chunk {i+1}/{total_chunks}..."
+                    )
 
-                print(f"[Worker] Transcribing chunk {i+1}/{total_chunks}: {chunk_path}")
+                    print(f"[Worker] Transcribing chunk {i+1}/{total_chunks}: {chunk_path}")
 
-                # Run in executor to avoid blocking event loop (critical for auth responsiveness)
-                segments, info = await _run_in_executor(
-                    whisper_model.transcribe,
-                    chunk_path,
-                    **transcribe_params
-                )
+                    segments, info = await _run_in_executor(
+                        whisper_model.transcribe,
+                        chunk_path,
+                        **transcribe_params
+                    )
 
-                chunk_segments = list(segments)
+                    chunk_segments = list(segments)
 
-                # Use language from first chunk
-                if detected_language is None:
-                    detected_language = info.language
-                    print(f"[Worker] Whisper detected language: {detected_language}")
+                    if detected_language is None:
+                        detected_language = info.language
+                        print(f"[Worker] Whisper detected language: {detected_language}")
 
-                # Adjust segment times based on chunk offset
-                chunk_offset = i * chunk_duration_seconds
-                for seg in chunk_segments:
-                    # Adjust segment times to be relative to the full video
-                    seg.start += chunk_offset
-                    seg.end += chunk_offset
+                    chunk_offset = i * chunk_duration_seconds
+                    for seg in chunk_segments:
+                        seg.start += chunk_offset
+                        seg.end += chunk_offset
 
-                all_segments.extend(chunk_segments)
+                    all_segments.extend(chunk_segments)
 
-            JobQueueService.update_progress(job_id, 50, "transcribing", "Processing transcription segments...")
+                JobQueueService.update_progress(job_id, 50, "transcribing", "Processing transcription segments...")
 
-            # Validate and potentially override detected language
-            if language and not force_language:
-                if detected_language != language:
-                    print(f"[Worker] Language mismatch! Specified: {language}, Detected: {detected_language}")
+                # Validate and potentially override detected language
+                if language and not force_language:
+                    if detected_language != language:
+                        print(f"[Worker] Language mismatch! Specified: {language}, Detected: {detected_language}")
+                        detected_language = language
+                elif force_language and language:
+                    print(f"[Worker] Force override - using: {language}")
                     detected_language = language
-            elif force_language and language:
-                print(f"[Worker] Force override - using: {language}")
-                detected_language = language
 
-            # Format segments
-            import uuid
-            formatted_segments = []
-            for seg in all_segments:
-                formatted_segments.append({
-                    "id": str(uuid.uuid4()),
-                    "start": seg.start,
-                    "end": seg.end,
-                    "start_time": format_timestamp(seg.start),
-                    "end_time": format_timestamp(seg.end),
-                    "text": seg.text,
-                    "translation": None,
+                # Format segments
+                import uuid
+                formatted_segments = []
+                for seg in all_segments:
+                    formatted_segments.append({
+                        "id": str(uuid.uuid4()),
+                        "start": seg.start,
+                        "end": seg.end,
+                        "start_time": format_timestamp(seg.start),
+                        "end_time": format_timestamp(seg.end),
+                        "text": seg.text,
+                        "translation": None,
+                    })
+
+                print(f"[Worker] Combined {len(formatted_segments)} segments from {total_chunks} chunks")
+
+                # Language code normalization (needed for cache)
+                language_code_map = {
+                    'spanish': 'es', 'español': 'es', 'es': 'es',
+                    'italian': 'it', 'italiano': 'it', 'it': 'it',
+                    'french': 'fr', 'français': 'fr', 'fr': 'fr',
+                    'german': 'de', 'deutsch': 'de', 'de': 'de',
+                    'portuguese': 'pt', 'português': 'pt', 'pt': 'pt',
+                    'russian': 'ru', 'русский': 'ru', 'ru': 'ru',
+                    'chinese': 'zh', 'zh': 'zh',
+                    'japanese': 'ja', 'ja': 'ja',
+                    'korean': 'ko', 'ko': 'ko',
+                    'english': 'en', 'en': 'en'
+                }
+                normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
+
+                # Cache transcription results
+                PipelineCacheService.save_cache(video_hash, "transcription", {
+                    "formatted_segments": formatted_segments,
+                    "detected_language": detected_language,
+                    "normalized_lang": normalized_lang,
                 })
 
-            print(f"[Worker] Combined {len(formatted_segments)} segments from {total_chunks} chunks")
-
             # === MEMORY CLEANUP: Unload Whisper before diarization ===
-            print("[Worker] Cleaning up GPU memory before diarization...")
-            log_gpu_memory("Worker:BeforeWhisperUnload")
-            unload_whisper_model()
-            clear_gpu_memory("Worker:AfterWhisperUnload")
+            if not cached_transcription:
+                print("[Worker] Cleaning up GPU memory before diarization...")
+                log_gpu_memory("Worker:BeforeWhisperUnload")
+                unload_whisper_model()
+                clear_gpu_memory("Worker:AfterWhisperUnload")
 
-            # Step 4: Speaker diarization (50-80%)
-            JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
-
-            if settings.ENABLE_SPEAKER_DIARIZATION:
+            # Step 4: Speaker diarization (50-80%) — may run in parallel with screenshots
+            if cached_diarization:
+                speaker_segments = cached_diarization["speaker_segments"]
+                formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+                print(f"[Worker] Using cached diarization: {len(speaker_segments)} speaker segments")
+                JobQueueService.update_progress(job_id, 75, "diarizing", "Diarization loaded from cache")
+            elif settings.ENABLE_SPEAKER_DIARIZATION:
+                JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
                 try:
-                    # Calculate total video duration to decide on chunked vs. standard diarization
-                    total_duration = len(audio_chunks) * 300  # 5 minutes per chunk
+                    total_duration = len(audio_chunks) * 300
 
-                    # Use chunked diarization for long videos (configurable threshold)
                     if total_duration > settings.USE_CHUNKED_DIARIZATION_ABOVE:
                         print(f"[Worker] Using chunked diarization for {total_duration}s ({total_duration/60:.1f} min) video")
                         JobQueueService.update_progress(job_id, 60, "diarizing", "Using chunked diarization for long video...")
 
-                        # Initialize chunked diarizer
                         chunked_diarizer = ChunkedSpeakerDiarizer(
                             chunk_duration=settings.DIARIZATION_CHUNK_DURATION,
                             similarity_threshold=settings.DIARIZATION_SIMILARITY_THRESHOLD,
                             use_auth_token=settings.HUGGINGFACE_TOKEN
                         )
 
-                        # Run chunked diarization in executor to avoid blocking event loop
                         speaker_segments = await _run_in_executor(
                             chunked_diarizer.diarize_chunked,
                             audio_chunks=audio_chunks,
-                            chunk_duration=300,  # 5-min chunks
+                            chunk_duration=300,
                             num_speakers=num_speakers,
                             min_speakers=min_speakers,
                             max_speakers=max_speakers
                         )
 
-                        # Apply speaker labels to transcription segments
                         formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
 
-                        # Clean up chunked diarizer to free GPU memory
                         chunked_diarizer.unload_pipeline()
                         del chunked_diarizer
                         clear_gpu_memory("Worker:AfterChunkedDiarization")
 
-                        JobQueueService.update_progress(job_id, 75, "diarizing", "Chunked diarization completed")
-
                     else:
-                        # Standard full-video diarization for shorter videos
                         print(f"[Worker] Using standard full-video diarization for {total_duration}s ({total_duration/60:.1f} min) video")
 
                         diarizer = get_speaker_diarizer()
 
                         if diarizer and full_audio_path:
-                            # Use pre-concatenated full audio for diarization
                             print(f"[Worker] Performing speaker diarization on full video...")
 
-                            # Run in executor to avoid blocking event loop
                             formatted_segments = await _run_in_executor(
                                 SpeakerService.add_speaker_labels,
                                 audio_path=full_audio_path,
@@ -459,21 +511,32 @@ class BackgroundWorker:
                                 max_speakers=max_speakers
                             )
 
-                            # Clean up standard diarizer
                             clear_gpu_memory("Worker:AfterStandardDiarization")
 
-                            JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
+                            # Extract speaker_segments for caching
+                            speaker_segments = [
+                                {"start": s["start"], "end": s["end"], "speaker": s.get("speaker", "UNKNOWN")}
+                                for s in formatted_segments
+                                if not s.get("is_silent")
+                            ]
                         else:
                             print("[Worker] Speaker diarization not available, skipping")
-                            # Add default speaker labels
                             for seg in formatted_segments:
                                 seg['speaker'] = "SPEAKER_00"
-                            JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (not available)")
+                            speaker_segments = None
+
+                    # Cache diarization results
+                    if speaker_segments is not None:
+                        PipelineCacheService.save_cache(video_hash, "diarization", {
+                            "speaker_segments": speaker_segments,
+                            "param_key": diarization_param_key,
+                        })
+
+                    JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
 
                 except Exception as e:
                     print(f"[Worker] Speaker diarization failed: {e}")
                     traceback.print_exc()
-                    # Add default speaker labels
                     for seg in formatted_segments:
                         seg['speaker'] = "SPEAKER_00"
                     JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (error)")
@@ -482,10 +545,6 @@ class BackgroundWorker:
                 for seg in formatted_segments:
                     seg['speaker'] = "SPEAKER_00"
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
-
-            # Calculate video hash early (used for audio analysis, screenshots and final result)
-            import hashlib
-            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
 
             # Step 4.25: Audio analysis (non-critical)
             try:
@@ -504,198 +563,212 @@ class BackgroundWorker:
                 print(f"[Worker] Audio analysis failed (non-critical): {e}")
 
             # Step 4.5: Screenshot extraction (75-80%)
-            # Check if file is a video format that supports screenshots
-            suffix = os.path.splitext(filename)[1].lower()
-            if suffix in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
-                try:
-                    JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
+            if is_video_format:
+                if cached_screenshots:
+                    # Restore screenshot URLs from cache
+                    screenshot_url_map = cached_screenshots.get("segment_screenshot_urls", {})
+                    screenshot_count = 0
+                    for seg in formatted_segments:
+                        ts_key = str(seg['start'])
+                        gcs_url = screenshot_url_map.get(ts_key)
+                        if gcs_url:
+                            seg['screenshot_url'] = gcs_url
+                            screenshot_count += 1
+                        else:
+                            seg['screenshot_url'] = None
+                    print(f"[Worker] Restored {screenshot_count} screenshot URLs from cache")
+                    JobQueueService.update_progress(job_id, 79, "extracting", f"Screenshots loaded from cache ({screenshot_count})")
+                else:
+                    try:
+                        JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
 
-                    screenshots_dir = os.path.join("static", "screenshots")
-                    os.makedirs(screenshots_dir, exist_ok=True)
+                        screenshots_dir = os.path.join("static", "screenshots")
+                        os.makedirs(screenshots_dir, exist_ok=True)
 
-                    # Get timestamps for all segments
-                    timestamps = [seg['start'] for seg in formatted_segments]
+                        timestamps = [seg['start'] for seg in formatted_segments]
 
-                    print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
-                    log_all_memory("Worker:BeforeScreenshotExtraction")
+                        print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
+                        log_all_memory("Worker:BeforeScreenshotExtraction")
 
-                    # Progress callback to update job progress during extraction (76% -> 78%)
-                    def screenshot_progress(completed: int, total: int):
-                        progress = 76 + int((completed / total) * 2) if total > 0 else 76
-                        JobQueueService.update_progress(
-                            job_id,
-                            progress,
-                            "extracting",
-                            f"Extracting screenshots... {completed}/{total}"
-                        )
+                        def screenshot_progress(completed: int, total: int):
+                            progress = 76 + int((completed / total) * 2) if total > 0 else 76
+                            JobQueueService.update_progress(
+                                job_id,
+                                progress,
+                                "extracting",
+                                f"Extracting screenshots... {completed}/{total}"
+                            )
 
-                    # Extract screenshots from GCS URL (streaming, no full download)
-                    # Run in executor to avoid blocking event loop
-                    screenshot_results = await _run_in_executor(
-                        VideoService.extract_screenshots_parallel_from_url,
-                        source_url=read_url,
-                        timestamps=timestamps,
-                        output_dir=screenshots_dir,
-                        video_hash=video_hash,
-                        max_workers=4,
-                        progress_callback=screenshot_progress
-                    )
-
-                    log_all_memory("Worker:AfterScreenshotExtraction")
-                    JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
-
-                    # Upload to GCS and update segments
-                    if settings.ENABLE_GCS_UPLOADS:
-                        print(f"[Worker] Uploading {len(screenshot_results)} screenshots to GCS...")
-                        log_all_memory("Worker:BeforeGCSUpload")
-
-                        gcs_urls = gcs_service.upload_screenshots_batch(
-                            screenshot_paths=screenshot_results,
-                            video_hash=video_hash
-                        )
-
-                        screenshot_count = 0
-                        for seg in formatted_segments:
-                            ts = seg['start']
-                            gcs_url = gcs_urls.get(ts)
-                            if gcs_url:
-                                seg['screenshot_url'] = gcs_url
-                                screenshot_count += 1
-                            else:
-                                seg['screenshot_url'] = None
-
-                        print(f"[Worker] Uploaded {screenshot_count}/{len(formatted_segments)} screenshots to GCS")
-                        log_all_memory("Worker:AfterGCSUpload")
-
-                        # Clean up local screenshots after upload
-                        for local_path in screenshot_results.values():
-                            if local_path and os.path.exists(local_path):
-                                try:
-                                    os.unlink(local_path)
-                                except Exception:
-                                    pass
-                    else:
-                        # Use local URLs (development mode)
-                        screenshot_count = 0
-                        for seg in formatted_segments:
-                            ts = seg['start']
-                            screenshot_path = screenshot_results.get(ts)
-                            if screenshot_path and os.path.exists(screenshot_path):
-                                screenshot_filename = os.path.basename(screenshot_path)
-                                seg['screenshot_url'] = f"/static/screenshots/{screenshot_filename}"
-                                screenshot_count += 1
-                            else:
-                                seg['screenshot_url'] = None
-
-                        print(f"[Worker] Extracted {screenshot_count}/{len(formatted_segments)} screenshots (local)")
-
-                    JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
-
-                    # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
-                    JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
-                    print(f"[Worker] Detecting timeline gaps and creating silent segments...")
-                    log_all_memory("Worker:BeforeSilentSegments")
-
-                    # Pure gap detection (no I/O) - fast, no timeout needed
-                    formatted_segments = create_silent_segments_for_gaps(
-                        segments=formatted_segments,
-                        min_gap_duration=2.0,
-                        silent_chunk_duration=10.0
-                    )
-
-                    log_all_memory("Worker:AfterSilentSegments")
-
-                    # Step 4.65: Audio analysis on silent segments for ambient sounds
-                    silent_count = len([s for s in formatted_segments if s.get('is_silent')])
-                    if silent_count > 0:
-                        try:
-                            audio_for_silent = full_audio_path
-                            if audio_for_silent and os.path.exists(audio_for_silent):
-                                JobQueueService.update_progress(
-                                    job_id, 79, "analyzing",
-                                    f"Analyzing {silent_count} silent segments for ambient sounds..."
-                                )
-                                formatted_segments = await _run_in_executor(
-                                    AudioAnalysisService.analyze_silent_segments,
-                                    audio_for_silent,
-                                    formatted_segments
-                                )
-                                clear_gpu_memory("Worker:AfterSilentAudioAnalysis")
-                                print(f"[Worker] Silent segment audio analysis completed for {silent_count} segments")
-                        except Exception as e:
-                            print(f"[Worker] Silent segment audio analysis failed (non-critical): {e}")
-
-                    # Extract silent segment screenshots in parallel (same pattern as speech screenshots)
-                    silent_segs = [s for s in formatted_segments if s.get('is_silent') and s.get('screenshot_timestamp')]
-                    if silent_segs:
-                        silent_timestamps = [s['screenshot_timestamp'] for s in silent_segs]
-                        print(f"[Worker] Extracting {len(silent_timestamps)} silent segment screenshots in parallel...")
-
-                        silent_screenshot_results = await _run_in_executor(
+                        screenshot_results = await _run_in_executor(
                             VideoService.extract_screenshots_parallel_from_url,
                             source_url=read_url,
-                            timestamps=silent_timestamps,
+                            timestamps=timestamps,
                             output_dir=screenshots_dir,
                             video_hash=video_hash,
-                            max_workers=4
+                            max_workers=4,
+                            progress_callback=screenshot_progress
                         )
 
-                        # Upload to GCS and map URLs back to segments
-                        silent_screenshot_count = 0
+                        log_all_memory("Worker:AfterScreenshotExtraction")
+                        JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
+
                         if settings.ENABLE_GCS_UPLOADS:
-                            print(f"[Worker] Uploading {len(silent_screenshot_results)} silent screenshots to GCS...")
+                            print(f"[Worker] Uploading {len(screenshot_results)} screenshots to GCS...")
+                            log_all_memory("Worker:BeforeGCSUpload")
 
                             gcs_urls = gcs_service.upload_screenshots_batch(
-                                screenshot_paths=silent_screenshot_results,
+                                screenshot_paths=screenshot_results,
                                 video_hash=video_hash
                             )
 
-                            for seg in silent_segs:
-                                ts = seg['screenshot_timestamp']
+                            screenshot_count = 0
+                            screenshot_url_map = {}
+                            for seg in formatted_segments:
+                                ts = seg['start']
                                 gcs_url = gcs_urls.get(ts)
                                 if gcs_url:
                                     seg['screenshot_url'] = gcs_url
-                                    silent_screenshot_count += 1
+                                    screenshot_url_map[str(ts)] = gcs_url
+                                    screenshot_count += 1
+                                else:
+                                    seg['screenshot_url'] = None
 
-                            # Clean up local silent screenshots after upload
-                            for local_path in silent_screenshot_results.values():
+                            print(f"[Worker] Uploaded {screenshot_count}/{len(formatted_segments)} screenshots to GCS")
+                            log_all_memory("Worker:AfterGCSUpload")
+
+                            for local_path in screenshot_results.values():
                                 if local_path and os.path.exists(local_path):
                                     try:
                                         os.unlink(local_path)
                                     except Exception:
                                         pass
                         else:
-                            # Use local URLs (development mode)
-                            for seg in silent_segs:
-                                ts = seg['screenshot_timestamp']
-                                path = silent_screenshot_results.get(ts)
-                                if path and os.path.exists(path):
-                                    seg['screenshot_url'] = f"/static/screenshots/{os.path.basename(path)}"
-                                    silent_screenshot_count += 1
+                            screenshot_count = 0
+                            screenshot_url_map = {}
+                            for seg in formatted_segments:
+                                ts = seg['start']
+                                screenshot_path = screenshot_results.get(ts)
+                                if screenshot_path and os.path.exists(screenshot_path):
+                                    screenshot_filename = os.path.basename(screenshot_path)
+                                    url = f"/static/screenshots/{screenshot_filename}"
+                                    seg['screenshot_url'] = url
+                                    screenshot_url_map[str(ts)] = url
+                                    screenshot_count += 1
+                                else:
+                                    seg['screenshot_url'] = None
 
-                        print(f"[Worker] Extracted {silent_screenshot_count}/{len(silent_segs)} silent screenshots")
-                        log_all_memory("Worker:AfterSilentGCSUpload")
-                        screenshot_count += silent_screenshot_count
+                            print(f"[Worker] Extracted {screenshot_count}/{len(formatted_segments)} screenshots (local)")
 
-                    # Auto-index images into Supabase pgvector if GCS uploads are enabled
-                    if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:
-                        try:
-                            from services.image_embedding_service import image_embedding_service
-                            JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
-                            print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
-                            log_all_memory("Worker:BeforeImageIndexing")
-                            indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False, user_id=user_id)
-                            log_all_memory("Worker:AfterImageIndexing")
-                            print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
-                        except Exception as e:
-                            print(f"[Worker] Image indexing failed (non-critical): {e}")
-                            # Non-critical - visual search just won't work until manually indexed
+                        JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
 
-                except Exception as e:
-                    print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
-                    # Non-critical error - continue without screenshots
-                    for seg in formatted_segments:
-                        seg['screenshot_url'] = None
+                        # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
+                        JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
+                        print(f"[Worker] Detecting timeline gaps and creating silent segments...")
+                        log_all_memory("Worker:BeforeSilentSegments")
+
+                        formatted_segments = create_silent_segments_for_gaps(
+                            segments=formatted_segments,
+                            min_gap_duration=2.0,
+                            silent_chunk_duration=10.0
+                        )
+
+                        log_all_memory("Worker:AfterSilentSegments")
+
+                        # Step 4.65: Audio analysis on silent segments for ambient sounds
+                        silent_count = len([s for s in formatted_segments if s.get('is_silent')])
+                        if silent_count > 0:
+                            try:
+                                audio_for_silent = full_audio_path
+                                if audio_for_silent and os.path.exists(audio_for_silent):
+                                    JobQueueService.update_progress(
+                                        job_id, 79, "analyzing",
+                                        f"Analyzing {silent_count} silent segments for ambient sounds..."
+                                    )
+                                    formatted_segments = await _run_in_executor(
+                                        AudioAnalysisService.analyze_silent_segments,
+                                        audio_for_silent,
+                                        formatted_segments
+                                    )
+                                    clear_gpu_memory("Worker:AfterSilentAudioAnalysis")
+                                    print(f"[Worker] Silent segment audio analysis completed for {silent_count} segments")
+                            except Exception as e:
+                                print(f"[Worker] Silent segment audio analysis failed (non-critical): {e}")
+
+                        # Extract silent segment screenshots
+                        silent_segs = [s for s in formatted_segments if s.get('is_silent') and s.get('screenshot_timestamp')]
+                        if silent_segs:
+                            silent_timestamps = [s['screenshot_timestamp'] for s in silent_segs]
+                            print(f"[Worker] Extracting {len(silent_timestamps)} silent segment screenshots in parallel...")
+
+                            silent_screenshot_results = await _run_in_executor(
+                                VideoService.extract_screenshots_parallel_from_url,
+                                source_url=read_url,
+                                timestamps=silent_timestamps,
+                                output_dir=screenshots_dir,
+                                video_hash=video_hash,
+                                max_workers=4
+                            )
+
+                            silent_screenshot_count = 0
+                            if settings.ENABLE_GCS_UPLOADS:
+                                print(f"[Worker] Uploading {len(silent_screenshot_results)} silent screenshots to GCS...")
+
+                                gcs_urls = gcs_service.upload_screenshots_batch(
+                                    screenshot_paths=silent_screenshot_results,
+                                    video_hash=video_hash
+                                )
+
+                                for seg in silent_segs:
+                                    ts = seg['screenshot_timestamp']
+                                    gcs_url = gcs_urls.get(ts)
+                                    if gcs_url:
+                                        seg['screenshot_url'] = gcs_url
+                                        screenshot_url_map[str(ts)] = gcs_url
+                                        silent_screenshot_count += 1
+
+                                for local_path in silent_screenshot_results.values():
+                                    if local_path and os.path.exists(local_path):
+                                        try:
+                                            os.unlink(local_path)
+                                        except Exception:
+                                            pass
+                            else:
+                                for seg in silent_segs:
+                                    ts = seg['screenshot_timestamp']
+                                    path = silent_screenshot_results.get(ts)
+                                    if path and os.path.exists(path):
+                                        url = f"/static/screenshots/{os.path.basename(path)}"
+                                        seg['screenshot_url'] = url
+                                        screenshot_url_map[str(ts)] = url
+                                        silent_screenshot_count += 1
+
+                            print(f"[Worker] Extracted {silent_screenshot_count}/{len(silent_segs)} silent screenshots")
+                            log_all_memory("Worker:AfterSilentGCSUpload")
+                            screenshot_count += silent_screenshot_count
+
+                        # Cache screenshot URLs
+                        if screenshot_url_map:
+                            PipelineCacheService.save_cache(video_hash, "screenshots", {
+                                "segment_screenshot_urls": screenshot_url_map,
+                            })
+
+                        # Auto-index images into Supabase pgvector if GCS uploads are enabled
+                        if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:
+                            try:
+                                from services.image_embedding_service import image_embedding_service
+                                JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
+                                print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
+                                log_all_memory("Worker:BeforeImageIndexing")
+                                indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False, user_id=user_id)
+                                log_all_memory("Worker:AfterImageIndexing")
+                                print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
+                            except Exception as e:
+                                print(f"[Worker] Image indexing failed (non-critical): {e}")
+
+                    except Exception as e:
+                        print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
+                        for seg in formatted_segments:
+                            seg['screenshot_url'] = None
             else:
                 print(f"[Worker] Skipping screenshots for audio-only file: {suffix}")
                 for seg in formatted_segments:
@@ -706,8 +779,8 @@ class BackgroundWorker:
             # Step 5: Generate SRT/VTT formats (80-95%)
             JobQueueService.update_progress(job_id, 85, "processing", "Generating subtitle formats...")
 
-            # For non-English, add translation field
-            # Language code normalization
+            # Language code normalization (normalized_lang is set in both cached and fresh transcription paths)
+            # This is a no-cost safety fallback
             language_code_map = {
                 'spanish': 'es', 'español': 'es', 'es': 'es',
                 'italian': 'it', 'italiano': 'it', 'it': 'it',
@@ -720,7 +793,6 @@ class BackgroundWorker:
                 'korean': 'ko', 'ko': 'ko',
                 'english': 'en', 'en': 'en'
             }
-
             normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
             # Translate non-English content to English
@@ -768,7 +840,6 @@ class BackgroundWorker:
             JobQueueService.update_progress(job_id, 90, "processing", "Generating subtitle formats...")
 
             # Step 6: Finalize results (90-95%)
-            # Note: video_hash was already calculated earlier for screenshot naming
             JobQueueService.update_progress(job_id, 95, "processing", "Finalizing results...")
 
             # Build result JSON

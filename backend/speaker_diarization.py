@@ -366,14 +366,48 @@ class ChunkedSpeakerDiarizer:
         diarization_groups = self._group_chunks(audio_chunks, chunk_duration)
         print(f"[ChunkedDiarizer] Created {len(diarization_groups)} diarization groups")
 
+        # PHASE 0: Pre-concatenate all group audio files in parallel (CPU-only)
+        # This overlaps FFmpeg concat work across groups instead of doing it sequentially
+        groups_needing_concat = [g for g in diarization_groups if len(g['chunks']) > 1]
+        if groups_needing_concat:
+            print(f"\n=== PHASE 0: Pre-concatenating {len(groups_needing_concat)} groups in parallel ===")
+            from concurrent.futures import ThreadPoolExecutor as ConcatExecutor
+            concat_workers = min(len(groups_needing_concat), 4)
+            with ConcatExecutor(max_workers=concat_workers, thread_name_prefix="concat") as concat_pool:
+                def _prepare_group(group):
+                    temp_f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                    output_path = temp_f.name
+                    temp_f.close()
+                    self._concatenate_audio_files(group['chunks'], output_path)
+                    return output_path
+
+                concat_results = list(concat_pool.map(_prepare_group, groups_needing_concat))
+
+            # Assign pre-concatenated paths back to groups
+            concat_idx = 0
+            for group in diarization_groups:
+                if len(group['chunks']) > 1:
+                    group['_concat_path'] = concat_results[concat_idx]
+                    group['_is_temp'] = True
+                    concat_idx += 1
+                else:
+                    group['_concat_path'] = group['chunks'][0]
+                    group['_is_temp'] = False
+            print(f"[ChunkedDiarizer] Pre-concatenation complete for {len(groups_needing_concat)} groups")
+        else:
+            for group in diarization_groups:
+                group['_concat_path'] = group['chunks'][0]
+                group['_is_temp'] = False
+
         # PHASE 1: Diarize all groups (pipeline only, no embeddings)
         print("\n=== PHASE 1: Diarizing all chunks ===")
         chunk_results = []
         for i, group in enumerate(diarization_groups):
             print(f"\n[Chunk {i+1}/{len(diarization_groups)}] Diarizing group with {len(group['chunks'])} audio files...")
-            result = self._diarize_group_segments_only(
-                group['chunks'],
-                group['time_offset'],
+            result = self._diarize_group_with_preconcat(
+                concat_audio_path=group['_concat_path'],
+                is_temp=group['_is_temp'],
+                time_offset=group['time_offset'],
                 num_speakers=num_speakers,
                 min_speakers=min_speakers,
                 max_speakers=max_speakers
@@ -542,6 +576,68 @@ class ChunkedSpeakerDiarizer:
             "audio_path": concat_audio_path,
             "is_temp": is_temp,
             "speaker_embeddings": {}  # Will be filled later in Phase 4
+        }
+
+    def _diarize_group_with_preconcat(
+        self,
+        concat_audio_path: str,
+        is_temp: bool,
+        time_offset: float,
+        num_speakers: int = None,
+        min_speakers: int = None,
+        max_speakers: int = None
+    ) -> Dict:
+        """
+        Perform diarization on a pre-concatenated audio file (segments only, no embeddings).
+
+        Used after Phase 0 parallel concatenation to avoid redundant concat work.
+
+        Args:
+            concat_audio_path: Path to the already-concatenated audio file
+            is_temp: Whether the file is a temporary concat (for cleanup tracking)
+            time_offset: Time offset in seconds for this group
+            num_speakers: Exact number of speakers (optional)
+            min_speakers: Minimum number of speakers (optional)
+            max_speakers: Maximum number of speakers (optional)
+
+        Returns:
+            Dict containing diarization segments and audio path for embedding extraction
+        """
+        diarization_params = {}
+        if num_speakers is not None:
+            diarization_params["num_speakers"] = num_speakers
+        else:
+            if min_speakers is not None:
+                diarization_params["min_speakers"] = min_speakers
+            if max_speakers is not None:
+                diarization_params["max_speakers"] = max_speakers
+
+        print(f"  Running diarization on pre-concatenated audio...")
+        from utils.memory_utils import log_all_memory
+        log_all_memory("BeforeDiarization")
+
+        diarization = self.pipeline(concat_audio_path, **diarization_params)
+
+        log_all_memory("AfterDiarization")
+
+        segments = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({
+                "start": turn.start + time_offset,
+                "end": turn.end + time_offset,
+                "speaker": speaker,
+                "local_start": turn.start,
+                "local_end": turn.end
+            })
+
+        print(f"  Diarization complete: {len(segments)} segments, {len(set(s['speaker'] for s in segments))} speakers")
+
+        return {
+            "time_offset": time_offset,
+            "segments": segments,
+            "audio_path": concat_audio_path,
+            "is_temp": is_temp,
+            "speaker_embeddings": {}
         }
 
     def _diarize_group(
