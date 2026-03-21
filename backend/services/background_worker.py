@@ -605,6 +605,26 @@ class BackgroundWorker:
 
                     log_all_memory("Worker:AfterSilentSegments")
 
+                    # Step 4.65: Audio analysis on silent segments for ambient sounds
+                    silent_count = len([s for s in formatted_segments if s.get('is_silent')])
+                    if silent_count > 0:
+                        try:
+                            audio_for_silent = full_audio_path
+                            if audio_for_silent and os.path.exists(audio_for_silent):
+                                JobQueueService.update_progress(
+                                    job_id, 79, "analyzing",
+                                    f"Analyzing {silent_count} silent segments for ambient sounds..."
+                                )
+                                formatted_segments = await _run_in_executor(
+                                    AudioAnalysisService.analyze_silent_segments,
+                                    audio_for_silent,
+                                    formatted_segments
+                                )
+                                clear_gpu_memory("Worker:AfterSilentAudioAnalysis")
+                                print(f"[Worker] Silent segment audio analysis completed for {silent_count} segments")
+                        except Exception as e:
+                            print(f"[Worker] Silent segment audio analysis failed (non-critical): {e}")
+
                     # Extract silent segment screenshots in parallel (same pattern as speech screenshots)
                     silent_segs = [s for s in formatted_segments if s.get('is_silent') and s.get('screenshot_timestamp')]
                     if silent_segs:
