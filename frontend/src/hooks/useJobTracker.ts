@@ -54,9 +54,10 @@ export const useJobTracker = () => {
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / JOBS_PER_PAGE));
 
-      // Cache jobs for offline fallback (with tokens for cancel/retry actions)
+      // Cache jobs for offline fallback (strip result_json to avoid quota issues)
       try {
-        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(jobsWithTokens));
+        const cacheableJobs = jobsWithTokens.map(({ result_json, ...rest }) => rest);
+        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(cacheableJobs));
       } catch (e) {
         console.warn('Failed to cache jobs:', e);
       }
