@@ -60,26 +60,26 @@ const EMOTION_EMOJI: Record<string, string> = {
 };
 
 const AMBIENT_COLORS: Record<string, string> = {
-  music: "rgba(218,112,214,0.4)",
-  singing: "rgba(218,112,214,0.4)",
-  laughter: "rgba(255,223,186,0.4)",
-  crying: "rgba(135,206,250,0.4)",
-  rain: "rgba(0,191,255,0.4)",
-  water: "rgba(0,191,255,0.4)",
-  wind: "rgba(176,224,230,0.4)",
-  thunder: "rgba(72,61,139,0.4)",
-  fire: "rgba(255,99,71,0.4)",
-  applause: "rgba(255,215,0,0.4)",
-  cheering: "rgba(255,215,0,0.4)",
-  crowd: "rgba(244,164,96,0.4)",
-  screaming: "rgba(255,69,0,0.45)",
-  explosion: "rgba(255,69,0,0.45)",
-  gunshot: "rgba(255,69,0,0.45)",
-  siren: "rgba(255,0,0,0.45)",
-  alarm: "rgba(255,0,0,0.45)",
-  breathing: "rgba(156,163,175,0.25)",
-  silence: "rgba(156,163,175,0.2)",
-  ambient: "rgba(156,163,175,0.25)",
+  music: "rgba(218,112,214,0.55)",
+  singing: "rgba(218,112,214,0.55)",
+  laughter: "rgba(255,223,186,0.55)",
+  crying: "rgba(135,206,250,0.55)",
+  rain: "rgba(0,191,255,0.55)",
+  water: "rgba(0,191,255,0.55)",
+  wind: "rgba(176,224,230,0.55)",
+  thunder: "rgba(72,61,139,0.55)",
+  fire: "rgba(255,99,71,0.55)",
+  applause: "rgba(255,215,0,0.55)",
+  cheering: "rgba(255,215,0,0.55)",
+  crowd: "rgba(244,164,96,0.55)",
+  screaming: "rgba(255,69,0,0.6)",
+  explosion: "rgba(255,69,0,0.6)",
+  gunshot: "rgba(255,69,0,0.6)",
+  siren: "rgba(255,0,0,0.6)",
+  alarm: "rgba(255,0,0,0.6)",
+  breathing: "rgba(156,163,175,0.4)",
+  silence: "rgba(156,163,175,0.35)",
+  ambient: "rgba(156,163,175,0.4)",
 };
 
 const AMBIENT_EMOJI: Record<string, string> = {
@@ -228,7 +228,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
               } else if (seg.audio_events?.length) {
                 const topEvent = seg.audio_events[0].event_type;
                 backgroundColor =
-                  AMBIENT_COLORS[topEvent] ?? "rgba(156,163,175,0.3)";
+                  AMBIENT_COLORS[topEvent] ?? "rgba(156,163,175,0.45)";
               }
               if (!backgroundColor) return null;
 
