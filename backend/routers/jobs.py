@@ -787,9 +787,14 @@ async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
     try:
         from services.job_queue_service import JobQueueService
 
-        processed = JobQueueService.check_and_recover_stale_jobs()
+        recovered_job_id = JobQueueService.check_and_recover_stale_jobs()
 
-        message = "No stale jobs found" if processed == 0 else f"Recovered {processed} stale job(s)"
+        if recovered_job_id:
+            message = f"Recovered stale job {recovered_job_id}"
+            processed = 1
+        else:
+            message = "No stale jobs found"
+            processed = 0
 
         return StaleJobCheckResponse(
             processed=processed,
