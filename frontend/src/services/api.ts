@@ -817,6 +817,7 @@ export const searchImages = async (
 export const indexImages = async (videoHash: string, forceReindex: boolean = false): Promise<void> => {
   await api.post('/api/index_images/', null, {
     params: { video_hash: videoHash, force_reindex: forceReindex },
+    timeout: forceReindex ? 300000 : undefined, // 5 min for re-indexing
   });
 };
 
