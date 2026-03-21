@@ -534,6 +534,7 @@ class JobQueueService:
             gcs_path=job["gcs_path"],
             file_size_bytes=job["file_size_bytes"],
             video_hash=job["video_hash"],
+            user_id=job.get("user_id"),
             **params
         )
 

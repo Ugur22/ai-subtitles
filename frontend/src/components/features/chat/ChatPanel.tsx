@@ -348,6 +348,9 @@ interface Message {
   sources?: Source[];
   visual_query_used?: string;
   original_question?: string;
+  isError?: boolean;
+  errorType?: "timeout" | "server" | "network" | "unknown";
+  retryQuestion?: string;
 }
 
 interface ChatPanelProps {
@@ -723,6 +726,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   } | null>(null);
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -863,6 +867,40 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
+  const getFriendlyErrorMessage = (error: any): { message: string; errorType: "timeout" | "server" | "network" | "unknown" } => {
+    const status = error.response?.status;
+    const code = error.code;
+
+    if (status === 502 || status === 503 || status === 504) {
+      return {
+        message: "The server is temporarily unavailable, likely warming up. Please try again in a few seconds.",
+        errorType: "server",
+      };
+    }
+    if (code === "ECONNABORTED" || error.message?.includes("timeout")) {
+      return {
+        message: "The request timed out. The server might be starting up — please try again in a moment.",
+        errorType: "timeout",
+      };
+    }
+    if (!error.response && error.request) {
+      return {
+        message: "Could not reach the server. Please check your connection and try again.",
+        errorType: "network",
+      };
+    }
+    const detail = error.response?.data?.detail;
+    if (detail && typeof detail === "string" && detail.length < 200) {
+      return { message: detail, errorType: "unknown" };
+    }
+    return { message: "Something went wrong. Please try again.", errorType: "unknown" };
+  };
+
+  const isRetryableError = (error: any): boolean => {
+    const status = error.response?.status;
+    return status === 502 || status === 503 || status === 504 || error.code === "ECONNABORTED" || error.message?.includes("timeout");
+  };
+
   const sendMessage = async (messageText?: string | React.MouseEvent) => {
     const textToSend = typeof messageText === "string" ? messageText : input;
     if (!textToSend.trim() || !videoHash) return;
@@ -875,48 +913,75 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
+    setRetryCount(0);
 
-    try {
-      // Build conversation history from previous messages (last 10)
-      const history = messages.slice(-10).map((m) => ({
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY = 3000;
+
+    // Build conversation history, filtering out error messages
+    const history = messages
+      .filter((m) => !m.isError)
+      .slice(-10)
+      .map((m) => ({
         role: m.role,
         content: m.content,
       }));
 
-      const response = await axios.post(`${API_BASE_URL}/api/chat/`, {
-        question: textToSend,
-        video_hash: videoHash,
-        provider: selectedProvider,
-        n_results: 8, // Increased for more comprehensive context
-        include_visuals: includeVisuals,
-        n_images: includeVisuals ? 6 : undefined,
-        custom_instructions: customInstructions || undefined,
-        conversation_history: history.length > 0 ? history : undefined,
-      });
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          setRetryCount(attempt);
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+        }
 
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: response.data.answer,
-        sources: response.data.sources,
-        visual_query_used: response.data.visual_query_used,
-        original_question: textToSend,
-      };
+        const response = await axios.post(
+          `${API_BASE_URL}/api/chat/`,
+          {
+            question: textToSend,
+            video_hash: videoHash,
+            provider: selectedProvider,
+            n_results: 8,
+            include_visuals: includeVisuals,
+            n_images: includeVisuals ? 6 : undefined,
+            custom_instructions: customInstructions || undefined,
+            conversation_history: history.length > 0 ? history : undefined,
+          },
+          { timeout: 30000 }
+        );
 
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error: any) {
-      console.error("Chat error:", error);
-      const errorMessage: Message = {
-        role: "assistant",
-        content: `Error: ${
-          error.response?.data?.detail ||
-          error.message ||
-          "Failed to get response"
-        }`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setLoading(false);
+        const assistantMessage: Message = {
+          role: "assistant",
+          content: response.data.answer,
+          sources: response.data.sources,
+          visual_query_used: response.data.visual_query_used,
+          original_question: textToSend,
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+        setRetryCount(0);
+        setLoading(false);
+        return;
+      } catch (error: any) {
+        console.error(`Chat error (attempt ${attempt + 1}):`, error);
+
+        if (attempt < MAX_RETRIES && isRetryableError(error)) {
+          continue;
+        }
+
+        const { message, errorType } = getFriendlyErrorMessage(error);
+        const errorMsg: Message = {
+          role: "assistant",
+          content: message,
+          isError: true,
+          errorType,
+          retryQuestion: textToSend,
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+      }
     }
+
+    setRetryCount(0);
+    setLoading(false);
   };
 
   // Fetch speakers for @mention autocomplete
@@ -1342,17 +1407,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               className={`max-w-3xl rounded-xl ${
                 message.role === "user"
                   ? "px-4 py-3 bg-indigo-600 text-white"
+                  : message.isError
+                  ? "px-5 py-4 bg-red-50 border border-red-200 shadow-sm text-gray-900"
                   : "px-5 py-4 bg-white border border-gray-200 shadow-sm text-gray-900"
               }`}
             >
+              {message.isError ? (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    <span className="font-medium text-red-700 text-sm">Something went wrong</span>
+                  </div>
+                  <p className="text-sm text-gray-700 mb-3">{message.content}</p>
+                  {message.retryQuestion && (
+                    <button
+                      onClick={() => sendMessage(message.retryQuestion)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Retry
+                    </button>
+                  )}
+                </div>
+              ) : (
               <AssistantMessageContent
                 content={message.content}
                 role={message.role}
                 onTimestampClick={onTimestampClick}
               />
+              )}
 
               {/* Sources */}
-              {message.sources && message.sources.length > 0 && (
+              {!message.isError && message.sources && message.sources.length > 0 && (
                 <div className="mt-4 space-y-3">
                   {/* Visual Sources (Screenshots) */}
                   {message.sources.filter((s) => s.screenshot_url).length >
@@ -1643,6 +1733,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+                {retryCount > 0 && (
+                  <span className="text-xs text-amber-600 font-medium ml-1">
+                    Retrying... (attempt {retryCount + 1})
+                  </span>
+                )}
               </div>
             </div>
           </div>
