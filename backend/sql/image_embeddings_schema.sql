@@ -38,8 +38,10 @@ CREATE INDEX idx_image_embeddings_speaker ON image_embeddings(speaker);
 --     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- HNSW index for very fast similarity search (can be created on empty table)
+-- m=24 and ef_construction=200 improve recall for large sets of similar images
 CREATE INDEX idx_image_embeddings_hnsw ON image_embeddings
-    USING hnsw (embedding vector_cosine_ops);
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 24, ef_construction = 200);
 
 -- Row Level Security (RLS)
 ALTER TABLE image_embeddings ENABLE ROW LEVEL SECURITY;
