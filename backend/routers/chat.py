@@ -588,9 +588,10 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                 # Fallback: try the old approach
                                 screenshot_url = screenshot_path.replace('./static/', '/static/')
 
+                            speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker']
                             visual_parts.append(
                                 f"Screenshot {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
-                                f"Speaker: {metadata['speaker']}"
+                                f"Speaker: {speaker_display}"
                             )
 
                             # Add to visual sources
@@ -599,7 +600,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                                 "end_time": f"{int(metadata['end'] // 3600):02d}:{int((metadata['end'] % 3600) // 60):02d}:{int(metadata['end'] % 60):02d}",
                                 "start": metadata['start'],
                                 "end": metadata['end'],
-                                "speaker": metadata['speaker'],
+                                "speaker": ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker'],
                                 "screenshot_url": screenshot_url,
                                 "type": "visual",
                                 "likely_speakers": img_result.get('likely_speakers', []),
