@@ -63,11 +63,11 @@ export const ProfileTab: React.FC = () => {
   return (
     <div className="space-y-6 p-4">
       <div>
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Profile Settings</h3>
+        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Profile Settings</h3>
 
         <div className="space-y-4">
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="email" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
               Email
             </label>
             <input
@@ -75,13 +75,13 @@ export const ProfileTab: React.FC = () => {
               type="email"
               value={user?.email || ''}
               disabled
-              className="input-base w-full bg-gray-50 text-gray-500 cursor-not-allowed"
+              className="input-base w-full"
             />
-            <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>Email cannot be changed</p>
           </div>
 
           <div>
-            <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="displayName" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
               Display Name
             </label>
             <input
@@ -98,7 +98,8 @@ export const ProfileTab: React.FC = () => {
           <div>
             <label
               htmlFor="defaultProvider"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-xs font-medium mb-1"
+              style={{ color: 'var(--text-secondary)' }}
             >
               Default LLM Provider
             </label>
@@ -118,7 +119,7 @@ export const ProfileTab: React.FC = () => {
                 );
               })}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
               The default provider to use for chat features
             </p>
           </div>

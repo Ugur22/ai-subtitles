@@ -29,14 +29,14 @@ export const AdminDashboard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen">
       {/* Header */}
-      <div className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div style={{ backgroundColor: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-              <p className="text-sm text-gray-500 mt-1">Manage users, invite codes, and view statistics</p>
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>Admin Dashboard</h1>
+              <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>Manage users, invite codes, and view statistics</p>
             </div>
             <a
               href="/"

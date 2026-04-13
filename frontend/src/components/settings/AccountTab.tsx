@@ -36,15 +36,22 @@ export const AccountTab: React.FC = () => {
   return (
     <div className="space-y-6 p-4">
       <div>
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Account Management</h3>
+        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Account Management</h3>
 
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex">
+        <div
+          className="rounded-md p-4"
+          style={{
+            backgroundColor: 'oklch(65% 0.20 25 / 0.08)',
+            border: '1px solid oklch(65% 0.20 25 / 0.35)',
+          }}
+        >
+          <div className="flex gap-3">
             <div className="flex-shrink-0">
               <svg
-                className="h-5 w-5 text-red-400"
+                className="h-4 w-4 mt-0.5"
                 fill="currentColor"
                 viewBox="0 0 20 20"
+                style={{ color: 'var(--c-error)' }}
               >
                 <path
                   fillRule="evenodd"
@@ -53,9 +60,9 @@ export const AccountTab: React.FC = () => {
                 />
               </svg>
             </div>
-            <div className="ml-3 flex-1">
-              <h4 className="text-sm font-medium text-red-800 mb-2">Danger Zone</h4>
-              <p className="text-sm text-red-700 mb-4">
+            <div className="flex-1">
+              <h4 className="text-sm font-medium mb-2" style={{ color: 'var(--c-error)' }}>Danger Zone</h4>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
                 Deleting your account is permanent and cannot be undone. All your data,
                 including transcriptions, API keys, and settings will be permanently deleted.
               </p>
@@ -63,7 +70,7 @@ export const AccountTab: React.FC = () => {
               {!showConfirm ? (
                 <button
                   onClick={() => setShowConfirm(true)}
-                  className="btn-secondary border-red-300 text-red-700 hover:bg-red-50 hover:border-red-400"
+                  className="btn-danger"
                 >
                   Delete Account
                 </button>
@@ -72,7 +79,8 @@ export const AccountTab: React.FC = () => {
                   <div>
                     <label
                       htmlFor="confirmDelete"
-                      className="block text-sm font-medium text-red-800 mb-1"
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--c-error)' }}
                     >
                       Type <strong>DELETE</strong> to confirm
                     </label>
@@ -81,7 +89,7 @@ export const AccountTab: React.FC = () => {
                       type="text"
                       value={confirmText}
                       onChange={(e) => setConfirmText(e.target.value)}
-                      className="input-base w-full border-red-300 focus:ring-red-500 focus:border-red-500"
+                      className="input-base w-full"
                       placeholder="DELETE"
                       disabled={isDeleting}
                     />
@@ -91,7 +99,7 @@ export const AccountTab: React.FC = () => {
                     <button
                       onClick={handleDeleteAccount}
                       disabled={isDeleting || confirmText !== 'DELETE'}
-                      className="btn-primary bg-red-600 hover:bg-red-700 focus:ring-red-500 flex-1"
+                      className="btn-danger flex-1"
                     >
                       {isDeleting ? 'Deleting...' : 'Confirm Delete Account'}
                     </button>

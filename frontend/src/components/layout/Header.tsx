@@ -85,10 +85,8 @@ export const Header: React.FC = () => {
               {/* User menu */}
               <Menu as="div" className="relative ml-1">
                 <Menu.Button
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors duration-150"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors duration-150 hover:bg-[var(--bg-surface)]"
                   style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--bg-surface)')}
-                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
                 >
                   <div
                     style={{
