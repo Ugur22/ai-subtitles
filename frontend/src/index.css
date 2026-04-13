@@ -6,15 +6,15 @@
 :root {
   color-scheme: dark;
 
-  /* Backgrounds — layered near-black with subtle blue tint */
-  --bg-base:    oklch(11% 0.008 250);  /* page background            */
-  --bg-subtle:  oklch(14% 0.010 250);  /* header, sidebars           */
-  --bg-surface: oklch(17% 0.010 250);  /* cards, panels, dropdowns   */
-  --bg-overlay: oklch(21% 0.012 250);  /* popovers, tooltips         */
+  /* Backgrounds — layered dark charcoal with subtle blue-steel tint */
+  --bg-base:    oklch(14% 0.012 250);  /* page background            */
+  --bg-subtle:  oklch(18% 0.014 250);  /* header, sidebars           */
+  --bg-surface: oklch(23% 0.014 250);  /* cards, panels, dropdowns   */
+  --bg-overlay: oklch(29% 0.016 250);  /* popovers, tooltips         */
 
   /* Borders */
-  --border-subtle:  oklch(24% 0.012 250);
-  --border-default: oklch(30% 0.012 250);
+  --border-subtle:  oklch(33% 0.016 250);
+  --border-default: oklch(40% 0.016 250);
 
   /* Text */
   --text-primary:   oklch(93% 0.005 250);

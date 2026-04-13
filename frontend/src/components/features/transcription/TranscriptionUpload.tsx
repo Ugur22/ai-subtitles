@@ -695,25 +695,27 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       <div className="h-full p-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
-          <UploadZone
-            file={file}
-            dragActive={dragActive}
-            isTranscribing={isTranscribing}
-            fileInputRef={fileInputRef}
-            handleDrag={handleDrag}
-            handleDrop={handleDrop}
-            handleButtonClick={handleButtonClick}
-            fileUploadHandleChange={fileUploadHandleChange}
-            selectedLanguage={selectedLanguage}
-            handleLanguageChange={handleLanguageChange}
-            transcriptionMethod={transcriptionMethod}
-            setTranscriptionMethod={setTranscriptionMethod}
-            handleStartTranscriptionClick={handleStartTranscriptionClick}
-            isNewTranscription={isNewTranscription}
-            processingStatus={processingStatus}
-            elapsedTime={elapsedTime}
-            languageOptions={languageOptions}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', minHeight: 'calc(100vh - 80px)' }}>
+            <UploadZone
+              file={file}
+              dragActive={dragActive}
+              isTranscribing={isTranscribing}
+              fileInputRef={fileInputRef}
+              handleDrag={handleDrag}
+              handleDrop={handleDrop}
+              handleButtonClick={handleButtonClick}
+              fileUploadHandleChange={fileUploadHandleChange}
+              selectedLanguage={selectedLanguage}
+              handleLanguageChange={handleLanguageChange}
+              transcriptionMethod={transcriptionMethod}
+              setTranscriptionMethod={setTranscriptionMethod}
+              handleStartTranscriptionClick={handleStartTranscriptionClick}
+              isNewTranscription={isNewTranscription}
+              processingStatus={processingStatus}
+              elapsedTime={elapsedTime}
+              languageOptions={languageOptions}
+            />
+          </div>
         )}
 
         {/* Results Section */}
