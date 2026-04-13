@@ -531,55 +531,6 @@ const getEventDetails = (eventType: string) => {
   return { emoji: "🔊", label, category: "other" };
 };
 
-// Get color theme based on event category
-const getCategoryTheme = (category: string) => {
-  switch (category) {
-    case "emotion":
-      return {
-        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(50% 0.15 290 / 0.35)" },
-        hoverBorder: "",
-        hoverShadow: "",
-        text: "text-purple-300",
-        timestamp: "text-purple-400",
-        confidence: "bg-purple-500",
-        badge: "bg-purple-900/50 text-purple-300",
-        icon: "text-purple-400",
-      };
-    case "speech":
-      return {
-        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(55% 0.12 230 / 0.35)" },
-        hoverBorder: "",
-        hoverShadow: "",
-        text: "text-blue-300",
-        timestamp: "text-blue-400",
-        confidence: "bg-blue-500",
-        badge: "bg-blue-900/50 text-blue-300",
-        icon: "text-blue-400",
-      };
-    case "sound":
-      return {
-        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(55% 0.12 160 / 0.35)" },
-        hoverBorder: "",
-        hoverShadow: "",
-        text: "text-emerald-300",
-        timestamp: "text-emerald-400",
-        confidence: "bg-emerald-500",
-        badge: "bg-emerald-900/50 text-emerald-300",
-        icon: "text-emerald-400",
-      };
-    default:
-      return {
-        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(60% 0.12 75 / 0.35)" },
-        hoverBorder: "",
-        hoverShadow: "",
-        text: "text-amber-300",
-        timestamp: "text-amber-400",
-        confidence: "bg-amber-500",
-        badge: "bg-amber-900/50 text-amber-300",
-        icon: "text-amber-400",
-      };
-  }
-};
 
 /** Renders assistant message content with Direct Answer highlight and collapsible sections */
 const AssistantMessageContent: React.FC<{
@@ -1165,10 +1116,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         <div className="flex flex-col gap-3">
           {/* Title Row */}
           <div>
-            <h2 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Chat with Video</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
-              Ask questions about the content
-            </p>
+            <h2 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>Chat with Video</h2>
           </div>
 
           {/* Controls Row */}
@@ -1607,7 +1555,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                       onTimestampClick?.(source.start_time);
                                     }
                                   }}
-                                  className="text-white text-xs font-mono font-bold hover:text-purple-300 transition-colors cursor-pointer block mb-0.5"
+                                  className="text-white text-xs font-mono font-bold transition-colors cursor-pointer block mb-0.5"
                                 >
                                   {source.start_time}
                                 </span>
@@ -1676,49 +1624,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Audio Events */}
                   {message.sources.filter((s) => s.type === "audio").length >
                     0 && (
-                    <div className="rounded-lg p-4 border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <div className="p-2 rounded-lg" style={{ background: "var(--accent-dim)" }}>
-                            <svg
-                              className="w-5 h-5"
-                              style={{ color: "var(--accent)" }}
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                              />
-                            </svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                              Audio Events Detected
-                            </p>
-                            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                              {
-                                message.sources.filter(
-                                  (s) => s.type === "audio",
-                                ).length
-                              }{" "}
-                              events found
-                            </p>
-                          </div>
-                        </div>
+                    <div className="rounded-lg p-3 border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg
+                          className="w-4 h-4"
+                          style={{ color: "var(--text-tertiary)" }}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+                          />
+                        </svg>
+                        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--text-secondary)" }}>
+                          Audio Events
+                        </p>
+                        <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                          {message.sources.filter((s) => s.type === "audio").length} found
+                        </span>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="space-y-1">
                         {message.sources
                           .filter((s) => s.type === "audio")
                           .map((source, idx) => {
                             const eventDetails = getEventDetails(
                               source.event_type || "unknown",
-                            );
-                            const theme = getCategoryTheme(
-                              eventDetails.category,
                             );
                             const confidence = source.confidence || 0;
                             const duration =
@@ -1729,85 +1663,47 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             return (
                               <button
                                 key={idx}
-                                onClick={() =>
-                                  onTimestampClick?.(source.start_time)
-                                }
-                                className="relative rounded-xl border-2 p-4 hover:shadow-lg transition-all duration-200 text-left group"
-                                style={theme.cardStyle}
-                                title={`${eventDetails.label} at ${source.start_time}${duration ? ` (${duration})` : ""} - Click to play`}
+                                onClick={() => onTimestampClick?.(source.start_time)}
+                                className="block w-full text-left rounded-md transition-colors"
+                                style={{ background: "var(--bg-overlay)", border: "1px solid var(--border-subtle)", padding: "8px 10px" }}
+                                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-subtle)'}
+                                title={`${eventDetails.label} at ${source.start_time}${duration ? ` (${duration})` : ""} — click to jump`}
                                 aria-label={`Jump to ${eventDetails.label} event at ${source.start_time}`}
                               >
-                                {/* Confidence badge - Top right */}
-                                {confidence > 0 && (
-                                  <div
-                                    className={`absolute top-3 right-3 px-2 py-0.5 ${theme.badge} rounded-full text-xs font-bold`}
-                                  >
-                                    {Math.round(confidence * 100)}%
-                                  </div>
-                                )}
-
-                                {/* Event Emoji - Large and prominent */}
-                                <div className="text-3xl mb-3 group-hover:scale-110 transition-transform duration-200">
-                                  {eventDetails.emoji}
-                                </div>
-
-                                {/* Event Type Label - Bold and clear */}
-                                <div
-                                  className={`font-bold text-base ${theme.text} mb-2`}
-                                >
-                                  {eventDetails.label}
-                                </div>
-
-                                {/* Timestamp - Prominent with icon */}
-                                <div className="flex items-center gap-1.5 mb-2">
-                                  <svg
-                                    className={`w-3.5 h-3.5 ${theme.timestamp}`}
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                                    />
-                                  </svg>
-                                  <span
-                                    className={`text-sm font-mono font-semibold ${theme.timestamp} group-hover:underline`}
-                                  >
-                                    {source.start_time}
-                                  </span>
-                                  {duration && (
-                                    <span className="text-xs ml-1" style={{ color: "var(--text-tertiary)" }}>
-                                      ({duration})
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                  {/* Left: emoji + label */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                    <span style={{ fontSize: '16px', lineHeight: 1, flexShrink: 0 }}>{eventDetails.emoji}</span>
+                                    <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {eventDetails.label}
                                     </span>
-                                  )}
-                                </div>
-
-                                {/* Speaker - If available */}
-                                {source.speaker &&
-                                  source.speaker !== "Unknown" && (
-                                    <div className="flex items-center gap-1.5">
-                                      <svg
-                                        className="w-3.5 h-3.5"
-                                        style={{ color: "var(--text-tertiary)" }}
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                      >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          strokeWidth={2}
-                                          d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                                        />
-                                      </svg>
-                                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                                    {source.speaker && source.speaker !== "Unknown" && (
+                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                         {source.speaker}
                                       </span>
-                                    </div>
-                                  )}
+                                    )}
+                                  </div>
+                                  {/* Right: timestamp + meta */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                                    {confidence > 0 && (
+                                      <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                                        {Math.round(confidence * 100)}%
+                                      </span>
+                                    )}
+                                    {duration && (
+                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                        {duration}
+                                      </span>
+                                    )}
+                                    <span
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs font-mono font-semibold rounded"
+                                      style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+                                    >
+                                      {source.start_time}
+                                    </span>
+                                  </div>
+                                </div>
                               </button>
                             );
                           })}
@@ -2067,7 +1963,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         .start_time,
                     )
                   }
-                  className="text-sm font-mono font-bold hover:text-purple-300 transition-colors"
+                  className="text-sm font-mono font-bold transition-colors" style={{ color: 'var(--accent)' }}
                   title="Click to jump to this timestamp"
                 >
                   {

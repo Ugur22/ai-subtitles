@@ -3,7 +3,8 @@
  * Displays job information, progress, and available actions based on status
  */
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
+import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
 import { ShareJobDialog } from "./ShareJobDialog";
 import { Job, JobStatus } from "../../../types/job";
@@ -169,33 +170,74 @@ export const JobCard: React.FC<JobCardProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
             </button>
-            <div className="relative group">
-              <button className="btn-ghost" style={{ padding: '6px 8px' }} title="Download">
+            <Menu as="div" className="relative">
+              <Menu.Button className="btn-ghost" style={{ padding: '6px 8px' }} title="Download">
                 <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-              </button>
-              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', backgroundColor: 'var(--bg-overlay)', border: '1px solid var(--border-subtle)', borderRadius: '6px', zIndex: 10, minWidth: '140px', display: 'none' }} className="group-hover:!block">
-                {job.access_token ? (
-                  <>
-                    <a href={`/api/jobs/${job.job_id}/download/srt?token=${job.access_token}`} download style={{ display: 'block', padding: '8px 14px', fontSize: '13px', color: 'var(--text-secondary)', textDecoration: 'none' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')} onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-secondary)')}>
-                      SRT
-                    </a>
-                    <a href={`/api/jobs/${job.job_id}/download/vtt?token=${job.access_token}`} download style={{ display: 'block', padding: '8px 14px', fontSize: '13px', color: 'var(--text-secondary)', textDecoration: 'none', borderTop: '1px solid var(--border-subtle)' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')} onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-secondary)')}>
-                      VTT
-                    </a>
-                    <a href={`/api/jobs/${job.job_id}/download/json?token=${job.access_token}`} download style={{ display: 'block', padding: '8px 14px', fontSize: '13px', color: 'var(--text-secondary)', textDecoration: 'none', borderTop: '1px solid var(--border-subtle)' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')} onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-secondary)')}>
-                      JSON
-                    </a>
-                  </>
-                ) : (
-                  <span style={{ display: 'block', padding: '8px 14px', fontSize: '13px', color: 'var(--text-tertiary)' }}>Unavailable</span>
-                )}
-              </div>
-            </div>
+              </Menu.Button>
+              <Transition
+                as={Fragment}
+                enter="transition ease-out duration-100"
+                enterFrom="transform opacity-0 scale-95"
+                enterTo="transform opacity-100 scale-100"
+                leave="transition ease-in duration-75"
+                leaveFrom="transform opacity-100 scale-100"
+                leaveTo="transform opacity-0 scale-95"
+              >
+                <Menu.Items
+                  className="absolute right-0 mt-1 py-1 z-20"
+                  style={{
+                    minWidth: '140px',
+                    backgroundColor: 'var(--bg-overlay)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '6px',
+                    boxShadow: '0 8px 24px oklch(0% 0 0 / 0.5)',
+                    top: '100%',
+                  }}
+                >
+                  {job.access_token ? (
+                    <>
+                      <Menu.Item>
+                        {({ active }) => (
+                          <a
+                            href={`/api/jobs/${job.job_id}/download/srt?token=${job.access_token}`}
+                            download
+                            style={{ display: 'block', padding: '8px 14px', fontSize: '13px', textDecoration: 'none', color: active ? 'var(--text-primary)' : 'var(--text-secondary)', backgroundColor: active ? 'var(--bg-surface)' : 'transparent' }}
+                          >
+                            SRT
+                          </a>
+                        )}
+                      </Menu.Item>
+                      <Menu.Item>
+                        {({ active }) => (
+                          <a
+                            href={`/api/jobs/${job.job_id}/download/vtt?token=${job.access_token}`}
+                            download
+                            style={{ display: 'block', padding: '8px 14px', fontSize: '13px', textDecoration: 'none', borderTop: '1px solid var(--border-subtle)', color: active ? 'var(--text-primary)' : 'var(--text-secondary)', backgroundColor: active ? 'var(--bg-surface)' : 'transparent' }}
+                          >
+                            VTT
+                          </a>
+                        )}
+                      </Menu.Item>
+                      <Menu.Item>
+                        {({ active }) => (
+                          <a
+                            href={`/api/jobs/${job.job_id}/download/json?token=${job.access_token}`}
+                            download
+                            style={{ display: 'block', padding: '8px 14px', fontSize: '13px', textDecoration: 'none', borderTop: '1px solid var(--border-subtle)', color: active ? 'var(--text-primary)' : 'var(--text-secondary)', backgroundColor: active ? 'var(--bg-surface)' : 'transparent' }}
+                          >
+                            JSON
+                          </a>
+                        )}
+                      </Menu.Item>
+                    </>
+                  ) : (
+                    <div style={{ padding: '8px 14px', fontSize: '13px', color: 'var(--text-tertiary)' }}>Unavailable</div>
+                  )}
+                </Menu.Items>
+              </Transition>
+            </Menu>
             <button
               onClick={handleDelete}
               disabled={isDeleting}
