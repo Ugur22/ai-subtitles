@@ -42,10 +42,10 @@ export const InviteCodesList: React.FC<InviteCodesListProps> = ({
 
   if (isLoading) {
     return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="animate-pulse space-y-4">
+      <div className="rounded-md p-5" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+        <div className="animate-pulse space-y-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-16 bg-gray-200 rounded"></div>
+            <div key={i} className="h-12 rounded" style={{ backgroundColor: 'var(--bg-overlay)' }}></div>
           ))}
         </div>
       </div>
@@ -53,11 +53,11 @@ export const InviteCodesList: React.FC<InviteCodesListProps> = ({
   }
 
   return (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+    <div className="rounded-md overflow-hidden" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <div>
-          <h3 className="text-lg font-medium text-gray-900">Invite Codes</h3>
-          <p className="text-sm text-gray-500 mt-1">
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Invite Codes</h3>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
             Total: {inviteCodes.length} ({inviteCodes.filter((c) => !c.used_at).length} unused)
           </p>
         </div>
@@ -71,60 +71,57 @@ export const InviteCodesList: React.FC<InviteCodesListProps> = ({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="min-w-full" style={{ borderCollapse: 'collapse' }}>
+          <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Code
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Created
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Used
-              </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
+              {['Code', 'Status', 'Created', 'Used', ''].map((col, i) => (
+                <th
+                  key={i}
+                  className={`px-5 py-2.5 text-xs font-medium uppercase tracking-wider ${i === 4 ? 'text-right' : 'text-left'}`}
+                  style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-subtle)' }}
+                >
+                  {col}
+                </th>
+              ))}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {inviteCodes.map((code) => (
-              <tr key={code.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <code className="text-sm font-mono text-gray-900">{code.code}</code>
+          <tbody>
+            {inviteCodes.map((code, idx) => (
+              <tr
+                key={code.id}
+                style={{ borderTop: idx > 0 ? '1px solid var(--border-subtle)' : undefined }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--bg-overlay)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
+                <td className="px-5 py-3 whitespace-nowrap">
+                  <code className="text-xs font-mono" style={{ color: 'var(--text-primary)' }}>{code.code}</code>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="px-5 py-3 whitespace-nowrap">
                   {code.used_at ? (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                      Used
-                    </span>
+                    <span className="badge badge-default">Used</span>
                   ) : (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      Available
-                    </span>
+                    <span className="badge badge-success">Available</span>
                   )}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <td className="px-5 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--text-secondary)' }}>
                   {new Date(code.created_at).toLocaleDateString()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {code.used_at ? new Date(code.used_at).toLocaleDateString() : '-'}
+                <td className="px-5 py-3 whitespace-nowrap text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  {code.used_at ? new Date(code.used_at).toLocaleDateString() : '—'}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <td className="px-5 py-3 whitespace-nowrap text-right text-xs font-medium">
                   <button
                     onClick={() => handleCopy(code.code)}
-                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                    className="mr-3 transition-colors duration-150"
+                    style={{ color: 'var(--accent)' }}
                   >
                     Copy
                   </button>
                   {!code.used_at && (
                     <button
                       onClick={() => handleDelete(code.code)}
-                      className="text-red-600 hover:text-red-900"
+                      className="transition-colors duration-150"
+                      style={{ color: 'var(--c-error)' }}
                     >
                       Delete
                     </button>
@@ -137,8 +134,8 @@ export const InviteCodesList: React.FC<InviteCodesListProps> = ({
       </div>
 
       {inviteCodes.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">No invite codes yet</p>
+        <div className="text-center py-10">
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No invite codes yet</p>
         </div>
       )}
     </div>

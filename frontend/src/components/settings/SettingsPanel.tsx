@@ -30,7 +30,7 @@ export const SettingsPanel: React.FC = () => {
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+          <div className="fixed inset-0 bg-black/60 transition-opacity" />
         </Transition.Child>
 
         <div className="fixed inset-0 overflow-hidden">
@@ -46,16 +46,28 @@ export const SettingsPanel: React.FC = () => {
                 leaveTo="translate-x-full"
               >
                 <Dialog.Panel className="pointer-events-auto w-screen max-w-md">
-                  <div className="flex h-full flex-col bg-white shadow-xl">
+                  <div
+                    className="flex h-full flex-col"
+                    style={{ backgroundColor: 'var(--bg-subtle)', borderLeft: '1px solid var(--border-subtle)' }}
+                  >
                     {/* Header */}
-                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-6 sm:px-6">
+                    <div
+                      className="px-4 py-5 sm:px-6"
+                      style={{ backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-subtle)' }}
+                    >
                       <div className="flex items-center justify-between">
-                        <Dialog.Title className="text-lg font-medium text-white">
+                        <Dialog.Title
+                          className="text-base font-semibold"
+                          style={{ color: 'var(--text-primary)' }}
+                        >
                           Settings
                         </Dialog.Title>
                         <button
                           type="button"
-                          className="rounded-md text-indigo-200 hover:text-white focus:outline-none focus:ring-2 focus:ring-white"
+                          className="rounded-md transition-colors duration-150 focus:outline-none"
+                          style={{ color: 'var(--text-secondary)' }}
+                          onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+                          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-secondary)')}
                           onClick={closeSettings}
                         >
                           <span className="sr-only">Close panel</span>
@@ -77,29 +89,24 @@ export const SettingsPanel: React.FC = () => {
                     </div>
 
                     {/* Tabs */}
-                    <div className="border-b border-gray-200 bg-gray-50">
+                    <div style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-subtle)' }}>
                       <nav className="flex -mb-px">
                         {tabs.map((tab) => {
                           const Icon = tab.icon;
+                          const isActive = activeTab === tab.id;
                           return (
                             <button
                               key={tab.id}
                               onClick={() => setActiveTab(tab.id)}
-                              className={`
-                                flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm
-                                ${
-                                  activeTab === tab.id
-                                    ? 'border-indigo-500 text-indigo-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                }
-                              `}
+                              className="flex-1 py-3 px-1 text-center border-b-2 font-medium text-sm transition-colors duration-150"
+                              style={{
+                                borderColor: isActive ? 'var(--accent)' : 'transparent',
+                                color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                              }}
+                              onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                              onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-secondary)'; }}
                             >
-                              <Icon
-                                className={`
-                                  inline-block w-5 h-5 mb-1
-                                  ${activeTab === tab.id ? 'text-indigo-600' : 'text-gray-400'}
-                                `}
-                              />
+                              <Icon className="inline-block w-4 h-4 mb-1" />
                               <span className="block">{tab.name}</span>
                             </button>
                           );

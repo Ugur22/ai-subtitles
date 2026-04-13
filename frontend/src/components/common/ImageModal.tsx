@@ -28,8 +28,8 @@ export const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => 
   const modalAnimation = useSpring({
     transform: "scale(1)",
     opacity: 1,
-    config: springConfig.wobbly,
-    from: { transform: "scale(0.9)", opacity: 0 },
+    config: springConfig.stiff,
+    from: { transform: "scale(0.95)", opacity: 0 },
   });
 
   return (
@@ -39,18 +39,30 @@ export const ImageModal: React.FC<ImageModalProps> = ({ imageUrl, onClose }) => 
       onClick={onClose} // Close when clicking backdrop
     >
       <animated.div
-        className="relative bg-white p-3 rounded-2xl shadow-2xl max-w-6xl max-h-[90vh]"
-        style={modalAnimation}
-        onClick={handleImageClick} // Prevent closing on image container click
+        className="relative p-2 rounded-xl max-w-6xl max-h-[90vh]"
+        style={{
+          ...modalAnimation,
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: '0 24px 64px oklch(0% 0 0 / 0.6)',
+        }}
+        onClick={handleImageClick}
       >
         <img
           src={imageUrl}
           alt="Enlarged screenshot"
-          className="block w-[900px] max-h-[85vh] object-contain rounded-xl"
+          className="block w-[900px] max-h-[85vh] object-contain rounded-lg"
         />
         <button
           onClick={onClose}
-          className="absolute -top-2 -right-2 bg-white rounded-full p-2 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-lg transition-all duration-200 hover:scale-110"
+          className="absolute -top-3 -right-3 rounded-full p-1.5 transition-all duration-150 hover:scale-110 focus:outline-none"
+          style={{
+            backgroundColor: 'var(--bg-overlay)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-subtle)',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-secondary)')}
           aria-label="Close image modal"
         >
           <svg

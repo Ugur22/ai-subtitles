@@ -30,10 +30,10 @@ export const UsersList: React.FC<UsersListProps> = ({
 
   if (isLoading) {
     return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="animate-pulse space-y-4">
+      <div className="rounded-md p-6" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+        <div className="animate-pulse space-y-3">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-16 bg-gray-200 rounded"></div>
+            <div key={i} className="h-12 rounded" style={{ backgroundColor: 'var(--bg-overlay)' }}></div>
           ))}
         </div>
       </div>
@@ -41,86 +41,69 @@ export const UsersList: React.FC<UsersListProps> = ({
   }
 
   return (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">Users</h3>
-        <p className="text-sm text-gray-500 mt-1">Total: {users.length}</p>
+    <div className="rounded-md overflow-hidden" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+      <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Users</h3>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>Total: {users.length}</p>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="min-w-full" style={{ borderCollapse: 'collapse' }}>
+          <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                User
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                API Keys
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Uploads
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Joined
-              </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
+              {['User', 'API Keys', 'Uploads', 'Joined', ''].map((col, i) => (
+                <th
+                  key={i}
+                  className={`px-5 py-2.5 text-xs font-medium uppercase tracking-wider ${i === 4 ? 'text-right' : 'text-left'}`}
+                  style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-subtle)' }}
+                >
+                  {col}
+                </th>
+              ))}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {users.map((user) => (
-              <tr key={user.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">
-                        {user.display_name || 'No name'}
-                      </div>
-                      <div className="text-sm text-gray-500">{user.email}</div>
-                    </div>
+          <tbody>
+            {users.map((user, idx) => (
+              <tr
+                key={user.id}
+                style={{
+                  borderTop: idx > 0 ? '1px solid var(--border-subtle)' : undefined,
+                }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--bg-overlay)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
+                <td className="px-5 py-3 whitespace-nowrap">
+                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                    {user.display_name || 'No name'}
+                  </div>
+                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{user.email}</div>
+                </td>
+                <td className="px-5 py-3 whitespace-nowrap">
+                  <div className="flex gap-1 flex-wrap">
+                    {user.has_groq && <span className="badge badge-accent">Groq</span>}
+                    {user.has_xai && <span className="badge badge-default">xAI</span>}
+                    {user.has_openai && <span className="badge badge-default">OpenAI</span>}
+                    {user.has_anthropic && <span className="badge badge-default">Anthropic</span>}
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex gap-1">
-                    {user.has_groq && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                        Groq
-                      </span>
-                    )}
-                    {user.has_xai && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                        xAI
-                      </span>
-                    )}
-                    {user.has_openai && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                        OpenAI
-                      </span>
-                    )}
-                    {user.has_anthropic && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
-                        Anthropic
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <td className="px-5 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
                   {user.upload_count}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <td className="px-5 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
                   {new Date(user.created_at).toLocaleDateString()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <td className="px-5 py-3 whitespace-nowrap text-right text-sm font-medium">
                   <button
                     onClick={() => handleInvalidateKeys(user)}
-                    className="text-orange-600 hover:text-orange-900 mr-3"
+                    className="text-xs mr-3 transition-colors duration-150"
+                    style={{ color: 'var(--c-warning)' }}
                   >
                     Invalidate Keys
                   </button>
                   <button
                     onClick={() => handleDelete(user)}
-                    className="text-red-600 hover:text-red-900"
+                    className="text-xs transition-colors duration-150"
+                    style={{ color: 'var(--c-error)' }}
                   >
                     Delete
                   </button>
@@ -132,8 +115,8 @@ export const UsersList: React.FC<UsersListProps> = ({
       </div>
 
       {users.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">No users found</p>
+        <div className="text-center py-10">
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No users found</p>
         </div>
       )}
     </div>

@@ -19,13 +19,17 @@ export const APIKeysTab: React.FC = () => {
 
   return (
     <div className="space-y-4 p-4">
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex">
+      <div
+        className="rounded-md p-3"
+        style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
+      >
+        <div className="flex gap-2.5">
           <div className="flex-shrink-0">
             <svg
-              className="h-5 w-5 text-blue-400"
+              className="h-4 w-4 mt-0.5"
               fill="currentColor"
               viewBox="0 0 20 20"
+              style={{ color: 'var(--accent)' }}
             >
               <path
                 fillRule="evenodd"
@@ -34,12 +38,10 @@ export const APIKeysTab: React.FC = () => {
               />
             </svg>
           </div>
-          <div className="ml-3">
-            <p className="text-sm text-blue-700">
-              Add your API keys to enable chat features. Keys are encrypted and stored securely.
-              Validation happens in the background.
-            </p>
-          </div>
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Add your API keys to enable chat features. Keys are encrypted and stored securely.
+            Validation happens in the background.
+          </p>
         </div>
       </div>
 
