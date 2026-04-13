@@ -1380,7 +1380,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                     {/* Chat Panel */}
                     {showChat && (
-                      <div className="h-full">
+                      <div style={{ position: 'absolute', inset: 0 }}>
                         <ChatPanel
                           videoHash={transcription?.video_hash || null}
                           onTimestampClick={seekToTimestamp}
@@ -1390,7 +1390,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                     {/* Chapters Panel */}
                     {showChapters && (
-                      <div className="h-full">
+                      <div style={{ position: 'absolute', inset: 0 }}>
                         <ChapterPanel
                           chapters={chaptersHook.chapters}
                           loading={chaptersHook.loading}
@@ -1403,7 +1403,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                     {/* Summary Panel */}
                     {showSummary && (
-                      <div className="h-full">
+                      <div style={{ position: 'absolute', inset: 0 }}>
                         <SummaryPanel
                           isVisible={showSummary}
                           onSeekTo={seekToTimestamp}
