@@ -108,7 +108,16 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
           e.preventDefault();
           video.currentTime = Math.max(0, video.currentTime - 5);
           break;
-        // Removed 'P' key shortcut - was interfering with typing
+        case " ":
+          if (
+            document.activeElement?.tagName !== "INPUT" &&
+            document.activeElement?.tagName !== "TEXTAREA" &&
+            !(document.activeElement as HTMLElement)?.isContentEditable
+          ) {
+            e.preventDefault();
+            video.paused ? video.play() : video.pause();
+          }
+          break;
       }
     };
 

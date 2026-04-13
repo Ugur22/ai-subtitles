@@ -1,4 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
+import { Dialog, Transition } from "@headlessui/react";
+import toast from "react-hot-toast";
+import axios from "axios";
 import { useJobs } from "../../../contexts/JobsContext";
 import {
   type TranscriptionResponse,
@@ -12,7 +15,6 @@ import {
   formatScreenshotUrl,
   formatScreenshotUrlSafe,
 } from "../../../utils/url";
-import { EnrolledSpeakersPanel } from "../speakers/EnrolledSpeakersPanel";
 import { SubtitleControls } from "./SubtitleControls";
 import { SearchPanel } from "../search/SearchPanel";
 // import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
@@ -79,6 +81,21 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [showChapters, setShowChapters] = useState(false);
+
+  // Speaker enrollment modal state
+  const [enrollModalSegment, setEnrollModalSegment] = useState<any>(null);
+  const [enrollSpeakerName, setEnrollSpeakerName] = useState('');
+  const [enrollSubmitting, setEnrollSubmitting] = useState(false);
+
+  // Auto-identify confirmation state
+  const [autoIdentifyConfirmOpen, setAutoIdentifyConfirmOpen] = useState(false);
+  const [autoIdentifyRunning, setAutoIdentifyRunning] = useState(false);
+
+  // Enrolled speakers in speakers dropdown
+  const [enrolledSpeakers, setEnrolledSpeakers] = useState<{name: string, samples_count: number}[]>([]);
+  const [enrolledLoading, setEnrolledLoading] = useState(false);
+  const [showEnrolledInDropdown, setShowEnrolledInDropdown] = useState(false);
+  const [confirmingDeleteEnrolled, setConfirmingDeleteEnrolled] = useState<string | null>(null);
 
   // Jobs context — shares active count + panel state with Header
   const { setActiveJobCount, showJobPanel, setShowJobPanel } = useJobs();
@@ -384,61 +401,77 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   // Speaker Recognition Handlers
-  const handleEnrollSpeaker = async (segment: any) => {
-    if (!transcription) return;
+  const handleEnrollSpeaker = (segment: any) => {
+    setEnrollSpeakerName(formatSpeakerLabel(segment.speaker));
+    setEnrollModalSegment(segment);
+  };
 
-    const speakerName = prompt(
-      `Enroll speaker "${segment.speaker}" for automatic recognition.\n\nEnter the actual name of this speaker:`,
-      formatSpeakerLabel(segment.speaker)
-    );
-
-    if (!speakerName || !speakerName.trim()) return;
-
+  const handleEnrollConfirm = async () => {
+    if (!enrollModalSegment || !transcription || !enrollSpeakerName.trim()) return;
+    setEnrollSubmitting(true);
     try {
-      const startTime = timeToSeconds(segment.start_time);
-      const endTime = timeToSeconds(segment.end_time);
-
+      const startTime = timeToSeconds(enrollModalSegment.start_time);
+      const endTime = timeToSeconds(enrollModalSegment.end_time);
       await enrollSpeaker(
-        speakerName.trim(),
+        enrollSpeakerName.trim(),
         transcription.video_hash,
         startTime,
         endTime
       );
-
-      alert(
-        `✓ Successfully enrolled ${speakerName}!\n\nThis speaker can now be automatically identified in future videos.`
-      );
+      toast.success(`${enrollSpeakerName.trim()} enrolled successfully`);
+      setEnrollModalSegment(null);
+      setEnrollSpeakerName('');
     } catch (err: any) {
       console.error("Failed to enroll speaker:", err);
-      const errorMessage = err.message || "Unknown error occurred";
-      alert(`Failed to enroll speaker: ${errorMessage}`);
+      toast.error(err.message || "Failed to enroll speaker");
+    } finally {
+      setEnrollSubmitting(false);
     }
   };
 
-  const handleAutoIdentifySpeakers = async () => {
+  const handleAutoIdentifySpeakers = () => {
     if (!transcription) return;
+    setAutoIdentifyConfirmOpen(true);
+    setSpeakerDropdownOpen(false);
+  };
 
-    if (
-      !confirm(
-        "This will automatically identify speakers in this video using enrolled voice prints.\n\nMake sure you have enrolled speakers first.\n\nContinue?"
-      )
-    ) {
-      return;
-    }
-
+  const handleAutoIdentifyConfirm = async () => {
+    if (!transcription) return;
+    setAutoIdentifyRunning(true);
     try {
       const result = await autoIdentifySpeakers(transcription.video_hash, 0.7);
-
-      alert(
-        `✓ Auto-identification complete!\n\nIdentified: ${result.identified_segments}/${result.total_segments} segments\n\nRefresh to see the updated speaker names.`
+      toast.success(
+        `Identified ${result.identified_segments}/${result.total_segments} segments — refreshing…`,
+        { duration: 3000 }
       );
-
-      // Reload transcription to get updated speaker names
-      window.location.reload();
+      setAutoIdentifyConfirmOpen(false);
+      setTimeout(() => window.location.reload(), 1500);
     } catch (err: any) {
       console.error("Failed to auto-identify speakers:", err);
-      const errorMessage = err.message || "Unknown error occurred";
-      alert(`Failed to auto-identify speakers: ${errorMessage}`);
+      toast.error(err.message || "Failed to auto-identify speakers");
+      setAutoIdentifyRunning(false);
+    }
+  };
+
+  const fetchEnrolledSpeakers = async () => {
+    setEnrolledLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`);
+      setEnrolledSpeakers(response.data.speakers || []);
+    } catch (e) {
+      console.error("Failed to fetch enrolled speakers:", e);
+    } finally {
+      setEnrolledLoading(false);
+    }
+  };
+
+  const handleDeleteEnrolledSpeaker = async (name: string) => {
+    try {
+      await axios.delete(`${API_BASE_URL}/api/speaker/${name}`);
+      setConfirmingDeleteEnrolled(null);
+      await fetchEnrolledSpeakers();
+    } catch (e) {
+      toast.error("Failed to remove speaker");
     }
   };
 
@@ -880,30 +913,24 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           >
                             {isPlaying ? (
                               <svg
-                                className="w-6 h-6 text-gray-200 hover:text-white transition-colors"
+                                className="w-6 h-6"
+                                style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
+                                onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
+                                onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
                               >
-                                <rect
-                                  x="6"
-                                  y="4"
-                                  width="4"
-                                  height="16"
-                                  rx="1"
-                                />
-                                <rect
-                                  x="14"
-                                  y="4"
-                                  width="4"
-                                  height="16"
-                                  rx="1"
-                                />
+                                <rect x="6" y="4" width="4" height="16" rx="1" />
+                                <rect x="14" y="4" width="4" height="16" rx="1" />
                               </svg>
                             ) : (
                               <svg
-                                className="w-6 h-6 text-gray-200 hover:text-white transition-colors"
+                                className="w-6 h-6"
+                                style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
+                                onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
+                                onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
                               >
                                 <path d="M8 5v14l11-7z" />
                               </svg>
@@ -913,7 +940,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           {/* Volume Control */}
                           <div className="flex items-center space-x-2">
                             <svg
-                              className="w-5 h-5 text-gray-200 hover:text-white cursor-pointer transition-colors"
+                              className="w-5 h-5 cursor-pointer"
+                              style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
+                              onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
+                              onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -948,7 +978,15 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               step="0.1"
                               value={volume}
                               onChange={handleVolumeChange}
-                              className="w-20 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                              style={{
+                                width: '72px',
+                                height: '3px',
+                                appearance: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: 'var(--border-default)',
+                                borderRadius: '2px',
+                                accentColor: 'var(--accent)',
+                              }}
                             />
                           </div>
                         </div>
@@ -988,10 +1026,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         />
                         <div className="flex justify-end px-4 pb-2">
                           <button
-                            className="px-3 py-1 rounded bg-gray-600 text-white text-xs font-semibold hover:bg-gray-700 shadow"
+                            className="btn-ghost"
+                            style={{ fontSize: '12px', padding: '4px 8px' }}
                             onClick={() => setJumpModalOpen(true)}
+                            title="Jump to a specific timestamp (Ctrl+J)"
                           >
-                            Jump to Time
+                            Jump to time
                           </button>
                         </div>
                         <JumpToTimeModal
@@ -1080,6 +1120,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 color: showTranslation ? 'var(--accent)' : 'var(--text-secondary)',
                                 backgroundColor: showTranslation ? 'var(--accent-dim)' : 'transparent',
                               }}
+                              title="Show translated text for each segment"
                             >
                               {showTranslation ? "Original" : "Translate"}
                             </button>
@@ -1107,80 +1148,197 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                               {/* Dropdown Menu */}
                               {speakerDropdownOpen && (
                                 <div
-                                  className="absolute left-0 mt-1 w-56 z-20 max-h-80 overflow-y-auto rounded-md"
+                                  className="absolute left-0 mt-1 z-20 rounded-md"
                                   style={{
+                                    width: '240px',
                                     backgroundColor: 'var(--bg-overlay)',
                                     border: '1px solid var(--border-subtle)',
                                     boxShadow: '0 8px 24px oklch(0% 0 0 / 0.5)',
                                   }}
                                 >
-                                  {/* Show All option */}
-                                  <button
-                                    onClick={() => { setFilteredSpeaker(null); setSpeakerDropdownOpen(false); }}
-                                    style={{
-                                      display: 'flex', width: '100%', textAlign: 'left',
-                                      padding: '8px 12px', fontSize: '13px',
-                                      color: !filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
-                                      backgroundColor: !filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
-                                      alignItems: 'center', justifyContent: 'space-between',
-                                    }}
-                                  >
-                                    <span style={{ fontWeight: 500 }}>All speakers</span>
-                                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                      {transcription?.transcription.segments.length}
-                                    </span>
-                                  </button>
+                                  {/* Filter section */}
+                                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                                    {/* Show All option */}
+                                    <button
+                                      onClick={() => { setFilteredSpeaker(null); setSpeakerDropdownOpen(false); }}
+                                      style={{
+                                        display: 'flex', width: '100%', textAlign: 'left',
+                                        padding: '8px 12px', fontSize: '13px',
+                                        color: !filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
+                                        backgroundColor: !filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
+                                        alignItems: 'center', justifyContent: 'space-between',
+                                      }}
+                                    >
+                                      <span style={{ fontWeight: 500 }}>All speakers</span>
+                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                        {transcription?.transcription.segments.length}
+                                      </span>
+                                    </button>
 
-                                  {/* Individual speakers */}
-                                  {uniqueSpeakers.map((speaker) => {
-                                    const segmentCount =
-                                      transcription?.transcription.segments.filter(
-                                        (seg) => seg.speaker === speaker
-                                      ).length || 0;
+                                    {/* Individual speakers */}
+                                    {uniqueSpeakers.map((speaker) => {
+                                      const segmentCount =
+                                        transcription?.transcription.segments.filter(
+                                          (seg) => seg.speaker === speaker
+                                        ).length || 0;
 
-                                    return (
-                                      <button
-                                        key={speaker}
-                                        onClick={() => {
-                                          setFilteredSpeaker(speaker);
-                                          setSpeakerDropdownOpen(false);
-                                        }}
-                                        style={{
-                                          width: '100%',
-                                          textAlign: 'left',
-                                          padding: '8px 14px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'space-between',
-                                          borderTop: '1px solid var(--border-subtle)',
-                                          backgroundColor: filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent',
-                                          cursor: 'pointer',
-                                          transition: 'background-color 100ms ease',
-                                        }}
-                                        onMouseEnter={e => { if (filteredSpeaker !== speaker) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-overlay)'; }}
-                                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent'; }}
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <span style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                            padding: '2px 8px', borderRadius: '9999px',
-                                            fontSize: '11px', fontWeight: 600,
-                                            backgroundColor: filteredSpeaker === speaker ? 'var(--accent)' : 'var(--bg-overlay)',
-                                            color: filteredSpeaker === speaker ? 'var(--accent-text)' : 'var(--text-secondary)',
-                                            border: '1px solid var(--border-default)',
-                                          }}>
-                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                                            </svg>
-                                            {formatSpeakerLabel(speaker)}
+                                      return (
+                                        <button
+                                          key={speaker}
+                                          onClick={() => {
+                                            setFilteredSpeaker(speaker);
+                                            setSpeakerDropdownOpen(false);
+                                          }}
+                                          style={{
+                                            width: '100%',
+                                            textAlign: 'left',
+                                            padding: '8px 14px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            borderTop: '1px solid var(--border-subtle)',
+                                            backgroundColor: filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent',
+                                            cursor: 'pointer',
+                                            transition: 'background-color 100ms ease',
+                                          }}
+                                          onMouseEnter={e => { if (filteredSpeaker !== speaker) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'; }}
+                                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent'; }}
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <span style={{
+                                              display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                              padding: '2px 8px', borderRadius: '9999px',
+                                              fontSize: '11px', fontWeight: 600,
+                                              backgroundColor: filteredSpeaker === speaker ? 'var(--accent)' : 'var(--bg-overlay)',
+                                              color: filteredSpeaker === speaker ? 'var(--accent-text)' : 'var(--text-secondary)',
+                                              border: '1px solid var(--border-default)',
+                                            }}>
+                                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                                              </svg>
+                                              {formatSpeakerLabel(speaker)}
+                                            </span>
+                                          </div>
+                                          <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                            {segmentCount}
                                           </span>
-                                        </div>
-                                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                          {segmentCount}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+
+                                  {/* Speaker tools section */}
+                                  <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                                    <p style={{ padding: '6px 12px 4px', fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                      Speaker tools
+                                    </p>
+
+                                    {/* Auto-identify */}
+                                    <button
+                                      onClick={handleAutoIdentifySpeakers}
+                                      style={{
+                                        width: '100%', textAlign: 'left',
+                                        padding: '7px 12px', fontSize: '12px',
+                                        color: 'var(--text-secondary)',
+                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                        transition: 'background-color 100ms ease',
+                                      }}
+                                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'}
+                                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'}
+                                      title="Automatically identify speakers using enrolled voice prints"
+                                    >
+                                      <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                                      </svg>
+                                      Auto-identify speakers
+                                    </button>
+
+                                    {/* Enrolled speakers toggle */}
+                                    <button
+                                      onClick={() => {
+                                        const next = !showEnrolledInDropdown;
+                                        setShowEnrolledInDropdown(next);
+                                        if (next) fetchEnrolledSpeakers();
+                                      }}
+                                      style={{
+                                        width: '100%', textAlign: 'left',
+                                        padding: '7px 12px', fontSize: '12px',
+                                        color: showEnrolledInDropdown ? 'var(--accent)' : 'var(--text-secondary)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                        transition: 'background-color 100ms ease',
+                                      }}
+                                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'}
+                                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        </svg>
+                                        Enrolled speakers
+                                        {enrolledSpeakers.length > 0 && (
+                                          <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '9999px', padding: '0 5px' }}>
+                                            {enrolledSpeakers.length}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <svg
+                                        className="w-3 h-3"
+                                        style={{ color: 'var(--text-tertiary)', transform: showEnrolledInDropdown ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 150ms ease' }}
+                                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+
+                                    {/* Enrolled speakers list */}
+                                    {showEnrolledInDropdown && (
+                                      <div style={{ borderTop: '1px solid var(--border-subtle)', maxHeight: '200px', overflowY: 'auto' }}>
+                                        {enrolledLoading ? (
+                                          <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+                                            <div className="animate-spin" style={{ width: '16px', height: '16px', border: '2px solid var(--border-default)', borderTopColor: 'var(--accent)', borderRadius: '50%' }} />
+                                          </div>
+                                        ) : enrolledSpeakers.length === 0 ? (
+                                          <p style={{ padding: '12px', fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                                            No enrolled speakers. Click "Enroll" on a segment.
+                                          </p>
+                                        ) : (
+                                          enrolledSpeakers.map(sp => (
+                                            <div key={sp.name}>
+                                              {confirmingDeleteEnrolled === sp.name ? (
+                                                <div style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'oklch(65% 0.20 25 / 0.06)' }}>
+                                                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Remove <strong style={{ color: 'var(--text-primary)' }}>{sp.name}</strong>?</span>
+                                                  <div style={{ display: 'flex', gap: '6px' }}>
+                                                    <button onClick={() => handleDeleteEnrolledSpeaker(sp.name)} style={{ fontSize: '11px', fontWeight: 600, color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer' }}>Yes</button>
+                                                    <button onClick={() => setConfirmingDeleteEnrolled(null)} style={{ fontSize: '11px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer' }}>No</button>
+                                                  </div>
+                                                </div>
+                                              ) : (
+                                                <div
+                                                  style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}
+                                                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.backgroundColor = 'var(--bg-surface)'}
+                                                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'}
+                                                >
+                                                  <div>
+                                                    <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-primary)' }}>{sp.name}</span>
+                                                    <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '6px' }}>{sp.samples_count} sample{sp.samples_count !== 1 ? 's' : ''}</span>
+                                                  </div>
+                                                  <button
+                                                    onClick={() => setConfirmingDeleteEnrolled(sp.name)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', flexShrink: 0 }}
+                                                    title="Remove enrolled speaker"
+                                                  >
+                                                    <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                    </svg>
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -1195,22 +1353,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 color: showVisualMoments ? 'var(--accent)' : 'var(--text-secondary)',
                                 backgroundColor: showVisualMoments ? 'var(--accent-dim)' : 'transparent',
                               }}
-                              title="Toggle visual-only segments"
+                              title="Show visual-only segments (silent frames captured from the video)"
                             >
                               <span>Scenes</span>
                             </button>
-
-                            {/* Speaker Recognition Buttons */}
-                            <button
-                              onClick={handleAutoIdentifySpeakers}
-                              className="btn-ghost"
-                              style={{ padding: '4px 10px', fontSize: '12px', color: 'var(--text-secondary)' }}
-                              title="Auto-identify speakers using enrolled voice prints"
-                            >
-                              Auto-identify
-                            </button>
-
-                            <EnrolledSpeakersPanel />
                           </div>
                         </div>
                         {/* Transcript content */}
@@ -1441,6 +1587,126 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           }
         }}
       />
+
+      {/* Enroll Speaker Modal */}
+      <Transition appear show={enrollModalSegment !== null} as={Fragment}>
+        <Dialog as="div" className="relative z-50" onClose={() => { setEnrollModalSegment(null); setEnrollSpeakerName(''); }}>
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100"
+            leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.75)' }} />
+          </Transition.Child>
+          <div className="fixed inset-0 flex items-center justify-center p-4">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-200" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100"
+              leave="ease-in duration-150" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95"
+            >
+              <Dialog.Panel style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '24px', width: '100%', maxWidth: '360px', boxShadow: '0 16px 48px oklch(0% 0 0 / 0.6)' }}>
+                <Dialog.Title style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                  Enroll speaker
+                </Dialog.Title>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
+                  Save this voice segment as a named speaker for future identification.
+                </p>
+                <input
+                  type="text"
+                  value={enrollSpeakerName}
+                  onChange={e => setEnrollSpeakerName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleEnrollConfirm(); if (e.key === 'Escape') { setEnrollModalSegment(null); setEnrollSpeakerName(''); } }}
+                  placeholder="Speaker name"
+                  autoFocus
+                  style={{
+                    width: '100%', padding: '8px 10px', fontSize: '13px',
+                    backgroundColor: 'var(--bg-overlay)', border: '1px solid var(--border-default)',
+                    borderRadius: '5px', color: 'var(--text-primary)', outline: 'none',
+                    marginBottom: '16px',
+                  }}
+                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--border-default)')}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    onClick={() => { setEnrollModalSegment(null); setEnrollSpeakerName(''); }}
+                    className="btn-ghost"
+                    style={{ padding: '6px 14px', fontSize: '13px' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEnrollConfirm}
+                    disabled={enrollSubmitting || !enrollSpeakerName.trim()}
+                    className="btn-primary"
+                    style={{ padding: '6px 14px', fontSize: '13px', opacity: enrollSubmitting || !enrollSpeakerName.trim() ? 0.5 : 1 }}
+                  >
+                    {enrollSubmitting ? 'Enrolling…' : 'Enroll'}
+                  </button>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
+          </div>
+        </Dialog>
+      </Transition>
+
+      {/* Auto-identify Confirmation Modal */}
+      <Transition appear show={autoIdentifyConfirmOpen} as={Fragment}>
+        <Dialog as="div" className="relative z-50" onClose={() => { if (!autoIdentifyRunning) setAutoIdentifyConfirmOpen(false); }}>
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100"
+            leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.75)' }} />
+          </Transition.Child>
+          <div className="fixed inset-0 flex items-center justify-center p-4">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-200" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100"
+              leave="ease-in duration-150" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95"
+            >
+              <Dialog.Panel style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '24px', width: '100%', maxWidth: '380px', boxShadow: '0 16px 48px oklch(0% 0 0 / 0.6)' }}>
+                <Dialog.Title style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                  Auto-identify speakers
+                </Dialog.Title>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5' }}>
+                  This will compare all transcript segments against your enrolled speaker voice prints and assign names where there's a confident match.
+                </p>
+                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
+                  The page will refresh after identification completes.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    onClick={() => setAutoIdentifyConfirmOpen(false)}
+                    disabled={autoIdentifyRunning}
+                    className="btn-ghost"
+                    style={{ padding: '6px 14px', fontSize: '13px', opacity: autoIdentifyRunning ? 0.5 : 1 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAutoIdentifyConfirm}
+                    disabled={autoIdentifyRunning}
+                    className="btn-primary"
+                    style={{ padding: '6px 14px', fontSize: '13px', opacity: autoIdentifyRunning ? 0.5 : 1 }}
+                  >
+                    {autoIdentifyRunning ? (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg style={{ width: '12px', height: '12px', animation: 'spin 1s linear infinite' }} fill="none" viewBox="0 0 24 24">
+                          <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Identifying…
+                      </span>
+                    ) : 'Identify'}
+                  </button>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
+          </div>
+        </Dialog>
+      </Transition>
     </div>
   );
 };
