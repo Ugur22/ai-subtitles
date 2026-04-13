@@ -1,5 +1,4 @@
 import React from "react";
-import { FaSpinner } from "react-icons/fa";
 import { match } from "ts-pattern";
 
 interface ProcessingStatus {
@@ -15,6 +14,14 @@ interface ProcessingOverlayProps {
   videoRef: HTMLVideoElement | null;
 }
 
+const stageOrder = ["uploading", "downloading", "extracting", "transcribing", "translating", "complete"];
+
+const steps: Array<{ stage: "uploading" | "extracting" | "transcribing"; label: string; activeLabel: string; doneLabel: string }> = [
+  { stage: "uploading", label: "Upload file", activeLabel: "Uploading file…", doneLabel: "File uploaded" },
+  { stage: "extracting", label: "Extract audio", activeLabel: "Extracting audio…", doneLabel: "Audio extracted" },
+  { stage: "transcribing", label: "Transcribe speech", activeLabel: "Transcribing speech…", doneLabel: "Speech transcribed" },
+];
+
 export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
   isVisible,
   processingStatus,
@@ -24,304 +31,150 @@ export const ProcessingOverlay: React.FC<ProcessingOverlayProps> = React.memo(({
 }) => {
   if (!isVisible) return null;
 
-  // Helper functions using ts-pattern for cleaner conditional logic
+  const currentStageIndex = processingStatus ? stageOrder.indexOf(processingStatus.stage) : -1;
+
   const getMainMessage = (stage: ProcessingStatus["stage"]) =>
     match(stage)
-      .with("uploading", () => "Uploading your file...")
-      .with("downloading", () => "Downloading from cloud...")
-      .with("extracting", () => "Preparing audio...")
-      .with("transcribing", () => "AI is transcribing...")
-      .with("translating", () => "Translating content...")
-      .with("complete", () => "Processing complete!")
+      .with("uploading", () => "Uploading file")
+      .with("downloading", () => "Downloading from cloud")
+      .with("extracting", () => "Preparing audio")
+      .with("transcribing", () => "Transcribing")
+      .with("translating", () => "Translating")
+      .with("complete", () => "Complete")
       .exhaustive();
 
   const getDescription = (stage: ProcessingStatus["stage"]) =>
     match(stage)
       .with("uploading", () => "Sending your file to cloud storage")
-      .with("downloading", () => "Server is downloading the file for processing")
-      .with("extracting", () => "Extracting and optimizing audio for processing")
+      .with("downloading", () => "Server is downloading the file")
+      .with("extracting", () => "Extracting and optimizing audio")
       .with("transcribing", () =>
         videoRef
-          ? `Processing ${Math.floor(
-              videoRef.duration / 60
-            )} minutes of audio. This may take 2-4 minutes.`
-          : "Analyzing speech patterns and converting to text"
+          ? `Processing ${Math.floor(videoRef.duration / 60)} min of audio. This may take a few minutes.`
+          : "Analyzing speech and converting to text"
       )
       .with("translating", () => "Converting text to your preferred language")
       .with("complete", () => "Your transcription is ready!")
       .exhaustive();
 
-  // Get the label for each step based on its own completion status
-  const getStepLabel = (
-    stepStage: "uploading" | "extracting" | "transcribing",
-    currentStage: ProcessingStatus["stage"]
-  ) => {
-    const stageOrder = ["uploading", "downloading", "extracting", "transcribing", "translating", "complete"];
-    const currentIndex = stageOrder.indexOf(currentStage);
-    const stepIndex = stageOrder.indexOf(stepStage);
-
-    const isActive = currentStage === stepStage;
-    const isCompleted = currentIndex > stepIndex;
-
-    return match({ stepStage, isActive, isCompleted })
-      // Upload step
-      .with({ stepStage: "uploading", isActive: true }, () => "Uploading file...")
-      .with({ stepStage: "uploading", isCompleted: true }, () => "File uploaded")
-      // Extract step
-      .with({ stepStage: "extracting", isActive: true }, () => "Extracting audio...")
-      .with({ stepStage: "extracting", isCompleted: true }, () => "Audio extracted")
-      .with({ stepStage: "extracting" }, () => "Extract audio")
-      // Transcribe step
-      .with({ stepStage: "transcribing", isActive: true }, () => "Transcribing speech...")
-      .with({ stepStage: "transcribing", isCompleted: true }, () => "Speech transcribed")
-      .with({ stepStage: "transcribing" }, () => "Transcribe speech")
-      .otherwise(() => "Processing...");
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md">
-      <div className="bg-white rounded-3xl p-10 shadow-2xl max-w-lg w-full mx-4">
-        {/* File Info Header */}
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center"
+      style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.92)' }}
+    >
+      <div style={{
+        backgroundColor: 'var(--bg-surface)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: '8px',
+        padding: '28px 32px',
+        maxWidth: '420px',
+        width: '100%',
+        margin: '0 16px',
+      }}>
+
+        {/* File info */}
         {file && (
-          <div className="mb-6 pb-6 border-b border-gray-200">
-            <div className="flex items-center gap-3">
-              <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
-                <svg
-                  className="w-6 h-6 text-white"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"
-                  />
+          <div style={{ marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                width: '36px', height: '36px', flexShrink: 0,
+                backgroundColor: 'var(--accent-dim)', border: '1px solid var(--accent)',
+                borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <svg style={{ width: '16px', height: '16px', color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-900 truncate">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {file.name}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
                   {(file.size / (1024 * 1024)).toFixed(1)} MB
-                  {videoRef &&
-                    ` • ${Math.floor(videoRef.duration / 60)}:${String(
-                      Math.floor(videoRef.duration % 60)
-                    ).padStart(2, "0")} duration`}
+                  {videoRef && ` · ${Math.floor(videoRef.duration / 60)}:${String(Math.floor(videoRef.duration % 60)).padStart(2, "0")}`}
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Processing Stages */}
-        <div className="mb-6 space-y-3">
-          {/* Stage 1: Upload */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                processingStatus?.stage === "uploading"
-                  ? "bg-indigo-500 text-white"
-                  : "bg-green-500 text-white"
-              }`}
-            >
-              {processingStatus?.stage === "uploading" ? (
-                <span className="animate-spin"><FaSpinner size={14} /></span>
-              ) : (
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={3}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              )}
-            </div>
-            <div className="flex-1">
-              <p
-                className={`text-sm font-medium ${
-                  processingStatus?.stage === "uploading"
-                    ? "text-indigo-600"
-                    : "text-gray-600"
-                }`}
-              >
-                {processingStatus?.stage && getStepLabel("uploading", processingStatus.stage)}
-              </p>
-            </div>
-          </div>
+        {/* Steps */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+          {steps.map(({ stage, label, activeLabel, doneLabel }) => {
+            const stepIndex = stageOrder.indexOf(stage);
+            const isActive = processingStatus?.stage === stage;
+            const isDone = currentStageIndex > stepIndex;
+            const isPending = !isActive && !isDone;
 
-          {/* Stage 2: Extracting */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                processingStatus?.stage === "extracting"
-                  ? "bg-indigo-500 text-white"
-                  : processingStatus?.stage &&
-                    ["transcribing", "translating", "complete"].includes(
-                      processingStatus.stage
-                    )
-                  ? "bg-green-500 text-white"
-                  : "bg-gray-200 text-gray-400"
-              }`}
-            >
-              {processingStatus?.stage === "extracting" ? (
-                <span className="animate-spin"><FaSpinner size={14} /></span>
-              ) : processingStatus?.stage &&
-                ["transcribing", "translating", "complete"].includes(
-                  processingStatus.stage
-                ) ? (
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={3}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              ) : (
-                <span className="text-xs font-semibold">2</span>
-              )}
-            </div>
-            <div className="flex-1">
-              <p
-                className={`text-sm font-medium ${
-                  processingStatus?.stage === "extracting"
-                    ? "text-indigo-600"
-                    : processingStatus?.stage &&
-                      ["transcribing", "translating", "complete"].includes(
-                        processingStatus.stage
-                      )
-                    ? "text-gray-600"
-                    : "text-gray-400"
-                }`}
-              >
-                {processingStatus?.stage && getStepLabel("extracting", processingStatus.stage)}
-              </p>
-            </div>
-          </div>
-
-          {/* Stage 3: Transcribing */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                processingStatus?.stage === "transcribing"
-                  ? "bg-indigo-500 text-white"
-                  : processingStatus?.stage === "complete"
-                  ? "bg-green-500 text-white"
-                  : "bg-gray-200 text-gray-400"
-              }`}
-            >
-              {processingStatus?.stage === "transcribing" ? (
-                <span className="animate-spin"><FaSpinner size={14} /></span>
-              ) : processingStatus?.stage === "complete" ? (
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={3}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              ) : (
-                <span className="text-xs font-semibold">3</span>
-              )}
-            </div>
-            <div className="flex-1">
-              <p
-                className={`text-sm font-medium ${
-                  processingStatus?.stage === "transcribing"
-                    ? "text-indigo-600"
-                    : processingStatus?.stage === "complete"
-                    ? "text-gray-600"
-                    : "text-gray-400"
-                }`}
-              >
-                {processingStatus?.stage && getStepLabel("transcribing", processingStatus.stage)}
-              </p>
-            </div>
-          </div>
+            return (
+              <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: isDone ? 'var(--c-success)' : isActive ? 'var(--accent)' : 'var(--bg-overlay)',
+                  border: isPending ? '1px solid var(--border-default)' : 'none',
+                  transition: 'background-color 300ms ease',
+                }}>
+                  {isDone ? (
+                    <svg style={{ width: '12px', height: '12px', color: 'oklch(11% 0.008 250)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : isActive ? (
+                    <svg style={{ width: '12px', height: '12px', color: 'var(--accent-text)', animation: 'spin 1s linear infinite' }} fill="none" viewBox="0 0 24 24">
+                      <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                      {steps.indexOf(steps.find(s => s.stage === stage)!) + 1}
+                    </span>
+                  )}
+                </div>
+                <span style={{
+                  fontSize: '13px',
+                  fontWeight: isActive ? 500 : 400,
+                  color: isDone ? 'var(--text-secondary)' : isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  transition: 'color 300ms ease',
+                }}>
+                  {isDone ? doneLabel : isActive ? activeLabel : label}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
-        {/* Main Message */}
-        <div className="mb-6">
-          <div className="flex items-center justify-center gap-3 mb-3">
-            <span className="animate-spin text-indigo-600">
-              <FaSpinner size={24} />
-            </span>
-            <h3 className="text-lg font-bold text-gray-900">
-              {processingStatus?.stage && getMainMessage(processingStatus.stage)}
-            </h3>
-          </div>
-          <p className="text-sm text-center text-gray-600">
-            {processingStatus?.stage && getDescription(processingStatus.stage)}
-          </p>
-        </div>
-
-        {/* Elapsed Time */}
-        {elapsedTime > 0 && (
-          <div className="mb-6 text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-full">
-              <svg
-                className="w-4 h-4 text-gray-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <span className="text-sm font-medium text-gray-700">
-                {Math.floor(elapsedTime / 60)}:
-                {String(elapsedTime % 60).padStart(2, "0")} elapsed
-              </span>
-            </div>
+        {/* Current message */}
+        {processingStatus?.stage && (
+          <div style={{ marginBottom: '20px' }}>
+            <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>
+              {getMainMessage(processingStatus.stage)}
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+              {getDescription(processingStatus.stage)}
+            </p>
           </div>
         )}
 
-        {/* Progress Bar - Indeterminate pulsing animation */}
-        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden relative">
+        {/* Elapsed time */}
+        {elapsedTime > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+              {Math.floor(elapsedTime / 60)}:{String(elapsedTime % 60).padStart(2, "0")} elapsed
+            </span>
+          </div>
+        )}
+
+        {/* Progress bar */}
+        <div style={{ width: '100%', height: '3px', backgroundColor: 'var(--border-subtle)', borderRadius: '2px', overflow: 'hidden' }}>
           {processingStatus?.stage === "complete" ? (
-            // Solid bar when complete
-            <div className="h-full w-full bg-gradient-to-r from-green-500 to-emerald-500" />
+            <div style={{ height: '100%', width: '100%', backgroundColor: 'var(--c-success)' }} />
           ) : (
-            // Animated indeterminate bar while processing
             <div
-              className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 absolute animate-progress-indeterminate"
-              style={{
-                width: "40%",
-                backgroundSize: "200% 100%",
-              }}
+              className="animate-progress-indeterminate"
+              style={{ height: '100%', width: '40%', backgroundColor: 'var(--accent)', borderRadius: '2px' }}
             />
           )}
-        </div>
-
-        {/* Helpful Tip */}
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <p className="text-xs text-center text-gray-500">
-            💡 Tip: Processing time varies based on audio length and quality
-          </p>
         </div>
       </div>
     </div>

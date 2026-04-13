@@ -18,26 +18,14 @@ export const ResetPasswordPage: React.FC = () => {
   const email = searchParams.get('email') || '';
 
   useEffect(() => {
-    if (!email) {
-      navigate('/forgot-password');
-    }
+    if (!email) navigate('/forgot-password');
   }, [email, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError('');
-
-    // Validate passwords match
-    if (newPassword !== confirmPassword) {
-      setLocalError('Passwords do not match');
-      return;
-    }
-
-    // Validate password strength
-    if (newPassword.length < 8) {
-      setLocalError('Password must be at least 8 characters');
-      return;
-    }
+    if (newPassword !== confirmPassword) { setLocalError('Passwords do not match'); return; }
+    if (newPassword.length < 8) { setLocalError('Password must be at least 8 characters'); return; }
 
     setIsLoading(true);
     try {
@@ -51,49 +39,43 @@ export const ResetPasswordPage: React.FC = () => {
     }
   };
 
-  const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
-    setCode(value);
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="mx-auto w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center mb-4">
-              <svg
-                className="w-8 h-8 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">Reset Password</h1>
-            <p className="text-sm text-gray-500 mt-1">Enter the code and your new password</p>
-          </div>
+    <div
+      className="min-h-screen flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--bg-base)' }}
+    >
+      <div className="w-full max-w-sm">
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="mb-8 text-center">
+          <span style={{ fontWeight: 600, fontSize: '18px', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+            AI Subs
+          </span>
+        </div>
+
+        <div
+          className="rounded-lg p-6"
+          style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}
+        >
+          <h1 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+            Reset password
+          </h1>
+          <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
+            Enter the code from your email and your new password
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label htmlFor="code" className="block text-sm font-medium text-gray-700 mb-1">
-                Reset Code
+              <label htmlFor="code" style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                Reset code
               </label>
               <input
                 id="code"
                 type="text"
                 inputMode="numeric"
                 value={code}
-                onChange={handleCodeChange}
-                className="input-base w-full text-center text-xl tracking-widest font-mono"
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="input-base w-full text-center tracking-widest"
+                style={{ fontSize: '20px', letterSpacing: '0.2em', fontVariantNumeric: 'tabular-nums' }}
                 placeholder="000000"
                 required
                 autoFocus
@@ -103,77 +85,37 @@ export const ResetPasswordPage: React.FC = () => {
             </div>
 
             <div>
-              <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-1">
-                New Password
+              <label htmlFor="newPassword" style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                New password
               </label>
-              <input
-                id="newPassword"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="input-base w-full"
-                placeholder="At least 8 characters"
-                required
-                disabled={isLoading}
-              />
+              <input id="newPassword" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                className="input-base w-full" placeholder="At least 8 characters" required disabled={isLoading} />
             </div>
 
             <div>
-              <label
-                htmlFor="confirmPassword"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Confirm New Password
+              <label htmlFor="confirmPassword" style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                Confirm password
               </label>
-              <input
-                id="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="input-base w-full"
-                placeholder="Confirm password"
-                required
-                disabled={isLoading}
-              />
+              <input id="confirmPassword" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+                className="input-base w-full" placeholder="Repeat password" required disabled={isLoading} />
             </div>
 
             {localError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{localError}</p>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: 'oklch(65% 0.20 25 / 0.1)', border: '1px solid oklch(65% 0.20 25 / 0.3)' }}>
+                <p style={{ fontSize: '13px', color: 'var(--c-error)' }}>{localError}</p>
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={isLoading || code.length !== 6}
-              className="btn-primary w-full"
-            >
+            <button type="submit" disabled={isLoading || code.length !== 6} className="btn-primary w-full" style={{ marginTop: '8px', justifyContent: 'center' }}>
               {isLoading ? (
-                <span className="flex items-center justify-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Resetting...
+                  Resetting…
                 </span>
-              ) : (
-                'Reset Password'
-              )}
+              ) : 'Reset password'}
             </button>
           </form>
         </div>

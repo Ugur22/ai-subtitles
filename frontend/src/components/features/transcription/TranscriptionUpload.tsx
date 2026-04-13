@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useJobs } from "../../../contexts/JobsContext";
 import {
   type TranscriptionResponse,
   translateLocalText,
@@ -77,8 +78,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
   const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
-  const [showJobPanel, setShowJobPanel] = useState(false);
   const [showChapters, setShowChapters] = useState(false);
+
+  // Jobs context — shares active count + panel state with Header
+  const { setActiveJobCount, showJobPanel, setShowJobPanel } = useJobs();
 
   // Initialize job tracker for background processing
   const jobTracker = useJobTracker();
@@ -193,6 +196,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     );
     return Array.from(speakers).sort();
   }, [transcription]);
+
+  // Sync active job count to header via context
+  useEffect(() => {
+    const activeCount = jobTracker.jobs.filter(
+      (j) => j.status === "processing" || j.status === "pending"
+    ).length;
+    setActiveJobCount(activeCount);
+  }, [jobTracker.jobs, setActiveJobCount]);
 
   // Cleanup function for progress simulation
   useEffect(() => {
@@ -639,7 +650,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   }, [transcription]);
 
   return (
-    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
+    <div className="relative min-h-screen" style={{ backgroundColor: 'var(--bg-base)' }}>
       {/* Processing overlay when transcribing */}
       <ProcessingOverlay
         isVisible={isTranscribing}
@@ -648,7 +659,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         file={file}
         videoRef={videoRef}
       />
-      <div className="h-full text-gray-900 p-6">
+      <div className="h-full p-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
           <UploadZone
@@ -674,174 +685,132 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {/* Results Section */}
         {transcription && (
-          <div className="space-y-4 h-screen flex flex-col overflow-hidden w-full">
-            <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex-shrink-0 transition-all duration-300">
-              {/* Header Top Row (Always Visible) */}
-              <div className="p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-                {/* Left: File Info */}
-                <div className="flex items-center gap-3 w-full md:w-auto overflow-hidden">
-                  <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
-                    <svg
-                      className="w-5 h-5 text-white"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <h2
-                      className="text-sm font-bold text-gray-900 truncate max-w-[200px] md:max-w-md"
-                      title={transcription.filename}
-                    >
-                      {transcription.filename}
-                    </h2>
-                    {!isHeaderExpanded && (
-                      <div className="flex items-center gap-3 text-xs text-gray-500">
-                        <span className="font-medium text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
-                          {transcription.transcription.duration}
-                        </span>
-                        <span className="font-medium text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded uppercase">
-                          {transcription.transcription.language}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+          <div className="h-screen flex flex-col overflow-hidden w-full" style={{ gap: '8px' }}>
+            {/* Flat results top bar */}
+            <div
+              className="flex-shrink-0"
+              style={{
+                borderBottom: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-subtle)',
+                borderRadius: '6px',
+              }}
+            >
+              {/* Always-visible row */}
+              <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                {/* Left: file name + meta badges */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                  <h2
+                    style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '320px' }}
+                    title={transcription.filename}
+                  >
+                    {transcription.filename}
+                  </h2>
+                  {!isHeaderExpanded && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      <span className="badge badge-default" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {transcription.transcription.duration}
+                      </span>
+                      <span className="badge badge-default" style={{ textTransform: 'uppercase' }}>
+                        {transcription.transcription.language}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Right: Actions */}
-                <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                {/* Right: actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
                   <button
                     onClick={handleSearchClick}
-                    className={`p-2 rounded-lg transition-colors ${
-                      showSearch
-                        ? "bg-slate-800 text-white hover:bg-slate-900"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
-                    title={showSearch ? "Hide Search" : "Show Search"}
+                    className="btn-ghost"
+                    style={{
+                      padding: '6px',
+                      color: showSearch ? 'var(--accent)' : 'var(--text-secondary)',
+                      backgroundColor: showSearch ? 'var(--accent-dim)' : 'transparent',
+                    }}
+                    title={showSearch ? "Hide search" : "Show search"}
                   >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                      />
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </button>
 
                   <button
                     onClick={startNewTranscription}
-                    className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                    title="New Transcription"
+                    className="btn-ghost"
+                    style={{ padding: '6px', color: 'var(--text-secondary)' }}
+                    title="New transcription"
                   >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <polyline points="23 4 23 10 17 10"></polyline>
                       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
                     </svg>
                   </button>
 
-                  <div className="h-6 w-px bg-gray-200 mx-1"></div>
+                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)', margin: '0 4px' }} />
 
                   <SubtitleControls
                     filename={transcription.filename}
                     videoHash={transcription.video_hash}
                   />
 
-                  <div className="h-6 w-px bg-gray-200 mx-1"></div>
+                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)', margin: '0 4px' }} />
 
                   <button
                     onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
-                    className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
+                    className="btn-ghost"
+                    style={{ padding: '6px', color: 'var(--text-secondary)' }}
                   >
                     <svg
-                      className={`w-5 h-5 transition-transform duration-200 ${
-                        isHeaderExpanded ? "rotate-180" : ""
-                      }`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                      className="w-4 h-4"
+                      style={{ transition: 'transform 200ms ease', transform: isHeaderExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
                 </div>
               </div>
 
-              {/* Expanded Content */}
+              {/* Expanded stats */}
               {isHeaderExpanded && (
-                <div className="px-6 pb-6 border-t border-gray-100 pt-6 animate-fade-in">
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
-                      <div className="text-xs font-semibold text-blue-600 mb-1 uppercase tracking-wide">
-                        📄 File
+                <div
+                  className="animate-fade-in"
+                  style={{ padding: '12px', borderTop: '1px solid var(--border-subtle)', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1px', backgroundColor: 'var(--border-subtle)' }}
+                >
+                  {[
+                    { label: 'File', value: transcription.filename, title: transcription.filename, truncate: true },
+                    { label: 'Duration', value: transcription.transcription.duration },
+                    { label: 'Language', value: transcription.transcription.language?.toUpperCase() },
+                    { label: 'Processing', value: formatProcessingTime(transcription.transcription.processing_time) },
+                  ].map(({ label, value, title, truncate }) => (
+                    <div key={label} style={{ backgroundColor: 'var(--bg-surface)', padding: '10px 12px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
+                        {label}
                       </div>
                       <div
-                        className="text-sm font-bold text-gray-900 truncate"
-                        title={transcription.filename}
+                        style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}) }}
+                        title={title}
                       >
-                        {transcription.filename}
+                        {value}
                       </div>
                     </div>
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
-                      <div className="text-xs font-semibold text-purple-600 mb-1 uppercase tracking-wide">
-                        ⏱️ Duration
-                      </div>
-                      <div className="text-sm font-bold text-gray-900">
-                        {transcription.transcription.duration}
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 border border-cyan-200">
-                      <div className="text-xs font-semibold text-cyan-600 mb-1 uppercase tracking-wide">
-                        🌐 Language
-                      </div>
-                      <div className="text-sm font-bold text-gray-900 uppercase">
-                        {transcription.transcription.language}
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
-                      <div className="text-xs font-semibold text-emerald-600 mb-1 uppercase tracking-wide">
-                        ⚡ Speed
-                      </div>
-                      <div className="text-sm font-bold text-emerald-900">
-                        {formatProcessingTime(
-                          transcription.transcription.processing_time
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               )}
             </div>
 
-            {/* New Three-Column Layout */}
-            <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full gap-4 mt-6">
+            {/* Three-Column Layout */}
+            <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full" style={{ gap: '8px' }}>
               {/* Main Column: Video and Transcript/Summary */}
               <div
                 className={`flex-grow flex flex-col xl:flex-row overflow-hidden gap-4 w-full`}
               >
                 {/* Video Player (Top/Left) */}
                 {videoUrl && (
-                  <div className="bg-black rounded-xl shadow-lg border border-gray-300 overflow-hidden flex-shrink-0 w-full xl:w-3/4 flex flex-col">
+                  <div
+                    className="overflow-hidden flex-shrink-0 w-full xl:w-3/4 flex flex-col"
+                    style={{ backgroundColor: '#000', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                  >
                     <div className="w-full bg-black flex justify-center relative flex-grow items-center">
                       <video
                         ref={setVideoRef}
@@ -1043,266 +1012,127 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
                 )}
 
-                {/* Tabs for Transcript, Chat, and Summary */}
-                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex-grow flex flex-col w-full xl:w-1/4">
-                  <div className="flex border-b border-gray-200 sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10">
-                    <button
-                      onClick={() => {
-                        setShowSummary(false);
-                        setShowChat(false);
-                        setShowChapters(false);
-                      }}
-                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        !showSummary && !showChat && !showChapters
-                          ? "text-indigo-600"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                          />
-                        </svg>
-                        Transcript
-                      </div>
-                      {!showSummary && !showChat && !showChapters && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowSummary(false);
-                        setShowChat(true);
-                        setShowChapters(false);
-                      }}
-                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        showChat
-                          ? "text-indigo-600"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                          />
-                        </svg>
-                        Chat
-                      </div>
-                      {showChat && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowSummary(false);
-                        setShowChat(false);
-                        setShowChapters(true);
-                      }}
-                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        showChapters
-                          ? "text-indigo-600"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M4 6h16M4 10h16M4 14h16M4 18h16"
-                          />
-                        </svg>
-                        Chapters
-                      </div>
-                      {showChapters && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowSummary(true);
-                        setShowChat(false);
-                        setShowChapters(false);
-                      }}
-                      className={`flex-1 px-5 py-4 text-sm font-bold transition-all duration-200 relative ${
-                        showSummary
-                          ? "text-indigo-600"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v11m-5-5v6m0 0v3m0-3a3 3 0 11-6 0 3 3 0 016 0z"
-                          />
-                        </svg>
-                        Summary
-                      </div>
-                      {showSummary && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-full"></div>
-                      )}
-                    </button>
+                {/* Tabs for Transcript, Chat, Chapters, Summary */}
+                <div
+                  className="overflow-hidden flex-grow flex flex-col w-full xl:w-1/4"
+                  style={{ backgroundColor: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                >
+                  {/* Tab bar */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      borderBottom: '1px solid var(--border-subtle)',
+                      backgroundColor: 'var(--bg-subtle)',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 10,
+                    }}
+                  >
+                    {[
+                      { key: 'transcript', label: 'Transcript', active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
+                      { key: 'chat',       label: 'Chat',       active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); } },
+                      { key: 'chapters',   label: 'Chapters',   active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
+                      { key: 'summary',    label: 'Summary',    active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
+                    ].map(({ key, label, active, onClick }) => (
+                      <button
+                        key={key}
+                        onClick={onClick}
+                        style={{
+                          flex: 1,
+                          padding: '10px 4px',
+                          fontSize: '12px',
+                          fontWeight: active ? 600 : 400,
+                          color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                          transition: 'color 150ms ease, border-color 150ms ease',
+                          backgroundColor: 'transparent',
+                          cursor: 'pointer',
+                        }}
+                        onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+                        onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; }}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
 
                   <div className="flex-grow overflow-auto relative">
                     {!showSummary && !showChat && !showChapters && (
                       <>
-                        {/* Sticky Show Translation button */}
-                        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white z-10 px-5 py-4 border-b border-gray-200 flex justify-between items-center flex-wrap gap-2">
+                        {/* Transcript toolbar */}
+                        <div
+                          className="sticky top-0 z-10 flex-wrap gap-2"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '8px 10px',
+                            borderBottom: '1px solid var(--border-subtle)',
+                            backgroundColor: 'var(--bg-subtle)',
+                          }}
+                        >
                           <div className="flex items-center gap-2 flex-wrap">
                             <button
-                              onClick={() =>
-                                setShowTranslation(!showTranslation)
-                              }
-                              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
-                                showTranslation
-                                  ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md hover:shadow-lg"
-                                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              }`}
+                              onClick={() => setShowTranslation(!showTranslation)}
+                              className="btn-ghost"
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '12px',
+                                color: showTranslation ? 'var(--accent)' : 'var(--text-secondary)',
+                                backgroundColor: showTranslation ? 'var(--accent-dim)' : 'transparent',
+                              }}
                             >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-                                />
-                              </svg>
-                              {showTranslation
-                                ? "Show Original"
-                                : "Show Translation"}
+                              {showTranslation ? "Original" : "Translate"}
                             </button>
 
                             {/* Speaker Filter Dropdown */}
                             <div className="relative">
                               <button
-                                onClick={() =>
-                                  setSpeakerDropdownOpen(!speakerDropdownOpen)
-                                }
-                                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
-                                  filteredSpeaker
-                                    ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-md hover:shadow-lg"
-                                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                }`}
+                                onClick={() => setSpeakerDropdownOpen(!speakerDropdownOpen)}
+                                className="btn-ghost"
+                                style={{
+                                  padding: '4px 10px',
+                                  fontSize: '12px',
+                                  color: filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
+                                  backgroundColor: filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
+                                  display: 'flex', alignItems: 'center', gap: '6px',
+                                }}
                               >
-                                <svg
-                                  className="w-4 h-4"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-                                  />
-                                </svg>
-                                <span>
-                                  {filteredSpeaker
-                                    ? formatSpeakerLabel(filteredSpeaker)
-                                    : "All Speakers"}
-                                </span>
-                                <span className="text-xs opacity-75">
-                                  ({displayedSegments.length})
-                                </span>
-                                <svg
-                                  className={`w-4 h-4 transition-transform ${
-                                    speakerDropdownOpen ? "rotate-180" : ""
-                                  }`}
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M19 9l-7 7-7-7"
-                                  />
+                                <span>{filteredSpeaker ? formatSpeakerLabel(filteredSpeaker) : 'Speakers'}</span>
+                                <span style={{ opacity: 0.6 }}>({displayedSegments.length})</span>
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: speakerDropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 150ms ease' }}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                 </svg>
                               </button>
 
                               {/* Dropdown Menu */}
                               {speakerDropdownOpen && (
-                                <div className="absolute left-0 mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-20 max-h-96 overflow-y-auto">
+                                <div
+                                  className="absolute left-0 mt-1 w-56 z-20 max-h-80 overflow-y-auto rounded-md"
+                                  style={{
+                                    backgroundColor: 'var(--bg-overlay)',
+                                    border: '1px solid var(--border-subtle)',
+                                    boxShadow: '0 8px 24px oklch(0% 0 0 / 0.5)',
+                                  }}
+                                >
                                   {/* Show All option */}
                                   <button
-                                    onClick={() => {
-                                      setFilteredSpeaker(null);
-                                      setSpeakerDropdownOpen(false);
+                                    onClick={() => { setFilteredSpeaker(null); setSpeakerDropdownOpen(false); }}
+                                    style={{
+                                      display: 'flex', width: '100%', textAlign: 'left',
+                                      padding: '8px 12px', fontSize: '13px',
+                                      color: !filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
+                                      backgroundColor: !filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
+                                      alignItems: 'center', justifyContent: 'space-between',
                                     }}
-                                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between ${
-                                      !filteredSpeaker ? "bg-blue-50" : ""
-                                    }`}
                                   >
-                                    <div className="flex items-center gap-2">
-                                      <svg
-                                        className="w-4 h-4 text-gray-600"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                      >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          strokeWidth={2}
-                                          d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-                                        />
-                                      </svg>
-                                      <span className="font-medium text-gray-900">
-                                        All Speakers
-                                      </span>
-                                    </div>
-                                    <span className="text-xs text-gray-500">
-                                      {
-                                        transcription?.transcription.segments
-                                          .length
-                                      }
+                                    <span style={{ fontWeight: 500 }}>All speakers</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                      {transcription?.transcription.segments.length}
                                     </span>
                                   </button>
 
                                   {/* Individual speakers */}
                                   {uniqueSpeakers.map((speaker) => {
-                                    const speakerColors =
-                                      getSpeakerColor(speaker);
                                     const segmentCount =
                                       transcription?.transcription.segments.filter(
                                         (seg) => seg.speaker === speaker
@@ -1315,31 +1145,37 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                           setFilteredSpeaker(speaker);
                                           setSpeakerDropdownOpen(false);
                                         }}
-                                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between border-t border-gray-100 ${
-                                          filteredSpeaker === speaker
-                                            ? "bg-blue-50"
-                                            : ""
-                                        }`}
+                                        style={{
+                                          width: '100%',
+                                          textAlign: 'left',
+                                          padding: '8px 14px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'space-between',
+                                          borderTop: '1px solid var(--border-subtle)',
+                                          backgroundColor: filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent',
+                                          cursor: 'pointer',
+                                          transition: 'background-color 100ms ease',
+                                        }}
+                                        onMouseEnter={e => { if (filteredSpeaker !== speaker) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-overlay)'; }}
+                                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent'; }}
                                       >
                                         <div className="flex items-center gap-2">
-                                          <span
-                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${speakerColors.bg} ${speakerColors.text} ${speakerColors.border}`}
-                                          >
-                                            <svg
-                                              className="w-3.5 h-3.5"
-                                              fill="currentColor"
-                                              viewBox="0 0 20 20"
-                                            >
-                                              <path
-                                                fillRule="evenodd"
-                                                d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                                                clipRule="evenodd"
-                                              />
+                                          <span style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                            padding: '2px 8px', borderRadius: '9999px',
+                                            fontSize: '11px', fontWeight: 600,
+                                            backgroundColor: filteredSpeaker === speaker ? 'var(--accent)' : 'var(--bg-overlay)',
+                                            color: filteredSpeaker === speaker ? 'var(--accent-text)' : 'var(--text-secondary)',
+                                            border: '1px solid var(--border-default)',
+                                          }}>
+                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
                                             </svg>
                                             {formatSpeakerLabel(speaker)}
                                           </span>
                                         </div>
-                                        <span className="text-xs text-gray-500">
+                                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
                                           {segmentCount}
                                         </span>
                                       </button>
@@ -1351,77 +1187,27 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                             {/* Visual Moments Toggle */}
                             <button
-                              onClick={() =>
-                                setShowVisualMoments(!showVisualMoments)
-                              }
-                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
-                                showVisualMoments
-                                  ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-md hover:shadow-lg"
-                                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              }`}
-                              title="Toggle visibility of visual-only segments (scenes without speech)"
+                              onClick={() => setShowVisualMoments(!showVisualMoments)}
+                              className="btn-ghost"
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '12px',
+                                color: showVisualMoments ? 'var(--accent)' : 'var(--text-secondary)',
+                                backgroundColor: showVisualMoments ? 'var(--accent-dim)' : 'transparent',
+                              }}
+                              title="Toggle visual-only segments"
                             >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-                                />
-                              </svg>
-                              <span>Visual Moments</span>
-                              {showVisualMoments ? (
-                                <svg
-                                  className="w-4 h-4"
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                >
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                                    clipRule="evenodd"
-                                  />
-                                </svg>
-                              ) : (
-                                <svg
-                                  className="w-4 h-4"
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                >
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                                    clipRule="evenodd"
-                                  />
-                                </svg>
-                              )}
+                              <span>Scenes</span>
                             </button>
 
                             {/* Speaker Recognition Buttons */}
                             <button
                               onClick={handleAutoIdentifySpeakers}
-                              className="px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white shadow-md hover:shadow-lg"
-                              title="Automatically identify speakers using enrolled voice prints"
+                              className="btn-ghost"
+                              style={{ padding: '4px 10px', fontSize: '12px', color: 'var(--text-secondary)' }}
+                              title="Auto-identify speakers using enrolled voice prints"
                             >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                                />
-                              </svg>
-                              Auto-Identify
+                              Auto-identify
                             </button>
 
                             <EnrolledSpeakersPanel />
@@ -1523,10 +1309,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
               {/* Right Column: Search & Analysis Panels */}
               {showSearch && (
-                <div className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto bg-white rounded-lg shadow-sm border border-gray-100 mt-4 lg:mt-0 lg:ml-4">
-                  <div className="sticky top-0 bg-white z-10 border-b border-gray-200">
+                <div
+                  className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto mt-4 lg:mt-0 lg:ml-4"
+                  style={{ backgroundColor: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                >
+                  <div className="sticky top-0 z-10" style={{ backgroundColor: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
                     <div className="px-4 py-3 flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-gray-800">
+                      <h3 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
                         Search & Analysis
                       </h3>
                     </div>
@@ -1547,35 +1336,32 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {/* Error Display */}
         {error && (
-          <div className="mt-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-md w-full">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <svg
-                  className="h-5 w-5 text-red-400"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="8" x2="12" y2="12"></line>
-                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-red-800">
-                  Transcription Failed
-                </h3>
-                <p className="mt-1 text-xs text-red-700">{error}</p>
-                <div className="mt-2">
-                  <button
-                    onClick={() => resetTranscriptionState()}
-                    className="text-xs font-medium text-red-700 hover:text-red-600 focus:outline-none"
-                  >
-                    Try again
-                  </button>
-                </div>
-              </div>
+          <div
+            className="mt-6 w-full"
+            style={{
+              padding: '12px 16px',
+              borderRadius: '6px',
+              backgroundColor: 'oklch(65% 0.20 25 / 0.08)',
+              border: '1px solid oklch(65% 0.20 25 / 0.3)',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+            }}
+          >
+            <svg style={{ width: '16px', height: '16px', color: 'var(--c-error)', flexShrink: 0, marginTop: '1px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--c-error)', marginBottom: '2px' }}>Transcription failed</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{error}</p>
+              <button
+                onClick={() => resetTranscriptionState()}
+                style={{ marginTop: '8px', fontSize: '12px', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}
+              >
+                Try again
+              </button>
             </div>
           </div>
         )}
@@ -1593,82 +1379,46 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         {/* Spinner if isPolling is true */}
         {isPolling && (
           <div className="flex flex-col items-center justify-center mt-8">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mb-4"></div>
-            <p className="text-teal-700 font-medium">
+            <div className="animate-spin rounded-full h-10 w-10 mb-4" style={{ border: '2px solid var(--border-default)', borderTopColor: 'var(--accent)' }}></div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
               Transcribing, please wait…
             </p>
           </div>
         )}
       </div>
 
-      {/* Background Jobs Panel Toggle Button */}
-      <button
-        onClick={() => setShowJobPanel(!showJobPanel)}
-        className={`fixed bottom-6 right-6 z-40 p-4 rounded-full shadow-lg transition-all duration-200 flex items-center gap-2 ${
-          jobTracker.jobs.filter(
-            (j) => j.status === "processing" || j.status === "pending"
-          ).length > 0
-            ? "bg-indigo-600 hover:bg-indigo-700"
-            : "bg-gray-700 hover:bg-gray-800"
-        } text-white`}
-        title="View background jobs"
-      >
-        <svg
-          className="w-6 h-6"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4 6h16M4 10h16M4 14h16M4 18h16"
-          />
-        </svg>
-        {jobTracker.jobs.filter(
-          (j) => j.status === "processing" || j.status === "pending"
-        ).length > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-            {
-              jobTracker.jobs.filter(
-                (j) => j.status === "processing" || j.status === "pending"
-              ).length
-            }
-          </span>
-        )}
-      </button>
-
       {/* Background Job Submission Progress Overlay */}
       {backgroundJobSubmit.isSubmitting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">
-              Submitting Job
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.85)' }}>
+          <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '28px 32px', maxWidth: '400px', width: '100%', margin: '0 16px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '20px' }}>
+              Submitting job
             </h3>
-            <div className="mb-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
                   {backgroundJobSubmit.progress?.message || "Preparing..."}
                 </span>
-                <span>{backgroundJobSubmit.progress?.progress || 0}%</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                  {backgroundJobSubmit.progress?.progress || 0}%
+                </span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
+              <div style={{ width: '100%', height: '3px', backgroundColor: 'var(--border-subtle)', borderRadius: '2px', overflow: 'hidden' }}>
                 <div
-                  className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
                   style={{
+                    height: '100%',
+                    backgroundColor: 'var(--accent)',
+                    borderRadius: '2px',
+                    transition: 'width 300ms ease',
                     width: `${backgroundJobSubmit.progress?.progress || 0}%`,
                   }}
                 />
               </div>
             </div>
-            <p className="text-sm text-gray-500">
-              {backgroundJobSubmit.progress?.stage === "hashing" &&
-                "Calculating file fingerprint..."}
-              {backgroundJobSubmit.progress?.stage === "uploading" &&
-                "Uploading to cloud storage..."}
-              {backgroundJobSubmit.progress?.stage === "submitting" &&
-                "Queuing for processing..."}
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+              {backgroundJobSubmit.progress?.stage === "hashing" && "Calculating file fingerprint…"}
+              {backgroundJobSubmit.progress?.stage === "uploading" && "Uploading to cloud storage…"}
+              {backgroundJobSubmit.progress?.stage === "submitting" && "Queuing for processing…"}
               {backgroundJobSubmit.progress?.stage === "complete" && "Done!"}
             </p>
           </div>
