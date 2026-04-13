@@ -39,7 +39,8 @@ function getSectionIcon(heading: string): React.ReactNode {
       const iconMap: Record<string, React.ReactNode> = {
         sparkles: (
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -54,7 +55,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         "magnifying-glass": (
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -69,7 +71,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         eye: (
           <svg
-            className="w-4 h-4 text-purple-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -90,7 +93,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         "document-text": (
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -105,7 +109,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         "information-circle": (
           <svg
-            className="w-4 h-4 text-blue-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -120,7 +125,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         user: (
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -135,7 +141,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         clock: (
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -150,7 +157,8 @@ function getSectionIcon(heading: string): React.ReactNode {
         ),
         "speaker-wave": (
           <svg
-            className="w-4 h-4 text-purple-500"
+            className="w-4 h-4"
+            style={{ color: "var(--accent)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -191,7 +199,8 @@ function renderWithTimestamps(
       <button
         key={`ts-${match.index}`}
         onClick={() => onTimestampClick?.(startTs)}
-        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 bg-indigo-100 text-indigo-700 text-xs font-mono font-semibold rounded-md hover:bg-indigo-200 transition-colors cursor-pointer align-baseline"
+        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 text-xs font-mono font-semibold rounded-md transition-colors cursor-pointer align-baseline"
+        style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
       >
         <svg
           className="w-3 h-3"
@@ -285,7 +294,10 @@ function buildMarkdownComponents(
       const text = typeof children === "string" ? children : String(children);
       const icon = getSectionIcon(text);
       return (
-        <h2 className="flex items-center gap-2 text-base font-bold text-gray-900 mt-5 mb-2 pb-1.5 border-b border-gray-200">
+        <h2
+          className="flex items-center gap-2 text-base font-bold mt-5 mb-2 pb-1.5 border-b"
+          style={{ color: "var(--text-primary)", borderColor: "var(--border-subtle)" }}
+        >
           {icon}
           <span>{children}</span>
         </h2>
@@ -293,35 +305,38 @@ function buildMarkdownComponents(
     },
     h3({ children }) {
       return (
-        <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1">
+        <h3 className="text-sm font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>
           {children}
         </h3>
       );
     },
     p({ children }) {
       return (
-        <p className="text-sm text-gray-800 my-1.5 leading-relaxed">
+        <p className="text-sm my-1.5 leading-relaxed" style={{ color: "var(--text-primary)" }}>
           {processChildren(children, onTimestampClick)}
         </p>
       );
     },
     li({ children }) {
       return (
-        <li className="text-sm text-gray-800 leading-relaxed marker:text-indigo-400">
+        <li className="text-sm leading-relaxed" style={{ color: "var(--text-primary)" }}>
           {processChildren(children, onTimestampClick)}
         </li>
       );
     },
     blockquote({ children }) {
       return (
-        <blockquote className="border-l-3 border-indigo-400 bg-indigo-50/60 rounded-r-lg px-4 py-2 my-3 not-italic">
+        <blockquote
+          className="border-l-4 rounded-r-lg px-4 py-2 my-3 not-italic"
+          style={{ borderLeftColor: "var(--accent)", background: "var(--accent-dim)" }}
+        >
           {children}
         </blockquote>
       );
     },
     strong({ children }) {
       return (
-        <strong className="font-semibold text-gray-900">{children}</strong>
+        <strong className="font-semibold" style={{ color: "var(--text-primary)" }}>{children}</strong>
       );
     },
   };
@@ -521,51 +536,47 @@ const getCategoryTheme = (category: string) => {
   switch (category) {
     case "emotion":
       return {
-        bg: "from-purple-50 to-fuchsia-50",
-        border: "border-purple-300",
-        hoverBorder: "hover:border-purple-400",
-        hoverShadow: "hover:shadow-purple-200",
-        text: "text-purple-700",
-        timestamp: "text-purple-600",
+        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(50% 0.15 290 / 0.35)" },
+        hoverBorder: "",
+        hoverShadow: "",
+        text: "text-purple-300",
+        timestamp: "text-purple-400",
         confidence: "bg-purple-500",
-        badge: "bg-purple-100 text-purple-700",
-        icon: "text-purple-600",
+        badge: "bg-purple-900/50 text-purple-300",
+        icon: "text-purple-400",
       };
     case "speech":
       return {
-        bg: "from-blue-50 to-cyan-50",
-        border: "border-blue-300",
-        hoverBorder: "hover:border-blue-400",
-        hoverShadow: "hover:shadow-blue-200",
-        text: "text-blue-700",
-        timestamp: "text-blue-600",
+        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(55% 0.12 230 / 0.35)" },
+        hoverBorder: "",
+        hoverShadow: "",
+        text: "text-blue-300",
+        timestamp: "text-blue-400",
         confidence: "bg-blue-500",
-        badge: "bg-blue-100 text-blue-700",
-        icon: "text-blue-600",
+        badge: "bg-blue-900/50 text-blue-300",
+        icon: "text-blue-400",
       };
     case "sound":
       return {
-        bg: "from-emerald-50 to-teal-50",
-        border: "border-emerald-300",
-        hoverBorder: "hover:border-emerald-400",
-        hoverShadow: "hover:shadow-emerald-200",
-        text: "text-emerald-700",
-        timestamp: "text-emerald-600",
+        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(55% 0.12 160 / 0.35)" },
+        hoverBorder: "",
+        hoverShadow: "",
+        text: "text-emerald-300",
+        timestamp: "text-emerald-400",
         confidence: "bg-emerald-500",
-        badge: "bg-emerald-100 text-emerald-700",
-        icon: "text-emerald-600",
+        badge: "bg-emerald-900/50 text-emerald-300",
+        icon: "text-emerald-400",
       };
     default:
       return {
-        bg: "from-amber-50 to-orange-50",
-        border: "border-amber-300",
-        hoverBorder: "hover:border-amber-400",
-        hoverShadow: "hover:shadow-amber-200",
-        text: "text-amber-700",
-        timestamp: "text-amber-600",
+        cardStyle: { background: "oklch(17% 0.01 250)", borderColor: "oklch(60% 0.12 75 / 0.35)" },
+        hoverBorder: "",
+        hoverShadow: "",
+        text: "text-amber-300",
+        timestamp: "text-amber-400",
         confidence: "bg-amber-500",
-        badge: "bg-amber-100 text-amber-700",
-        icon: "text-amber-600",
+        badge: "bg-amber-900/50 text-amber-300",
+        icon: "text-amber-400",
       };
   }
 };
@@ -612,11 +623,13 @@ const AssistantMessageContent: React.FC<{
           return (
             <div
               key={idx}
-              className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg px-4 py-3 my-2"
+              className="rounded-lg px-4 py-3 my-2 border"
+              style={{ background: "var(--bg-surface)", borderColor: "var(--accent)" }}
             >
               <div className="flex items-center gap-2 mb-1.5">
                 <svg
-                  className="w-4 h-4 text-indigo-500"
+                  className="w-4 h-4"
+                  style={{ color: "var(--accent)" }}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -628,7 +641,7 @@ const AssistantMessageContent: React.FC<{
                     d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
                   />
                 </svg>
-                <span className="text-sm font-bold text-indigo-900">
+                <span className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
                   {section.heading}
                 </span>
               </div>
@@ -658,10 +671,11 @@ const AssistantMessageContent: React.FC<{
           return (
             <Disclosure key={idx} defaultOpen={false}>
               {({ open }) => (
-                <div className="border-b border-gray-100 last:border-b-0">
+                <div className="border-b last:border-b-0" style={{ borderColor: "var(--border-subtle)" }}>
                   <DisclosureButton className="flex items-center gap-2 w-full text-left py-2 group">
                     <svg
-                      className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}
+                      className={`w-4 h-4 transition-transform ${open ? "rotate-90" : ""}`}
+                      style={{ color: "var(--text-tertiary)" }}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -674,7 +688,10 @@ const AssistantMessageContent: React.FC<{
                       />
                     </svg>
                     {getSectionIcon(section.heading)}
-                    <span className="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
+                    <span
+                      className="text-sm font-bold transition-colors"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {section.heading}
                     </span>
                   </DisclosureButton>
@@ -1117,9 +1134,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   if (!videoHash) {
     return (
       <div className="flex items-center justify-center h-full p-8">
-        <div className="text-center text-gray-500">
+        <div className="text-center" style={{ color: "var(--text-secondary)" }}>
           <svg
-            className="w-16 h-16 mx-auto mb-4 text-gray-300"
+            className="w-16 h-16 mx-auto mb-4"
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -1141,14 +1159,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full" style={{ background: "var(--bg-subtle)" }}>
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+      <div className="px-6 py-4 border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
         <div className="flex flex-col gap-3">
           {/* Title Row */}
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Chat with Video</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <h2 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Chat with Video</h2>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
               Ask questions about the content
             </p>
           </div>
@@ -1157,14 +1175,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <div className="flex items-center gap-3 flex-wrap">
             {/* Model Selector */}
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-600">
+              <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
                 Model:
               </label>
               <div className="relative">
                 {loadingProviders ? (
-                  <div className="flex items-center gap-2 px-4 py-2 text-sm text-gray-500 bg-gray-50 border border-gray-300 rounded-lg min-w-[200px]">
+                  <div className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base" style={{ color: "var(--text-secondary)" }}>
                     <svg
-                      className="w-4 h-4 animate-spin text-indigo-500"
+                      className="w-4 h-4 animate-spin"
+                      style={{ color: "var(--accent)" }}
                       fill="none"
                       viewBox="0 0 24 24"
                     >
@@ -1195,7 +1214,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         setIncludeVisuals(false);
                       }
                     }}
-                    className="appearance-none text-sm pl-4 pr-10 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 hover:border-gray-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all cursor-pointer font-medium text-gray-700 min-w-[200px]"
+                    className="input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium min-w-[200px]"
                     title="Select LLM Provider"
                   >
                     {providers.map((provider) => (
@@ -1214,7 +1233,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 {!loadingProviders && (
                   <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
                     <svg
-                      className="w-4 h-4 text-gray-500"
+                      className="w-4 h-4"
+                      style={{ color: "var(--text-secondary)" }}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -1233,7 +1253,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
             {/* Divider - only show if vision supported */}
             {VISION_SUPPORTED_PROVIDERS.includes(selectedProvider) && (
-              <div className="h-6 w-px bg-gray-300"></div>
+              <div className="h-6 w-px" style={{ background: "var(--border-default)" }}></div>
             )}
 
             {/* Visual Search Toggle - only show for vision-capable models */}
@@ -1241,11 +1261,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div className="relative group flex items-center gap-2">
                 <button
                   onClick={() => setIncludeVisuals(!includeVisuals)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border-2"
+                  style={
                     includeVisuals
-                      ? "bg-indigo-100 text-indigo-700 border-2 border-indigo-300"
-                      : "bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200"
-                  }`}
+                      ? { background: "var(--accent-dim)", color: "var(--accent)", borderColor: "var(--accent)" }
+                      : { background: "var(--bg-overlay)", color: "var(--text-secondary)", borderColor: "transparent" }
+                  }
                   aria-label={
                     includeVisuals
                       ? "Disable scene search"
@@ -1276,7 +1297,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   </svg>
                   <span>Scene Search</span>
                   {includeVisuals && (
-                    <span className="ml-1 px-1.5 py-0.5 bg-indigo-200 text-indigo-800 text-xs rounded-full">
+                    <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full font-semibold" style={{ background: "var(--accent)", color: "var(--accent-text)" }}>
                       ON
                     </span>
                   )}
@@ -1285,24 +1306,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 {/* Info tooltip */}
                 <div className="relative">
                   <button
-                    className="w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center text-xs font-bold transition-colors"
+                    className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                    style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}
                     title="Scene Search finds visual moments (actions, objects, settings). Cannot identify specific people by name - use transcript for speaker queries."
                     aria-label="Scene search information"
                   >
                     ?
                   </button>
                   {/* Tooltip on hover */}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 shadow-lg">
-                    <div className="font-medium mb-1.5">Scene Search</div>
-                    <div className="text-gray-300 mb-1">
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 shadow-lg" style={{ background: "var(--bg-overlay)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}>
+                    <div className="font-medium mb-1.5" style={{ color: "var(--text-primary)" }}>Scene Search</div>
+                    <div className="mb-1" style={{ color: "var(--text-secondary)" }}>
                       Finds visual moments (actions, objects, settings).
                     </div>
-                    <div className="text-gray-300">
+                    <div style={{ color: "var(--text-secondary)" }}>
                       Cannot identify specific people by name - use transcript
                       for speaker queries.
                     </div>
                     <svg
-                      className="absolute top-full left-1/2 -translate-x-1/2 text-gray-900"
+                      className="absolute top-full left-1/2 -translate-x-1/2"
+                      style={{ color: "var(--bg-overlay)" }}
                       width="8"
                       height="4"
                       viewBox="0 0 8 4"
@@ -1316,7 +1339,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <button
                   onClick={handleReindex}
                   disabled={reindexing || !videoHash}
-                  className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn-ghost w-6 h-6 rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Re-index images (fixes visual search)"
                   aria-label="Re-index images"
                 >
@@ -1338,21 +1361,25 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
         {/* Re-index Status */}
         {reindexStatus && (
-          <div className={`mt-2 px-3 py-2 rounded-lg flex items-center gap-2 text-sm ${
-            reindexStatus.includes("failed")
-              ? "bg-red-50 border border-red-200 text-red-700"
-              : "bg-green-50 border border-green-200 text-green-700"
-          }`}>
+          <div
+            className="mt-2 px-3 py-2 rounded-lg flex items-center gap-2 text-sm border"
+            style={
+              reindexStatus.includes("failed")
+                ? { background: "oklch(65% 0.20 25 / 0.08)", borderColor: "oklch(65% 0.20 25 / 0.25)", color: "oklch(65% 0.20 25)" }
+                : { background: "oklch(70% 0.15 145 / 0.08)", borderColor: "oklch(70% 0.15 145 / 0.25)", color: "oklch(70% 0.15 145)" }
+            }
+          >
             <span>{reindexStatus}</span>
           </div>
         )}
 
         {/* Indexing Status */}
         {indexingStatus && (
-          <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
+          <div className="mt-3 px-3 py-2 rounded-lg flex items-center gap-2 border" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)" }}>
             {indexingStatus.includes("Indexing") && (
               <svg
-                className="w-4 h-4 text-blue-600 animate-spin"
+                className="w-4 h-4 animate-spin"
+                style={{ color: "var(--accent)" }}
                 fill="none"
                 viewBox="0 0 24 24"
               >
@@ -1373,7 +1400,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
             {indexingStatus.includes("successfully") && (
               <svg
-                className="w-4 h-4 text-green-600"
+                className="w-4 h-4"
+                style={{ color: "var(--c-success)" }}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1388,7 +1416,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
             {indexingStatus.includes("failed") && (
               <svg
-                className="w-4 h-4 text-amber-600"
+                className="w-4 h-4"
+                style={{ color: "var(--accent)" }}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1402,13 +1431,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </svg>
             )}
             <p
-              className={`text-sm ${
-                indexingStatus.includes("successfully")
-                  ? "text-green-700"
+              className="text-sm"
+              style={{
+                color: indexingStatus.includes("successfully")
+                  ? "var(--c-success)"
                   : indexingStatus.includes("failed")
-                    ? "text-amber-700"
-                    : "text-blue-700"
-              }`}
+                    ? "var(--accent)"
+                    : "var(--text-secondary)",
+              }}
             >
               {indexingStatus}
             </p>
@@ -1420,13 +1450,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="text-center py-8">
-            <p className="text-gray-500 mb-4">Start a conversation!</p>
+            <p className="mb-4" style={{ color: "var(--text-secondary)" }}>Start a conversation!</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl mx-auto">
               {quickQuestions.map((question, index) => (
                 <button
                   key={index}
                   onClick={() => sendMessage(question)}
-                  className="px-4 py-2 text-sm text-left bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="px-4 py-2 text-sm text-left rounded-lg transition-colors"
+                  style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}
                 >
                   {question}
                 </button>
@@ -1447,37 +1478,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               message.visual_query_used &&
               message.original_question &&
               message.visual_query_used !== message.original_question && (
-                <div className="max-w-3xl px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-gray-700 flex items-start gap-2">
+                <div
+                  className="max-w-3xl px-3 py-2 rounded-lg text-xs flex items-start gap-2 border"
+                  style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+                >
                   <span className="text-sm">💡</span>
                   <div>
-                    <span className="font-medium">Scene search:</span> "
+                    <span className="font-medium" style={{ color: "var(--text-primary)" }}>Scene search:</span> "
                     {message.visual_query_used}"
                   </div>
                 </div>
               )}
 
             <div
-              className={`max-w-3xl rounded-xl ${
+              className="max-w-3xl rounded-xl"
+              style={
                 message.role === "user"
-                  ? "px-4 py-3 bg-indigo-600 text-white"
+                  ? { padding: "0.75rem 1rem", background: "var(--accent)", color: "var(--accent-text)" }
                   : message.isError
-                  ? "px-5 py-4 bg-red-50 border border-red-200 shadow-sm text-gray-900"
-                  : "px-5 py-4 bg-white border border-gray-200 shadow-sm text-gray-900"
-              }`}
+                  ? { padding: "1rem 1.25rem", background: "oklch(65% 0.20 25 / 0.08)", border: "1px solid oklch(65% 0.20 25 / 0.25)", color: "var(--text-primary)" }
+                  : { padding: "1rem 1.25rem", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }
+              }
             >
               {message.isError ? (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 flex-shrink-0" style={{ color: "var(--c-error)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
                     </svg>
-                    <span className="font-medium text-red-700 text-sm">Something went wrong</span>
+                    <span className="font-medium text-sm" style={{ color: "var(--c-error)" }}>Something went wrong</span>
                   </div>
-                  <p className="text-sm text-gray-700 mb-3">{message.content}</p>
+                  <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{message.content}</p>
                   {message.retryQuestion && (
                     <button
                       onClick={() => sendMessage(message.retryQuestion)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md transition-colors"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+                      style={{ color: "var(--c-error)", background: "oklch(65% 0.20 25 / 0.12)" }}
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1500,10 +1536,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Visual Sources (Screenshots) */}
                   {message.sources.filter((s) => s.screenshot_url).length >
                     0 && (
-                    <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg p-3 border border-purple-200">
+                    <div className="rounded-lg p-3 border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
                       <div className="flex items-center gap-2 mb-3">
                         <span className="text-base">🎨</span>
-                        <p className="text-xs font-bold text-purple-900 uppercase tracking-wide">
+                        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--text-secondary)" }}>
                           Scene Matches
                         </p>
                       </div>
@@ -1528,7 +1564,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   });
                                 }
                               }}
-                              className="group relative aspect-video bg-white rounded-lg overflow-hidden border-2 border-purple-200 hover:border-purple-400 transition-all hover:shadow-lg cursor-pointer"
+                              className="group relative aspect-video rounded-lg overflow-hidden border-2 transition-all hover:shadow-lg cursor-pointer"
+                              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
                             >
                               <img
                                 src={formatScreenshotUrl(source.screenshot_url)}
@@ -1596,10 +1633,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {message.sources.filter(
                     (s) => !s.screenshot_url && s.type !== "audio",
                   ).length > 0 && (
-                    <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-3 border border-blue-200">
+                    <div className="rounded-lg p-3 border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-base">📝</span>
-                        <p className="text-xs font-bold text-blue-900 uppercase tracking-wide">
+                        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--text-secondary)" }}>
                           From Transcript
                         </p>
                       </div>
@@ -1614,18 +1651,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               onClick={() =>
                                 onTimestampClick?.(source.start_time)
                               }
-                              className="block w-full text-left text-xs px-3 py-2 bg-white hover:bg-blue-50 rounded-lg border border-blue-200 hover:border-blue-300 transition-all hover:shadow-sm group"
+                              className="block w-full text-left text-xs px-3 py-2 rounded-lg border transition-all hover:shadow-sm group"
+                              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
                             >
                               <div className="flex items-center justify-between mb-1">
-                                <span className="font-mono font-bold text-blue-700 group-hover:text-blue-800">
+                                <span className="font-mono font-bold" style={{ color: "var(--accent)" }}>
                                   {source.start_time} - {source.end_time}
                                 </span>
-                                <span className="text-gray-600 font-medium">
+                                <span className="font-medium" style={{ color: "var(--text-secondary)" }}>
                                   {source.speaker}
                                 </span>
                               </div>
                               {source.text && (
-                                <p className="text-gray-600 line-clamp-2 leading-relaxed">
+                                <p className="line-clamp-2 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
                                   {source.text}
                                 </p>
                               )}
@@ -1638,12 +1676,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Audio Events */}
                   {message.sources.filter((s) => s.type === "audio").length >
                     0 && (
-                    <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-lg p-4 border border-gray-200">
+                    <div className="rounded-lg p-4 border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <div className="p-2 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-lg">
+                          <div className="p-2 rounded-lg" style={{ background: "var(--accent-dim)" }}>
                             <svg
-                              className="w-5 h-5 text-indigo-600"
+                              className="w-5 h-5"
+                              style={{ color: "var(--accent)" }}
                               fill="none"
                               stroke="currentColor"
                               viewBox="0 0 24 24"
@@ -1657,10 +1696,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             </svg>
                           </div>
                           <div>
-                            <p className="text-sm font-bold text-gray-900">
+                            <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
                               Audio Events Detected
                             </p>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
                               {
                                 message.sources.filter(
                                   (s) => s.type === "audio",
@@ -1693,7 +1732,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 onClick={() =>
                                   onTimestampClick?.(source.start_time)
                                 }
-                                className={`relative bg-gradient-to-br ${theme.bg} rounded-xl border-2 ${theme.border} ${theme.hoverBorder} p-4 hover:shadow-lg ${theme.hoverShadow} transition-all duration-200 text-left group`}
+                                className="relative rounded-xl border-2 p-4 hover:shadow-lg transition-all duration-200 text-left group"
+                                style={theme.cardStyle}
                                 title={`${eventDetails.label} at ${source.start_time}${duration ? ` (${duration})` : ""} - Click to play`}
                                 aria-label={`Jump to ${eventDetails.label} event at ${source.start_time}`}
                               >
@@ -1739,7 +1779,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     {source.start_time}
                                   </span>
                                   {duration && (
-                                    <span className="text-xs text-gray-500 ml-1">
+                                    <span className="text-xs ml-1" style={{ color: "var(--text-tertiary)" }}>
                                       ({duration})
                                     </span>
                                   )}
@@ -1750,7 +1790,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   source.speaker !== "Unknown" && (
                                     <div className="flex items-center gap-1.5">
                                       <svg
-                                        className="w-3.5 h-3.5 text-gray-400"
+                                        className="w-3.5 h-3.5"
+                                        style={{ color: "var(--text-tertiary)" }}
                                         fill="none"
                                         stroke="currentColor"
                                         viewBox="0 0 24 24"
@@ -1762,7 +1803,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                           d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                                         />
                                       </svg>
-                                      <span className="text-xs text-gray-600 font-medium">
+                                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
                                         {source.speaker}
                                       </span>
                                     </div>
@@ -1781,13 +1822,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 px-4 py-3 rounded-lg">
+            <div className="px-4 py-3 rounded-lg" style={{ background: "var(--bg-surface)" }}>
               <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+                <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: "var(--text-tertiary)" }}></div>
+                <div className="w-2 h-2 rounded-full animate-bounce delay-100" style={{ background: "var(--text-tertiary)" }}></div>
+                <div className="w-2 h-2 rounded-full animate-bounce delay-200" style={{ background: "var(--text-tertiary)" }}></div>
                 {retryCount > 0 && (
-                  <span className="text-xs text-amber-600 font-medium ml-1">
+                  <span className="text-xs font-medium ml-1" style={{ color: "var(--accent)" }}>
                     Retrying... (attempt {retryCount + 1})
                   </span>
                 )}
@@ -1800,12 +1841,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
 
       {/* Input */}
-      <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+      <div className="px-6 py-4 border-t" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
         {/* Custom Instructions Section */}
         <div className="mb-3">
           <button
             onClick={() => setShowCustomInstructions(!showCustomInstructions)}
-            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+            className="flex items-center gap-2 text-sm font-medium transition-colors"
+            style={{ color: "var(--text-secondary)" }}
             aria-expanded={showCustomInstructions}
             aria-label="Toggle custom instructions"
           >
@@ -1843,23 +1885,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </svg>
             <span>Custom Instructions</span>
             {customInstructions && (
-              <span className="ml-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-semibold">
+              <span className="ml-1 px-2 py-0.5 text-xs rounded-full font-semibold" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>
                 Active
               </span>
             )}
           </button>
 
           {showCustomInstructions && (
-            <div className="mt-3 bg-white rounded-lg border border-gray-300 p-3">
+            <div className="mt-3 rounded-lg border p-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
               <textarea
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
                 placeholder="Add custom instructions for the AI (e.g., 'Respond in Spanish', 'Be brief and casual', 'Focus on technical details')..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-sm"
+                className="input-base w-full px-3 py-2 resize-none text-sm"
                 rows={3}
                 disabled={loading}
               />
-              <p className="mt-2 text-xs text-gray-500">
+              <p className="mt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
                 These instructions will be applied to all your questions. They
                 persist across messages.
               </p>
@@ -1870,21 +1912,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {/* Chat Input */}
         <div className="relative flex gap-2">
           {showMentions && filteredSpeakers.length > 0 && (
-            <div className="absolute bottom-full mb-1 left-0 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+            <div className="absolute bottom-full mb-1 left-0 w-64 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50 border" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
               {filteredSpeakers.map((speaker, i) => (
                 <button
                   key={speaker}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 ${
+                  className="w-full text-left px-3 py-2 text-sm transition-colors"
+                  style={
                     i === mentionIndex
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-gray-700"
-                  }`}
+                      ? { background: "var(--accent-dim)", color: "var(--accent)" }
+                      : { color: "var(--text-primary)" }
+                  }
                   onMouseDown={(e) => {
                     e.preventDefault();
                     selectMention(speaker);
                   }}
                 >
-                  <span className="text-gray-400 mr-1">@</span>
+                  <span className="mr-1" style={{ color: "var(--text-tertiary)" }}>@</span>
                   {speaker}
                 </button>
               ))}
@@ -1897,13 +1940,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             onChange={handleInputChange}
             onKeyDown={handleKeyPress}
             placeholder="Ask about the video... (type @ to mention a speaker)"
-            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="input-base flex-1 px-4 py-3"
             disabled={loading}
           />
           <button
             onClick={sendMessage}
             disabled={loading || !input.trim()}
-            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+            className="px-6 py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+            style={{ background: "var(--accent)", color: "var(--accent-text)" }}
           >
             <svg
               className="w-5 h-5 transform rotate-90"
