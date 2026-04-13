@@ -15,7 +15,6 @@ export const ForgotPasswordPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
     try {
       await forgotPassword(email);
       toast.success('If that email exists, a reset code has been sent');
@@ -28,36 +27,35 @@ export const ForgotPasswordPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="mx-auto w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center mb-4">
-              <svg
-                className="w-8 h-8 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">Reset Password</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Enter your email to receive a reset code
-            </p>
-          </div>
+    <div
+      className="min-h-screen flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--bg-base)' }}
+    >
+      <div className="w-full max-w-sm">
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="mb-8 text-center">
+          <span style={{ fontWeight: 600, fontSize: '18px', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+            AI Subs
+          </span>
+        </div>
+
+        <div
+          className="rounded-lg p-6"
+          style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}
+        >
+          <h1 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+            Reset password
+          </h1>
+          <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
+            Enter your email to receive a reset code
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="email"
+                style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}
+              >
                 Email
               </label>
               <input
@@ -73,43 +71,32 @@ export const ForgotPasswordPage: React.FC = () => {
               />
             </div>
 
-            <button type="submit" disabled={isLoading} className="btn-primary w-full">
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="btn-primary w-full"
+              style={{ marginTop: '8px', justifyContent: 'center' }}
+            >
               {isLoading ? (
-                <span className="flex items-center justify-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Sending...
+                  Sending…
                 </span>
               ) : (
-                'Send Reset Code'
+                'Send reset code'
               )}
             </button>
           </form>
-
-          {/* Footer */}
-          <div className="mt-6 text-center">
-            <Link to="/login" className="text-sm text-indigo-600 hover:text-indigo-500">
-              Back to Sign In
-            </Link>
-          </div>
         </div>
+
+        <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px', color: 'var(--text-tertiary)' }}>
+          <Link to="/login" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+            Back to sign in
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -18,22 +18,18 @@ export const VerifyEmailPage: React.FC = () => {
   const email = sessionStorage.getItem('pendingVerificationEmail');
 
   useEffect(() => {
-    if (!userId) {
-      navigate('/login');
-    }
+    if (!userId) navigate('/login');
   }, [userId, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId) return;
-
     try {
       await verifyEmail(userId, code);
-      // Clear stored email after successful verification
       sessionStorage.removeItem('pendingVerificationEmail');
       navigate('/');
     } catch (error) {
-      // Error handled by useAuth (toast shown)
+      // Error handled by useAuth
     }
   };
 
@@ -43,59 +39,52 @@ export const VerifyEmailPage: React.FC = () => {
       navigate('/register');
       return;
     }
-
     setIsResending(true);
     try {
       const response = await resendVerificationCode(email);
       toast.success(response.message || 'Verification code sent!');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to resend code';
-      toast.error(message);
+      toast.error(error instanceof Error ? error.message : 'Failed to resend code');
     } finally {
       setIsResending(false);
     }
   };
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
-    setCode(value);
+    setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="mx-auto w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center mb-4">
-              <svg
-                className="w-8 h-8 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">Verify Your Email</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              We sent a 6-digit code to your email
-            </p>
-          </div>
+    <div
+      className="min-h-screen flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--bg-base)' }}
+    >
+      <div className="w-full max-w-sm">
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="mb-8 text-center">
+          <span style={{ fontWeight: 600, fontSize: '18px', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+            AI Subs
+          </span>
+        </div>
+
+        <div
+          className="rounded-lg p-6"
+          style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}
+        >
+          <h1 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+            Verify your email
+          </h1>
+          <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
+            Enter the 6-digit code we sent to your email
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
               <label
                 htmlFor="code"
-                className="block text-sm font-medium text-gray-700 mb-1 text-center"
+                style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}
               >
-                Verification Code
+                Verification code
               </label>
               <input
                 id="code"
@@ -103,67 +92,56 @@ export const VerifyEmailPage: React.FC = () => {
                 inputMode="numeric"
                 value={code}
                 onChange={handleCodeChange}
-                className="input-base w-full text-center text-2xl tracking-widest font-mono"
+                className="input-base w-full text-center tracking-widest"
+                style={{ fontSize: '22px', letterSpacing: '0.25em', fontVariantNumeric: 'tabular-nums' }}
                 placeholder="000000"
                 required
                 autoFocus
                 disabled={isLoading}
                 maxLength={6}
               />
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                Enter the 6-digit code from your email
-              </p>
             </div>
 
             <button
               type="submit"
               disabled={isLoading || code.length !== 6}
               className="btn-primary w-full"
+              style={{ marginTop: '8px', justifyContent: 'center' }}
             >
               {isLoading ? (
-                <span className="flex items-center justify-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Verifying...
+                  Verifying…
                 </span>
               ) : (
-                'Verify Email'
+                'Verify email'
               )}
             </button>
           </form>
-
-          {/* Footer */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
-              Didn't receive the code?{' '}
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={isResending || !email}
-                className="text-indigo-600 hover:text-indigo-500 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isResending ? 'Sending...' : 'Resend'}
-              </button>
-            </p>
-          </div>
         </div>
+
+        <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px', color: 'var(--text-tertiary)' }}>
+          Didn't receive the code?{' '}
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={isResending || !email}
+            style={{
+              color: 'var(--accent)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: '13px',
+              opacity: (isResending || !email) ? 0.5 : 1,
+            }}
+          >
+            {isResending ? 'Sending…' : 'Resend'}
+          </button>
+        </p>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './hooks/useAuth';
 import { SettingsProvider } from './hooks/useSettings';
+import { JobsProvider } from './contexts/JobsContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
@@ -27,26 +28,30 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <Router>
         <AuthProvider>
+          <JobsProvider>
           <SettingsProvider>
             <Toaster
               position="top-right"
               toastOptions={{
                 duration: 4000,
                 style: {
-                  background: '#fff',
-                  color: '#1f2937',
-                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                  background: 'oklch(17% 0.010 250)',
+                  color: 'oklch(93% 0.005 250)',
+                  border: '1px solid oklch(24% 0.012 250)',
+                  boxShadow: '0 4px 16px oklch(0% 0 0 / 0.4)',
+                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  fontSize: '14px',
                 },
                 success: {
                   iconTheme: {
-                    primary: '#10b981',
-                    secondary: '#fff',
+                    primary: 'oklch(70% 0.15 145)',
+                    secondary: 'oklch(17% 0.010 250)',
                   },
                 },
                 error: {
                   iconTheme: {
-                    primary: '#ef4444',
-                    secondary: '#fff',
+                    primary: 'oklch(65% 0.20 25)',
+                    secondary: 'oklch(17% 0.010 250)',
                   },
                 },
               }}
@@ -76,6 +81,7 @@ function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </SettingsProvider>
+          </JobsProvider>
         </AuthProvider>
       </Router>
     </QueryClientProvider>
