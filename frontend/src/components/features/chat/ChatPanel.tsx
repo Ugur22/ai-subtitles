@@ -1112,13 +1112,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg-subtle)" }}>
       {/* Header */}
-      <div className="px-6 py-4 border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
-        <div className="flex flex-col gap-3">
-          {/* Title Row */}
-          <div>
-            <h2 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>Chat with Video</h2>
-          </div>
-
+      <div className="px-4 py-3 border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
           {/* Controls Row */}
           <div className="flex items-center gap-3 flex-wrap">
             {/* Model Selector */}
@@ -1305,7 +1299,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
             )}
           </div>
-        </div>
 
         {/* Re-index Status */}
         {reindexStatus && (
