@@ -1125,7 +1125,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   <div className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base" style={{ color: "var(--text-secondary)" }}>
                     <svg
                       className="w-4 h-4 animate-spin"
-                      style={{ color: "var(--accent)" }}
+                      style={{ color: "var(--text-secondary)" }}
                       fill="none"
                       viewBox="0 0 24 24"
                     >
@@ -1203,12 +1203,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div className="relative group flex items-center gap-2">
                 <button
                   onClick={() => setIncludeVisuals(!includeVisuals)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border-2"
-                  style={
-                    includeVisuals
-                      ? { background: "var(--accent-dim)", color: "var(--accent)", borderColor: "var(--accent)" }
-                      : { background: "var(--bg-overlay)", color: "var(--text-secondary)", borderColor: "transparent" }
-                  }
+                  className="btn-ghost flex items-center gap-2 px-3 py-1.5 text-sm font-medium"
+                  style={includeVisuals ? { background: "var(--accent-dim)", color: "var(--accent)" } : {}}
                   aria-label={
                     includeVisuals
                       ? "Disable scene search"
@@ -1320,7 +1316,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {indexingStatus.includes("Indexing") && (
               <svg
                 className="w-4 h-4 animate-spin"
-                style={{ color: "var(--accent)" }}
+                style={{ color: "var(--text-secondary)" }}
                 fill="none"
                 viewBox="0 0 24 24"
               >
@@ -1358,7 +1354,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {indexingStatus.includes("failed") && (
               <svg
                 className="w-4 h-4"
-                style={{ color: "var(--accent)" }}
+                style={{ color: "var(--c-error)" }}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1377,7 +1373,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 color: indexingStatus.includes("successfully")
                   ? "var(--c-success)"
                   : indexingStatus.includes("failed")
-                    ? "var(--accent)"
+                    ? "var(--c-error)"
                     : "var(--text-secondary)",
               }}
             >
