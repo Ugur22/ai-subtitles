@@ -1112,7 +1112,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg-subtle)" }}>
       {/* Header */}
-      <div className="px-4 py-3 border-b" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
+      <div className="px-4 py-3" style={{ background: "var(--bg-subtle)" }}>
           {/* Controls Row */}
           <div className="flex items-center gap-3 flex-wrap">
             {/* Model Selector */}

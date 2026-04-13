@@ -21,10 +21,10 @@
   --text-secondary: oklch(62% 0.008 250);
   --text-tertiary:  oklch(40% 0.008 250);
 
-  /* Accent — warm amber, surgical use only */
-  --accent:      oklch(78% 0.17 75);
-  --accent-dim:  oklch(78% 0.17 75 / 0.14);
-  --accent-text: oklch(18% 0.05 75);   /* dark text on amber bg */
+  /* Accent — electric emerald, surgical use only */
+  --accent:      oklch(70% 0.18 145);
+  --accent-dim:  oklch(70% 0.18 145 / 0.14);
+  --accent-text: oklch(15% 0.05 145);  /* dark text on emerald bg */
 
   /* Semantic */
   --c-success: oklch(70% 0.15 145);
