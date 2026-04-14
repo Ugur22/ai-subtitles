@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './hooks/useAuth';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { SettingsProvider } from './hooks/useSettings';
 import { JobsProvider } from './contexts/JobsContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -23,39 +24,48 @@ const queryClient = new QueryClient({
   },
 });
 
+function DynamicToaster() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <Toaster
+      position="top-right"
+      toastOptions={{
+        duration: 4000,
+        style: {
+          background: 'var(--bg-subtle)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-default)',
+          boxShadow: `0 4px 16px oklch(0% 0 0 / ${isDark ? '0.4' : '0.15'})`,
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+          fontSize: '14px',
+        },
+        success: {
+          iconTheme: {
+            primary: isDark ? 'oklch(70% 0.15 145)' : 'oklch(38% 0.15 145)',
+            secondary: isDark ? 'oklch(17% 0.010 250)' : 'oklch(93.5% 0.008 250)',
+          },
+        },
+        error: {
+          iconTheme: {
+            primary: isDark ? 'oklch(65% 0.20 25)' : 'oklch(52% 0.22 25)',
+            secondary: isDark ? 'oklch(17% 0.010 250)' : 'oklch(93.5% 0.008 250)',
+          },
+        },
+      }}
+    />
+  );
+}
+
 function App() {
   return (
+    <ThemeProvider>
     <QueryClientProvider client={queryClient}>
       <Router>
         <AuthProvider>
           <JobsProvider>
           <SettingsProvider>
-            <Toaster
-              position="top-right"
-              toastOptions={{
-                duration: 4000,
-                style: {
-                  background: 'oklch(17% 0.010 250)',
-                  color: 'oklch(93% 0.005 250)',
-                  border: '1px solid oklch(24% 0.012 250)',
-                  boxShadow: '0 4px 16px oklch(0% 0 0 / 0.4)',
-                  fontFamily: "'DM Sans', system-ui, sans-serif",
-                  fontSize: '14px',
-                },
-                success: {
-                  iconTheme: {
-                    primary: 'oklch(70% 0.15 145)',
-                    secondary: 'oklch(17% 0.010 250)',
-                  },
-                },
-                error: {
-                  iconTheme: {
-                    primary: 'oklch(65% 0.20 25)',
-                    secondary: 'oklch(17% 0.010 250)',
-                  },
-                },
-              }}
-            />
+            <DynamicToaster />
             <Routes>
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
@@ -85,6 +95,7 @@ function App() {
         </AuthProvider>
       </Router>
     </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 
