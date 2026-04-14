@@ -4,13 +4,43 @@
 
 /* ─── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
+  color-scheme: light;
+
+  /* Backgrounds — Apple HIG gray system, subtle blue-steel tint */
+  --bg-base:    oklch(96.5% 0.006 250);  /* ~#F2F2F7 systemGroupedBackground    */
+  --bg-subtle:  oklch(93.5% 0.008 250);  /* ~#E5E5EA secondarySystemGroupedBg   */
+  --bg-surface: oklch(99.5% 0.002 250);  /* ~#FFFFFF cards — float above base   */
+  --bg-overlay: oklch(97.5% 0.004 250);  /* popovers, dropdowns                 */
+
+  /* Borders */
+  --border-subtle:  oklch(87% 0.008 250);
+  --border-default: oklch(79% 0.010 250);
+
+  /* Text */
+  --text-primary:   oklch(13% 0.012 250);  /* ~#1C1C1E — 18:1 contrast on surface */
+  --text-secondary: oklch(42% 0.010 250);  /* ~6.5:1 on surface, WCAG AA          */
+  --text-tertiary:  oklch(60% 0.008 250);  /* ~4.5:1 on surface, WCAG AA large    */
+
+  /* Accent — darkened for WCAG AA on white bg (5.1:1) */
+  --accent:      oklch(42% 0.18 145);
+  --accent-dim:  oklch(42% 0.18 145 / 0.12);
+  --accent-text: oklch(98% 0.005 145);     /* near-white on dark emerald btn      */
+
+  /* Semantic */
+  --c-success: oklch(38% 0.15 145);
+  --c-error:   oklch(52% 0.22 25);
+  --c-warning: oklch(44% 0.16 65);
+}
+
+/* ─── Dark Mode ─────────────────────────────────────────────────────────────── */
+.dark {
   color-scheme: dark;
 
   /* Backgrounds — layered dark charcoal with subtle blue-steel tint */
-  --bg-base:    oklch(14% 0.012 250);  /* page background            */
-  --bg-subtle:  oklch(18% 0.014 250);  /* header, sidebars           */
-  --bg-surface: oklch(23% 0.014 250);  /* cards, panels, dropdowns   */
-  --bg-overlay: oklch(29% 0.016 250);  /* popovers, tooltips         */
+  --bg-base:    oklch(14% 0.012 250);
+  --bg-subtle:  oklch(18% 0.014 250);
+  --bg-surface: oklch(23% 0.014 250);
+  --bg-overlay: oklch(29% 0.016 250);
 
   /* Borders */
   --border-subtle:  oklch(33% 0.016 250);
@@ -21,10 +51,10 @@
   --text-secondary: oklch(62% 0.008 250);
   --text-tertiary:  oklch(40% 0.008 250);
 
-  /* Accent — electric emerald, surgical use only */
+  /* Accent — electric emerald */
   --accent:      oklch(70% 0.18 145);
   --accent-dim:  oklch(70% 0.18 145 / 0.14);
-  --accent-text: oklch(15% 0.05 145);  /* dark text on emerald bg */
+  --accent-text: oklch(15% 0.05 145);
 
   /* Semantic */
   --c-success: oklch(70% 0.15 145);
@@ -45,6 +75,7 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 body {
