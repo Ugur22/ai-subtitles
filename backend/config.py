@@ -115,8 +115,8 @@ class Settings(BaseSettings):
     GCS_PROCESSED_PREFIX: str = os.getenv("GCS_PROCESSED_PREFIX", "processed/")
     GCS_SCREENSHOTS_PREFIX: str = os.getenv("GCS_SCREENSHOTS_PREFIX", "screenshots/")
     GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
-    GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "86400"))  # 24 hours for playback
-    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "604800"))  # 7 days for screenshots
+    GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "604800"))  # 7 days for playback
+    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "2592000"))  # 30 days for screenshots
 
     # Supabase Configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

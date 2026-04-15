@@ -338,6 +338,20 @@ async def get_job_status(
     job = require_job_access(job_id, token, user_id)
 
     try:
+        result_json = job.get('result_json')
+
+        # Refresh stale GCS screenshot URLs in completed jobs so thumbnails
+        # don't go blank after the original signed URL expires.
+        if result_json and job.get('status') == 'completed':
+            try:
+                from config import settings as _cfg
+                if _cfg.ENABLE_GCS_UPLOADS:
+                    from services.gcs_service import gcs_service
+                    segments = result_json.get('transcription', {}).get('segments', [])
+                    if segments:
+                        gcs_service.refresh_screenshot_urls_in_segments(segments)
+            except Exception as _e:
+                print(f"[Jobs] Screenshot URL refresh skipped: {_e}")
 
         # Map database fields to response model
         return JobStatusResponse(
@@ -350,7 +364,7 @@ async def get_job_status(
             progress_message=job.get('message'),
             error_message=job.get('error_message'),
             error_code=job.get('error_code'),
-            result_json=job.get('result_json'),
+            result_json=result_json,
             result_srt=job.get('result_srt'),
             result_vtt=job.get('result_vtt'),
             created_at=job['created_at'],
