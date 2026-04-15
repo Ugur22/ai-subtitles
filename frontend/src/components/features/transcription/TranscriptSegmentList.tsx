@@ -24,6 +24,7 @@ interface TranscriptSegmentListProps {
   editSpeakerName: string;
   setEditSpeakerName: (name: string) => void;
   handleSpeakerRename: (speaker: string) => void;
+  isRenamingSpeaker: boolean;
   getSpeakerColor: (speaker: string) => { bg: string; text: string; border: string };
   formatSpeakerLabel: (speaker: string) => string;
   onEnrollSpeaker?: (segment: Segment) => void;
@@ -101,6 +102,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
       editSpeakerName,
       setEditSpeakerName,
       handleSpeakerRename,
+      isRenamingSpeaker,
       getSpeakerColor,
       formatSpeakerLabel,
       onEnrollSpeaker,
@@ -220,6 +222,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                                 className="input-base"
                                 style={{ padding: '2px 8px', fontSize: '12px', width: '120px' }}
                                 autoFocus
+                                disabled={isRenamingSpeaker}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") handleSpeakerRename(segment.speaker!);
                                   if (e.key === "Escape") setEditingSegmentId(null);
@@ -230,16 +233,24 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                               />
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleSpeakerRename(segment.speaker!); }}
-                                style={{ padding: '2px 6px', fontSize: '11px', color: 'var(--c-success)', background: 'none', border: '1px solid var(--c-success)', borderRadius: '4px', cursor: 'pointer' }}
+                                disabled={isRenamingSpeaker}
+                                style={{ padding: '2px 6px', fontSize: '11px', color: 'var(--c-success)', background: 'none', border: '1px solid var(--c-success)', borderRadius: '4px', cursor: isRenamingSpeaker ? 'not-allowed' : 'pointer', opacity: isRenamingSpeaker ? 0.7 : 1 }}
                                 title="Save"
                               >
-                                <svg style={{ width: '12px', height: '12px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                                </svg>
+                                {isRenamingSpeaker ? (
+                                  <svg style={{ width: '12px', height: '12px', animation: 'spin 0.8s linear infinite' }} fill="none" viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4" strokeDashoffset="10" strokeLinecap="round" />
+                                  </svg>
+                                ) : (
+                                  <svg style={{ width: '12px', height: '12px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setEditingSegmentId(null); }}
-                                style={{ padding: '2px 6px', fontSize: '11px', color: 'var(--c-error)', background: 'none', border: '1px solid var(--c-error)', borderRadius: '4px', cursor: 'pointer' }}
+                                disabled={isRenamingSpeaker}
+                                style={{ padding: '2px 6px', fontSize: '11px', color: 'var(--c-error)', background: 'none', border: '1px solid var(--c-error)', borderRadius: '4px', cursor: isRenamingSpeaker ? 'not-allowed' : 'pointer', opacity: isRenamingSpeaker ? 0.5 : 1 }}
                                 title="Cancel"
                               >
                                 <svg style={{ width: '12px', height: '12px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">

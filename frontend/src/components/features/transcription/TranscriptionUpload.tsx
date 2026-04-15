@@ -76,6 +76,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showScreenshots] = useState(false); // Unused but kept for future use
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [editSpeakerName, setEditSpeakerName] = useState("");
+  const [isRenamingSpeaker, setIsRenamingSpeaker] = useState(false);
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
   const [showVisualMoments, setShowVisualMoments] = useState(true);
@@ -361,6 +362,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const handleSpeakerRename = async (originalSpeaker: string) => {
     if (!editSpeakerName.trim() || !transcription) return;
 
+    setIsRenamingSpeaker(true);
     try {
       // Call API
       await updateSpeakerName(
@@ -397,6 +399,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     } catch (err) {
       console.error("Failed to rename speaker:", err);
       alert("Failed to rename speaker");
+    } finally {
+      setIsRenamingSpeaker(false);
     }
   };
 
@@ -1373,6 +1377,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           editSpeakerName={editSpeakerName}
                           setEditSpeakerName={setEditSpeakerName}
                           handleSpeakerRename={handleSpeakerRename}
+                          isRenamingSpeaker={isRenamingSpeaker}
                           getSpeakerColor={getSpeakerColor}
                           formatSpeakerLabel={formatSpeakerLabel}
                           onEnrollSpeaker={handleEnrollSpeaker}
