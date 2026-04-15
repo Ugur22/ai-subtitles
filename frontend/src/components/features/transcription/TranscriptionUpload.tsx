@@ -692,10 +692,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         file={file}
         videoRef={videoRef}
       />
-      <div className="h-full p-4" style={{ color: 'var(--text-primary)' }}>
+      <div className="h-full px-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
-          <div style={{ display: 'flex', alignItems: 'center', minHeight: 'calc(100vh - 80px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 48px)' }}>
             <UploadZone
               file={file}
               dragActive={dragActive}

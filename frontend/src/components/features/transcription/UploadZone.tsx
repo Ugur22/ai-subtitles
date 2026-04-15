@@ -57,7 +57,29 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
         .otherwise(() => "Audio");
 
     return (
-      <div style={{ maxWidth: '680px', margin: '0 auto', padding: '48px 24px 32px' }}>
+      <div style={{ maxWidth: '760px', margin: '0 auto', padding: '40px 24px 32px' }}>
+
+        {/* Page heading */}
+        <div style={{ marginBottom: '28px', textAlign: 'center' }}>
+          <h1 style={{
+            fontSize: '22px',
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
+            color: 'var(--text-primary)',
+            margin: 0,
+            lineHeight: 1.3,
+          }}>
+            Transcribe your media
+          </h1>
+          <p style={{
+            marginTop: '6px',
+            fontSize: '14px',
+            color: 'var(--text-tertiary)',
+            lineHeight: 1.5,
+          }}>
+            Upload a video or audio file to generate a searchable transcript
+          </p>
+        </div>
 
         {/* Upload drop zone */}
         <div
@@ -73,7 +95,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             alignItems: 'center',
             justifyContent: 'center',
             width: '100%',
-            height: '220px',
+            height: '280px',
             border: `1.5px dashed ${dragActive ? 'var(--accent)' : 'var(--border-default)'}`,
             borderRadius: '8px',
             backgroundColor: dragActive ? 'var(--accent-dim)' : 'var(--bg-subtle)',
@@ -95,7 +117,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           }}
         >
           <svg
-            style={{ width: '32px', height: '32px', color: dragActive ? 'var(--accent)' : 'var(--text-tertiary)', marginBottom: '12px', transition: 'color 150ms ease' }}
+            style={{ width: '36px', height: '36px', color: dragActive ? 'var(--accent)' : 'var(--text-tertiary)', marginBottom: '14px', transition: 'color 150ms ease' }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -162,13 +184,13 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
         )}
 
         {/* Options */}
-        <div style={{ marginTop: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ marginTop: '28px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
 
           {/* Language */}
           <div>
             <label
               htmlFor="language-select"
-              style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}
+              style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}
             >
               Source language
             </label>
@@ -190,7 +212,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
           {/* Processing method */}
           <div>
-            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}>
               Processing method
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -228,6 +250,44 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Feature chips */}
+        <div style={{
+          marginTop: '24px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '8px',
+          justifyContent: 'center',
+        }}>
+          {[
+            { icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', label: 'Speaker detection' },
+            { icon: 'M4 6h16M4 12h16M4 18h7', label: 'Auto chapters' },
+            { icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z', label: 'AI chat' },
+            { icon: 'M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129', label: 'Translations' },
+          ].map(({ icon, label }) => (
+            <div
+              key={label}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '5px 10px',
+                borderRadius: '20px',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-surface)',
+                fontSize: '12px',
+                color: 'var(--text-tertiary)',
+                fontWeight: 400,
+                userSelect: 'none' as const,
+              }}
+            >
+              <svg style={{ width: '12px', height: '12px', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+              </svg>
+              {label}
+            </div>
+          ))}
         </div>
 
         {/* CTA */}
