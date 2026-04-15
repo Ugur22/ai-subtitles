@@ -278,6 +278,8 @@ class GCSService:
         bucket = cls._get_bucket()
         blob = bucket.blob(gcs_path)
         expiry = expiry_seconds or settings.GCS_DOWNLOAD_URL_EXPIRY
+        # GCS IAM-signed URLs (access token method) max out at 7 days
+        expiry = min(expiry, 604800)
 
         signed_url = blob.generate_signed_url(
             version="v4",

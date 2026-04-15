@@ -54,6 +54,28 @@ class ImageEmbeddingService:
                 abs_path = str(backend_dir / url.lstrip('/'))
                 if os.path.exists(abs_path):
                     return abs_path
+                # Fallback: try GCS using predictable path screenshots/{hash}/{ts}.jpg
+                if url.startswith('/static/screenshots/'):
+                    try:
+                        from config import settings as _cfg
+                        if _cfg.ENABLE_GCS_UPLOADS:
+                            filename = os.path.basename(url)       # e.g. "abc123_1001.64.jpg"
+                            stem = filename.rsplit('.', 1)[0]       # "abc123_1001.64"
+                            last_us = stem.rfind('_')
+                            if last_us > 0:
+                                video_hash = stem[:last_us]
+                                ts_str = stem[last_us + 1:]         # "1001.64"
+                                gcs_path = f"screenshots/{video_hash}/{ts_str}.jpg"
+                                from services.gcs_service import GCSService
+                                bucket = GCSService._get_bucket()
+                                blob = bucket.blob(gcs_path)
+                                if blob.exists():
+                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                                    tmp.close()
+                                    blob.download_to_filename(tmp.name)
+                                    return tmp.name
+                    except Exception as gcs_e:
+                        print(f"[ImageEmbedding] GCS fallback failed for {url}: {gcs_e}")
             return None
 
         try:
@@ -145,8 +167,58 @@ class ImageEmbeddingService:
         segments_to_index = []
         temp_files = []  # Track temp files for cleanup
 
+        # Pre-load available GCS screenshots in one list API call so we can
+        # recover when screenshot_url is null (common for older jobs).
+        _gcs_bucket = None
+        _gcs_ts_set: set = set()
+        _gcs_cfg = None
+        _GCSService = None
+        try:
+            from config import settings as _gcs_cfg
+            if _gcs_cfg.ENABLE_GCS_UPLOADS:
+                from services.gcs_service import GCSService as _GCSService
+                _gcs_bucket = _GCSService._get_bucket()
+                prefix = f"screenshots/{video_hash}/"
+                for b in _gcs_bucket.list_blobs(prefix=prefix):
+                    fname = b.name.rsplit('/', 1)[-1]
+                    if fname.endswith('.jpg'):
+                        _gcs_ts_set.add(fname[:-4])  # "1001.64"
+                if _gcs_ts_set:
+                    print(f"[ImageEmbedding] GCS fallback: {len(_gcs_ts_set)} screenshots found for {video_hash}")
+        except Exception as e:
+            print(f"[ImageEmbedding] Could not list GCS screenshots: {e}")
+
         for seg in segments:
             screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
+
+            # GCS fallback: screenshot_url is null but file exists in GCS
+            if not screenshot_url and _gcs_bucket and _gcs_ts_set:
+                start = seg.get('start', 0)
+                ts_str = f"{start:.2f}"
+                if ts_str in _gcs_ts_set:
+                    gcs_path = f"screenshots/{video_hash}/{ts_str}.jpg"
+                    try:
+                        img_data = _gcs_bucket.blob(gcs_path).download_as_bytes()
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                            tmp.write(img_data)
+                            tmp_path = tmp.name
+                        temp_files.append(tmp_path)
+                        signed_url = _GCSService.generate_download_signed_url(
+                            gcs_path,
+                            expiry_seconds=_gcs_cfg.GCS_SCREENSHOT_URL_EXPIRY
+                        )
+                        segments_to_index.append({
+                            'local_path': tmp_path,
+                            'screenshot_url': signed_url,
+                            'segment_id': seg.get('id', ''),
+                            'start': seg.get('start', 0.0),
+                            'end': seg.get('end', 0.0),
+                            'speaker': seg.get('speaker', 'SPEAKER_00')
+                        })
+                    except Exception as e:
+                        print(f"[ImageEmbedding] GCS download failed for {gcs_path}: {e}")
+                continue  # null-url segments handled above; skip normal path
+
             if not screenshot_url:
                 continue
 

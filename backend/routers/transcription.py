@@ -581,8 +581,7 @@ async def regenerate_screenshots_for_video(request: Request, video_hash: str):
             if gcs_url:
                 segment["screenshot_url"] = gcs_url
                 screenshot_count += 1
-            else:
-                segment["screenshot_url"] = None
+            # Don't null out screenshot_url on miss — keep whatever URL is already there
 
         print(f"[Screenshots] Updated {screenshot_count}/{len(segments)} segments with GCS URLs")
 
@@ -2316,8 +2315,7 @@ async def transcribe_gcs_stream(
                             if gcs_url:
                                 segment["screenshot_url"] = gcs_url
                                 screenshot_count += 1
-                            else:
-                                segment["screenshot_url"] = None
+                            # Don't null out on miss — keep existing URL as fallback
 
                         print(f"[GCS Stream] Uploaded {screenshot_count}/{total_screenshots} screenshots to GCS", flush=True)
 
@@ -2331,8 +2329,7 @@ async def transcribe_gcs_stream(
                                 screenshot_filename = os.path.basename(screenshot_path)
                                 segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
                                 screenshot_count += 1
-                            else:
-                                segment["screenshot_url"] = None
+                            # Don't null out on miss — keep existing URL as fallback
                 else:
                     # Use local URLs (development mode)
                     for idx, segment in enumerate(formatted_segments):
@@ -2342,8 +2339,7 @@ async def transcribe_gcs_stream(
                             screenshot_filename = os.path.basename(screenshot_path)
                             segment["screenshot_url"] = f"/static/screenshots/{screenshot_filename}"
                             screenshot_count += 1
-                        else:
-                            segment["screenshot_url"] = None
+                        # Don't null out on miss — keep existing URL as fallback
 
                     print(f"[GCS Stream] Extracted {screenshot_count}/{total_screenshots} screenshots via streaming", flush=True)
 
