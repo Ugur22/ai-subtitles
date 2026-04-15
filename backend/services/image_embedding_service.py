@@ -195,6 +195,9 @@ class ImageEmbeddingService:
             if not screenshot_url and _gcs_bucket and _gcs_ts_set:
                 start = seg.get('start', 0)
                 ts_str = f"{start:.2f}"
+                # Silent segments store screenshot at midpoint (screenshot_timestamp), not start
+                if ts_str not in _gcs_ts_set:
+                    ts_str = f"{seg.get('screenshot_timestamp', start):.2f}"
                 if ts_str in _gcs_ts_set:
                     gcs_path = f"screenshots/{video_hash}/{ts_str}.jpg"
                     try:
