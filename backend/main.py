@@ -364,6 +364,12 @@ async def transcribe_video(
                     TranslationService.translate_segments, all_segments, response_language
                 )
 
+            # Upload video to GCS for persistence across container restarts
+            if app_settings.ENABLE_GCS_UPLOADS:
+                from services.gcs_service import gcs_service
+                gcs_video_path = f"{app_settings.GCS_PROCESSED_PREFIX}{video_hash}{file_extension}"
+                await _run_blocking(gcs_service.upload_local_file, permanent_file_path, gcs_video_path)
+
             # Extract screenshots for video files
             if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
                 print("\nExtracting screenshots...")
@@ -376,6 +382,27 @@ async def transcribe_video(
                     )
                     if result:
                         segment['screenshot_url'] = f"/static/screenshots/{screenshot_filename}"
+
+                # Upload screenshots to GCS so they survive container restarts
+                if app_settings.ENABLE_GCS_UPLOADS:
+                    from services.gcs_service import gcs_service  # already imported above if video branch ran first
+                    screenshot_map = {}
+                    for seg in all_segments:
+                        if seg.get('screenshot_url'):
+                            ts = seg['start']
+                            local_path = os.path.join(screenshots_dir, f"{video_hash}_{ts:.2f}.jpg")
+                            if os.path.exists(local_path):
+                                screenshot_map[ts] = local_path
+
+                    if screenshot_map:
+                        print(f"\nUploading {len(screenshot_map)} screenshots to GCS...")
+                        gcs_urls = await _run_blocking(
+                            gcs_service.upload_screenshots_batch, screenshot_map, video_hash
+                        )
+                        for seg in all_segments:
+                            ts = seg.get('start')
+                            if ts in gcs_urls and gcs_urls[ts]:
+                                seg['screenshot_url'] = gcs_urls[ts]
 
             # Add speaker diarization
             diarizer = get_speaker_diarizer()

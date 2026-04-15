@@ -378,6 +378,81 @@ class GCSService:
         return result
 
     @classmethod
+    def upload_local_file(cls, local_path: str, gcs_path: str) -> bool:
+        """
+        Upload a local file to GCS.
+
+        Args:
+            local_path: Absolute path to the local file
+            gcs_path: Destination path in GCS (e.g., "processed/abc123.mp4")
+
+        Returns:
+            True if uploaded successfully, False on error
+        """
+        try:
+            bucket = cls._get_bucket()
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_filename(local_path)
+            size_mb = os.path.getsize(local_path) / (1024 * 1024)
+            print(f"[GCS] Uploaded {local_path} -> {gcs_path} ({size_mb:.1f} MB)")
+            return True
+        except Exception as e:
+            print(f"[GCS] Failed to upload {local_path} to {gcs_path}: {e}")
+            return False
+
+    @classmethod
+    def extract_gcs_path_from_signed_url(cls, url: str) -> Optional[str]:
+        """
+        Extract the GCS object path from a signed URL.
+
+        Example input:  https://storage.googleapis.com/ai-subs-uploads/screenshots/abc/1.23.jpg?X-Goog-...
+        Example output: screenshots/abc/1.23.jpg
+        """
+        try:
+            if 'storage.googleapis.com' not in url:
+                return None
+            base = url.split('?')[0]
+            marker = f'/{settings.GCS_BUCKET_NAME}/'
+            idx = base.find(marker)
+            if idx >= 0:
+                return base[idx + len(marker):]
+            return None
+        except Exception:
+            return None
+
+    @classmethod
+    def refresh_screenshot_urls_in_segments(cls, segments: list) -> list:
+        """
+        Regenerate signed screenshot URLs in a list of transcript segments.
+
+        Call this before returning segments to the frontend to ensure screenshot
+        URLs are fresh. Segments with local (/static/...) or non-GCS URLs are
+        left unchanged.
+
+        Args:
+            segments: List of transcript segment dicts (each may have screenshot_url)
+
+        Returns:
+            The same list with refreshed screenshot_url values
+        """
+        for seg in segments:
+            url = seg.get('screenshot_url')
+            if not url or not url.startswith('https://storage.googleapis.com'):
+                continue
+            gcs_path = cls.extract_gcs_path_from_signed_url(url)
+            if not gcs_path:
+                continue
+            try:
+                new_url = cls.generate_download_signed_url(
+                    gcs_path,
+                    expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+                )
+                seg['screenshot_url'] = new_url
+            except Exception as e:
+                print(f"[GCS] Failed to refresh screenshot URL for {gcs_path}: {e}")
+        return segments
+
+    @classmethod
     def delete_file(cls, gcs_path: str) -> bool:
         """
         Delete a single file from GCS.
