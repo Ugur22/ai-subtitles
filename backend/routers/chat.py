@@ -4,7 +4,7 @@ Chat and RAG (Retrieval-Augmented Generation) endpoints
 import asyncio
 from typing import Dict, Optional, List, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 # Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
 # This prevents blocking the event loop during visual search and chat operations
@@ -1022,6 +1022,22 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
         )
 
 
+def _run_index_images_background(video_hash: str, segments: list, force_reindex: bool, user_id, use_supabase: bool):
+    """Background worker: run CLIP indexing synchronously (called from BackgroundTasks)."""
+    try:
+        storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
+        print(f"[BG] Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}...")
+        if use_supabase:
+            num = image_embedding_service.index_video_images(video_hash, segments, force_reindex=force_reindex, user_id=user_id)
+        else:
+            num = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
+        print(f"[BG] Indexing complete: {num} images indexed for video {video_hash}")
+    except Exception as e:
+        import traceback
+        print(f"[BG] Indexing failed for video {video_hash}: {e}")
+        traceback.print_exc()
+
+
 @router.post(
     "/index_images/",
     response_model=IndexImagesResponse,
@@ -1033,13 +1049,14 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
     }
 )
 @require_auth
-async def index_video_images(request: Request, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
+async def index_video_images(request: Request, background_tasks: BackgroundTasks, video_hash: str = None, force_reindex: bool = False) -> IndexImagesResponse:
     """
-    Index video screenshots using CLIP embeddings for visual search
+    Index video screenshots using CLIP embeddings for visual search.
+    Returns immediately; indexing runs in the background.
 
     Args:
         video_hash: Optional video hash. If not provided, uses last transcription
-        force_reindex: If True, delete existing index and re-index all images (runs in background)
+        force_reindex: If True, delete existing index and re-index all images
     """
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
@@ -1063,37 +1080,28 @@ async def index_video_images(request: Request, video_hash: str = None, force_rei
         if not segments:
             raise HTTPException(status_code=400, detail="No segments found in transcription")
 
-        # Index images using appropriate service
         use_supabase = _use_supabase_for_images()
         storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
-        print(f"Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}... (force_reindex={force_reindex})")
-
-        # Get user_id from the transcription/job data for RLS compliance
         user_id = transcription.get('user_id')
 
-        # Run in executor - CLIP batch encoding is very CPU/GPU intensive
-        if use_supabase:
-            num_images = await _run_in_executor(
-                image_embedding_service.index_video_images, video_hash, segments, force_reindex=force_reindex, user_id=user_id
-            )
-        else:
-            num_images = await _run_in_executor(
-                vector_store.index_video_images, video_hash, segments, force_reindex=force_reindex
-            )
+        # Schedule CLIP indexing as a background task so the request returns immediately
+        background_tasks.add_task(
+            _run_index_images_background, video_hash, segments, force_reindex, user_id, use_supabase
+        )
 
         return IndexImagesResponse(
             success=True,
             video_hash=video_hash,
-            images_indexed=num_images,
-            message=f"Successfully indexed {num_images} images from {len(segments)} segments (storage: {storage_type})"
+            images_indexed=0,
+            message=f"Re-indexing started in background ({len(segments)} segments, storage: {storage_type}). Visual search will update shortly."
         )
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error indexing images: {str(e)}")
+        print(f"Error starting image indexing: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to index images: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to start image indexing: {str(e)}")
 
 
 @router.post(

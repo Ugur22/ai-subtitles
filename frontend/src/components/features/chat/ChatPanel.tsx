@@ -844,10 +844,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     try {
       await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
         params: { video_hash: videoHash, force_reindex: true },
-        timeout: 300000, // 5 min — re-indexing processes all images synchronously
+        timeout: 15000,
       });
-      setReindexStatus("Re-indexing complete! Visual search is now updated.");
-      setTimeout(() => setReindexStatus(null), 5000);
+      setReindexStatus("Re-indexing started — visual search will update in a few minutes.");
+      setTimeout(() => setReindexStatus(null), 8000);
     } catch (error) {
       console.error("Failed to re-index images:", error);
       setReindexStatus("Re-indexing failed. Please try again.");
@@ -1277,7 +1277,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <button
                   onClick={handleReindex}
                   disabled={reindexing || !videoHash}
-                  className="btn-ghost w-6 h-6 rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn-ghost !p-0 w-6 h-6 rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Re-index images (fixes visual search)"
                   aria-label="Re-index images"
                 >
