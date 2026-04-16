@@ -1139,6 +1139,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           }));
           break;
         }
+        case "reset": {
+          updateStreamingMessage((m) => ({ ...m, content: "" }));
+          break;
+        }
         case "done": {
           updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
           setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));

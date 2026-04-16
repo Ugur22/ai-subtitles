@@ -1202,16 +1202,34 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             else:
                 if include_visuals and image_paths and not provider.supports_vision():
                     print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
-                got_any_token = False
-                async for chunk in provider.generate_stream(messages, temperature=0.7, max_tokens=2000):
-                    got_any_token = True
-                    yield _sse({"type": "token", "content": chunk})
-                # Fallback: some providers (e.g. xAI reasoning models) may not
-                # emit delta.content chunks. If no tokens streamed, run the
-                # non-streaming call and emit the full answer as one token.
-                if not got_any_token:
-                    print("Stream yielded no tokens; falling back to non-streaming generate()")
-                    answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
+                streamed_chunks: list[str] = []
+                chunk_count = 0
+                try:
+                    async for chunk in provider.generate_stream(messages, temperature=0.7, max_tokens=2000):
+                        chunk_count += 1
+                        streamed_chunks.append(chunk)
+                        yield _sse({"type": "token", "content": chunk})
+                except Exception as stream_err:
+                    print(f"[chat/stream] generate_stream raised: {stream_err}")
+                total_streamed = "".join(streamed_chunks).strip()
+                print(
+                    f"[chat/stream] provider={provider_name or llm_manager.default_provider} "
+                    f"chunks={chunk_count} total_chars={len(total_streamed)}"
+                )
+                # Fallback: some providers (e.g. xAI reasoning models) don't
+                # emit delta.content chunks. If streaming produced little or
+                # no output, run the non-streaming call and emit the full
+                # answer as one token event.
+                if len(total_streamed) < 20:
+                    print("[chat/stream] Streaming output too short; falling back to generate()")
+                    try:
+                        answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
+                    except Exception as gen_err:
+                        print(f"[chat/stream] generate() fallback failed: {gen_err}")
+                        answer = ""
+                    print(f"[chat/stream] fallback generate() returned {len(answer or '')} chars")
+                    if chunk_count > 0:
+                        yield _sse({"type": "reset"})
                     if answer:
                         yield _sse({"type": "token", "content": answer})
 
