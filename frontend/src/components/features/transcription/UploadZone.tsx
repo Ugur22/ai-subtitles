@@ -57,28 +57,20 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
         .otherwise(() => "Audio");
 
     return (
-      <div style={{ maxWidth: '760px', margin: '0 auto', padding: '40px 24px 32px' }}>
+      <div style={{ maxWidth: '720px', margin: '0 auto', padding: '56px 24px 32px' }}>
 
         {/* Page heading */}
-        <div style={{ marginBottom: '28px', textAlign: 'center' }}>
+        <div style={{ marginBottom: '32px', textAlign: 'center' }}>
           <h1 style={{
-            fontSize: '22px',
+            fontSize: '24px',
             fontWeight: 600,
             letterSpacing: '-0.02em',
             color: 'var(--text-primary)',
             margin: 0,
-            lineHeight: 1.3,
+            lineHeight: 1.2,
           }}>
             Transcribe your media
           </h1>
-          <p style={{
-            marginTop: '6px',
-            fontSize: '14px',
-            color: 'var(--text-tertiary)',
-            lineHeight: 1.5,
-          }}>
-            Upload a video or audio file to generate a searchable transcript
-          </p>
         </div>
 
         {/* Upload drop zone */}
@@ -95,10 +87,10 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             alignItems: 'center',
             justifyContent: 'center',
             width: '100%',
-            height: '280px',
-            border: `1.5px dashed ${dragActive ? 'var(--accent)' : 'var(--border-default)'}`,
-            borderRadius: '8px',
-            backgroundColor: dragActive ? 'var(--accent-dim)' : 'var(--bg-subtle)',
+            height: '220px',
+            border: `1px dashed ${dragActive ? 'var(--accent)' : 'var(--border-default)'}`,
+            borderRadius: '10px',
+            backgroundColor: dragActive ? 'var(--accent-dim)' : 'transparent',
             cursor: isTranscribing ? 'not-allowed' : 'pointer',
             opacity: isTranscribing ? 0.5 : 1,
             transition: 'border-color 150ms ease, background-color 150ms ease',
@@ -112,27 +104,39 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           onMouseLeave={e => {
             if (!dragActive) {
               (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-default)';
-              (e.currentTarget as HTMLDivElement).style.backgroundColor = 'var(--bg-subtle)';
+              (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
             }
           }}
         >
-          <svg
-            style={{ width: '36px', height: '36px', color: dragActive ? 'var(--accent)' : 'var(--text-tertiary)', marginBottom: '14px', transition: 'color 150ms ease' }}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth="1.5"
-          >
-            <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
+          {/* Circular icon pill */}
+          <div style={{
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            backgroundColor: 'var(--accent-dim)',
+            border: '1px solid var(--accent-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <svg
+              style={{ width: '22px', height: '22px', color: 'var(--accent)' }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth="1.5"
+            >
+              <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+          </div>
 
-          <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '16px', marginBottom: '4px' }}>
             {dragActive ? 'Release to upload' : 'Drop your file here'}
           </p>
           <p style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>
-            or <span style={{ color: 'var(--accent)' }}>browse</span> your computer
+            or <span style={{ color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: '2px' }}>browse your computer</span>
           </p>
-          <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '8px' }}>
+          <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '12px', letterSpacing: '0.02em' }}>
             MP4 · MP3 · WAV · WebM · AVI · MKV and more
           </p>
 
@@ -150,9 +154,9 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
         {file && (
           <div
             style={{
-              marginTop: '12px',
+              marginTop: '16px',
               padding: '12px 16px',
-              borderRadius: '6px',
+              borderRadius: '8px',
               backgroundColor: 'var(--bg-surface)',
               border: '1px solid var(--border-subtle)',
               display: 'flex',
@@ -161,8 +165,8 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             }}
           >
             <div style={{
-              width: '32px', height: '32px', borderRadius: '6px',
-              backgroundColor: 'var(--accent-dim)', border: '1px solid var(--accent)',
+              width: '32px', height: '32px', borderRadius: '8px',
+              backgroundColor: 'var(--accent-dim)', border: '1px solid var(--accent-border)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
             }}>
               <svg style={{ width: '16px', height: '16px', color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -183,24 +187,52 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           </div>
         )}
 
-        {/* Options */}
-        <div style={{ marginTop: '28px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-
-          {/* Language */}
-          <div>
-            <label
-              htmlFor="language-select"
-              style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}
+        {/* Compact settings row */}
+        <div style={{
+          marginTop: '20px',
+          display: 'flex',
+          justifyContent: 'center',
+          gap: '8px',
+          flexWrap: 'wrap',
+        }}>
+          {/* Language pill */}
+          <div style={{ position: 'relative' }}>
+            <svg
+              style={{
+                position: 'absolute',
+                left: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '14px',
+                height: '14px',
+                color: 'var(--text-tertiary)',
+                pointerEvents: 'none',
+              }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={1.8}
             >
-              Source language
-            </label>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
             <select
               id="language-select"
               value={selectedLanguage}
               onChange={handleLanguageChange}
               disabled={isTranscribing}
-              className="input-base w-full"
-              style={{ appearance: 'none', cursor: 'pointer' }}
+              aria-label="Source language"
+              style={{
+                height: '32px',
+                padding: '0 28px 0 32px',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px',
+                backgroundColor: 'var(--bg-surface)',
+                color: 'var(--text-primary)',
+                fontSize: '13px',
+                appearance: 'none',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
             >
               {languageOptions.map((option) => (
                 <option key={option.value} value={option.value} style={{ backgroundColor: 'var(--bg-overlay)', color: 'var(--text-primary)' }}>
@@ -208,86 +240,67 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                 </option>
               ))}
             </select>
+            <svg
+              style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '12px',
+                height: '12px',
+                color: 'var(--text-tertiary)',
+                pointerEvents: 'none',
+              }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
           </div>
 
-          {/* Processing method */}
-          <div>
-            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-              Processing method
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {[
-                { value: 'local', label: 'Real-time', sublabel: 'Stay on page' },
-                { value: 'background', label: 'Background', sublabel: 'Close tab safely' },
-              ].map(({ value, label, sublabel }) => (
-                <label
+          {/* Processing segmented control */}
+          <div style={{
+            height: '32px',
+            display: 'flex',
+            padding: '2px',
+            gap: '2px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: '8px',
+          }}>
+            {[
+              { value: 'local', label: 'Real-time', title: 'Stay on this page' },
+              { value: 'background', label: 'Background', title: 'Close tab safely' },
+            ].map(({ value, label, title }) => {
+              const isActive = transcriptionMethod === value;
+              return (
+                <button
                   key={value}
+                  type="button"
+                  onClick={() => setTranscriptionMethod(value as "local" | "background")}
+                  disabled={isTranscribing}
+                  title={title}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '8px 12px',
+                    padding: '0 12px',
                     borderRadius: '6px',
-                    border: `1px solid ${transcriptionMethod === value ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                    backgroundColor: transcriptionMethod === value ? 'var(--accent-dim)' : 'var(--bg-surface)',
-                    cursor: 'pointer',
-                    transition: 'border-color 150ms ease, background-color 150ms ease',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    border: 'none',
+                    cursor: isTranscribing ? 'not-allowed' : 'pointer',
+                    backgroundColor: isActive ? 'var(--bg-overlay)' : 'transparent',
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                    boxShadow: isActive ? '0 1px 2px oklch(0% 0 0 / 0.06)' : 'none',
+                    transition: 'background-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
+                    outline: 'none',
                   }}
                 >
-                  <input
-                    type="radio"
-                    name="transcriptionMethod"
-                    value={value}
-                    checked={transcriptionMethod === value}
-                    onChange={(e) => setTranscriptionMethod(e.target.value as "local" | "background")}
-                    style={{ accentColor: 'var(--accent)', width: '14px', height: '14px', flexShrink: 0 }}
-                  />
-                  <span>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'block' }}>{label}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{sublabel}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+                  {label}
+                </button>
+              );
+            })}
           </div>
-        </div>
-
-        {/* Feature chips */}
-        <div style={{
-          marginTop: '24px',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-          justifyContent: 'center',
-        }}>
-          {[
-            { icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', label: 'Speaker detection' },
-            { icon: 'M4 6h16M4 12h16M4 18h7', label: 'Auto chapters' },
-            { icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z', label: 'AI chat' },
-            { icon: 'M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129', label: 'Translations' },
-          ].map(({ icon, label }) => (
-            <div
-              key={label}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '5px 10px',
-                borderRadius: '20px',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-surface)',
-                fontSize: '12px',
-                color: 'var(--text-tertiary)',
-                fontWeight: 400,
-                userSelect: 'none' as const,
-              }}
-            >
-              <svg style={{ width: '12px', height: '12px', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
-              </svg>
-              {label}
-            </div>
-          ))}
         </div>
 
         {/* CTA */}
@@ -295,7 +308,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           <button
             onClick={handleStartTranscriptionClick}
             className="btn-primary"
-            style={{ marginTop: '24px', width: '100%', justifyContent: 'center', padding: '10px 24px', fontSize: '14px', fontWeight: 600 }}
+            style={{ marginTop: '16px', width: '100%', justifyContent: 'center', height: '40px', padding: '0 24px', fontSize: '15px', fontWeight: 600 }}
           >
             <svg style={{ width: '16px', height: '16px', marginRight: '8px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
