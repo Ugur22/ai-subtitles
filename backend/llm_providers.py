@@ -9,7 +9,7 @@ import httpx
 import base64
 import io
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union, Any
+from typing import AsyncIterator, Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from PIL import Image
@@ -137,6 +137,20 @@ class BaseLLMProvider(ABC):
         """
         # Default implementation for non-vision models: ignore images
         return await self.generate(messages, temperature, max_tokens)
+
+    async def generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> AsyncIterator[str]:
+        """
+        Stream a response as text chunks. Default: fall back to generate()
+        and yield the whole response in one chunk, so non-streaming providers
+        still work behind the streaming API.
+        """
+        answer = await self.generate(messages, temperature, max_tokens)
+        yield answer
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -547,6 +561,54 @@ class GrokProvider(BaseLLMProvider):
             raise Exception(f"Grok generation failed: {str(e)}\nResponse: {error_detail}")
         except Exception as e:
             raise Exception(f"Grok generation failed: {str(e)}")
+
+    async def generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> AsyncIterator[str]:
+        """Stream tokens from Grok (xAI) via SSE."""
+        import json as _json
+
+        if not self.api_key or self.api_key == "your_xai_api_key_here":
+            raise Exception("xAI API key not configured")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                },
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = _json.loads(payload)
+                    except Exception:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
 
     def is_available(self) -> bool:
         """Check if xAI API key is configured"""

@@ -366,6 +366,20 @@ interface Message {
   isError?: boolean;
   errorType?: "timeout" | "server" | "network" | "unknown";
   retryQuestion?: string;
+  isStreaming?: boolean;
+}
+
+type PhaseId =
+  | "searching"
+  | "analyzing_scenes"
+  | "matching_faces"
+  | "analyzing_audio"
+  | "generating";
+
+interface PhaseEntry {
+  id: PhaseId;
+  label: string;
+  status: "active" | "done";
 }
 
 interface ChatPanelProps {
@@ -672,6 +686,64 @@ const AssistantMessageContent: React.FC<{
   );
 };
 
+const PhaseIndicator: React.FC<{ phases: PhaseEntry[] }> = ({ phases }) => {
+  if (phases.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5 mb-3">
+      {phases.map((phase) => (
+        <div
+          key={phase.id}
+          className="flex items-center gap-2 text-xs"
+          style={{
+            color:
+              phase.status === "active"
+                ? "var(--text-primary)"
+                : "var(--text-tertiary)",
+          }}
+        >
+          {phase.status === "done" ? (
+            <svg
+              className="w-3.5 h-3.5 flex-shrink-0"
+              style={{ color: "var(--c-success, oklch(70% 0.15 150))" }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2.5}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          ) : (
+            <span
+              className="relative flex h-3.5 w-3.5 items-center justify-center flex-shrink-0"
+            >
+              <span
+                className="absolute inline-flex h-full w-full rounded-full animate-ping opacity-60"
+                style={{ background: "var(--accent)" }}
+              />
+              <span
+                className="relative inline-flex rounded-full h-2 w-2"
+                style={{ background: "var(--accent)" }}
+              />
+            </span>
+          )}
+          <span
+            className={phase.status === "active" ? "phase-shimmer" : ""}
+            style={{
+              fontWeight: phase.status === "active" ? 500 : 400,
+            }}
+          >
+            {phase.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   videoHash,
   onTimestampClick,
@@ -697,6 +769,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [retryCount, setRetryCount] = useState(0);
   const [reindexing, setReindexing] = useState(false);
   const [reindexStatus, setReindexStatus] = useState<string | null>(null);
+  const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -891,31 +964,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return status === 502 || status === 503 || status === 504 || error.code === "ECONNABORTED" || error.message?.includes("timeout");
   };
 
-  const sendMessage = async (messageText?: string | React.MouseEvent) => {
-    const textToSend = typeof messageText === "string" ? messageText : input;
-    if (!textToSend.trim() || !videoHash) return;
+  const PHASE_LABELS: Record<PhaseId, string> = {
+    searching: "Searching transcript",
+    analyzing_scenes: "Analyzing scenes",
+    matching_faces: "Matching faces",
+    analyzing_audio: "Scanning audio events",
+    generating: "Writing answer",
+  };
 
-    const userMessage: Message = {
-      role: "user",
-      content: textToSend,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setLoading(true);
-    setRetryCount(0);
-
+  const sendViaLegacy = async (
+    textToSend: string,
+    history: Array<{ role: string; content: string }>
+  ) => {
     const MAX_RETRIES = 2;
     const RETRY_DELAY = 3000;
-
-    // Build conversation history, filtering out error messages
-    const history = messages
-      .filter((m) => !m.isError)
-      .slice(-10)
-      .map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -939,39 +1001,248 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           { timeout: 30000 }
         );
 
-        const assistantMessage: Message = {
-          role: "assistant",
-          content: response.data.answer,
-          sources: response.data.sources,
-          visual_query_used: response.data.visual_query_used,
-          original_question: textToSend,
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
-        setRetryCount(0);
-        setLoading(false);
-        return;
+        setMessages((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === "assistant" && next[i].isStreaming) {
+              next[i] = {
+                ...next[i],
+                content: response.data.answer,
+                sources: response.data.sources,
+                visual_query_used: response.data.visual_query_used,
+                isStreaming: false,
+              };
+              return next;
+            }
+          }
+          return [
+            ...next,
+            {
+              role: "assistant",
+              content: response.data.answer,
+              sources: response.data.sources,
+              visual_query_used: response.data.visual_query_used,
+              original_question: textToSend,
+            },
+          ];
+        });
+        return true;
       } catch (error: any) {
         console.error(`Chat error (attempt ${attempt + 1}):`, error);
-
-        if (attempt < MAX_RETRIES && isRetryableError(error)) {
-          continue;
-        }
+        if (attempt < MAX_RETRIES && isRetryableError(error)) continue;
 
         const { message, errorType } = getFriendlyErrorMessage(error);
-        const errorMsg: Message = {
-          role: "assistant",
-          content: message,
-          isError: true,
+        setMessages((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === "assistant" && next[i].isStreaming) {
+              next[i] = {
+                ...next[i],
+                content: message,
+                isError: true,
+                errorType,
+                retryQuestion: textToSend,
+                isStreaming: false,
+              };
+              return next;
+            }
+          }
+          return [
+            ...next,
+            {
+              role: "assistant",
+              content: message,
+              isError: true,
+              errorType,
+              retryQuestion: textToSend,
+            },
+          ];
+        });
+        return false;
+      }
+    }
+    return false;
+  };
+
+  const sendMessage = async (messageText?: string | React.MouseEvent) => {
+    const textToSend = typeof messageText === "string" ? messageText : input;
+    if (!textToSend.trim() || !videoHash) return;
+
+    const userMessage: Message = {
+      role: "user",
+      content: textToSend,
+    };
+
+    const placeholderAssistant: Message = {
+      role: "assistant",
+      content: "",
+      original_question: textToSend,
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, userMessage, placeholderAssistant]);
+    setInput("");
+    setLoading(true);
+    setRetryCount(0);
+    setPhases([]);
+
+    const history = messages
+      .filter((m) => !m.isError && !m.isStreaming)
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    const updateStreamingMessage = (updater: (msg: Message) => Message) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === "assistant" && next[i].isStreaming) {
+            next[i] = updater(next[i]);
+            return next;
+          }
+        }
+        return next;
+      });
+    };
+
+    const handleEvent = (evt: any) => {
+      if (!evt || typeof evt !== "object") return;
+      switch (evt.type) {
+        case "phase": {
+          const id = evt.phase as PhaseId;
+          const label = evt.label || PHASE_LABELS[id] || id;
+          setPhases((prev) => {
+            const existing = prev.find((p) => p.id === id);
+            if (existing) return prev;
+            return [
+              ...prev.map((p) => ({ ...p, status: "done" as const })),
+              { id, label, status: "active" as const },
+            ];
+          });
+          break;
+        }
+        case "sources": {
+          updateStreamingMessage((m) => ({
+            ...m,
+            sources: evt.sources || [],
+            visual_query_used: evt.visual_query_used || undefined,
+          }));
+          break;
+        }
+        case "token": {
+          const chunk = evt.content || "";
+          if (!chunk) break;
+          updateStreamingMessage((m) => ({
+            ...m,
+            content: (m.content || "") + chunk,
+          }));
+          break;
+        }
+        case "done": {
+          updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
+          setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
+          break;
+        }
+        case "error": {
+          const message = evt.message || "Something went wrong.";
+          updateStreamingMessage((m) => ({
+            ...m,
+            content: message,
+            isError: true,
+            errorType: "server",
+            retryQuestion: textToSend,
+            isStreaming: false,
+          }));
+          break;
+        }
+      }
+    };
+
+    let streamSucceeded = false;
+    let receivedAnyEvent = false;
+
+    try {
+      const controller = new AbortController();
+      const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          question: textToSend,
+          video_hash: videoHash,
+          provider: selectedProvider,
+          n_results: 8,
+          include_visuals: includeVisuals,
+          n_images: includeVisuals ? 6 : undefined,
+          custom_instructions: customInstructions || undefined,
+          conversation_history: history.length > 0 ? history : undefined,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream failed with status ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sepIndex: number;
+        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, sepIndex);
+          buffer = buffer.slice(sepIndex + 2);
+          const dataLines = rawEvent
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart());
+          if (dataLines.length === 0) continue;
+          const payload = dataLines.join("\n");
+          try {
+            const parsed = JSON.parse(payload);
+            receivedAnyEvent = true;
+            handleEvent(parsed);
+          } catch (e) {
+            console.warn("Failed to parse SSE event:", payload, e);
+          }
+        }
+      }
+
+      streamSucceeded = true;
+    } catch (error: any) {
+      console.error("Stream error:", error);
+      if (!receivedAnyEvent) {
+        await sendViaLegacy(textToSend, history);
+        streamSucceeded = true;
+      } else {
+        const { message, errorType } = getFriendlyErrorMessage(error);
+        updateStreamingMessage((m) => ({
+          ...m,
+          content: m.content
+            ? `${m.content}\n\n${message}`
+            : message,
+          isError: !m.content,
           errorType,
           retryQuestion: textToSend,
-        };
-        setMessages((prev) => [...prev, errorMsg]);
+          isStreaming: false,
+        }));
       }
+    }
+
+    if (!streamSucceeded) {
+      updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
     }
 
     setRetryCount(0);
     setLoading(false);
+    setPhases([]);
   };
 
   // Fetch speakers for @mention autocomplete
@@ -1460,11 +1731,33 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   )}
                 </div>
               ) : (
-              <AssistantMessageContent
-                content={message.content}
-                role={message.role}
-                onTimestampClick={onTimestampClick}
-              />
+                <>
+                  {message.role === "assistant" && message.isStreaming && (
+                    <PhaseIndicator phases={phases} />
+                  )}
+                  {message.content && (
+                    <AssistantMessageContent
+                      content={message.content}
+                      role={message.role}
+                      onTimestampClick={onTimestampClick}
+                    />
+                  )}
+                  {message.role === "assistant" &&
+                    message.isStreaming &&
+                    message.content && (
+                      <span
+                        aria-hidden="true"
+                        className="inline-block align-middle ml-0.5 animate-pulse"
+                        style={{
+                          width: "0.55rem",
+                          height: "1em",
+                          background: "var(--accent)",
+                          borderRadius: "1px",
+                          marginBottom: "-0.1em",
+                        }}
+                      />
+                    )}
+                </>
               )}
 
               {/* Sources */}
@@ -1705,19 +1998,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </animated.div>
         ))}
 
-        {loading && (
+        {retryCount > 0 && loading && (
           <div className="flex justify-start">
-            <div className="px-4 py-3 rounded-lg" style={{ background: "var(--bg-surface)" }}>
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: "var(--text-tertiary)" }}></div>
-                <div className="w-2 h-2 rounded-full animate-bounce delay-100" style={{ background: "var(--text-tertiary)" }}></div>
-                <div className="w-2 h-2 rounded-full animate-bounce delay-200" style={{ background: "var(--text-tertiary)" }}></div>
-                {retryCount > 0 && (
-                  <span className="text-xs font-medium ml-1" style={{ color: "var(--accent)" }}>
-                    Retrying... (attempt {retryCount + 1})
-                  </span>
-                )}
-              </div>
+            <div
+              className="px-3 py-1.5 rounded-md text-xs font-medium"
+              style={{
+                background: "var(--bg-surface)",
+                color: "var(--accent)",
+              }}
+            >
+              Retrying... (attempt {retryCount + 1})
             </div>
           </div>
         )}

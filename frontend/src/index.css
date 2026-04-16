@@ -233,4 +233,23 @@ body {
   .animate-fadeIn  { animation: fadeIn  0.15s ease-out; }
   .animate-scaleIn { animation: scaleIn 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
   .animate-fade-in { animation: fadeIn  0.15s ease-out; }
+
+  @keyframes phaseShimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position:  200% 0; }
+  }
+  .phase-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--text-primary) 0%,
+      var(--accent) 50%,
+      var(--text-primary) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: phaseShimmer 2.2s ease-in-out infinite;
+  }
 }
