@@ -1084,7 +1084,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setInput("");
     setLoading(true);
     setRetryCount(0);
-    setPhases([]);
+    setPhases([
+      { id: "searching", label: PHASE_LABELS.searching, status: "active" },
+    ]);
 
     const history = messages
       .filter((m) => !m.isError && !m.isStreaming)
