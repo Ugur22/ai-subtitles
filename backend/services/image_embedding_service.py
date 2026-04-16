@@ -5,7 +5,9 @@ Handles persistent storage of CLIP embeddings for video screenshots
 
 import os
 import tempfile
+import time
 import requests
+import httpx
 from typing import List, Dict, Optional
 from PIL import Image
 from sentence_transformers import SentenceTransformer
@@ -119,6 +121,44 @@ class ImageEmbeddingService:
             print(f"[ImageEmbedding] Failed to generate embedding for {image_path}: {e}")
             return None
 
+    def _upsert_with_retry(
+        self,
+        client,
+        records: List[Dict],
+        batch_num: int,
+        total_batches: int,
+        max_retries: int = 3,
+    ) -> None:
+        # Supabase sits behind Cloudflare which closes idle sockets after ~60s. httpx's
+        # pooled connection can be dead by the time we write the next batch. Catch the
+        # transport errors, force the pool to rebuild, and retry with backoff.
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                client.table('image_embeddings').upsert(
+                    records, on_conflict='video_hash,segment_id'
+                ).execute()
+                print(
+                    f"[ImageEmbedding] Inserted batch {batch_num}/{total_batches} "
+                    f"({len(records)} rows)"
+                )
+                return
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
+                last_err = e
+                try:
+                    session = getattr(client.postgrest, 'session', None)
+                    if session is not None:
+                        session.close()
+                except Exception:
+                    pass
+                backoff = 0.5 * (2 ** attempt)
+                print(
+                    f"[ImageEmbedding] Retry {attempt + 1}/{max_retries} for batch "
+                    f"{batch_num} after {type(e).__name__}: {e}. Sleeping {backoff}s"
+                )
+                time.sleep(backoff)
+        raise last_err if last_err else RuntimeError("batch upsert failed")
+
     def index_video_images(
         self,
         video_hash: str,
@@ -158,10 +198,10 @@ class ImageEmbeddingService:
                 print(f"[ImageEmbedding] Video {video_hash} already has {count} indexed images")
                 return count
 
-        # Delete existing if force_reindex
-        if force_reindex:
-            print(f"[ImageEmbedding] Force re-index: deleting existing embeddings for {video_hash}")
-            client.table('image_embeddings').delete().eq('video_hash', video_hash).execute()
+        # Upsert on (video_hash, segment_id) overwrites rows in place, so we intentionally
+        # do NOT pre-delete on force_reindex — partial progress is never destroyed if an
+        # insert fails partway through. force_reindex now only bypasses the early-return
+        # "already indexed" check above.
 
         # Extract segments with screenshot URLs
         segments_to_index = []
@@ -247,54 +287,112 @@ class ImageEmbeddingService:
             print("[ImageEmbedding] No valid screenshots found to index")
             return 0
 
-        print(f"[ImageEmbedding] Indexing {len(segments_to_index)} images for video {video_hash}...")
+        total = len(segments_to_index)
+        tmp_dir = tempfile.gettempdir()
 
-        # Generate embeddings and insert into Supabase
-        indexed_count = 0
-        batch_size = 10  # Process in batches
+        # Phase A: encode all images into an in-memory records list (no DB traffic).
+        # Doing this up front keeps the Supabase TCP connection idle-free during Phase B,
+        # avoiding the Cloudflare edge timeout that was killing the old interleaved loop.
+        print(f"[ImageEmbedding] Encoding {total} images with CLIP for video {video_hash}...")
+        encode_batch_size = 32
+        records: List[Dict] = []
 
         try:
-            for i in range(0, len(segments_to_index), batch_size):
-                batch = segments_to_index[i:i + batch_size]
-                records = []
+            for start_i in range(0, total, encode_batch_size):
+                chunk = segments_to_index[start_i:start_i + encode_batch_size]
+                images: List[Image.Image] = []
+                kept: List[Dict] = []
+                for seg in chunk:
+                    try:
+                        images.append(Image.open(seg['local_path']).convert('RGB'))
+                        kept.append(seg)
+                    except Exception as e:
+                        print(f"[ImageEmbedding] Failed to load {seg['local_path']}: {e}")
 
-                for seg in batch:
-                    embedding = self._generate_embedding(seg['local_path'])
-                    if embedding is None:
-                        continue
+                if images:
+                    try:
+                        embeddings = self.clip_model.encode(
+                            images,
+                            convert_to_numpy=True,
+                            batch_size=encode_batch_size,
+                        ).tolist()
+                    except Exception as e:
+                        print(
+                            f"[ImageEmbedding] CLIP encode failed for chunk at offset "
+                            f"{start_i}: {e}"
+                        )
+                        embeddings = []
 
-                    record = {
-                        'video_hash': video_hash,
-                        'segment_id': str(seg['segment_id']),
-                        'start_time': seg['start'],
-                        'end_time': seg['end'],
-                        'speaker': seg['speaker'],
-                        'screenshot_url': seg['screenshot_url'],
-                        'embedding': embedding
-                    }
-                    # Include user_id for RLS policy compliance
-                    if user_id:
-                        record['user_id'] = user_id
-                    records.append(record)
+                    for seg, emb in zip(kept, embeddings):
+                        record = {
+                            'video_hash': video_hash,
+                            'segment_id': str(seg['segment_id']),
+                            'start_time': seg['start'],
+                            'end_time': seg['end'],
+                            'speaker': seg['speaker'],
+                            'screenshot_url': seg['screenshot_url'],
+                            'embedding': emb,
+                        }
+                        if user_id:
+                            record['user_id'] = user_id
+                        records.append(record)
 
-                if records:
-                    # Upsert to handle duplicates gracefully
-                    client.table('image_embeddings').upsert(
-                        records,
-                        on_conflict='video_hash,segment_id'
-                    ).execute()
-                    indexed_count += len(records)
-                    print(f"[ImageEmbedding] Indexed batch {i // batch_size + 1}: {len(records)} images")
+                # Free PIL handles and per-chunk temp files immediately.
+                for img in images:
+                    try:
+                        img.close()
+                    except Exception:
+                        pass
+                for seg in chunk:
+                    path = seg.get('local_path', '')
+                    if path.startswith(tmp_dir):
+                        try:
+                            os.unlink(path)
+                        except Exception:
+                            pass
 
+                done = min(start_i + encode_batch_size, total)
+                print(f"[ImageEmbedding] Encoded {done}/{total} images")
         finally:
-            # Cleanup temp files
+            # Safety net in case a code path skipped chunk-local cleanup above.
             for temp_path in temp_files:
                 try:
                     os.unlink(temp_path)
-                except:
+                except Exception:
                     pass
 
-        print(f"[ImageEmbedding] Successfully indexed {indexed_count} images for video {video_hash}")
+        if not records:
+            print("[ImageEmbedding] No embeddings generated")
+            return 0
+
+        # Phase B: bulk insert back-to-back. Connection stays warm, and each batch is
+        # wrapped in _upsert_with_retry to recover from occasional transport errors.
+        insert_batch_size = 50
+        total_batches = (len(records) + insert_batch_size - 1) // insert_batch_size
+        print(
+            f"[ImageEmbedding] Inserting {len(records)} embeddings in {total_batches} "
+            f"batches of {insert_batch_size}..."
+        )
+
+        indexed_count = 0
+        for i in range(0, len(records), insert_batch_size):
+            batch = records[i:i + insert_batch_size]
+            batch_num = i // insert_batch_size + 1
+            try:
+                self._upsert_with_retry(client, batch, batch_num, total_batches)
+                indexed_count += len(batch)
+            except Exception as e:
+                # Upsert is idempotent, so a permanently-failed batch doesn't poison later
+                # batches — keep going and report what we got.
+                print(
+                    f"[ImageEmbedding] Batch {batch_num}/{total_batches} permanently "
+                    f"failed after retries: {e}"
+                )
+
+        print(
+            f"[ImageEmbedding] Successfully indexed {indexed_count}/{len(records)} "
+            f"images for video {video_hash}"
+        )
         return indexed_count
 
     def search_images(
