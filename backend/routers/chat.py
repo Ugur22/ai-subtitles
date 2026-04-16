@@ -2,9 +2,11 @@
 Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
 import asyncio
-from typing import Dict, Optional, List, Callable, Any
+import json
+from typing import AsyncIterator, Dict, Optional, List, Callable, Any, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 # Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
 # This prevents blocking the event loop during visual search and chat operations
@@ -190,6 +192,628 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     return found_speakers
 
 
+# ---------------------------------------------------------------------------
+# Pure helper functions (no SSE knowledge, shared by sync and streaming endpoints)
+# ---------------------------------------------------------------------------
+
+async def _retrieve_text_context(
+    video_hash: str,
+    question: str,
+    n_results: int,
+) -> tuple[list, str, list]:
+    """
+    Search transcript vector store and build context text + sources list.
+
+    Returns:
+        (search_results, context_text, sources)
+        search_results is the raw list from vector_store.search; empty list if none found.
+    """
+    print(f"Searching for relevant context for question: {question}")
+    search_results = await _run_in_executor(vector_store.search, video_hash, question, n_results=n_results)
+
+    if not search_results:
+        return [], "", []
+
+    context_parts = []
+    sources = []
+
+    for i, result in enumerate(search_results):
+        metadata = result['metadata']
+        text = result['text']
+
+        context_parts.append(
+            f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
+            f"[Speaker: {metadata['speaker']}]\n{text}"
+        )
+
+        sources.append({
+            "start_time": metadata['start_time'],
+            "end_time": metadata['end_time'],
+            "start": metadata['start'],
+            "end": metadata['end'],
+            "speaker": metadata['speaker'],
+            "text": text[:200] + "..." if len(text) > 200 else text
+        })
+
+    context = "\n\n".join(context_parts)
+    return search_results, context, sources
+
+
+async def _retrieve_visual_context(
+    video_hash: str,
+    question: str,
+    n_images: int,
+    phase_cb: Optional[Callable[[str, str], Awaitable[None]]] = None,
+) -> dict:
+    """
+    Search image embeddings, apply temporal + face re-ranking, and return visual context.
+
+    phase_cb: optional async callback(phase_name, label) called before each sub-stage.
+              The streaming endpoint passes a coroutine that emits SSE phase events;
+              the sync endpoint passes None.
+
+    Returns a dict with keys:
+        images_indexed (bool) - False means images are not indexed; all other keys absent
+        image_paths, visual_context, visual_sources, visual_query_used,
+        image_results, face_tags_available, speaker_names
+    """
+    use_supabase = _use_supabase_for_images()
+    if use_supabase:
+        images_indexed = image_embedding_service.image_collection_exists(video_hash)
+    else:
+        images_indexed = vector_store.image_collection_exists(video_hash)
+
+    if not images_indexed:
+        print(f"Images not indexed for video {video_hash}. Continuing with text-only analysis.")
+        return {"images_indexed": False}
+
+    print(f"Visual analysis requested, searching for {n_images} relevant images...")
+
+    try:
+        # Extract ALL speaker names from the query
+        speaker_names = _extract_all_speakers_from_query(question, video_hash)
+
+        # CLIP doesn't know specific people by name; replace names with generic "person"/"people"
+        visual_query = question
+        if speaker_names:
+            import re
+            replacement = "person" if len(speaker_names) == 1 else "people"
+            for speaker_name in speaker_names:
+                visual_query = re.sub(
+                    rf'\b{re.escape(speaker_name)}\b',
+                    replacement,
+                    visual_query,
+                    flags=re.IGNORECASE
+                )
+            print(f"Visual search: transformed '{question}' -> '{visual_query}'")
+            visual_query_used = visual_query
+        else:
+            visual_query_used = question
+
+        # Sub-stage: CLIP scene search
+        if phase_cb is not None:
+            await phase_cb("analyzing_scenes", "Analyzing scenes")
+
+        if use_supabase:
+            image_results = await _run_in_executor(
+                image_embedding_service.search_images,
+                video_hash,
+                visual_query,
+                n_results=n_images,
+                speaker_filter=None
+            )
+        else:
+            image_results = await _run_in_executor(
+                vector_store.search_images,
+                video_hash,
+                visual_query,
+                n_results=n_images,
+                speaker_filter=None
+            )
+
+        face_tags_available = False
+
+        # Phase 1: Temporal Correlation Scoring
+        if speaker_names and image_results:
+            print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
+
+            transcription = get_transcription_from_any_source(video_hash)
+            if transcription:
+                segments = transcription.get('transcription', {}).get('segments', [])
+
+                speaker_timelines = {}
+                for name in speaker_names:
+                    speaker_timelines[name] = [
+                        (seg['start'], seg['end'])
+                        for seg in segments
+                        if seg.get('speaker', '').lower() == name.lower()
+                    ]
+                    print(f"  Speaker '{name}': {len(speaker_timelines[name])} segments")
+
+                for result in image_results:
+                    img_start = float(result['metadata'].get('start', 0) or 0)
+                    img_end = float(result['metadata'].get('end', 0) or 0)
+
+                    overlap_score = 0
+                    overlapping_speakers = []
+
+                    for speaker, timeline in speaker_timelines.items():
+                        for seg_start, seg_end in timeline:
+                            if img_start <= seg_end and img_end >= seg_start:
+                                overlap_score += 1
+                                if speaker not in overlapping_speakers:
+                                    overlapping_speakers.append(speaker)
+
+                    if overlap_score == 0 and speaker_timelines:
+                        first_speaker = list(speaker_timelines.keys())[0]
+                        tl = speaker_timelines[first_speaker]
+                        if tl:
+                            print(f"  DEBUG overlap=0: img=[{img_start:.1f}-{img_end:.1f}], "
+                                  f"first segment=[{tl[0][0]:.1f}-{tl[0][1]:.1f}], "
+                                  f"last segment=[{tl[-1][0]:.1f}-{tl[-1][1]:.1f}], "
+                                  f"total={len(tl)} segments")
+
+                    result['overlap_score'] = overlap_score
+                    result['likely_speakers'] = overlapping_speakers
+
+                # Check if any mentioned speaker has face tags
+                speaker_face_embeddings = {}
+                try:
+                    from services.supabase_service import supabase as get_supabase
+                    face_client = get_supabase()
+                    for name in speaker_names:
+                        face_result = face_client.table("face_tags").select(
+                            "embedding"
+                        ).eq("video_hash", video_hash).eq(
+                            "speaker_name", name
+                        ).execute()
+                        if face_result.data:
+                            import numpy as np
+                            import json as _json
+                            raw_embeddings = []
+                            for row in face_result.data:
+                                emb = row["embedding"]
+                                if isinstance(emb, str):
+                                    emb = _json.loads(emb)
+                                raw_embeddings.append(emb)
+                            embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
+                            avg_emb = np.mean(embeddings, axis=0)
+                            avg_emb = avg_emb / np.linalg.norm(avg_emb)
+                            speaker_face_embeddings[name] = avg_emb.tolist()
+                            face_tags_available = True
+                            print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
+                except Exception as e:
+                    print(f"  Face tags lookup failed (non-critical): {e}")
+
+                # Sub-stage: face re-ranking (only if face tags exist)
+                if face_tags_available:
+                    if phase_cb is not None:
+                        await phase_cb("matching_faces", "Matching faces")
+
+                    print("Computing face scores for visual results...")
+                    try:
+                        from services.face_service import face_service
+                        for result in image_results:
+                            screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
+                            if not screenshot_url:
+                                result['face_score'] = 0.0
+                                continue
+
+                            detected = await _run_in_executor(face_service.detect_faces, screenshot_url)
+                            if not detected:
+                                result['face_score'] = 0.0
+                                continue
+
+                            max_sim = 0.0
+                            for det_face in detected:
+                                for speaker, ref_emb in speaker_face_embeddings.items():
+                                    sim = face_service.compute_face_similarity(
+                                        det_face['embedding'], ref_emb
+                                    )
+                                    max_sim = max(max_sim, sim)
+                            result['face_score'] = max(0.0, max_sim)
+                    except Exception as e:
+                        print(f"  Face scoring failed (falling back to no face): {e}")
+                        face_tags_available = False
+
+                # Hybrid ranking
+                for result in image_results:
+                    clip_score = result.get('similarity', 0)
+                    if clip_score == 0 and 'distance' in result:
+                        clip_score = max(0, 1 - result['distance'])
+
+                    max_overlap = 3
+                    normalized_overlap = min(result.get('overlap_score', 0), max_overlap) / max_overlap
+
+                    if face_tags_available:
+                        face_score = result.get('face_score', 0.0)
+                        result['hybrid_score'] = 0.6 * clip_score + 0.15 * normalized_overlap + 0.25 * face_score
+                    else:
+                        result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
+
+                image_results.sort(key=lambda x: x.get('hybrid_score', 0), reverse=True)
+
+                ranking_mode = "60% CLIP + 15% temporal + 25% face" if face_tags_available else "80% CLIP + 20% temporal"
+                print(f"Scored {len(image_results)} visual results with hybrid ranking ({ranking_mode})")
+                for i, result in enumerate(image_results[:3]):
+                    face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
+                    print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
+                          f"clip={result.get('similarity', 0):.3f}, "
+                          f"overlap={result.get('overlap_score', 0)}{face_info}, "
+                          f"speakers={result.get('likely_speakers', [])}")
+
+        image_paths = []
+        visual_context = ""
+        visual_sources = []
+
+        if image_results:
+            print(f"Found {len(image_results)} relevant images")
+            image_paths = [result.get('screenshot_url') or result.get('screenshot_path') for result in image_results]
+
+            visual_parts = []
+            for i, img_result in enumerate(image_results):
+                metadata = img_result['metadata']
+                screenshot_path = img_result.get('screenshot_url') or img_result.get('screenshot_path', '')
+
+                if screenshot_path.startswith('https://'):
+                    screenshot_url = screenshot_path
+                elif 'static/screenshots/' in screenshot_path:
+                    filename = screenshot_path.split('static/screenshots/')[-1]
+                    screenshot_url = f"/static/screenshots/{filename}"
+                else:
+                    screenshot_url = screenshot_path.replace('./static/', '/static/')
+
+                speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker']
+                visual_parts.append(
+                    f"Screenshot {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
+                    f"Speaker: {speaker_display}"
+                )
+
+                visual_sources.append({
+                    "start_time": f"{int(metadata['start'] // 3600):02d}:{int((metadata['start'] % 3600) // 60):02d}:{int(metadata['start'] % 60):02d}",
+                    "end_time": f"{int(metadata['end'] // 3600):02d}:{int((metadata['end'] % 3600) // 60):02d}:{int(metadata['end'] % 60):02d}",
+                    "start": metadata['start'],
+                    "end": metadata['end'],
+                    "speaker": ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker'],
+                    "screenshot_url": screenshot_url,
+                    "type": "visual",
+                    "likely_speakers": img_result.get('likely_speakers', []),
+                    "overlap_score": img_result.get('overlap_score', 0)
+                })
+
+            visual_context = "\n".join(visual_parts)
+            print(f"Visual context: {visual_context}")
+        else:
+            print("No relevant images found for the query")
+
+        return {
+            "images_indexed": True,
+            "image_paths": image_paths,
+            "visual_context": visual_context,
+            "visual_sources": visual_sources,
+            "visual_query_used": visual_query_used,
+            "image_results": image_results,
+            "face_tags_available": face_tags_available,
+            "speaker_names": speaker_names,
+        }
+
+    except Exception as e:
+        print(f"Warning: Failed to search images: {str(e)}")
+        return {
+            "images_indexed": True,
+            "image_paths": [],
+            "visual_context": "",
+            "visual_sources": [],
+            "visual_query_used": question,
+            "image_results": [],
+            "face_tags_available": False,
+            "speaker_names": [],
+        }
+
+
+async def _retrieve_audio_context(
+    video_hash: str,
+    question: str,
+    search_results: list,
+    image_results: list,
+) -> tuple[str, list, bool]:
+    """
+    Search audio event vector store, apply temporal re-ranking, and return audio context.
+
+    Returns:
+        (audio_context, audio_sources, audio_indexed)
+    """
+    if not vector_store.audio_collection_exists(video_hash):
+        return "", [], False
+
+    audio_context = ""
+    audio_sources = []
+
+    try:
+        audio_results = await _run_in_executor(
+            vector_store.search_audio_events,
+            video_hash,
+            question,
+            n_results=20
+        )
+
+        if audio_results:
+            temporal_anchors = []
+
+            if search_results:
+                for sr in search_results:
+                    s = sr.get('metadata', {}).get('start')
+                    e = sr.get('metadata', {}).get('end')
+                    if s is not None and e is not None:
+                        temporal_anchors.append((float(s), float(e)))
+
+            if image_results:
+                for ir in image_results:
+                    s = ir.get('metadata', {}).get('start')
+                    e = ir.get('metadata', {}).get('end')
+                    if s is not None and e is not None:
+                        temporal_anchors.append((float(s), float(e)))
+
+            if temporal_anchors:
+                for audio_result in audio_results:
+                    a_start = float(audio_result['metadata'].get('start', 0) or 0)
+                    a_end = float(audio_result['metadata'].get('end', 0) or 0)
+                    a_mid = (a_start + a_end) / 2
+
+                    min_dist = float('inf')
+                    for anchor_start, anchor_end in temporal_anchors:
+                        anchor_mid = (anchor_start + anchor_end) / 2
+                        dist = abs(a_mid - anchor_mid)
+                        min_dist = min(min_dist, dist)
+
+                    audio_result['temporal_distance'] = min_dist
+
+                audio_results.sort(key=lambda x: x.get('temporal_distance', float('inf')))
+
+                n_text = sum(1 for sr in (search_results or []) if sr.get('metadata', {}).get('start') is not None)
+                n_img = len(temporal_anchors) - n_text
+                print(f"Audio re-ranking: {n_text} text + {n_img} image = {len(temporal_anchors)} anchors, "
+                      f"closest={audio_results[0]['temporal_distance']:.1f}s, "
+                      f"furthest={audio_results[-1]['temporal_distance']:.1f}s")
+
+            audio_results = audio_results[:5]
+            print(f"Found {len(audio_results)} relevant audio events")
+            audio_parts = []
+
+            for i, audio_result in enumerate(audio_results):
+                metadata = audio_result['metadata']
+                description = audio_result['description']
+
+                audio_parts.append(
+                    f"Audio Event {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
+                    f"Events: {description}"
+                )
+
+                events_list = description.split(", ")
+
+                for event_str in events_list[:3]:
+                    if "(" in event_str and ")" in event_str:
+                        event_type = event_str.split("(")[0].strip()
+                        confidence_str = event_str.split("(")[1].split("%")[0].strip()
+
+                        try:
+                            confidence = float(confidence_str) / 100.0
+                        except ValueError:
+                            confidence = 0.5
+
+                        if confidence < 0.3:
+                            continue
+
+                        if event_type.startswith("emotion:"):
+                            event_type = event_type.replace("emotion:", "").strip()
+
+                        audio_sources.append({
+                            "start_time": f"{int(float(metadata['start']) // 3600):02d}:{int((float(metadata['start']) % 3600) // 60):02d}:{int(float(metadata['start']) % 60):02d}",
+                            "end_time": f"{int(float(metadata['end']) // 3600):02d}:{int((float(metadata['end']) % 3600) // 60):02d}:{int(float(metadata['end']) % 60):02d}",
+                            "start": float(metadata['start']),
+                            "end": float(metadata['end']),
+                            "speaker": metadata.get('speaker', 'Unknown'),
+                            "event_type": event_type,
+                            "confidence": confidence,
+                            "type": "audio"
+                        })
+
+            audio_context = "\n".join(audio_parts)
+
+    except Exception as e:
+        print(f"Warning: Failed to search audio events: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    return audio_context, audio_sources, True
+
+
+def _build_chat_messages(
+    question: str,
+    context: str,
+    visual_context: str,
+    audio_context: str,
+    has_images: bool,
+    custom_instructions: Optional[str],
+    conversation_history: Optional[list],
+) -> list:
+    """
+    Build the messages list ready for the LLM from retrieved context.
+
+    Returns:
+        messages list with system, optional history, and user turns
+    """
+    if has_images:
+        system_message = """You are an expert AI assistant specialized in analyzing video content, combining both visual and textual information.
+
+Your role:
+- Analyze both the visual content (screenshots) and transcript text
+- Provide detailed, comprehensive answers based on what you see and what is said
+- Always cite specific timestamps when referencing information (use format [HH:MM:SS])
+- Identify speakers and their contributions clearly
+- Describe visual elements when relevant to the question
+- Connect visual and textual information to provide richer insights
+- Offer insights and analysis, not just basic summaries
+- Use markdown formatting for better readability (bold, bullet points, etc.)
+
+Communication style:
+- Think through your analysis out loud: "Looking at this section, I notice...", "What's interesting here is..."
+- Express when something is ambiguous: "The transcript isn't entirely clear on this, but based on the visual context..."
+- Offer constructive observations: "One thing worth noting...", "A potential concern here is..."
+- When you see multiple interpretations, acknowledge them: "This could mean X or Y - based on what I see, I lean toward X because..."
+- If the question could be interpreted multiple ways, briefly ask for clarification at the end
+- Be honest about limitations: "I can see X in the screenshot, but I'd need more context to determine..."
+
+Response structure (use these exact markdown headers):
+- Start with ## Direct Answer — 2-3 sentences directly answering the question
+- Follow with ## Key Analysis — detailed breakdown with bullet points, timestamps, and evidence
+- If screenshots are relevant, add ## Visual Observations — describe what you see in the visual content
+- Use > blockquotes for direct speaker quotes (e.g., > "exact words" — Speaker Name [HH:MM:SS])
+- Use **bold** sparingly for key terms only, not entire sentences
+- Always cite timestamps in [HH:MM:SS] format
+
+Guidelines:
+- When analyzing screenshots, describe what you observe and how it relates to the question
+- Include relevant quotes from speakers when appropriate
+- Explain context, implications, and connections between ideas
+- If asked to summarize, organize information logically with bullet points or sections
+- Reference multiple sources/timestamps to support your answers
+- If the context is insufficient, explain what information is missing"""
+
+        if custom_instructions:
+            system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
+
+        user_message_parts = [
+            "Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.",
+            "",
+            "VIDEO TRANSCRIPT CONTEXT:",
+            context,
+            "",
+            "VISUAL CONTEXT (Screenshots provided):",
+            visual_context
+        ]
+
+        if audio_context:
+            user_message_parts.extend([
+                "",
+                "AUDIO CONTEXT (Sound Events):",
+                audio_context
+            ])
+
+        user_message_parts.extend([
+            "",
+            f"QUESTION: {question}",
+            "",
+            "Please provide a detailed, well-structured answer that:",
+            "1. Directly addresses the question",
+            "2. Analyzes both the visual content in the screenshots AND the transcript text"
+        ])
+
+        if audio_context:
+            user_message_parts.append("3. Considers relevant audio events and sound cues")
+            user_message_parts.append("4. Cites specific timestamps and speakers")
+            user_message_parts.append("5. Describes relevant visual elements you observe")
+            user_message_parts.append("6. Provides context and analysis connecting visual, audio, and textual information")
+            user_message_parts.append("7. Uses markdown formatting for clarity")
+        else:
+            user_message_parts.append("3. Cites specific timestamps and speakers")
+            user_message_parts.append("4. Describes relevant visual elements you observe")
+            user_message_parts.append("5. Provides context and analysis connecting visual and textual information")
+            user_message_parts.append("6. Uses markdown formatting for clarity")
+
+        user_message = "\n".join(user_message_parts)
+    else:
+        system_message = """You are an expert AI assistant specialized in analyzing video content and transcripts.
+
+Your role:
+- Provide detailed, comprehensive answers based on the video transcript
+- Always cite specific timestamps when referencing information (use format [HH:MM:SS])
+- Identify speakers and their contributions clearly
+- Connect related points across different parts of the video
+- Offer insights and analysis, not just basic summaries
+- Use markdown formatting for better readability (bold, bullet points, etc.)
+
+Communication style:
+- Think through your analysis out loud: "Looking at this section, I notice...", "What's interesting here is..."
+- Express when something is ambiguous: "The transcript isn't entirely clear on this, but based on the context..."
+- Offer constructive observations: "One thing worth noting...", "A potential concern here is..."
+- When you see multiple interpretations, acknowledge them: "This could mean X or Y - based on the surrounding discussion, I lean toward X because..."
+- If the question could be interpreted multiple ways, briefly ask for clarification at the end
+- Be honest about limitations: "Based on what's in the transcript, I can tell you X, but I'd need more context to determine..."
+
+Response structure (use these exact markdown headers):
+- Start with ## Direct Answer — 2-3 sentences directly answering the question
+- Follow with ## Key Analysis — detailed breakdown with bullet points, timestamps, and evidence
+- Use > blockquotes for direct speaker quotes (e.g., > "exact words" — Speaker Name [HH:MM:SS])
+- Use **bold** sparingly for key terms only, not entire sentences
+- Always cite timestamps in [HH:MM:SS] format
+
+Guidelines:
+- Be thorough and detailed in your responses
+- Include relevant quotes from speakers when appropriate
+- Explain context, implications, and connections between ideas
+- If asked to summarize, organize information logically with bullet points or sections
+- Reference multiple sources/timestamps to support your answers
+- If the context is insufficient, explain what information is missing"""
+
+        if custom_instructions:
+            system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
+
+        user_message_parts = [
+            "Based on the following transcript segments from the video, please answer the question comprehensively.",
+            "",
+            "VIDEO TRANSCRIPT CONTEXT:",
+            context
+        ]
+
+        if audio_context:
+            user_message_parts.extend([
+                "",
+                "AUDIO CONTEXT (Sound Events):",
+                audio_context
+            ])
+
+        user_message_parts.extend([
+            "",
+            f"QUESTION: {question}",
+            "",
+            "Please provide a detailed, well-structured answer that:",
+            "1. Directly addresses the question",
+            "2. Cites specific timestamps and speakers",
+            "3. Provides context and analysis"
+        ])
+
+        if audio_context:
+            user_message_parts.append("4. Considers relevant audio events and sound cues")
+            user_message_parts.append("5. Uses markdown formatting for clarity")
+            user_message_parts.append("6. Connects related information from different parts of the video")
+        else:
+            user_message_parts.append("4. Uses markdown formatting for clarity")
+            user_message_parts.append("5. Connects related information from different parts of the video")
+
+        user_message = "\n".join(user_message_parts)
+
+    messages = [
+        {"role": "system", "content": system_message},
+    ]
+
+    if conversation_history:
+        history = conversation_history[-10:]
+        for msg in history:
+            if msg.get("role") in ("user", "assistant"):
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @router.post(
     "/index_video/",
     response_model=IndexVideoResponse,
@@ -321,9 +945,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                     detail="Video not indexed. Please index it first using /api/index_video/"
                 )
 
-        # Retrieve relevant context using vector search (run in executor - embedding generation)
-        print(f"Searching for relevant context for question: {question}")
-        search_results = await _run_in_executor(vector_store.search, video_hash, question, n_results=n_results)
+        # Retrieve text context
+        search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
 
         if not search_results:
             return {
@@ -333,579 +956,43 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 "video_hash": video_hash
             }
 
-        # Build context from search results
-        context_parts = []
-        sources = []
-
-        for i, result in enumerate(search_results):
-            metadata = result['metadata']
-            text = result['text']
-
-            context_parts.append(
-                f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
-                f"[Speaker: {metadata['speaker']}]\n{text}"
-            )
-
-            sources.append({
-                "start_time": metadata['start_time'],
-                "end_time": metadata['end_time'],
-                "start": metadata['start'],
-                "end": metadata['end'],
-                "speaker": metadata['speaker'],
-                "text": text[:200] + "..." if len(text) > 200 else text
-            })
-
-        context = "\n\n".join(context_parts)
-
-        # Search for relevant images if include_visuals is True
+        # Retrieve visual context
         image_paths = []
         visual_context = ""
         visual_sources = []
-        visual_query_used = None  # Track the transformed query for visual search
+        visual_query_used = None
+        image_results = []
 
         if include_visuals:
-            print(f"Visual analysis requested, searching for {n_images} relevant images...")
-
-            # Determine which image service to use
-            use_supabase = _use_supabase_for_images()
-            if use_supabase:
-                images_indexed = image_embedding_service.image_collection_exists(video_hash)
-            else:
-                images_indexed = vector_store.image_collection_exists(video_hash)
-
-            # Check if images are indexed
-            if images_indexed:
-                try:
-                    # Extract ALL speaker names from the query
-                    speaker_names = _extract_all_speakers_from_query(question, video_hash)
-
-                    # Create a visual-optimized query for CLIP
-                    # CLIP doesn't know specific people by name, so we replace all speaker names
-                    # and let CLIP focus on the visual concepts (e.g., "swimming", "talking")
-                    visual_query = question
-                    if speaker_names:
-                        import re
-                        # Replace all speaker names with "person" (or "people" if multiple speakers)
-                        replacement = "person" if len(speaker_names) == 1 else "people"
-
-                        for speaker_name in speaker_names:
-                            visual_query = re.sub(
-                                rf'\b{re.escape(speaker_name)}\b',
-                                replacement,
-                                visual_query,
-                                flags=re.IGNORECASE
-                            )
-
-                        print(f"Visual search: transformed '{question}' -> '{visual_query}'")
-                        visual_query_used = visual_query
-                    else:
-                        visual_query_used = question
-
-                    # Search for relevant images using the visual-optimized query
-                    # No speaker filter - CLIP searches by visual similarity, not speaker metadata
-                    # Run in executor - CLIP encoding is CPU/GPU intensive
-                    if use_supabase:
-                        image_results = await _run_in_executor(
-                            image_embedding_service.search_images,
-                            video_hash,
-                            visual_query,
-                            n_results=n_images,
-                            speaker_filter=None
-                        )
-                    else:
-                        image_results = await _run_in_executor(
-                            vector_store.search_images,
-                            video_hash,
-                            visual_query,
-                            n_results=n_images,
-                            speaker_filter=None  # Don't filter by speaker - let CLIP find visual matches
-                        )
-
-                    # Phase 1: Temporal Correlation Scoring
-                    # Score visual results by temporal overlap with speaker segments
-                    if speaker_names and image_results:
-                        print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
-
-                        # Get speaker segments from transcript
-                        transcription = get_transcription_from_any_source(video_hash)
-                        if transcription:
-                            segments = transcription.get('transcription', {}).get('segments', [])
-
-                            # Build timeline for each speaker mentioned
-                            speaker_timelines = {}
-                            for name in speaker_names:
-                                speaker_timelines[name] = [
-                                    (seg['start'], seg['end'])
-                                    for seg in segments
-                                    if seg.get('speaker', '').lower() == name.lower()
-                                ]
-                                print(f"  Speaker '{name}': {len(speaker_timelines[name])} segments")
-
-                            # Score each visual result by overlap with speaker timelines
-                            for result in image_results:
-                                img_start = float(result['metadata'].get('start', 0) or 0)
-                                img_end = float(result['metadata'].get('end', 0) or 0)
-
-                                overlap_score = 0
-                                overlapping_speakers = []
-
-                                for speaker, timeline in speaker_timelines.items():
-                                    for seg_start, seg_end in timeline:
-                                        # Check for temporal overlap
-                                        if img_start <= seg_end and img_end >= seg_start:
-                                            overlap_score += 1
-                                            if speaker not in overlapping_speakers:
-                                                overlapping_speakers.append(speaker)
-
-                                # Debug: log overlap details for first few results
-                                if overlap_score == 0 and speaker_timelines:
-                                    first_speaker = list(speaker_timelines.keys())[0]
-                                    tl = speaker_timelines[first_speaker]
-                                    if tl:
-                                        print(f"  DEBUG overlap=0: img=[{img_start:.1f}-{img_end:.1f}], "
-                                              f"first segment=[{tl[0][0]:.1f}-{tl[0][1]:.1f}], "
-                                              f"last segment=[{tl[-1][0]:.1f}-{tl[-1][1]:.1f}], "
-                                              f"total={len(tl)} segments")
-
-                                result['overlap_score'] = overlap_score
-                                result['likely_speakers'] = overlapping_speakers
-
-                            # Check if any mentioned speaker has face tags
-                            face_tags_available = False
-                            speaker_face_embeddings = {}  # speaker_name -> average embedding
-                            try:
-                                from services.supabase_service import supabase as get_supabase
-                                face_client = get_supabase()
-                                for name in speaker_names:
-                                    face_result = face_client.table("face_tags").select(
-                                        "embedding"
-                                    ).eq("video_hash", video_hash).eq(
-                                        "speaker_name", name
-                                    ).execute()
-                                    if face_result.data:
-                                        import numpy as np
-                                        import json
-                                        raw_embeddings = []
-                                        for row in face_result.data:
-                                            emb = row["embedding"]
-                                            # Supabase returns vector as string, parse it
-                                            if isinstance(emb, str):
-                                                emb = json.loads(emb)
-                                            raw_embeddings.append(emb)
-                                        embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
-                                        avg_emb = np.mean(embeddings, axis=0)
-                                        avg_emb = avg_emb / np.linalg.norm(avg_emb)  # L2 normalize
-                                        speaker_face_embeddings[name] = avg_emb.tolist()
-                                        face_tags_available = True
-                                        print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
-                            except Exception as e:
-                                print(f"  Face tags lookup failed (non-critical): {e}")
-
-                            # If face tags available, compute face scores for each result
-                            if face_tags_available:
-                                print("Computing face scores for visual results...")
-                                try:
-                                    from services.face_service import face_service
-                                    for result in image_results:
-                                        screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
-                                        if not screenshot_url:
-                                            result['face_score'] = 0.0
-                                            continue
-
-                                        # Detect faces in this candidate screenshot
-                                        detected = await _run_in_executor(face_service.detect_faces, screenshot_url)
-                                        if not detected:
-                                            result['face_score'] = 0.0
-                                            continue
-
-                                        # Find max similarity between any detected face and any speaker reference
-                                        max_sim = 0.0
-                                        for det_face in detected:
-                                            for speaker, ref_emb in speaker_face_embeddings.items():
-                                                sim = face_service.compute_face_similarity(
-                                                    det_face['embedding'], ref_emb
-                                                )
-                                                max_sim = max(max_sim, sim)
-                                        result['face_score'] = max(0.0, max_sim)
-                                except Exception as e:
-                                    print(f"  Face scoring failed (falling back to no face): {e}")
-                                    face_tags_available = False
-
-                            # Hybrid ranking: combine CLIP, temporal, and optionally face scores
-                            # With face tags: 60% CLIP + 15% temporal + 25% face match
-                            # Without face tags: 80% CLIP + 20% temporal (original)
-                            for result in image_results:
-                                # Get CLIP similarity score (normalize to 0-1)
-                                clip_score = result.get('similarity', 0)
-                                if clip_score == 0 and 'distance' in result:
-                                    clip_score = max(0, 1 - result['distance'])
-
-                                # Normalize overlap score (cap at 3 for normalization)
-                                max_overlap = 3
-                                normalized_overlap = min(result.get('overlap_score', 0), max_overlap) / max_overlap
-
-                                if face_tags_available:
-                                    face_score = result.get('face_score', 0.0)
-                                    result['hybrid_score'] = 0.6 * clip_score + 0.15 * normalized_overlap + 0.25 * face_score
-                                else:
-                                    result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
-
-                            image_results.sort(key=lambda x: x.get('hybrid_score', 0), reverse=True)
-
-                            ranking_mode = "60% CLIP + 15% temporal + 25% face" if face_tags_available else "80% CLIP + 20% temporal"
-                            print(f"Scored {len(image_results)} visual results with hybrid ranking ({ranking_mode})")
-                            for i, result in enumerate(image_results[:3]):  # Log top 3
-                                face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
-                                print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
-                                      f"clip={result.get('similarity', 0):.3f}, "
-                                      f"overlap={result.get('overlap_score', 0)}{face_info}, "
-                                      f"speakers={result.get('likely_speakers', [])}")
-
-                    if image_results:
-                        print(f"Found {len(image_results)} relevant images")
-                        # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
-                        image_paths = [result.get('screenshot_url') or result.get('screenshot_path') for result in image_results]
-
-                        # Build visual context description and sources
-                        visual_parts = []
-                        for i, img_result in enumerate(image_results):
-                            metadata = img_result['metadata']
-                            # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
-                            screenshot_path = img_result.get('screenshot_url') or img_result.get('screenshot_path', '')
-
-                            # Convert local path to URL
-                            # screenshot_path can be absolute like "/path/to/backend/static/screenshots/hash_123.45.jpg"
-                            # or relative like "./static/screenshots/hash_123.45.jpg"
-                            # or already a GCS signed URL (https://...)
-                            if screenshot_path.startswith('https://'):
-                                # Already a full URL (GCS signed URL)
-                                screenshot_url = screenshot_path
-                            elif 'static/screenshots/' in screenshot_path:
-                                # Extract the filename from the path
-                                filename = screenshot_path.split('static/screenshots/')[-1]
-                                screenshot_url = f"/static/screenshots/{filename}"
-                            else:
-                                # Fallback: try the old approach
-                                screenshot_url = screenshot_path.replace('./static/', '/static/')
-
-                            speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker']
-                            visual_parts.append(
-                                f"Screenshot {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
-                                f"Speaker: {speaker_display}"
-                            )
-
-                            # Add to visual sources
-                            visual_sources.append({
-                                "start_time": f"{int(metadata['start'] // 3600):02d}:{int((metadata['start'] % 3600) // 60):02d}:{int(metadata['start'] % 60):02d}",
-                                "end_time": f"{int(metadata['end'] // 3600):02d}:{int((metadata['end'] % 3600) // 60):02d}:{int(metadata['end'] % 60):02d}",
-                                "start": metadata['start'],
-                                "end": metadata['end'],
-                                "speaker": ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker'],
-                                "screenshot_url": screenshot_url,
-                                "type": "visual",
-                                "likely_speakers": img_result.get('likely_speakers', []),
-                                "overlap_score": img_result.get('overlap_score', 0)
-                            })
-
-                        visual_context = "\n".join(visual_parts)
-                        print(f"Visual context: {visual_context}")
-                    else:
-                        print("No relevant images found for the query")
-                except Exception as e:
-                    print(f"Warning: Failed to search images: {str(e)}")
-                    # Continue without images
-            else:
-                print(f"Images not indexed for video {video_hash}. Continuing with text-only analysis.")
-
-        # Search for relevant audio events if available
-        audio_context = ""
-        audio_sources = []
-
-        if vector_store.audio_collection_exists(video_hash):
-            try:
-                # Run in executor - embedding generation is CPU intensive
-                audio_results = await _run_in_executor(
-                    vector_store.search_audio_events,
-                    video_hash,
-                    question,
-                    n_results=20  # Over-fetch for temporal re-ranking
-                )
-
-                if audio_results:
-                    # Collect temporal anchors from text and image results
-                    temporal_anchors = []
-
-                    if search_results:
-                        for sr in search_results:
-                            s = sr.get('metadata', {}).get('start')
-                            e = sr.get('metadata', {}).get('end')
-                            if s is not None and e is not None:
-                                temporal_anchors.append((float(s), float(e)))
-
-                    try:
-                        ir_list = image_results if include_visuals else []
-                    except NameError:
-                        ir_list = []
-                    if ir_list:
-                        for ir in ir_list:
-                            s = ir.get('metadata', {}).get('start')
-                            e = ir.get('metadata', {}).get('end')
-                            if s is not None and e is not None:
-                                temporal_anchors.append((float(s), float(e)))
-
-                    # Re-rank audio by temporal proximity if we have anchors
-                    if temporal_anchors:
-                        for audio_result in audio_results:
-                            a_start = float(audio_result['metadata'].get('start', 0) or 0)
-                            a_end = float(audio_result['metadata'].get('end', 0) or 0)
-                            a_mid = (a_start + a_end) / 2
-
-                            min_dist = float('inf')
-                            for anchor_start, anchor_end in temporal_anchors:
-                                anchor_mid = (anchor_start + anchor_end) / 2
-                                dist = abs(a_mid - anchor_mid)
-                                min_dist = min(min_dist, dist)
-
-                            audio_result['temporal_distance'] = min_dist
-
-                        audio_results.sort(key=lambda x: x.get('temporal_distance', float('inf')))
-
-                        n_text = sum(1 for sr in (search_results or []) if sr.get('metadata', {}).get('start') is not None)
-                        n_img = len(temporal_anchors) - n_text
-                        print(f"Audio re-ranking: {n_text} text + {n_img} image = {len(temporal_anchors)} anchors, "
-                              f"closest={audio_results[0]['temporal_distance']:.1f}s, "
-                              f"furthest={audio_results[-1]['temporal_distance']:.1f}s")
-
-                    # Take top 5 after re-ranking
-                    audio_results = audio_results[:5]
-                    print(f"Found {len(audio_results)} relevant audio events")
-                    audio_parts = []
-
-                    for i, audio_result in enumerate(audio_results):
-                        metadata = audio_result['metadata']
-                        description = audio_result['description']
-
-                        audio_parts.append(
-                            f"Audio Event {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
-                            f"Events: {description}"
-                        )
-
-                        # Parse description to extract individual events
-                        # Description format: "laughter (85%), speech (62%), ..."
-                        # Split by comma and parse each event
-                        events_list = description.split(", ")
-
-                        for event_str in events_list[:3]:  # Limit to top 3 events per segment
-                            # Parse "event_type (confidence%)" format
-                            if "(" in event_str and ")" in event_str:
-                                event_type = event_str.split("(")[0].strip()
-                                confidence_str = event_str.split("(")[1].split("%")[0].strip()
-
-                                try:
-                                    confidence = float(confidence_str) / 100.0
-                                except ValueError:
-                                    confidence = 0.5  # Default confidence
-
-                                # Skip low confidence or "emotion:" prefix events for cleaner UI
-                                if confidence < 0.3:
-                                    continue
-
-                                # Handle emotion prefix (e.g., "emotion: happy")
-                                if event_type.startswith("emotion:"):
-                                    event_type = event_type.replace("emotion:", "").strip()
-
-                                # Add individual audio source for each event
-                                audio_sources.append({
-                                    "start_time": f"{int(float(metadata['start']) // 3600):02d}:{int((float(metadata['start']) % 3600) // 60):02d}:{int(float(metadata['start']) % 60):02d}",
-                                    "end_time": f"{int(float(metadata['end']) // 3600):02d}:{int((float(metadata['end']) % 3600) // 60):02d}:{int(float(metadata['end']) % 60):02d}",
-                                    "start": float(metadata['start']),
-                                    "end": float(metadata['end']),
-                                    "speaker": metadata.get('speaker', 'Unknown'),
-                                    "event_type": event_type,
-                                    "confidence": confidence,
-                                    "type": "audio"
-                                })
-
-                    audio_context = "\n".join(audio_parts)
-            except Exception as e:
-                print(f"Warning: Failed to search audio events: {str(e)}")
-                import traceback
-                traceback.print_exc()
-
-        # Build prompt for LLM
-        if include_visuals and image_paths:
-            system_message = """You are an expert AI assistant specialized in analyzing video content, combining both visual and textual information.
-
-Your role:
-- Analyze both the visual content (screenshots) and transcript text
-- Provide detailed, comprehensive answers based on what you see and what is said
-- Always cite specific timestamps when referencing information (use format [HH:MM:SS])
-- Identify speakers and their contributions clearly
-- Describe visual elements when relevant to the question
-- Connect visual and textual information to provide richer insights
-- Offer insights and analysis, not just basic summaries
-- Use markdown formatting for better readability (bold, bullet points, etc.)
-
-Communication style:
-- Think through your analysis out loud: "Looking at this section, I notice...", "What's interesting here is..."
-- Express when something is ambiguous: "The transcript isn't entirely clear on this, but based on the visual context..."
-- Offer constructive observations: "One thing worth noting...", "A potential concern here is..."
-- When you see multiple interpretations, acknowledge them: "This could mean X or Y - based on what I see, I lean toward X because..."
-- If the question could be interpreted multiple ways, briefly ask for clarification at the end
-- Be honest about limitations: "I can see X in the screenshot, but I'd need more context to determine..."
-
-Response structure (use these exact markdown headers):
-- Start with ## Direct Answer — 2-3 sentences directly answering the question
-- Follow with ## Key Analysis — detailed breakdown with bullet points, timestamps, and evidence
-- If screenshots are relevant, add ## Visual Observations — describe what you see in the visual content
-- Use > blockquotes for direct speaker quotes (e.g., > "exact words" — Speaker Name [HH:MM:SS])
-- Use **bold** sparingly for key terms only, not entire sentences
-- Always cite timestamps in [HH:MM:SS] format
-
-Guidelines:
-- When analyzing screenshots, describe what you observe and how it relates to the question
-- Include relevant quotes from speakers when appropriate
-- Explain context, implications, and connections between ideas
-- If asked to summarize, organize information logically with bullet points or sections
-- Reference multiple sources/timestamps to support your answers
-- If the context is insufficient, explain what information is missing"""
-
-            # Append custom instructions if provided
-            if custom_instructions:
-                system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
-
-            user_message_parts = [
-                "Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.",
-                "",
-                "VIDEO TRANSCRIPT CONTEXT:",
-                context,
-                "",
-                "VISUAL CONTEXT (Screenshots provided):",
-                visual_context
-            ]
-
-            if audio_context:
-                user_message_parts.extend([
-                    "",
-                    "AUDIO CONTEXT (Sound Events):",
-                    audio_context
-                ])
-
-            user_message_parts.extend([
-                "",
-                f"QUESTION: {question}",
-                "",
-                "Please provide a detailed, well-structured answer that:",
-                "1. Directly addresses the question",
-                "2. Analyzes both the visual content in the screenshots AND the transcript text"
-            ])
-
-            if audio_context:
-                user_message_parts.append("3. Considers relevant audio events and sound cues")
-                user_message_parts.append("4. Cites specific timestamps and speakers")
-                user_message_parts.append("5. Describes relevant visual elements you observe")
-                user_message_parts.append("6. Provides context and analysis connecting visual, audio, and textual information")
-                user_message_parts.append("7. Uses markdown formatting for clarity")
-            else:
-                user_message_parts.append("3. Cites specific timestamps and speakers")
-                user_message_parts.append("4. Describes relevant visual elements you observe")
-                user_message_parts.append("5. Provides context and analysis connecting visual and textual information")
-                user_message_parts.append("6. Uses markdown formatting for clarity")
-
-            user_message = "\n".join(user_message_parts)
-        else:
-            system_message = """You are an expert AI assistant specialized in analyzing video content and transcripts.
-
-Your role:
-- Provide detailed, comprehensive answers based on the video transcript
-- Always cite specific timestamps when referencing information (use format [HH:MM:SS])
-- Identify speakers and their contributions clearly
-- Connect related points across different parts of the video
-- Offer insights and analysis, not just basic summaries
-- Use markdown formatting for better readability (bold, bullet points, etc.)
-
-Communication style:
-- Think through your analysis out loud: "Looking at this section, I notice...", "What's interesting here is..."
-- Express when something is ambiguous: "The transcript isn't entirely clear on this, but based on the context..."
-- Offer constructive observations: "One thing worth noting...", "A potential concern here is..."
-- When you see multiple interpretations, acknowledge them: "This could mean X or Y - based on the surrounding discussion, I lean toward X because..."
-- If the question could be interpreted multiple ways, briefly ask for clarification at the end
-- Be honest about limitations: "Based on what's in the transcript, I can tell you X, but I'd need more context to determine..."
-
-Response structure (use these exact markdown headers):
-- Start with ## Direct Answer — 2-3 sentences directly answering the question
-- Follow with ## Key Analysis — detailed breakdown with bullet points, timestamps, and evidence
-- Use > blockquotes for direct speaker quotes (e.g., > "exact words" — Speaker Name [HH:MM:SS])
-- Use **bold** sparingly for key terms only, not entire sentences
-- Always cite timestamps in [HH:MM:SS] format
-
-Guidelines:
-- Be thorough and detailed in your responses
-- Include relevant quotes from speakers when appropriate
-- Explain context, implications, and connections between ideas
-- If asked to summarize, organize information logically with bullet points or sections
-- Reference multiple sources/timestamps to support your answers
-- If the context is insufficient, explain what information is missing"""
-
-            # Append custom instructions if provided
-            if custom_instructions:
-                system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
-
-            user_message_parts = [
-                "Based on the following transcript segments from the video, please answer the question comprehensively.",
-                "",
-                "VIDEO TRANSCRIPT CONTEXT:",
-                context
-            ]
-
-            if audio_context:
-                user_message_parts.extend([
-                    "",
-                    "AUDIO CONTEXT (Sound Events):",
-                    audio_context
-                ])
-
-            user_message_parts.extend([
-                "",
-                f"QUESTION: {question}",
-                "",
-                "Please provide a detailed, well-structured answer that:",
-                "1. Directly addresses the question",
-                "2. Cites specific timestamps and speakers",
-                "3. Provides context and analysis"
-            ])
-
-            if audio_context:
-                user_message_parts.append("4. Considers relevant audio events and sound cues")
-                user_message_parts.append("5. Uses markdown formatting for clarity")
-                user_message_parts.append("6. Connects related information from different parts of the video")
-            else:
-                user_message_parts.append("4. Uses markdown formatting for clarity")
-                user_message_parts.append("5. Connects related information from different parts of the video")
-
-            user_message = "\n".join(user_message_parts)
-
-        messages = [
-            {"role": "system", "content": system_message},
-        ]
-
-        # Insert conversation history for multi-turn context (last 10 messages)
-        if chat_request.conversation_history:
-            history = chat_request.conversation_history[-10:]
-            for msg in history:
-                if msg.get("role") in ("user", "assistant"):
-                    messages.append({
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    })
-
-        messages.append({"role": "user", "content": user_message})
+            vis = await _retrieve_visual_context(video_hash, question, n_images)
+            if vis.get("images_indexed"):
+                image_paths = vis["image_paths"]
+                visual_context = vis["visual_context"]
+                visual_sources = vis["visual_sources"]
+                visual_query_used = vis["visual_query_used"]
+                image_results = vis["image_results"]
+
+        # Retrieve audio context
+        audio_context, audio_sources, _ = await _retrieve_audio_context(
+            video_hash, question, search_results, image_results
+        )
+
+        # Build prompt
+        has_images = include_visuals and bool(image_paths)
+        messages = _build_chat_messages(
+            question=question,
+            context=context,
+            visual_context=visual_context,
+            audio_context=audio_context,
+            has_images=has_images,
+            custom_instructions=custom_instructions,
+            conversation_history=chat_request.conversation_history,
+        )
 
         # Get LLM provider and generate response
         try:
             provider = llm_manager.get_provider(provider_name)
 
-            # Use vision API if images are available and provider supports it
             if include_visuals and image_paths and provider.supports_vision():
                 print(f"Using vision-capable model for analysis with {len(image_paths)} images")
                 answer = await provider.generate_with_images(
@@ -939,7 +1026,6 @@ Guidelines:
             "video_hash": video_hash
         }
 
-        # Add visual query if it was used
         if visual_query_used:
             response["visual_query_used"] = visual_query_used
 
@@ -952,6 +1038,193 @@ Guidelines:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@router.post(
+    "/chat/stream",
+    summary="Chat with video (streaming)",
+    description="Chat with a video using RAG with Server-Sent Events streaming",
+    responses={
+        503: {"model": ErrorResponse, "description": "LLM features not available"},
+    }
+)
+@require_auth
+async def chat_with_video_stream(request: Request, chat_request: ChatRequest) -> StreamingResponse:
+    """
+    Chat with a video using RAG with Server-Sent Events streaming.
+
+    Emits one JSON object per SSE data line. Event types:
+      phase   - pipeline stage progress
+      sources - retrieved context metadata
+      token   - LLM output chunk
+      done    - final completion signal
+      error   - pipeline failure
+    """
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    from model_preloader import models_ready, wait_for_models
+
+    async def _event_stream() -> AsyncIterator[str]:
+        def _sse(event: dict) -> str:
+            return f"data: {json.dumps(event)}\n\n"
+
+        # Model preload guard
+        if not models_ready():
+            if not wait_for_models(timeout=5.0):
+                yield _sse({
+                    "type": "error",
+                    "message": "The server just started and is still loading AI models. Please try again in about 30 seconds."
+                })
+                return
+
+        try:
+            question = chat_request.question
+            video_hash = chat_request.video_hash
+            provider_name = chat_request.provider
+            n_results = chat_request.n_results or 8
+            include_visuals = chat_request.include_visuals or False
+            n_images = chat_request.n_images or 4
+            custom_instructions = chat_request.custom_instructions
+
+            if not question:
+                yield _sse({"type": "error", "message": "Question is required"})
+                return
+
+            # Resolve video_hash
+            if not video_hash:
+                global _last_transcription_data
+                if not _last_transcription_data:
+                    yield _sse({"type": "error", "message": "No video available for chat"})
+                    return
+                video_hash = _last_transcription_data.get('video_hash')
+
+            # Auto-index check
+            if not vector_store.collection_exists(video_hash):
+                transcription = get_transcription_from_any_source(video_hash)
+                if transcription:
+                    segments = transcription.get('transcription', {}).get('segments', [])
+                    print(f"Auto-indexing video {video_hash}...")
+                    await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+                else:
+                    yield _sse({"type": "error", "message": "Video not indexed. Please index it first using /api/index_video/"})
+                    return
+
+            # Phase: text search
+            yield _sse({"type": "phase", "phase": "searching", "label": "Searching transcript"})
+
+            search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
+
+            if not search_results:
+                yield _sse({"type": "sources", "sources": [], "visual_query_used": None})
+                yield _sse({"type": "token", "content": "I couldn't find relevant information in the video to answer your question."})
+                yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
+                return
+
+            # Visual retrieval
+            image_paths = []
+            visual_context = ""
+            visual_sources = []
+            visual_query_used = None
+            image_results = []
+
+            if include_visuals:
+                # Determine upfront if images are indexed so we only emit phases
+                # that will actually run.
+                use_supabase = _use_supabase_for_images()
+                if use_supabase:
+                    _images_indexed_check = image_embedding_service.image_collection_exists(video_hash)
+                else:
+                    _images_indexed_check = vector_store.image_collection_exists(video_hash)
+
+                if _images_indexed_check:
+                    # The phase_cb emits SSE events from within the helper at
+                    # the right moment (after CLIP search, before face scoring).
+                    # yield is not available inside a nested function, so we
+                    # write to a shared list and drain it after the helper returns.
+                    _pending_events: list = []
+
+                    async def _phase_cb(phase: str, label: str) -> None:
+                        _pending_events.append(_sse({"type": "phase", "phase": phase, "label": label}))
+
+                    vis = await _retrieve_visual_context(video_hash, question, n_images, phase_cb=_phase_cb)
+
+                    # Drain any phase events that were queued during the helper call
+                    for evt in _pending_events:
+                        yield evt
+
+                    if vis.get("images_indexed"):
+                        image_paths = vis["image_paths"]
+                        visual_context = vis["visual_context"]
+                        visual_sources = vis["visual_sources"]
+                        visual_query_used = vis["visual_query_used"]
+                        image_results = vis["image_results"]
+
+            # Audio context
+            audio_indexed = vector_store.audio_collection_exists(video_hash)
+            if audio_indexed:
+                yield _sse({"type": "phase", "phase": "analyzing_audio", "label": "Scanning audio events"})
+
+            audio_context, audio_sources, _ = await _retrieve_audio_context(
+                video_hash, question, search_results, image_results
+            )
+
+            # Emit sources event
+            all_sources = sources + visual_sources + audio_sources
+            yield _sse({"type": "sources", "sources": all_sources, "visual_query_used": visual_query_used})
+
+            # Build messages
+            has_images = include_visuals and bool(image_paths)
+            messages = _build_chat_messages(
+                question=question,
+                context=context,
+                visual_context=visual_context,
+                audio_context=audio_context,
+                has_images=has_images,
+                custom_instructions=custom_instructions,
+                conversation_history=chat_request.conversation_history,
+            )
+
+            # LLM generation
+            yield _sse({"type": "phase", "phase": "generating", "label": "Writing answer"})
+
+            provider = llm_manager.get_provider(provider_name)
+
+            if include_visuals and image_paths and provider.supports_vision():
+                print(f"Using vision-capable model for analysis with {len(image_paths)} images")
+                answer = await provider.generate_with_images(
+                    messages,
+                    image_paths,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                yield _sse({"type": "token", "content": answer})
+            else:
+                if include_visuals and image_paths and not provider.supports_vision():
+                    print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
+                async for chunk in provider.generate_stream(messages, temperature=0.7, max_tokens=2000):
+                    yield _sse({"type": "token", "content": chunk})
+
+            yield _sse({
+                "type": "done",
+                "provider_used": provider_name or llm_manager.default_provider,
+                "video_hash": video_hash
+            })
+
+        except Exception as e:
+            print(f"Error in streaming chat: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            yield _sse({"type": "error", "message": str(e)})
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        }
+    )
 
 
 @router.get(
