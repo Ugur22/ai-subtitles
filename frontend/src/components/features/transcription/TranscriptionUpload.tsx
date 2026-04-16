@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, Fragment } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import toast from "react-hot-toast";
 import axios from "axios";
@@ -33,6 +33,8 @@ import { JumpToTimeModal } from "./JumpToTimeModal";
 import { ProcessingOverlay } from "./ProcessingOverlay";
 import { TranscriptSegmentList } from "./TranscriptSegmentList";
 import { UploadZone } from "./UploadZone";
+import { RecentTranscriptions } from "./RecentTranscriptions";
+import { Job } from "../../../types/job";
 import { useFileUpload } from "../../../hooks/useFileUpload";
 import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
@@ -337,6 +339,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       selectedLanguage
     );
   };
+
+  const handleViewTranscript = useCallback((job: Job) => {
+    if (job.result_json) {
+      setTranscription(job.result_json);
+      setVideoUrl(
+        `${API_BASE_URL}/api/jobs/${job.job_id}/video?token=${job.access_token}`
+      );
+      setShowJobPanel(false);
+    }
+  }, [setTranscription, setVideoUrl, setShowJobPanel]);
 
   const startNewTranscription = () => {
     // Set flag to hide progress bar
@@ -699,7 +711,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       <div className="h-full px-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 48px)' }}>
+          <div style={{ paddingBottom: '64px' }}>
             <UploadZone
               file={file}
               dragActive={dragActive}
@@ -718,6 +730,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               processingStatus={processingStatus}
               elapsedTime={elapsedTime}
               languageOptions={languageOptions}
+            />
+            <RecentTranscriptions
+              jobs={jobTracker.jobs}
+              onViewJob={handleViewTranscript}
+              onViewAll={() => setShowJobPanel(true)}
             />
           </div>
         )}
@@ -1582,17 +1599,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       <JobPanel
         isOpen={showJobPanel}
         onClose={() => setShowJobPanel(false)}
-        onViewTranscript={(job) => {
-          // Load the job result as the current transcription
-          if (job.result_json) {
-            setTranscription(job.result_json);
-            // Set video URL from job video endpoint (streams from GCS)
-            setVideoUrl(
-              `${API_BASE_URL}/api/jobs/${job.job_id}/video?token=${job.access_token}`
-            );
-            setShowJobPanel(false);
-          }
-        }}
+        onViewTranscript={handleViewTranscript}
       />
 
       {/* Enroll Speaker Modal */}
