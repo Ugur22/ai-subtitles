@@ -1202,8 +1202,18 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             else:
                 if include_visuals and image_paths and not provider.supports_vision():
                     print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
+                got_any_token = False
                 async for chunk in provider.generate_stream(messages, temperature=0.7, max_tokens=2000):
+                    got_any_token = True
                     yield _sse({"type": "token", "content": chunk})
+                # Fallback: some providers (e.g. xAI reasoning models) may not
+                # emit delta.content chunks. If no tokens streamed, run the
+                # non-streaming call and emit the full answer as one token.
+                if not got_any_token:
+                    print("Stream yielded no tokens; falling back to non-streaming generate()")
+                    answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
+                    if answer:
+                        yield _sse({"type": "token", "content": answer})
 
             yield _sse({
                 "type": "done",
