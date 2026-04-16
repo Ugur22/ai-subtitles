@@ -735,6 +735,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               jobs={jobTracker.jobs}
               onViewJob={handleViewTranscript}
               onViewAll={() => setShowJobPanel(true)}
+              isLoading={jobTracker.isLoading}
             />
           </div>
         )}

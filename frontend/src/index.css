@@ -234,6 +234,26 @@ body {
   .animate-scaleIn { animation: scaleIn 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
   .animate-fade-in { animation: fadeIn  0.15s ease-out; }
 
+  @keyframes skeletonPulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 0.95; }
+  }
+  .recent-skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--bg-subtle) 0%,
+      var(--bg-surface) 50%,
+      var(--bg-subtle) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeletonPulse 1.4s ease-in-out infinite,
+               skeletonShimmer 1.8s linear infinite;
+  }
+  @keyframes skeletonShimmer {
+    0%   { background-position: -150% 0; }
+    100% { background-position:  150% 0; }
+  }
+
   @keyframes phaseShimmer {
     0%   { background-position: -200% 0; }
     100% { background-position:  200% 0; }

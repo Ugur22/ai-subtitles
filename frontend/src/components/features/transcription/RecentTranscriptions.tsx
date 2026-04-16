@@ -6,19 +6,62 @@ interface RecentTranscriptionsProps {
   jobs: Job[];
   onViewJob: (job: Job) => void;
   onViewAll: () => void;
+  isLoading?: boolean;
 }
+
+const SkeletonRow: React.FC = () => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: "12px",
+      width: "100%",
+      padding: "10px 12px",
+    }}
+  >
+    <div
+      className="recent-skeleton"
+      style={{
+        width: "32px",
+        height: "32px",
+        borderRadius: "8px",
+        flexShrink: 0,
+      }}
+    />
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div
+        className="recent-skeleton"
+        style={{
+          height: "12px",
+          width: "70%",
+          borderRadius: "4px",
+          marginBottom: "6px",
+        }}
+      />
+      <div
+        className="recent-skeleton"
+        style={{
+          height: "10px",
+          width: "35%",
+          borderRadius: "4px",
+        }}
+      />
+    </div>
+  </div>
+);
 
 export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
   jobs,
   onViewJob,
   onViewAll,
+  isLoading = false,
 }) => {
   const recent = jobs
     .filter((j) => j.status === "completed")
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 5);
 
-  if (recent.length === 0) return null;
+  if (!isLoading && recent.length === 0) return null;
 
   return (
     <div style={{ maxWidth: "720px", margin: "48px auto 0", padding: "0 24px" }}>
@@ -42,33 +85,42 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
         >
           Recent
         </span>
-        <button
-          onClick={onViewAll}
-          className="btn-ghost"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "4px 8px",
-            fontSize: "12px",
-            fontWeight: 500,
-          }}
-        >
-          View all
-          <svg
-            style={{ width: "12px", height: "12px" }}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2}
+        {!isLoading && (
+          <button
+            onClick={onViewAll}
+            className="btn-ghost"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "4px 8px",
+              fontSize: "12px",
+              fontWeight: 500,
+            }}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
+            View all
+            <svg
+              style={{ width: "12px", height: "12px" }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Rows */}
       <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+        {isLoading && recent.length === 0 && (
+          <>
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </>
+        )}
         {recent.map((job) => {
           const duration = job.result_json?.transcription?.duration;
           return (
