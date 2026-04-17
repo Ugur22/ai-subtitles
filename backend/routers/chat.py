@@ -1204,6 +1204,14 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     answer = ""
                 answer = (answer or "").strip()
                 print(f"[chat/stream] vision answer length: {len(answer)}")
+                if answer:
+                    _has_direct = "## direct answer" in answer.lower()
+                    _has_visual = "## visual observation" in answer.lower()
+                    print(
+                        f"[chat/stream] headings present — direct_answer={_has_direct} "
+                        f"visual_observations={_has_visual} "
+                        f"preview={answer[:160]!r}"
+                    )
                 if len(answer) < 20:
                     print("[chat/stream] Vision returned empty/short; falling back to text-only generate()")
                     try:

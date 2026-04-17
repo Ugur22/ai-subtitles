@@ -261,27 +261,42 @@ function splitIntoSections(
   let currentHeading = "";
   let currentBody: string[] = [];
 
+  const flush = () => {
+    if (currentHeading || currentBody.length > 0) {
+      sections.push({
+        heading: currentHeading,
+        body: currentBody.join("\n").trim(),
+      });
+    }
+  };
+
+  // Accept a few heading styles the LLM sometimes emits:
+  //   ## Heading        (canonical)
+  //   ### Heading       (deeper level)
+  //   **Heading**       or **Heading:** on its own line
+  const headingPatterns: RegExp[] = [
+    /^\s*#{2,6}\s+(.+?)\s*:?\s*$/,
+    /^\s*\*\*(.+?)\*\*\s*:?\s*$/,
+  ];
+
   for (const line of lines) {
-    const h2Match = line.match(/^## (.+)/);
-    if (h2Match) {
-      if (currentHeading || currentBody.length > 0) {
-        sections.push({
-          heading: currentHeading,
-          body: currentBody.join("\n").trim(),
-        });
+    let heading: string | null = null;
+    for (const re of headingPatterns) {
+      const m = line.match(re);
+      if (m) {
+        heading = m[1].replace(/:$/, "").trim();
+        break;
       }
-      currentHeading = h2Match[1];
+    }
+    if (heading) {
+      flush();
+      currentHeading = heading;
       currentBody = [];
     } else {
       currentBody.push(line);
     }
   }
-  if (currentHeading || currentBody.length > 0) {
-    sections.push({
-      heading: currentHeading,
-      body: currentBody.join("\n").trim(),
-    });
-  }
+  flush();
   return sections;
 }
 
@@ -565,7 +580,23 @@ const AssistantMessageContent: React.FC<{
     );
   }
 
-  const sections = useMemo(() => splitIntoSections(content), [content]);
+  const sections = useMemo(() => {
+    const raw = splitIntoSections(content);
+    const hasDirectAnswer = raw.some((s) =>
+      s.heading.toLowerCase().includes("direct answer"),
+    );
+    if (hasDirectAnswer) return raw;
+    // LLM skipped the "## Direct Answer" heading (happens intermittently
+    // with Grok). Promote the first pre-heading prose block to a synthetic
+    // Direct Answer so the highlight card still renders.
+    const firstProseIdx = raw.findIndex(
+      (s) => !s.heading && s.body.trim().length > 0,
+    );
+    if (firstProseIdx === -1) return raw;
+    return raw.map((s, i) =>
+      i === firstProseIdx ? { ...s, heading: "Direct Answer" } : s,
+    );
+  }, [content]);
   const hasMultipleSections = sections.filter((s) => s.heading).length >= 2;
   const totalLength = content.length;
   const shouldCollapse = hasMultipleSections && totalLength > 1500;
