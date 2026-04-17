@@ -1111,7 +1111,27 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       isStreaming: true,
     };
 
-    setMessages((prev) => [...prev, userMessage, placeholderAssistant]);
+    setMessages((prev) => {
+      // Finalize any prior streaming assistant message so only the new
+      // placeholder drives the PhaseIndicator. A stream can get stuck
+      // (backend timeout, dropped connection) and leave isStreaming=true,
+      // which otherwise makes older messages keep pulsing.
+      const finalized = prev.map((m) => {
+        if (m.role !== "assistant" || !m.isStreaming) return m;
+        if (m.content) {
+          return { ...m, isStreaming: false };
+        }
+        return {
+          ...m,
+          isStreaming: false,
+          isError: true,
+          errorType: "server" as const,
+          content: "That request didn't finish. Retry?",
+          retryQuestion: m.original_question,
+        };
+      });
+      return [...finalized, userMessage, placeholderAssistant];
+    });
     setInput("");
     setLoading(true);
     setRetryCount(0);
