@@ -1192,13 +1192,33 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
 
             if include_visuals and image_paths and provider.supports_vision():
                 print(f"Using vision-capable model for analysis with {len(image_paths)} images")
-                answer = await provider.generate_with_images(
-                    messages,
-                    image_paths,
-                    temperature=0.7,
-                    max_tokens=2000
-                )
-                yield _sse({"type": "token", "content": answer})
+                try:
+                    answer = await provider.generate_with_images(
+                        messages,
+                        image_paths,
+                        temperature=0.7,
+                        max_tokens=2000
+                    )
+                except Exception as vision_err:
+                    print(f"[chat/stream] generate_with_images failed: {vision_err}")
+                    answer = ""
+                answer = (answer or "").strip()
+                print(f"[chat/stream] vision answer length: {len(answer)}")
+                if len(answer) < 20:
+                    print("[chat/stream] Vision returned empty/short; falling back to text-only generate()")
+                    try:
+                        answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
+                    except Exception as gen_err:
+                        print(f"[chat/stream] text fallback after vision failed: {gen_err}")
+                        answer = ""
+                    print(f"[chat/stream] text fallback returned {len(answer or '')} chars")
+                if answer:
+                    yield _sse({"type": "token", "content": answer})
+                else:
+                    yield _sse({
+                        "type": "token",
+                        "content": "The model did not return an answer for this query. Try rephrasing, or turn off visual analysis."
+                    })
             else:
                 if include_visuals and image_paths and not provider.supports_vision():
                     print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
