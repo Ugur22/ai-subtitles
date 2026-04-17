@@ -785,7 +785,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("grok");
-  const [includeVisuals, setIncludeVisuals] = useState(false);
+  const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
   const VISION_SUPPORTED_PROVIDERS = ["grok", "grok-deep", "openai", "anthropic"];

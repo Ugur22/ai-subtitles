@@ -1192,13 +1192,34 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
 
             if include_visuals and image_paths and provider.supports_vision():
                 print(f"Using vision-capable model for analysis with {len(image_paths)} images")
-                try:
-                    answer = await provider.generate_with_images(
+                # Vision providers are non-streaming, so the call blocks for
+                # ~10s with no bytes on the SSE socket. Intermediate proxies
+                # can drop idle connections and lose the big token event that
+                # follows. Run the call as a task and emit a lightweight phase
+                # heartbeat every few seconds to keep the socket warm.
+                vision_task = asyncio.create_task(
+                    provider.generate_with_images(
                         messages,
                         image_paths,
                         temperature=0.7,
-                        max_tokens=2000
+                        max_tokens=2000,
                     )
+                )
+                while not vision_task.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(vision_task), timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        yield _sse({
+                            "type": "phase",
+                            "phase": "generating",
+                            "label": "Writing answer",
+                        })
+                    except Exception:
+                        break
+                try:
+                    answer = vision_task.result()
                 except Exception as vision_err:
                     print(f"[chat/stream] generate_with_images failed: {vision_err}")
                     answer = ""
