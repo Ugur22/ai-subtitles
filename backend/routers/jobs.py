@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import settings
-from middleware.auth import require_auth, require_admin
+from middleware.auth import require_auth, require_admin, optional_auth
 
 
 # Executor for non-blocking database operations
@@ -986,3 +986,51 @@ async def stream_job_video(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to stream video")
+
+
+@router.get("/{job_id}/video_url")
+@optional_auth
+async def get_job_video_url(
+    request: Request,
+    job_id: str,
+    token: Optional[str] = Query(None, description="Access token for this job (optional if authenticated)")
+):
+    """
+    Return a short-lived signed GCS URL for the job's video.
+
+    Authorization: either a valid per-job access token, or an authenticated
+    user who owns the job. Returns JSON so the frontend can plug the signed
+    URL directly into a `<video>` tag.
+    """
+    from services.gcs_service import gcs_service
+
+    user = getattr(request.state, "user", None)
+    user_id = user["id"] if user else None
+
+    job = require_job_access(job_id, token, user_id)
+
+    if job.get("status") != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job is not completed (current status: {job.get('status')})"
+        )
+
+    result_json = job.get("result_json") or {}
+    gcs_path = job.get("gcs_path") or result_json.get("gcs_path")
+    if not gcs_path:
+        raise HTTPException(status_code=404, detail="Video file path not found in job result")
+
+    try:
+        if not gcs_service.file_exists(gcs_path):
+            raise HTTPException(status_code=404, detail="Video file not found in storage")
+
+        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Jobs] Error generating signed URL for job {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate video URL")
+
+    return {"download_url": signed_url, "expires_in": 3600}

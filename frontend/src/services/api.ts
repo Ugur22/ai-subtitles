@@ -624,6 +624,21 @@ export const deleteJobPermanent = async (jobId: string, token: string): Promise<
 };
 
 /**
+ * Fetch a short-lived signed GCS URL for a completed job's video.
+ * Authorized by cookie session (owner) or per-job access token.
+ */
+export const getJobVideoUrl = async (
+  jobId: string,
+  token?: string | null
+): Promise<{ download_url: string; expires_in: number }> => {
+  const response = await api.get<{ download_url: string; expires_in: number }>(
+    `/api/jobs/${jobId}/video_url`,
+    token ? { params: { token } } : undefined
+  );
+  return response.data;
+};
+
+/**
  * Submission progress stages
  */
 export type SubmissionStage = 'hashing' | 'uploading' | 'submitting' | 'complete';
