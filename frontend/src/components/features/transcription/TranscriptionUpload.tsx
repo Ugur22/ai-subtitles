@@ -9,6 +9,7 @@ import {
   updateSpeakerName,
   enrollSpeaker,
   autoIdentifySpeakers,
+  getJobVideoUrl,
 } from "../../../services/api";
 import { API_BASE_URL } from "../../../config";
 import {
@@ -340,13 +341,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     );
   };
 
-  const handleViewTranscript = useCallback((job: Job) => {
-    if (job.result_json) {
-      setTranscription(job.result_json);
-      setVideoUrl(
-        `${API_BASE_URL}/api/jobs/${job.job_id}/video?token=${job.access_token}`
-      );
-      setShowJobPanel(false);
+  const handleViewTranscript = useCallback(async (job: Job) => {
+    if (!job.result_json) return;
+    setTranscription(job.result_json);
+    setShowJobPanel(false);
+    try {
+      const { download_url } = await getJobVideoUrl(job.job_id, job.access_token);
+      setVideoUrl(download_url);
+    } catch (err) {
+      console.error("Failed to load video URL for job", job.job_id, err);
+      toast.error("Could not load video. It may have been removed.");
+      setVideoUrl(null);
     }
   }, [setTranscription, setVideoUrl, setShowJobPanel]);
 

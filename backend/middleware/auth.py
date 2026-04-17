@@ -339,6 +339,61 @@ def require_auth(func):
     return wrapper
 
 
+def optional_auth(func):
+    """
+    Decorator that attempts authentication but never raises.
+
+    Populates request.state.user and request.state.profile when cookies are
+    valid; sets them to None otherwise. Use on endpoints that accept either an
+    authenticated session or another authorization mechanism (e.g. a per-job
+    access token).
+    """
+    @wraps(func)
+    async def wrapper(request: Request, *args, **kwargs):
+        request.state.user = None
+        request.state.profile = None
+
+        token = _get_token_from_request(request)
+        if not token:
+            return await func(request, *args, **kwargs)
+
+        cached = _get_cached_verification(token)
+        if cached:
+            request.state.user = cached["user"]
+            request.state.profile = cached["profile"]
+            return await func(request, *args, **kwargs)
+
+        user = await _verify_supabase_token_async(token)
+        if not user:
+            refresh_token = request.cookies.get("auth_refresh_token")
+            if refresh_token:
+                refresh_result = await _refresh_supabase_session_async(refresh_token)
+                if refresh_result:
+                    user = refresh_result["user"]
+                    request.state.refreshed_tokens = {
+                        "access_token": refresh_result["access_token"],
+                        "refresh_token": refresh_result["refresh_token"]
+                    }
+
+        if not user or not user.get("email_confirmed_at"):
+            return await func(request, *args, **kwargs)
+
+        profile = await _get_user_profile_async(user["id"])
+        if not profile or not profile.get("email_verified", False):
+            return await func(request, *args, **kwargs)
+
+        cache_token = token
+        if hasattr(request.state, 'refreshed_tokens'):
+            cache_token = request.state.refreshed_tokens["access_token"]
+        _cache_token_verification(cache_token, user, profile)
+
+        request.state.user = user
+        request.state.profile = profile
+        return await func(request, *args, **kwargs)
+
+    return wrapper
+
+
 def require_admin(func):
     """
     Decorator to require admin authentication for an endpoint.
