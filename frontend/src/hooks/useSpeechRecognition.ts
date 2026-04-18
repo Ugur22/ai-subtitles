@@ -38,43 +38,68 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
     rec.interimResults = true;
     rec.lang = opts.lang ?? 'en-US';
 
+    rec.onstart = () => {
+      console.log('[speech] start');
+      setStatus('listening');
+      setError(null);
+    };
+    rec.onaudiostart = () => console.log('[speech] audiostart');
+    rec.onspeechstart = () => console.log('[speech] speechstart');
+    rec.onspeechend = () => console.log('[speech] speechend');
+
     rec.onresult = (e: any) => {
+      console.log('[speech] result event, results.length =', e.results.length);
       let interimText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         if (r.isFinal) {
-          onFinalRef.current?.(String(r[0].transcript).trim());
+          const finalText = String(r[0].transcript).trim();
+          console.log('[speech] final:', finalText);
+          onFinalRef.current?.(finalText);
         } else {
           interimText += r[0].transcript;
         }
       }
       setInterim(interimText);
     };
+
     rec.onerror = (e: any) => {
+      console.warn('[speech] error:', e.error);
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         userStoppedRef.current = true;
         setStatus('denied');
         setError(e.error);
+      } else if (e.error === 'aborted') {
+        userStoppedRef.current = true;
+        setStatus('idle');
+        setError(e.error);
       } else {
-        // 'no-speech', 'audio-capture', etc. — let onend handle restart
+        // 'no-speech', 'audio-capture', etc. — benign, let onend restart
         setError(e.error || 'speech-error');
       }
     };
+
     rec.onend = () => {
+      console.log('[speech] end (userStopped=', userStoppedRef.current, ')');
       setInterim('');
       if (userStoppedRef.current) {
         setStatus('idle');
         return;
       }
-      try {
-        rec.start();
-      } catch {
-        setStatus('idle');
-      }
+      setTimeout(() => {
+        if (userStoppedRef.current) return;
+        try {
+          rec.start();
+        } catch (err) {
+          console.warn('[speech] restart failed:', err);
+          setStatus('idle');
+        }
+      }, 200);
     };
 
     recRef.current = rec;
     return () => {
+      userStoppedRef.current = true;
       try { rec.stop(); } catch { /* noop */ }
     };
   }, [isSupported, opts.lang]);
@@ -85,9 +110,9 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
     userStoppedRef.current = false;
     try {
       recRef.current.start();
-      setStatus('listening');
-    } catch {
-      /* already started */
+      // status flips to 'listening' from rec.onstart
+    } catch (err) {
+      console.warn('[speech] start failed:', err);
     }
   }, [status]);
 
