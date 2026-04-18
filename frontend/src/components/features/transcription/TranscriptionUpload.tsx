@@ -933,33 +933,30 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     {/* Custom Progress Bar with Tooltip and Screenshot Preview */}
                     {videoRef && (
                       <>
+                        <div className="bg-gradient-to-t from-black/70 via-black/20 to-transparent pt-4">
                         <div className="flex items-center px-4 py-2 gap-4">
                           {/* Play/Pause Button */}
                           <button
                             onClick={handlePlayPause}
-                            className="flex items-center justify-center"
                             aria-label={isPlaying ? "Pause" : "Play"}
+                            className="group flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                           >
                             {isPlaying ? (
                               <svg
-                                className="w-6 h-6"
-                                style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
+                                className="w-6 h-6 transition-colors duration-150"
+                                style={{ color: 'var(--player-icon)' }}
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
-                                onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
-                                onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
                               >
                                 <rect x="6" y="4" width="4" height="16" rx="1" />
                                 <rect x="14" y="4" width="4" height="16" rx="1" />
                               </svg>
                             ) : (
                               <svg
-                                className="w-6 h-6"
-                                style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
+                                className="w-6 h-6 transition-colors duration-150"
+                                style={{ color: 'var(--player-icon)' }}
                                 fill="currentColor"
                                 viewBox="0 0 24 24"
-                                onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
-                                onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
                               >
                                 <path d="M8 5v14l11-7z" />
                               </svg>
@@ -968,54 +965,50 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                           {/* Volume Control */}
                           <div className="flex items-center space-x-2">
-                            <svg
-                              className="w-5 h-5 cursor-pointer"
-                              style={{ color: 'var(--text-secondary)', transition: 'color 100ms ease' }}
-                              onMouseEnter={e => (e.currentTarget as SVGElement).style.color = 'var(--text-primary)'}
-                              onMouseLeave={e => (e.currentTarget as SVGElement).style.color = 'var(--text-secondary)'}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
+                            <button
+                              type="button"
                               onClick={() => {
                                 if (videoRef) {
-                                  const newVolume = volume === 0 ? 1 : 0;
-                                  // Volume is managed by useVideoPlayer hook
-                                  videoRef.volume = newVolume;
+                                  videoRef.volume = volume === 0 ? 1 : 0;
                                 }
                               }}
+                              aria-label={volume === 0 ? "Unmute" : "Mute"}
+                              className="group flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                             >
-                              {volume === 0 ? (
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                                />
-                              ) : (
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                                />
-                              )}
-                            </svg>
+                              <svg
+                                className="w-5 h-5 transition-colors duration-150"
+                                style={{ color: 'var(--player-icon)' }}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                {volume === 0 ? (
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+                                  />
+                                ) : (
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+                                  />
+                                )}
+                              </svg>
+                            </button>
                             <input
                               type="range"
                               min="0"
                               max="1"
-                              step="0.1"
+                              step="0.05"
                               value={volume}
                               onChange={handleVolumeChange}
-                              style={{
-                                width: '72px',
-                                height: '3px',
-                                appearance: 'none',
-                                cursor: 'pointer',
-                                backgroundColor: 'var(--border-default)',
-                                borderRadius: '2px',
-                                accentColor: 'var(--accent)',
-                              }}
+                              aria-label="Volume"
+                              className="player-volume-slider rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                              style={{ width: '80px', ['--vol' as string]: volume } as React.CSSProperties}
                             />
                           </div>
                         </div>
@@ -1053,6 +1046,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           }}
                           chapters={chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title }))}
                         />
+                        </div>
                         <div className="flex justify-end px-4 pb-2">
                           <button
                             className="btn-ghost"

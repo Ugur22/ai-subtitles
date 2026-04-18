@@ -64,6 +64,40 @@
   --c-warning: oklch(78% 0.15 65);
 }
 
+/* ─── Player Controls (always overlay dark video) ──────────────────────────── */
+:root, .dark {
+  --player-icon:  oklch(88% 0.005 250);
+  --player-track: oklch(55% 0.008 250);
+}
+
+.player-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) calc(var(--vol, 1) * 100%),
+    var(--player-track) calc(var(--vol, 1) * 100%)
+  );
+}
+.player-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px oklch(70% 0.18 145 / 0.25);
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+.player-volume-slider:hover::-webkit-slider-thumb { transform: scale(1.15); }
+.player-volume-slider::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: none;
+  box-shadow: 0 0 0 3px oklch(70% 0.18 145 / 0.25);
+}
+
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 html {
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
