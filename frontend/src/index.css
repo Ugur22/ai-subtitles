@@ -19,7 +19,7 @@
   /* Text */
   --text-primary:   oklch(13% 0.012 250);  /* ~#1C1C1E — 18:1 contrast on surface */
   --text-secondary: oklch(42% 0.010 250);  /* ~6.5:1 on surface, WCAG AA          */
-  --text-tertiary:  oklch(60% 0.008 250);  /* ~4.5:1 on surface, WCAG AA large    */
+  --text-tertiary:  oklch(50% 0.010 250);  /* ~5:1 on surface, WCAG AA body text  */
 
   /* Accent — darkened for WCAG AA on white bg (5.1:1) */
   --accent:      oklch(42% 0.18 145);
@@ -50,7 +50,7 @@
   /* Text */
   --text-primary:   oklch(93% 0.005 250);
   --text-secondary: oklch(62% 0.008 250);
-  --text-tertiary:  oklch(40% 0.008 250);
+  --text-tertiary:  oklch(60% 0.008 250);  /* ~4.4:1 on surface, WCAG AA body text */
 
   /* Accent — electric emerald */
   --accent:      oklch(70% 0.18 145);
