@@ -181,7 +181,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                           padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600,
                           fontVariantNumeric: 'tabular-nums', cursor: 'pointer',
                           backgroundColor: 'var(--accent-dim)', color: 'var(--accent)',
-                          border: '1px solid oklch(78% 0.17 75 / 0.25)',
+                          border: '1px solid var(--accent-border)',
                           transition: 'opacity 100ms ease',
                         }}
                         title="Jump to timestamp"
