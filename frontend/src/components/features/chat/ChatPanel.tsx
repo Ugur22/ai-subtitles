@@ -10,6 +10,7 @@ import {
 import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { listSpeakers, getFaceTagSpeakers } from "../../../services/api";
+import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
@@ -803,6 +804,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const speech = useSpeechRecognition({
+    onFinalTranscript: (text) => {
+      if (!text) return;
+      setInput(prev => (prev ? prev.trimEnd() + ' ' : '') + text);
+    },
+  });
 
 
   // @mention autocomplete state
@@ -2175,6 +2183,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             className="input-base flex-1 px-4 py-3"
             disabled={loading}
           />
+          {speech.isSupported && (
+            <button
+              type="button"
+              onClick={() => (speech.status === 'listening' ? speech.stop() : speech.start())}
+              disabled={loading}
+              aria-label={speech.status === 'listening' ? 'Stop dictation' : 'Start dictation'}
+              title={speech.status === 'denied' ? 'Microphone permission denied' : 'Voice input'}
+              className={`relative px-3 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                speech.status === 'listening' ? 'bg-red-500/15 text-red-500' : 'btn-ghost'
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+              </svg>
+              {speech.status === 'listening' && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              )}
+            </button>
+          )}
           <button
             onClick={sendMessage}
             disabled={loading || !input.trim()}
