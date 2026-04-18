@@ -27,6 +27,7 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recRef = useRef<any>(null);
+  const userStoppedRef = useRef(false);
   const onFinalRef = useRef(opts.onFinalTranscript);
   onFinalRef.current = opts.onFinalTranscript;
 
@@ -50,13 +51,26 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
       setInterim(interimText);
     };
     rec.onerror = (e: any) => {
-      if (e.error === 'not-allowed') setStatus('denied');
-      else setStatus('error');
-      setError(e.error || 'speech-error');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        userStoppedRef.current = true;
+        setStatus('denied');
+        setError(e.error);
+      } else {
+        // 'no-speech', 'audio-capture', etc. — let onend handle restart
+        setError(e.error || 'speech-error');
+      }
     };
     rec.onend = () => {
       setInterim('');
-      setStatus(prev => (prev === 'listening' ? 'idle' : prev));
+      if (userStoppedRef.current) {
+        setStatus('idle');
+        return;
+      }
+      try {
+        rec.start();
+      } catch {
+        setStatus('idle');
+      }
     };
 
     recRef.current = rec;
@@ -68,6 +82,7 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
   const start = useCallback(() => {
     if (!recRef.current || status === 'listening') return;
     setError(null);
+    userStoppedRef.current = false;
     try {
       recRef.current.start();
       setStatus('listening');
@@ -78,6 +93,7 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
 
   const stop = useCallback(() => {
     if (!recRef.current) return;
+    userStoppedRef.current = true;
     try { recRef.current.stop(); } catch { /* noop */ }
     setStatus('idle');
   }, []);

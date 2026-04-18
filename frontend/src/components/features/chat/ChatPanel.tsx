@@ -2226,6 +2226,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </svg>
           </button>
         </div>
+        {speech.status === 'listening' && (
+          <div className="px-2 pt-2 text-xs flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+            <span className="inline-flex w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+            <span>
+              Listening — click mic to stop
+              {speech.interim ? ` · "${speech.interim}"` : '…'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Screenshot Modal with Slideshow */}
