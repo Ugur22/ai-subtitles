@@ -44,14 +44,14 @@ function formatTime(seconds: number) {
 }
 
 const EMOTION_COLORS: Record<string, string> = {
-  happy: "rgba(250,204,21,0.7)",
-  sad: "rgba(96,165,250,0.7)",
-  angry: "rgba(248,113,113,0.7)",
-  fearful: "rgba(192,132,252,0.7)",
-  surprised: "rgba(251,146,60,0.7)",
-  disgust: "rgba(74,222,128,0.7)",
-  neutral: "rgba(156,163,175,0.35)",
-  calm: "rgba(156,163,175,0.35)",
+  happy:     'oklch(75% 0.12 80 / 0.32)',
+  sad:       'oklch(70% 0.09 240 / 0.32)',
+  angry:     'oklch(65% 0.13 25 / 0.32)',
+  fearful:   'oklch(68% 0.10 290 / 0.32)',
+  surprised: 'oklch(72% 0.12 55 / 0.32)',
+  disgust:   'oklch(68% 0.10 130 / 0.32)',
+  neutral:   'oklch(60% 0.01 250 / 0.25)',
+  calm:      'oklch(60% 0.01 250 / 0.25)',
 };
 
 const EMOTION_EMOJI: Record<string, string> = {
@@ -66,26 +66,26 @@ const EMOTION_EMOJI: Record<string, string> = {
 };
 
 const AMBIENT_COLORS: Record<string, string> = {
-  music: "rgba(218,112,214,0.55)",
-  singing: "rgba(218,112,214,0.55)",
-  laughter: "rgba(255,223,186,0.55)",
-  crying: "rgba(135,206,250,0.55)",
-  rain: "rgba(0,191,255,0.55)",
-  water: "rgba(0,191,255,0.55)",
-  wind: "rgba(176,224,230,0.55)",
-  thunder: "rgba(72,61,139,0.55)",
-  fire: "rgba(255,99,71,0.55)",
-  applause: "rgba(255,215,0,0.55)",
-  cheering: "rgba(255,215,0,0.55)",
-  crowd: "rgba(244,164,96,0.55)",
-  screaming: "rgba(255,69,0,0.6)",
-  explosion: "rgba(255,69,0,0.6)",
-  gunshot: "rgba(255,69,0,0.6)",
-  siren: "rgba(255,0,0,0.6)",
-  alarm: "rgba(255,0,0,0.6)",
-  breathing: "rgba(156,163,175,0.4)",
-  silence: "rgba(156,163,175,0.35)",
-  ambient: "rgba(156,163,175,0.4)",
+  music:     'oklch(70% 0.12 320 / 0.30)',
+  singing:   'oklch(70% 0.12 320 / 0.30)',
+  laughter:  'oklch(75% 0.10 75 / 0.30)',
+  crying:    'oklch(70% 0.09 240 / 0.30)',
+  rain:      'oklch(70% 0.08 220 / 0.30)',
+  water:     'oklch(70% 0.08 220 / 0.30)',
+  wind:      'oklch(72% 0.05 200 / 0.28)',
+  thunder:   'oklch(50% 0.08 270 / 0.32)',
+  fire:      'oklch(65% 0.13 35 / 0.32)',
+  applause:  'oklch(75% 0.10 75 / 0.30)',
+  cheering:  'oklch(75% 0.10 75 / 0.30)',
+  crowd:     'oklch(70% 0.08 60 / 0.28)',
+  screaming: 'oklch(60% 0.15 25 / 0.36)',
+  explosion: 'oklch(60% 0.15 25 / 0.36)',
+  gunshot:   'oklch(60% 0.15 25 / 0.36)',
+  siren:     'oklch(60% 0.18 20 / 0.40)',
+  alarm:     'oklch(60% 0.18 20 / 0.40)',
+  breathing: 'oklch(60% 0.01 250 / 0.25)',
+  silence:   'oklch(60% 0.01 250 / 0.20)',
+  ambient:   'oklch(60% 0.01 250 / 0.25)',
 };
 
 const AMBIENT_EMOJI: Record<string, string> = {
@@ -189,31 +189,41 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
 
   return (
     <div className="w-full px-4 pb-2 select-none">
-      <div className="flex items-center text-xs font-mono mb-1">
-        <span className="text-gray-200 font-semibold drop-shadow-sm p-2">
+      <div className="flex items-center text-xs mb-1">
+        <span
+          className="font-mono tabular-nums px-2 py-1"
+          style={{ color: 'var(--player-icon)' }}
+        >
           {formatTime(currentTime)}
         </span>
         {hasOverlayData && (
           <button
             onClick={() => setShowEmotions((v) => !v)}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
+            aria-label={showEmotions ? "Hide audio overlay" : "Show audio overlay"}
+            title={showEmotions ? "Hide audio overlay" : "Show audio overlay"}
+            className="ml-1 px-1.5 py-1 rounded transition-colors"
+            style={
               showEmotions
-                ? "bg-orange-500/30 text-orange-300 hover:bg-orange-500/40"
-                : "bg-gray-700/50 text-gray-400 hover:bg-gray-700/70"
-            }`}
-            title={showEmotions ? "Hide sound overlay" : "Show sound overlay"}
+                ? { background: 'var(--accent-dim)', color: 'var(--accent)' }
+                : { background: 'transparent', color: 'var(--text-tertiary)' }
+            }
           >
-            🎭
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" d="M4 12h2M8 8v8M12 5v14M16 9v6M20 12h0" />
+            </svg>
           </button>
         )}
         <div className="flex-1" />
-        <span className="text-gray-200 font-semibold drop-shadow-sm p-2">
+        <span
+          className="font-mono tabular-nums px-2 py-1"
+          style={{ color: 'var(--player-icon)' }}
+        >
           {formatTime(duration)}
         </span>
       </div>
       <div
         ref={barRef}
-        className={`relative bg-gray-700 rounded cursor-pointer group transition-all duration-200 ${
+        className={`relative rounded cursor-pointer group transition-all duration-150 ${
           showEmotions && hasOverlayData ? "h-5" : "h-3"
         }`}
         onMouseMove={handleMouseMove}
@@ -221,7 +231,7 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         onClick={handleClick}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
-        style={{ userSelect: "none" }}
+        style={{ userSelect: "none", backgroundColor: 'var(--player-track)' }}
       >
         {/* Emotion + ambient overlay — behind progress fill */}
         {showEmotions && hasOverlayData && (
@@ -270,8 +280,18 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
                   className="absolute top-0 h-full group/ch pointer-events-auto"
                   style={{ left: `${left}%` }}
                 >
-                  <div className="w-[2px] h-full bg-white/70" />
-                  <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 px-1.5 py-0.5 text-[10px] text-white bg-black/80 rounded whitespace-nowrap opacity-0 group-hover/ch:opacity-100 transition-opacity pointer-events-none">
+                  <div
+                    className="w-[2px] h-full"
+                    style={{ backgroundColor: 'var(--player-icon)', opacity: 0.55 }}
+                  />
+                  <div
+                    className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 px-2 py-1 text-[11px] rounded whitespace-nowrap opacity-0 group-hover/ch:opacity-100 transition-opacity pointer-events-none border"
+                    style={{
+                      background: 'var(--bg-overlay)',
+                      color: 'var(--text-primary)',
+                      borderColor: 'var(--border-subtle)',
+                    }}
+                  >
                     {ch.title}
                   </div>
                 </div>
@@ -281,13 +301,20 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         )}
         {/* Progress fill */}
         <div
-          className="absolute top-0 left-0 h-full bg-gradient-to-r from-orange-400 to-rose-500 rounded"
-          style={{ width: `${percent * 100}%` }}
+          className="absolute top-0 left-0 h-full rounded"
+          style={{
+            width: `${percent * 100}%`,
+            backgroundColor: 'var(--accent)',
+          }}
         />
         {/* Thumb */}
         <div
-          className="absolute top-0 h-full w-3 bg-white rounded-full shadow -translate-x-1/2 border border-orange-500"
-          style={{ left: `calc(${percent * 100}% )` }}
+          className="absolute top-1/2 w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 transition-transform group-hover:scale-125"
+          style={{
+            left: `${percent * 100}%`,
+            backgroundColor: 'var(--accent)',
+            boxShadow: '0 0 0 3px oklch(70% 0.18 145 / 0.25)',
+          }}
         />
         {/* Tooltip and Screenshot Preview */}
         {hoverX !== null && hoverTime !== null && (
@@ -305,21 +332,26 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
               <img
                 src={screenshotUrl}
                 alt="Preview"
-                className="mb-1 w-40 h-24 object-cover rounded shadow border border-gray-300 bg-black"
-                style={{ background: "#222" }}
+                className="mb-1 w-40 h-24 object-cover rounded shadow-sm border"
+                style={{ borderColor: 'var(--border-subtle)' }}
               />
             )}
             <div
-              className="px-2 py-1 text-xs text-white bg-black bg-opacity-80 rounded shadow flex items-center gap-1"
-              style={{ marginTop: screenshotUrl ? 0 : 8 }}
+              className="px-2 py-1 text-xs rounded shadow-sm flex items-center gap-1.5 border"
+              style={{
+                background: 'var(--bg-overlay)',
+                color: 'var(--text-primary)',
+                borderColor: 'var(--border-subtle)',
+                marginTop: screenshotUrl ? 0 : 8,
+              }}
             >
-              {formatTime(hoverTime)}
+              <span className="font-mono tabular-nums">{formatTime(hoverTime)}</span>
               {hoverOverlay && (
-                <span className="ml-1 opacity-90">
-                  {hoverOverlay.type === 'emotion'
-                    ? (EMOTION_EMOJI[hoverOverlay.label] ?? "")
-                    : (AMBIENT_EMOJI[hoverOverlay.label] ?? "🔈")
-                  }{" "}
+                <span style={{ color: 'var(--text-tertiary)' }}>
+                  · {hoverOverlay.type === 'emotion'
+                      ? (EMOTION_EMOJI[hoverOverlay.label] ?? "")
+                      : (AMBIENT_EMOJI[hoverOverlay.label] ?? "🔈")}
+                  {" "}
                   {hoverOverlay.label}
                 </span>
               )}
