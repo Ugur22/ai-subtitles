@@ -24,10 +24,14 @@ export const ChapterPanel = ({
 }: ChapterPanelProps) => {
   return (
     <div className="h-full flex flex-col">
-      <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+      <div
+        className="px-5 py-4 border-b flex items-center justify-between"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
         <div className="flex items-center gap-2">
           <svg
-            className="w-4 h-4 text-indigo-500"
+            className="w-4 h-4"
+            style={{ color: 'var(--accent)' }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -39,44 +43,24 @@ export const ChapterPanel = ({
               d="M4 6h16M4 10h16M4 14h16M4 18h16"
             />
           </svg>
-          <h3 className="text-sm font-semibold text-gray-800">Chapters</h3>
+          <h3
+            className="text-sm font-semibold"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Chapters
+          </h3>
           {chapters.length > 0 && (
-            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
-              {chapters.length}
-            </span>
+            <span className="badge badge-accent">{chapters.length}</span>
           )}
         </div>
         <button
           onClick={onGenerate}
           disabled={loading}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center gap-1.5 ${
-            loading
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-              : "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm hover:shadow-md hover:from-indigo-600 hover:to-purple-700"
-          }`}
+          className="btn-tonal flex items-center gap-1.5"
         >
           {loading ? (
             <>
-              <svg
-                className="animate-spin h-3 w-3"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
+              <span className="spinner" style={{ width: '0.75rem', height: '0.75rem', borderWidth: '1.5px' }} />
               Generating...
             </>
           ) : chapters.length > 0 ? (
@@ -90,7 +74,14 @@ export const ChapterPanel = ({
       <div className="flex-grow overflow-auto p-4">
         {/* Error */}
         {error && (
-          <div className="p-3 bg-red-50 border-l-4 border-red-400 text-red-700 text-sm rounded-md mb-4">
+          <div
+            className="p-3 border-l-4 text-sm rounded-md mb-4"
+            style={{
+              background: 'oklch(65% 0.20 25 / 0.10)',
+              borderColor: 'var(--c-error)',
+              color: 'var(--c-error)',
+            }}
+          >
             {error}
           </div>
         )}
@@ -101,11 +92,21 @@ export const ChapterPanel = ({
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="animate-pulse rounded-lg border border-gray-100 p-3"
+                className="animate-pulse rounded-lg border p-3"
+                style={{ borderColor: 'var(--border-subtle)' }}
               >
-                <div className="h-4 bg-gray-200 rounded w-3/4 mb-2" />
-                <div className="h-3 bg-gray-100 rounded w-1/3 mb-2" />
-                <div className="h-3 bg-gray-100 rounded w-full" />
+                <div
+                  className="h-4 rounded w-3/4 mb-2"
+                  style={{ background: 'var(--bg-subtle)' }}
+                />
+                <div
+                  className="h-3 rounded w-1/3 mb-2"
+                  style={{ background: 'var(--bg-base)' }}
+                />
+                <div
+                  className="h-3 rounded w-full"
+                  style={{ background: 'var(--bg-base)' }}
+                />
               </div>
             ))}
           </div>
@@ -113,9 +114,9 @@ export const ChapterPanel = ({
 
         {/* Empty state */}
         {!loading && chapters.length === 0 && !error && (
-          <div className="py-12 text-center">
+          <div className="empty-state">
             <svg
-              className="mx-auto h-12 w-12 text-gray-300"
+              className="empty-state-icon"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -127,8 +128,10 @@ export const ChapterPanel = ({
                 d="M4 6h16M4 10h16M4 14h16M4 18h16"
               />
             </svg>
-            <p className="mt-3 text-sm text-gray-500">No chapters yet</p>
-            <p className="mt-1 text-xs text-gray-400">
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              No chapters yet
+            </p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
               Click Generate to create YouTube-style chapter markers
             </p>
           </div>
@@ -143,24 +146,39 @@ export const ChapterPanel = ({
                 <button
                   key={index}
                   onClick={() => onSeekTo(chapter.start_time)}
-                  className="w-full text-left rounded-lg border border-gray-200 p-3 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all duration-150 group"
+                  className="w-full text-left rounded-lg border p-3 transition-colors duration-150 group hover:[background:var(--bg-subtle)]"
+                  style={{ borderColor: 'var(--border-subtle)' }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex-shrink-0">
+                        <span
+                          className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold flex-shrink-0"
+                          style={{
+                            background: 'var(--accent-dim)',
+                            color: 'var(--accent)',
+                          }}
+                        >
                           {index + 1}
                         </span>
-                        <h4 className="text-sm font-semibold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
+                        <h4
+                          className="text-sm font-semibold truncate transition-colors group-hover:[color:var(--accent)]"
+                          style={{ color: 'var(--text-primary)' }}
+                        >
                           {chapter.title}
                         </h4>
                       </div>
-                      <p className="text-xs text-gray-500 line-clamp-2 ml-7">
+                      <p
+                        className="text-xs line-clamp-2 ml-7"
+                        style={{ color: 'var(--text-tertiary)' }}
+                      >
                         {chapter.summary}
                       </p>
                     </div>
                     <div className="flex flex-col items-end flex-shrink-0 gap-0.5">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 group-hover:bg-orange-200 transition-colors">
+                      <span
+                        className="badge badge-default font-mono tabular-nums inline-flex items-center gap-1"
+                      >
                         <svg
                           className="w-2.5 h-2.5"
                           viewBox="0 0 20 20"
@@ -174,7 +192,10 @@ export const ChapterPanel = ({
                         </svg>
                         {chapter.start_time}
                       </span>
-                      <span className="text-[10px] text-gray-400">
+                      <span
+                        className="text-[10px]"
+                        style={{ color: 'var(--text-tertiary)' }}
+                      >
                         {formatDuration(duration)}
                       </span>
                     </div>

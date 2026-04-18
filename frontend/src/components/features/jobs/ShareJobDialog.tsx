@@ -43,24 +43,26 @@ export const ShareJobDialog: React.FC<ShareJobDialogProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="modal-overlay"
       onClick={handleBackdropClick}
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-modal="true"
       aria-labelledby="share-dialog-title"
     >
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+      <div className="modal-content p-6">
         <div className="flex items-start justify-between mb-4">
           <h3
             id="share-dialog-title"
-            className="text-lg font-semibold text-gray-900"
+            className="text-lg font-semibold"
+            style={{ color: 'var(--text-primary)' }}
           >
             Share Transcription
           </h3>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="transition-colors"
+            style={{ color: 'var(--text-tertiary)' }}
             aria-label="Close dialog"
           >
             <svg
@@ -79,7 +81,7 @@ export const ShareJobDialog: React.FC<ShareJobDialogProps> = ({
           </button>
         </div>
 
-        <p className="text-sm text-gray-600 mb-4">
+        <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
           Anyone with this link can view the transcription results. The link
           includes access credentials.
         </p>
@@ -89,17 +91,18 @@ export const ShareJobDialog: React.FC<ShareJobDialogProps> = ({
             type="text"
             value={shareUrl}
             readOnly
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="input-base flex-1 font-mono text-xs"
             onClick={(e) => e.currentTarget.select()}
             aria-label="Shareable URL"
           />
           <button
             onClick={handleCopy}
-            className={`px-4 py-2 rounded-md font-medium transition-colors ${
+            className="btn-primary"
+            style={
               copied
-                ? "bg-green-600 text-white"
-                : "bg-blue-600 text-white hover:bg-blue-700"
-            }`}
+                ? { background: 'var(--c-success)', color: 'var(--accent-text)' }
+                : undefined
+            }
             aria-label={copied ? "Copied!" : "Copy URL"}
           >
             {copied ? (
@@ -140,10 +143,17 @@ export const ShareJobDialog: React.FC<ShareJobDialogProps> = ({
           </button>
         </div>
 
-        <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4">
+        <div
+          className="rounded-md p-3 mb-4"
+          style={{
+            background: 'var(--accent-dim)',
+            border: '1px solid var(--accent-border)',
+          }}
+        >
           <div className="flex gap-2">
             <svg
-              className="w-5 h-5 text-blue-600 flex-shrink-0"
+              className="w-5 h-5 flex-shrink-0"
+              style={{ color: 'var(--accent)' }}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -155,17 +165,14 @@ export const ShareJobDialog: React.FC<ShareJobDialogProps> = ({
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            <p className="text-sm text-blue-700">
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
               This link will remain valid as long as the job exists in the
               system (up to 7 days).
             </p>
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="w-full py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors font-medium text-gray-700"
-        >
+        <button onClick={onClose} className="btn-secondary w-full">
           Close
         </button>
       </div>

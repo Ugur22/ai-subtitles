@@ -39,85 +39,74 @@ export const TranscriptDisplay = ({
     console.log("Clicked time:", time);
   };
 
-  const getSpeakerColor = (speaker: string) => {
-    // Generate consistent colors for speakers
-    const colors = [
-      "text-violet-600 bg-violet-50 border-violet-200",
-      "text-rose-600 bg-rose-50 border-rose-200",
-      "text-orange-600 bg-orange-50 border-orange-200",
-      "text-pink-600 bg-pink-50 border-pink-200",
-      "text-purple-600 bg-purple-50 border-purple-200",
+  // Speaker palette: 5 distinct hues at consistent L/C, all token-aware
+  const speakerStyles = (speaker: string): React.CSSProperties => {
+    const palette: Array<{ bg: string; text: string }> = [
+      { bg: 'oklch(70% 0.18 145 / 0.15)', text: 'oklch(75% 0.14 145)' }, // emerald (accent)
+      { bg: 'oklch(70% 0.10 240 / 0.15)', text: 'oklch(75% 0.10 240)' }, // slate-blue
+      { bg: 'oklch(70% 0.12 80 / 0.15)',  text: 'oklch(75% 0.12 80)'  }, // amber
+      { bg: 'oklch(70% 0.12 320 / 0.15)', text: 'oklch(75% 0.12 320)' }, // magenta
+      { bg: 'oklch(70% 0.12 35 / 0.15)',  text: 'oklch(75% 0.12 35)'  }, // ember
     ];
-    const hash = speaker
-      .split("")
-      .reduce((acc, char) => char.charCodeAt(0) + acc, 0);
-    return colors[hash % colors.length];
+    const hash = speaker.split('').reduce((acc, ch) => ch.charCodeAt(0) + acc, 0);
+    const c = palette[hash % palette.length];
+    return { background: c.bg, color: c.text };
+  };
+  const speakerTextColor = (speaker: string): string => {
+    return (speakerStyles(speaker).color as string) ?? 'var(--text-primary)';
   };
 
   return (
     <div className="p-4">
       {/* Display Mode Controls */}
-      <div className="flex space-x-2 mb-6">
+      <div className="flex gap-2 mb-6">
         <button
           onClick={() => setDisplayMode("segments")}
-          className={`px-4 py-2 text-sm rounded-md transition ${
-            displayMode === "segments"
-              ? "bg-violet-600 text-gray-900 shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
-          }`}
+          className={displayMode === "segments" ? "btn-primary" : "btn-ghost"}
         >
           Segment View
         </button>
         <button
           onClick={() => setDisplayMode("words")}
-          className={`px-4 py-2 text-sm rounded-md transition ${
-            displayMode === "words"
-              ? "bg-violet-600 text-gray-900 shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
-          }`}
+          className={displayMode === "words" ? "btn-primary" : "btn-ghost"}
         >
           Word View
         </button>
       </div>
 
       {/* Transcript Content */}
-      <div className="space-y-4">
+      <div className="space-y-2">
         {transcription.segments.map((segment, index) => {
-          const speakerColorClasses = getSpeakerColor(segment.speaker);
-
+          const isSelected = selectedSegment === index;
           return (
             <div
               key={segment.id}
-              className={`p-4 rounded-lg border transition duration-200 ${
-                selectedSegment === index
-                  ? "bg-rose-50 border-rose-300 shadow-sm"
-                  : "bg-white border-gray-200 hover:border-gray-300"
-              }`}
+              className="p-4 rounded-lg border transition-colors duration-150 cursor-pointer"
+              style={{
+                background: isSelected ? 'var(--accent-dim)' : 'var(--bg-surface)',
+                borderColor: isSelected ? 'var(--accent-border)' : 'var(--border-subtle)',
+              }}
               onClick={() => setSelectedSegment(index)}
             >
               {/* Segment Header */}
               <div className="flex items-center justify-between mb-3">
                 <button
                   onClick={() => handleTimeClick(segment.start_time)}
-                  className="flex items-center space-x-2 text-sm text-violet-600 hover:text-violet-800"
+                  className="flex items-center gap-2 text-xs font-mono tabular-nums transition-colors"
+                  style={{ color: 'var(--accent)' }}
                 >
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                     <path
                       fillRule="evenodd"
                       d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span>
-                    {segment.start_time} - {segment.end_time}
-                  </span>
+                  <span>{segment.start_time} – {segment.end_time}</span>
                 </button>
                 <span
-                  className={`px-2 py-1 text-xs font-medium rounded-full border ${speakerColorClasses}`}
+                  className="px-2 py-0.5 text-xs font-medium rounded-full"
+                  style={speakerStyles(segment.speaker)}
                 >
                   {segment.speaker}
                 </span>
@@ -125,12 +114,13 @@ export const TranscriptDisplay = ({
 
               {/* Content */}
               {displayMode === "segments" ? (
-                // Segment View
-                <p className="text-base text-gray-800 leading-relaxed">
+                <p
+                  className="text-sm leading-relaxed"
+                  style={{ color: 'var(--text-primary)' }}
+                >
                   {segment.text}
                 </p>
               ) : (
-                // Word View
                 <div className="flex flex-wrap gap-1">
                   {segment.words?.map((word, wordIndex) => (
                     <div
@@ -139,15 +129,19 @@ export const TranscriptDisplay = ({
                       title={`${word.start} - ${word.end}`}
                     >
                       <span
-                        className={`text-base hover:bg-gray-100 rounded px-1 py-0.5 cursor-pointer ${
-                          getSpeakerColor(word.speaker).split(" ")[0]
-                        }`}
+                        className="text-sm rounded px-1 py-0.5 cursor-pointer transition-colors hover:[background:var(--bg-subtle)]"
+                        style={{ color: speakerTextColor(word.speaker) }}
                       >
                         {word.word}
                       </span>
-
-                      {/* Timestamp tooltip */}
-                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      <div
+                        className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity z-10 border font-mono tabular-nums"
+                        style={{
+                          background: 'var(--bg-overlay)',
+                          color: 'var(--text-primary)',
+                          borderColor: 'var(--border-subtle)',
+                        }}
+                      >
                         {word.start}
                       </div>
                     </div>
@@ -160,32 +154,34 @@ export const TranscriptDisplay = ({
       </div>
 
       {/* Statistics */}
-      <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="text-sm text-gray-500 mb-1">Total Segments</div>
-          <div className="text-xl font-medium">
-            {transcription.segments.length}
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="text-sm text-gray-500 mb-1">Duration</div>
-          <div className="text-xl font-medium">{transcription.duration}</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="text-sm text-gray-500 mb-1">Language</div>
-          <div className="text-xl font-medium capitalize">
-            {transcription.language}
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="text-sm text-gray-500 mb-1">Total Words</div>
-          <div className="text-xl font-medium">
-            {transcription.segments.reduce(
+      <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Segments', value: transcription.segments.length },
+          { label: 'Duration', value: transcription.duration },
+          { label: 'Language', value: transcription.language, capitalize: true },
+          {
+            label: 'Total Words',
+            value: transcription.segments.reduce(
               (acc, segment) => acc + (segment.words?.length || 0),
               0
-            )}
+            ),
+          },
+        ].map((stat) => (
+          <div key={stat.label} className="surface-panel p-4">
+            <div
+              className="text-xs uppercase tracking-wider mb-1"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              {stat.label}
+            </div>
+            <div
+              className={`text-xl font-semibold tabular-nums ${stat.capitalize ? 'capitalize' : ''}`}
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {stat.value}
+            </div>
           </div>
-        </div>
+        ))}
       </div>
     </div>
   );

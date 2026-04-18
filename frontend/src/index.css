@@ -64,6 +64,11 @@
   --c-warning: oklch(78% 0.15 65);
 }
 
+/* ─── Shared elevation tokens ──────────────────────────────────────────────── */
+:root, .dark {
+  --shadow-overlay: 0 12px 32px oklch(0% 0 0 / 0.55);
+}
+
 /* ─── Player Controls (always overlay dark video) ──────────────────────────── */
 :root, .dark {
   --player-icon:  oklch(88% 0.005 250);
@@ -229,6 +234,70 @@ body {
   .badge-error {
     background-color: oklch(65% 0.20 25 / 0.12);
     color: var(--c-error);
+  }
+
+  /* Surface panel — replaces bg-white shadow-sm border-gray-200 */
+  .surface-panel {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  /* Modals — replace hand-rolled bg-white shadow-2xl + bg-black/40 backdrop-blur */
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center;
+    background: oklch(0% 0 0 / 0.6);
+    animation: fadeIn 0.12s ease-out;
+  }
+  .modal-content {
+    background-color: var(--bg-overlay);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow-overlay);
+    max-width: 32rem;
+    width: 90%;
+    animation: scaleIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Empty-state container — replaces bespoke "no data yet" blocks */
+  .empty-state {
+    @apply flex flex-col items-center justify-center text-center py-12 px-4;
+    color: var(--text-tertiary);
+  }
+  .empty-state-icon {
+    @apply mb-3;
+    width: 3rem;
+    height: 3rem;
+    color: var(--text-tertiary);
+    opacity: 0.6;
+  }
+
+  /* Spinner — replaces inline border-4 border-indigo-500 spinners */
+  .spinner {
+    @apply inline-block animate-spin rounded-full;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent);
+  }
+  .spinner-lg {
+    width: 2rem;
+    height: 2rem;
+    border-width: 3px;
+  }
+
+  /* Tonal accent button — for indigo→purple gradient buttons we're killing */
+  .btn-tonal {
+    @apply inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium rounded-md
+           transition-colors duration-150
+           focus:outline-none focus-visible:ring-2
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    background-color: var(--accent-dim);
+    color: var(--accent);
+  }
+  .btn-tonal:hover:not(:disabled) {
+    background-color: oklch(70% 0.18 145 / 0.22);
   }
 }
 

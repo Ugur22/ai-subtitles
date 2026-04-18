@@ -98,17 +98,17 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
           <div key={idx}>
             {/* Bounding box */}
             <div
-              className={`absolute pointer-events-auto cursor-pointer transition-all ${
-                isSelected
-                  ? "border-3 border-indigo-400 shadow-lg shadow-indigo-400/30"
-                  : "border-2 border-green-400 hover:border-indigo-400"
-              }`}
+              className="absolute pointer-events-auto cursor-pointer transition-all"
               style={{
                 left: `${left}px`,
                 top: `${top}px`,
                 width: `${width}px`,
                 height: `${height}px`,
                 borderRadius: "4px",
+                border: isSelected
+                  ? `3px solid var(--accent)`
+                  : `2px solid oklch(70% 0.18 145 / 0.5)`,
+                boxShadow: isSelected ? `0 0 0 4px var(--accent-dim)` : 'none',
               }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -116,7 +116,14 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
               }}
             >
               {/* Confidence badge */}
-              <div className="absolute -top-5 left-0 px-1.5 py-0.5 bg-black/70 text-white text-[10px] rounded whitespace-nowrap">
+              <div
+                className="absolute -top-5 left-0 px-1.5 py-0.5 text-[10px] rounded whitespace-nowrap font-mono tabular-nums"
+                style={{
+                  background: 'var(--bg-overlay)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
                 {(face.confidence * 100).toFixed(0)}%
               </div>
             </div>
@@ -124,19 +131,28 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
             {/* Speaker assignment popover */}
             {isSelected && (
               <div
-                className="absolute pointer-events-auto z-50 bg-white rounded-lg shadow-xl border border-gray-200 p-2 min-w-[160px]"
+                className="absolute pointer-events-auto z-50 rounded-lg p-2 min-w-[160px] border"
                 style={{
                   left: `${left + width + 8}px`,
                   top: `${top}px`,
                   maxHeight: "200px",
                   overflowY: "auto",
+                  background: 'var(--bg-overlay)',
+                  borderColor: 'var(--border-subtle)',
+                  boxShadow: 'var(--shadow-overlay)',
                 }}
               >
-                <div className="text-xs font-medium text-gray-500 px-2 py-1 mb-1">
+                <div
+                  className="text-xs font-medium px-2 py-1 mb-1"
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
                   Assign speaker
                 </div>
                 {speakers.length === 0 ? (
-                  <div className="text-xs text-gray-400 px-2 py-1">
+                  <div
+                    className="text-xs px-2 py-1"
+                    style={{ color: 'var(--text-tertiary)' }}
+                  >
                     No speakers found
                   </div>
                 ) : (
@@ -148,14 +164,18 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
                         e.stopPropagation();
                         handleTagFace(idx, name);
                       }}
-                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-indigo-50 hover:text-indigo-700 transition-colors disabled:opacity-50"
+                      className="w-full text-left px-2 py-1.5 text-sm rounded transition-colors disabled:opacity-50 hover:[background:var(--accent-dim)] hover:[color:var(--accent)]"
+                      style={{ color: 'var(--text-primary)' }}
                     >
                       {name}
                     </button>
                   ))
                 )}
                 {saving && (
-                  <div className="text-xs text-indigo-500 px-2 py-1 mt-1">
+                  <div
+                    className="text-xs px-2 py-1 mt-1"
+                    style={{ color: 'var(--accent)' }}
+                  >
                     Saving...
                   </div>
                 )}

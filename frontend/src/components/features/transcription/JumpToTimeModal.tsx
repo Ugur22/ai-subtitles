@@ -103,18 +103,19 @@ export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <animated.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      style={backdropAnimation}
-    >
+    <animated.div className="modal-overlay" style={backdropAnimation}>
       <animated.div
-        className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md flex flex-col items-center"
+        className="modal-content p-8 flex flex-col items-center"
         style={modalAnimation}
       >
         <div className="mb-6 flex flex-col items-center">
-          <div className="w-16 h-16 mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+          <div
+            className="w-12 h-12 mb-4 rounded-lg flex items-center justify-center"
+            style={{ background: 'var(--accent)' }}
+          >
             <svg
-              className="w-8 h-8 text-white"
+              className="w-6 h-6"
+              style={{ color: 'var(--accent-text)' }}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -128,20 +129,25 @@ export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
               <polygon points="8,17 16,12 8,7" fill="currentColor" />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold mb-2 text-gray-900">
+          <h2
+            className="text-xl font-semibold mb-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
             Jump to Time
           </h2>
-          <p className="text-sm text-gray-600 text-center leading-relaxed">
-            Enter the time you want to jump to in the video.
-            <br />
-            <span className="text-indigo-600 font-medium">
-              Example: 20:35 or 1:30:45
+          <p
+            className="text-sm text-center leading-relaxed"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Enter the time to jump to.{' '}
+            <span style={{ color: 'var(--accent)' }} className="font-mono">
+              20:35 or 1:30:45
             </span>
           </p>
         </div>
         <input
           ref={inputRef || localInputRef}
-          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 mb-3 text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
+          className="input-base text-center text-lg font-mono mb-3"
           placeholder="mm:ss or hh:mm:ss"
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -149,21 +155,22 @@ export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
           autoFocus
         />
         {error && (
-          <div className="text-sm text-red-500 mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
+          <div
+            className="text-sm mb-4 p-3 rounded-md w-full"
+            style={{
+              color: 'var(--c-error)',
+              background: 'oklch(65% 0.20 25 / 0.10)',
+              border: '1px solid oklch(65% 0.20 25 / 0.30)',
+            }}
+          >
             {error}
           </div>
         )}
-        <div className="flex w-full gap-3 mt-4">
-          <button
-            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-all duration-200 hover:scale-105"
-            onClick={onClose}
-          >
+        <div className="flex w-full gap-3 mt-2">
+          <button className="btn-secondary flex-1" onClick={onClose}>
             Cancel
           </button>
-          <button
-            className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-all duration-200 hover:scale-105"
-            onClick={handleOk}
-          >
+          <button className="btn-primary flex-1" onClick={handleOk}>
             Jump
           </button>
         </div>
