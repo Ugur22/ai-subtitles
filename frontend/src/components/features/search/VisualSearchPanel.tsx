@@ -28,12 +28,13 @@ const LoadingSkeleton = () => (
     {Array.from({ length: 6 }).map((_, i) => (
       <div
         key={i}
-        className="rounded-md overflow-hidden bg-gray-100 animate-pulse"
+        className="rounded-md overflow-hidden animate-pulse"
+        style={{ background: 'var(--bg-subtle)' }}
       >
-        <div className="w-full aspect-video bg-gray-200" />
+        <div className="w-full aspect-video" style={{ background: 'var(--bg-base)' }} />
         <div className="p-1.5 space-y-1">
-          <div className="h-3 bg-gray-200 rounded w-16" />
-          <div className="h-3 bg-gray-200 rounded w-10" />
+          <div className="h-3 rounded w-16" style={{ background: 'var(--bg-base)' }} />
+          <div className="h-3 rounded w-10" style={{ background: 'var(--bg-base)' }} />
         </div>
       </div>
     ))}
@@ -64,9 +65,13 @@ const Thumbnail = ({ result, onSeekToTimestamp, onImageClick }: ThumbnailProps) 
   };
 
   return (
-    <div className="rounded-md overflow-hidden border border-gray-200 bg-gray-50 hover:border-violet-400 transition-colors group">
+    <div
+      className="rounded-md overflow-hidden border transition-colors group"
+      style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-subtle)' }}
+    >
       <div
-        className="relative cursor-pointer overflow-hidden aspect-video bg-gray-100"
+        className="relative cursor-pointer overflow-hidden aspect-video"
+        style={{ background: 'var(--bg-base)' }}
         onClick={handleImageClick}
         role="button"
         aria-label={`Open screenshot at ${timestamp}`}
@@ -88,7 +93,8 @@ const Thumbnail = ({ result, onSeekToTimestamp, onImageClick }: ThumbnailProps) 
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <svg
-              className="h-8 w-8 text-gray-300"
+              className="h-8 w-8"
+              style={{ color: 'var(--text-tertiary)' }}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -106,11 +112,12 @@ const Thumbnail = ({ result, onSeekToTimestamp, onImageClick }: ThumbnailProps) 
       <div className="p-1.5 space-y-0.5">
         <button
           onClick={handleTimestampClick}
-          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${
+          className="badge font-mono tabular-nums inline-flex items-center gap-1"
+          style={
             onSeekToTimestamp
-              ? "bg-orange-100 text-orange-800 hover:bg-orange-200 cursor-pointer"
-              : "bg-gray-100 text-gray-700"
-          }`}
+              ? { background: 'var(--accent-dim)', color: 'var(--accent)', cursor: 'pointer' }
+              : { background: 'var(--bg-base)', color: 'var(--text-tertiary)' }
+          }
           aria-label={`Seek to ${timestamp}`}
         >
           <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
@@ -123,7 +130,10 @@ const Thumbnail = ({ result, onSeekToTimestamp, onImageClick }: ThumbnailProps) 
           {timestamp}
         </button>
         {result.speaker && (
-          <div className="text-xs text-gray-500 truncate px-0.5">
+          <div
+            className="text-xs truncate px-0.5"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
             {result.speaker}
           </div>
         )}
@@ -153,15 +163,10 @@ export const VisualSearchPanel = ({
 
   const searchMutation = useMutation({
     mutationFn: async (query: string) => {
-      // Attempt search; if the index is missing the backend may return an empty
-      // result set. We proactively index before the first search when we have a
-      // videoHash so the user doesn't need a separate "index" step.
       if (videoHash) {
         try {
           await indexImages(videoHash);
         } catch (err) {
-          // Non-fatal: indexing may have already been done, or the video may not
-          // have screenshots yet. Continue to search regardless.
           console.warn("[VisualSearch] indexImages failed (non-fatal):", err);
         }
       }
@@ -188,7 +193,8 @@ export const VisualSearchPanel = ({
         <div className="relative w-full">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <svg
-              className="h-5 w-5 text-gray-400"
+              className="h-4 w-4"
+              style={{ color: 'var(--text-tertiary)' }}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -211,39 +217,20 @@ export const VisualSearchPanel = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search screenshots... (e.g., 'person at whiteboard')"
-            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-violet-500 focus:border-violet-500 sm:text-sm"
+            placeholder="Search screenshots… (e.g., 'person at whiteboard')"
+            className="input-base pl-10"
           />
         </div>
         <div className="flex gap-2">
           <button
             type="submit"
             disabled={searchMutation.isPending || !searchQuery.trim()}
-            className="flex-1 btn-primary py-2.5 bg-violet-500 text-gray-900 rounded-md hover:bg-violet-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="btn-primary flex-1"
           >
             {searchMutation.isPending ? (
               <>
-                <svg
-                  className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-900 inline-block"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
-                </svg>
-                Searching...
+                <span className="spinner mr-2" style={{ width: '0.875rem', height: '0.875rem', borderWidth: '1.5px' }} />
+                Searching…
               </>
             ) : (
               "Search"
@@ -253,33 +240,18 @@ export const VisualSearchPanel = ({
             type="button"
             disabled={reindexMutation.isPending || !videoHash}
             onClick={() => reindexMutation.mutate()}
-            className="px-3 py-2.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed text-sm"
+            className="btn-secondary px-3"
             title="Re-index images with updated embeddings"
           >
             {reindexMutation.isPending ? (
-              <svg
-                className="animate-spin h-4 w-4 text-gray-700"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
+              <span className="spinner" style={{ width: '0.875rem', height: '0.875rem', borderWidth: '1.5px' }} />
             ) : (
               <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                <path
+                  fillRule="evenodd"
+                  d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
+                  clipRule="evenodd"
+                />
               </svg>
             )}
           </button>
@@ -288,7 +260,14 @@ export const VisualSearchPanel = ({
 
       {/* Re-index success message */}
       {reindexMutation.isSuccess && (
-        <div className="mt-2 p-2 bg-green-50 border-l-4 border-green-400 text-green-700 text-xs rounded-md">
+        <div
+          className="mt-2 p-2 border-l-4 text-xs rounded-md"
+          style={{
+            background: 'oklch(70% 0.15 145 / 0.10)',
+            borderColor: 'var(--c-success)',
+            color: 'var(--c-success)',
+          }}
+        >
           Re-indexing complete. Search again to see updated results.
         </div>
       )}
@@ -300,11 +279,14 @@ export const VisualSearchPanel = ({
       {searchMutation.isSuccess && !searchMutation.isPending && (
         <div className="mt-4">
           <div className="flex items-center mb-3">
-            <h4 className="text-sm font-medium text-gray-900">
+            <h4
+              className="text-sm font-semibold"
+              style={{ color: 'var(--text-primary)' }}
+            >
               Visual Results
             </h4>
-            <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-              {searchMutation.data.results.length} found
+            <span className="ml-2 badge badge-accent">
+              {searchMutation.data.results.length}
             </span>
           </div>
 
@@ -320,9 +302,9 @@ export const VisualSearchPanel = ({
               ))}
             </div>
           ) : (
-            <div className="py-8 text-center">
+            <div className="empty-state">
               <svg
-                className="mx-auto h-12 w-12 text-gray-300"
+                className="empty-state-icon"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -334,8 +316,8 @@ export const VisualSearchPanel = ({
                   d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                 />
               </svg>
-              <p className="mt-2 text-sm text-gray-500">
-                No matching screenshots found. Try a different description.
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                No matching screenshots. Try a different description.
               </p>
             </div>
           )}
@@ -344,9 +326,9 @@ export const VisualSearchPanel = ({
 
       {/* Empty / initial state */}
       {!searchMutation.isSuccess && !searchMutation.isPending && !searchMutation.isError && (
-        <div className="mt-8 py-6 text-center">
+        <div className="empty-state mt-6">
           <svg
-            className="mx-auto h-12 w-12 text-gray-300"
+            className="empty-state-icon"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -364,10 +346,10 @@ export const VisualSearchPanel = ({
               d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
             />
           </svg>
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
             Search for visual content in your video
           </p>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
             Powered by CLIP semantic image search
           </p>
         </div>
@@ -375,13 +357,27 @@ export const VisualSearchPanel = ({
 
       {/* Error state */}
       {searchMutation.isError && (
-        <div className="mt-4 p-3 bg-red-50 border-l-4 border-red-400 text-red-700 text-sm rounded-md">
+        <div
+          className="mt-4 p-3 border-l-4 text-sm rounded-md"
+          style={{
+            background: 'oklch(65% 0.20 25 / 0.10)',
+            borderColor: 'var(--c-error)',
+            color: 'var(--c-error)',
+          }}
+        >
           Search failed. Please try again with a different description.
         </div>
       )}
 
       {indexingError && (
-        <div className="mt-4 p-3 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 text-sm rounded-md">
+        <div
+          className="mt-4 p-3 border-l-4 text-sm rounded-md"
+          style={{
+            background: 'oklch(78% 0.15 65 / 0.10)',
+            borderColor: 'var(--c-warning)',
+            color: 'var(--c-warning)',
+          }}
+        >
           {indexingError}
         </div>
       )}

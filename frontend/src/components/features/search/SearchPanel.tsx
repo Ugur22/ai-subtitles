@@ -43,28 +43,25 @@ export const SearchPanel = ({
   };
 
   return (
-    <div className="card">
-      <div className="card-header">
+    <div className="surface-panel flex flex-col h-full">
+      <div
+        className="px-5 py-3 border-b"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium text-gray-900">Search</h3>
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            Search
+          </h3>
           <div className="flex gap-1">
             <button
               onClick={() => setActiveTab("text")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                activeTab === "text"
-                  ? "bg-violet-500 text-white"
-                  : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-              }`}
+              className={activeTab === "text" ? "btn-primary text-xs px-3 py-1" : "btn-ghost text-xs px-3 py-1"}
             >
               Text
             </button>
             <button
               onClick={() => setActiveTab("visual")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                activeTab === "visual"
-                  ? "bg-violet-500 text-white"
-                  : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-              }`}
+              className={activeTab === "visual" ? "btn-primary text-xs px-3 py-1" : "btn-ghost text-xs px-3 py-1"}
             >
               Visual
             </button>
@@ -72,7 +69,7 @@ export const SearchPanel = ({
         </div>
       </div>
 
-      <div className="card-body">
+      <div className="p-5">
         {activeTab === "text" ? (
           <>
             <form onSubmit={handleSearch} className="space-y-4">
@@ -81,7 +78,8 @@ export const SearchPanel = ({
                   <div className="relative w-full">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <svg
-                        className="h-5 w-5 text-gray-400"
+                        className="h-4 w-4"
+                        style={{ color: 'var(--text-tertiary)' }}
                         viewBox="0 0 20 20"
                         fill="currentColor"
                       >
@@ -96,38 +94,19 @@ export const SearchPanel = ({
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search for keywords or phrases..."
-                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      placeholder="Search for keywords or phrases…"
+                      className="input-base pl-10"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={searchMutation.isPending}
-                    className="w-full btn-primary py-2.5 bg-violet-500 text-gray-900 rounded-md hover:bg-violet-600 transition-colors"
+                    className="btn-primary w-full"
                   >
                     {searchMutation.isPending ? (
                       <>
-                        <svg
-                          className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-900 inline-block"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
-                        Searching...
+                        <span className="spinner mr-2" style={{ width: '0.875rem', height: '0.875rem', borderWidth: '1.5px' }} />
+                        Searching…
                       </>
                     ) : (
                       "Search"
@@ -141,11 +120,15 @@ export const SearchPanel = ({
                     id="semanticSearch"
                     checked={useSemanticSearch}
                     onChange={(e) => setUseSemanticSearch(e.target.checked)}
-                    className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    className="h-4 w-4 rounded"
+                    style={{ accentColor: 'var(--accent)' }}
                   />
-                  <label htmlFor="semanticSearch" className="text-sm text-gray-600">
-                    Use semantic search (finds related content even if exact words
-                    don't match)
+                  <label
+                    htmlFor="semanticSearch"
+                    className="text-xs"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    Use semantic search (finds related content even if exact words don't match)
                   </label>
                 </div>
               </div>
@@ -154,72 +137,81 @@ export const SearchPanel = ({
             {/* Search Results */}
             {searchMutation.isSuccess && (
               <div className="mt-6 max-h-[300px] overflow-y-auto pr-1">
-                <div className="flex items-center mb-4 sticky top-0 bg-white z-10 py-2">
-                  <h4 className="text-base font-medium text-gray-900">
-                    Search Results
+                <div
+                  className="flex items-center mb-4 sticky top-0 z-10 py-2"
+                  style={{ background: 'var(--bg-surface)' }}
+                >
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Results
                   </h4>
-                  <span className="ml-2 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                    {searchMutation.data.total_matches} matches
+                  <span className="ml-2 badge badge-accent">
+                    {searchMutation.data.total_matches}
                   </span>
                 </div>
 
                 {searchMutation.data.matches.length > 0 ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {searchMutation.data.matches.map((match, index) => (
                       <div
                         key={index}
-                        className="border rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition"
+                        className="rounded-md p-3 border transition-colors hover:[background:var(--bg-subtle)]"
+                        style={{ borderColor: 'var(--border-subtle)' }}
                       >
                         <div className="flex justify-between items-start mb-2">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              onSeekToTimestamp
-                                ? "bg-orange-100 text-orange-800 cursor-pointer hover:bg-orange-200"
-                                : "bg-gray-100 text-gray-800"
-                            }`}
-                            onClick={() =>
-                              handleTimestampClick(match.timestamp.start)
-                            }
+                            className="badge font-mono tabular-nums inline-flex items-center gap-1 cursor-pointer"
+                            style={onSeekToTimestamp ? {
+                              background: 'var(--accent-dim)',
+                              color: 'var(--accent)',
+                            } : {
+                              background: 'var(--bg-subtle)',
+                              color: 'var(--text-tertiary)',
+                            }}
+                            onClick={() => handleTimestampClick(match.timestamp.start)}
                           >
-                            <svg
-                              className="w-3 h-3 mr-1"
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                                clipRule="evenodd"
-                              />
+                            <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                             </svg>
-                            {match.timestamp.start} - {match.timestamp.end}
+                            {match.timestamp.start} – {match.timestamp.end}
                           </span>
                         </div>
 
                         {/* Context Before */}
                         {match.context.before.length > 0 && (
-                          <div className="text-sm text-gray-500 mb-2">
+                          <div className="text-xs mb-2" style={{ color: 'var(--text-tertiary)' }}>
                             {match.context.before.map((text, i) => (
                               <div key={i}>{text}</div>
                             ))}
                           </div>
                         )}
 
-                        {/* Matched Text */}
-                        <div className="text-base font-semibold text-gray-900 my-2 bg-yellow-100 px-2 py-1 rounded">
+                        {/* Matched Text — accent highlight */}
+                        <div
+                          className="text-sm font-semibold my-2 px-2 py-1 rounded"
+                          style={{
+                            color: 'var(--text-primary)',
+                            background: 'var(--accent-dim)',
+                          }}
+                        >
                           {match.original_text}
                         </div>
 
                         {/* Translation if available */}
                         {match.translated_text && (
-                          <div className="text-sm text-gray-700 italic my-2 bg-gray-100 px-2 py-1 rounded">
+                          <div
+                            className="text-xs italic my-2 px-2 py-1 rounded"
+                            style={{
+                              color: 'var(--text-secondary)',
+                              background: 'var(--bg-subtle)',
+                            }}
+                          >
                             {match.translated_text}
                           </div>
                         )}
 
                         {/* Context After */}
                         {match.context.after.length > 0 && (
-                          <div className="text-sm text-gray-500 mt-2">
+                          <div className="text-xs mt-2" style={{ color: 'var(--text-tertiary)' }}>
                             {match.context.after.map((text, i) => (
                               <div key={i}>{text}</div>
                             ))}
@@ -229,9 +221,9 @@ export const SearchPanel = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="py-8 text-center">
+                  <div className="empty-state">
                     <svg
-                      className="mx-auto h-12 w-12 text-gray-400"
+                      className="empty-state-icon"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -243,11 +235,11 @@ export const SearchPanel = ({
                         d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">
-                      No results found
+                    <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      No results
                     </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Try adjusting your search terms or use semantic search.
+                    <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      Try adjusting your terms or use semantic search.
                     </p>
                   </div>
                 )}
@@ -256,9 +248,15 @@ export const SearchPanel = ({
 
             {/* Error Display */}
             {searchMutation.isError && (
-              <div className="mt-4 p-3 bg-red-50 border-l-4 border-red-400 text-red-700 text-sm rounded-md">
-                An error occurred during search. Please try again with different
-                search terms.
+              <div
+                className="mt-4 p-3 border-l-4 text-sm rounded-md"
+                style={{
+                  background: 'oklch(65% 0.20 25 / 0.10)',
+                  borderColor: 'var(--c-error)',
+                  color: 'var(--c-error)',
+                }}
+              >
+                Search failed. Please try again with different terms.
               </div>
             )}
           </>

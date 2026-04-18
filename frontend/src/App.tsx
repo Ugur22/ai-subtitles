@@ -40,6 +40,8 @@ function DynamicToaster() {
           fontFamily: "'DM Sans', system-ui, sans-serif",
           fontSize: '14px',
         },
+        // Icon colors mirror --c-success / --c-error tokens.
+        // Inlined as oklch because react-hot-toast doesn't resolve CSS vars in icon SVG fills.
         success: {
           iconTheme: {
             primary: isDark ? 'oklch(70% 0.15 145)' : 'oklch(38% 0.15 145)',

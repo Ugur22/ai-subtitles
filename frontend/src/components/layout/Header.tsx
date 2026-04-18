@@ -148,7 +148,7 @@ export const Header: React.FC = () => {
                     style={{
                       backgroundColor: 'var(--bg-overlay)',
                       border: '1px solid var(--border-subtle)',
-                      boxShadow: '0 8px 24px oklch(0% 0 0 / 0.5)',
+                      boxShadow: 'var(--shadow-overlay)',
                     }}
                   >
                     <div

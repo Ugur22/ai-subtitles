@@ -165,16 +165,20 @@ export const SummaryPanel = ({
   if (!isVisible) return null;
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden flex flex-col h-full">
-      {/* Phase 1: Typography improvements - text-base font-semibold for consistency */}
-      <div className="px-4 sm:px-5 py-3 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-        <h3 className="text-base font-semibold text-gray-900">Content Summary</h3>
+    <div className="surface-panel flex flex-col h-full">
+      <div
+        className="px-4 sm:px-5 py-3 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Content Summary
+        </h3>
         {(!summaries.length || summaries.length > 0) && !loading && !screenshotLoading && (
           <div className="flex flex-wrap gap-2">
             {!summaries.length ? (
               <button
                 onClick={generateSummaries}
-                className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                className="btn-primary text-xs"
                 aria-label="Generate content summary"
               >
                 Generate Summary
@@ -184,7 +188,7 @@ export const SummaryPanel = ({
                 <button
                   onClick={regenerateScreenshots}
                   disabled={!videoHash}
-                  className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 hover:shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                  className="btn-tonal"
                   title={!videoHash ? "Video hash not available" : "Regenerate screenshots from video"}
                   aria-label="Regenerate screenshots"
                 >
@@ -192,7 +196,7 @@ export const SummaryPanel = ({
                 </button>
                 <button
                   onClick={generateSummaries}
-                  className="px-3 py-1.5 text-xs font-medium bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                  className="btn-tonal"
                   aria-label="Regenerate content summary"
                 >
                   Regenerate Summary
@@ -203,12 +207,13 @@ export const SummaryPanel = ({
         )}
       </div>
 
-      {/* Phase 4: Better loading states */}
       {loading && (
         <div className="flex flex-col items-center justify-center flex-1 p-8 text-center" role="status" aria-live="polite">
-          <div className="inline-block animate-spin h-10 w-10 border-4 border-indigo-500 border-t-transparent rounded-full mb-4" aria-hidden="true"></div>
-          <p className="text-base font-semibold text-gray-900">Generating summary...</p>
-          <p className="text-sm text-gray-500 mt-1.5 max-w-sm">
+          <span className="spinner spinner-lg mb-4" aria-hidden="true" />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            Generating summary…
+          </p>
+          <p className="text-xs mt-1.5 max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
             Analyzing video content and extracting key points
           </p>
         </div>
@@ -216,42 +221,41 @@ export const SummaryPanel = ({
 
       {screenshotLoading && (
         <div className="flex flex-col items-center justify-center flex-1 p-8 text-center" role="status" aria-live="polite">
-          <div className="inline-block animate-spin h-10 w-10 border-4 border-indigo-500 border-t-transparent rounded-full mb-4" aria-hidden="true"></div>
-          <p className="text-base font-semibold text-gray-900">Regenerating screenshots...</p>
-          <p className="text-sm text-gray-500 mt-1.5 max-w-sm">
+          <span className="spinner spinner-lg mb-4" aria-hidden="true" />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            Regenerating screenshots…
+          </p>
+          <p className="text-xs mt-1.5 max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
             Extracting frames from video and uploading to storage
           </p>
         </div>
       )}
 
       {!loading && !screenshotLoading && summaries.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
-          <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-indigo-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-base font-semibold text-gray-900 mb-2">
-            No Summary Yet
+        <div className="empty-state flex-1">
+          <svg
+            className="empty-state-icon"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+            No summary yet
           </h3>
-          <p className="text-sm text-gray-600 mb-6 max-w-sm leading-relaxed">
-            Generate a summary to get a quick overview of the key topics and
-            segments in this video.
+          <p className="text-xs mb-6 max-w-sm leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+            Generate a summary for a quick overview of key topics and segments.
           </p>
           <button
             onClick={generateSummaries}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 font-medium shadow-sm hover:shadow-md active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            className="btn-primary"
             aria-label="Generate content summary"
           >
             Generate Summary
@@ -260,15 +264,28 @@ export const SummaryPanel = ({
       )}
 
       {error && !loading && (
-        <div className="mx-4 sm:mx-5 my-4 p-4 bg-red-50 border border-red-200 rounded-lg" role="alert" aria-live="assertive">
+        <div
+          className="mx-4 sm:mx-5 my-4 p-3 rounded-md"
+          style={{
+            background: 'oklch(65% 0.20 25 / 0.10)',
+            border: '1px solid oklch(65% 0.20 25 / 0.30)',
+          }}
+          role="alert"
+          aria-live="assertive"
+        >
           <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              className="w-5 h-5 flex-shrink-0 mt-0.5"
+              style={{ color: 'var(--c-error)' }}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div className="flex-1">
-              <p className="text-sm font-medium text-red-800">{error}</p>
+              <p className="text-sm font-medium" style={{ color: 'var(--c-error)' }}>{error}</p>
               <button
-                className="mt-2 text-sm text-red-600 hover:text-red-800 underline focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                className="mt-2 text-xs underline focus:outline-none rounded"
+                style={{ color: 'var(--c-error)' }}
                 onClick={() => setError(null)}
                 aria-label="Dismiss error message"
               >
@@ -280,22 +297,29 @@ export const SummaryPanel = ({
       )}
 
       {!loading && summaries.length > 0 && (
-        <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
+        <div
+          className="overflow-y-auto flex-1"
+          style={{ borderTop: '1px solid var(--border-subtle)' }}
+        >
           {transitions((style, section, _, index) => (
-            <animated.div style={style} className="hover:bg-gray-50">
-              <div className="flex flex-col sm:flex-row items-start gap-3 sm:gap-4 px-4 sm:px-5 py-4">
-                {/* Phase 3: Thumbnail size reduction 128px -> 96px, Phase 2: Split click zones */}
+            <animated.div
+              style={style}
+              className="border-b transition-colors hover:[background:var(--bg-subtle)]"
+            >
+              <div
+                className="flex flex-col sm:flex-row items-start gap-3 sm:gap-4 px-4 sm:px-5 py-4"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
                 {section.screenshot_url ? (
                   <div className="flex-shrink-0 w-full sm:w-24">
                     <img
                       src={formatScreenshotUrl(section.screenshot_url)}
                       alt={`Screenshot for ${section.title}`}
-                      className="w-full sm:w-24 h-24 object-cover rounded-lg shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer hover:scale-105 border border-gray-200"
+                      className="w-full sm:w-24 h-24 object-cover rounded-md transition-all duration-200 cursor-pointer hover:scale-105 border"
+                      style={{ borderColor: 'var(--border-subtle)' }}
                       onClick={(e) => {
                         e.stopPropagation();
-                        openImageModal(
-                          formatScreenshotUrl(section.screenshot_url)
-                        );
+                        openImageModal(formatScreenshotUrl(section.screenshot_url));
                       }}
                       role="button"
                       tabIndex={0}
@@ -309,17 +333,20 @@ export const SummaryPanel = ({
                     />
                   </div>
                 ) : (
-                  <div className="flex-shrink-0 w-full sm:w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200">
-                    <span className="text-xs text-gray-400" aria-label="No preview available">[No preview]</span>
+                  <div
+                    className="flex-shrink-0 w-full sm:w-24 h-24 rounded-md flex items-center justify-center border"
+                    style={{
+                      background: 'var(--bg-subtle)',
+                      borderColor: 'var(--border-subtle)',
+                    }}
+                  >
+                    <span className="text-xs" style={{ color: 'var(--text-tertiary)' }} aria-label="No preview available">[No preview]</span>
                   </div>
                 )}
 
-                {/* Phase 2: Separate click zone for accordion expansion */}
                 <div
                   className="flex-1 min-w-0 cursor-pointer"
-                  onClick={() =>
-                    setExpandedSection(expandedSection === index ? null : index)
-                  }
+                  onClick={() => setExpandedSection(expandedSection === index ? null : index)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
@@ -332,72 +359,60 @@ export const SummaryPanel = ({
                   aria-label={`${expandedSection === index ? 'Collapse' : 'Expand'} section: ${section.title}`}
                 >
                   <div className="flex justify-between items-start gap-2">
-                    {/* Phase 1: Typography improvements - text-base font-semibold */}
-                    <h4 className="text-base font-semibold text-gray-900 leading-snug">
+                    <h4 className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
                       {section.title}
                     </h4>
-                    {/* Phase 2: Improved hover states */}
-                    <div className="flex-shrink-0 transition-transform duration-200 hover:bg-gray-100 rounded-full p-1">
+                    <div className="flex-shrink-0 rounded-full p-1 transition-colors hover:[background:var(--bg-subtle)]">
                       <Chevron rotation={expandedSection === index ? 180 : 0} />
                     </div>
                   </div>
 
-                  {/* Phase 1: Better spacing and color consistency */}
-                  <p className="mt-1.5 text-xs font-medium text-gray-500">
-                    {section.start} - {section.end}
+                  <p
+                    className="mt-1.5 text-xs font-mono tabular-nums"
+                    style={{ color: 'var(--text-tertiary)' }}
+                  >
+                    {section.start} – {section.end}
                   </p>
 
-                  {/* Collapsed summary preview - Phase 4: Smooth animations */}
                   <div
-                    className={`mt-2 text-sm text-gray-700 leading-relaxed overflow-hidden transition-all duration-300 ease-in-out ${
-                      expandedSection === index
-                        ? "opacity-0 h-0"
-                        : "opacity-100"
+                    className={`mt-2 text-sm leading-relaxed overflow-hidden transition-all duration-300 ease-in-out ${
+                      expandedSection === index ? "opacity-0 h-0" : "opacity-100"
                     }`}
+                    style={{ color: 'var(--text-secondary)' }}
                   >
                     <p className="line-clamp-2">{section.summary}</p>
                   </div>
                 </div>
 
-                {/* Phase 2: Persistent "Jump to section" button - always visible */}
                 <div className="flex-shrink-0 self-start">
                   <button
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-100 hover:bg-indigo-200 text-indigo-700 hover:text-indigo-800 rounded-lg transition-all duration-200 hover:shadow-sm active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                    className="btn-tonal flex items-center gap-1.5"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleSeekTo(section.start);
                     }}
                     aria-label={`Jump to ${section.title} at ${section.start}`}
                   >
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <span className="hidden sm:inline">Jump</span>
                   </button>
                 </div>
               </div>
 
-              {/* Phase 4: Improved accordion animation */}
               <AccordionContent isOpen={expandedSection === index}>
-                <div className="px-4 sm:px-5 py-3 bg-gray-50 border-t border-gray-100">
-                  <p className="text-sm text-gray-700 leading-relaxed">{section.summary}</p>
+                <div
+                  className="px-4 sm:px-5 py-3 border-t"
+                  style={{
+                    background: 'var(--bg-subtle)',
+                    borderColor: 'var(--border-subtle)',
+                  }}
+                >
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    {section.summary}
+                  </p>
                 </div>
               </AccordionContent>
             </animated.div>
