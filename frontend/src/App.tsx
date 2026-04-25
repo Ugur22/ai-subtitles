@@ -8,6 +8,7 @@ import { JobsProvider } from './contexts/JobsContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
+import { PricingPage } from './components/pages/PricingPage';
 import { VerifyEmailPage } from './components/auth/VerifyEmailPage';
 import { ForgotPasswordPage } from './components/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
@@ -75,6 +76,7 @@ function App() {
               <Route path="/verify-email" element={<VerifyEmailPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/pricing" element={<PricingPage />} />
 
               {/* Protected routes */}
               <Route element={<ProtectedRoute />}>

@@ -257,6 +257,10 @@ async def submit_job(
     # Get authenticated user ID
     user_id = request.state.user["id"]
 
+    # Quota check (admins bypass; free/pro/studio enforced)
+    from middleware.quota import check_can_transcribe
+    check_can_transcribe(getattr(request.state, "profile", None))
+
     try:
         # Create job (checks queue limit and deduplication)
         result = JobQueueService.create_job(

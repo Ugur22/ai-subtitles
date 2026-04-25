@@ -386,7 +386,9 @@ class JobQueueService:
         video_hash: str,
         result_json: Dict,
         result_srt: str,
-        result_vtt: str
+        result_vtt: str,
+        video_duration_seconds: Optional[int] = None,
+        gpu_seconds: Optional[float] = None,
     ) -> bool:
         """
         Mark a job as completed with results.
@@ -397,6 +399,8 @@ class JobQueueService:
             result_json: Full transcription result as JSON
             result_srt: SRT format subtitles
             result_vtt: VTT format subtitles
+            video_duration_seconds: Length of the source media (for quota)
+            gpu_seconds: Wall-clock processing time on the GPU instance (for cost accounting)
 
         Returns:
             True if successful
@@ -404,7 +408,7 @@ class JobQueueService:
         client = supabase()
 
         try:
-            response = client.table("jobs").update({
+            update_payload = {
                 "status": "completed",
                 "progress": 100,
                 "stage": "completed",
@@ -416,7 +420,13 @@ class JobQueueService:
                 "completed_at": datetime.utcnow().isoformat(),
                 "updated_at": datetime.utcnow().isoformat(),
                 "last_seen": datetime.utcnow().isoformat(),
-            }).eq("id", job_id).execute()
+            }
+            if video_duration_seconds is not None:
+                update_payload["video_duration_seconds"] = int(video_duration_seconds)
+            if gpu_seconds is not None:
+                update_payload["gpu_seconds"] = round(float(gpu_seconds), 2)
+
+            response = client.table("jobs").update(update_payload).eq("id", job_id).execute()
 
             success = response.data and len(response.data) > 0
             if success:

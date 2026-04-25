@@ -902,6 +902,12 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
 
+    # Plan gate: free tier has chat disabled; admins always pass
+    from middleware.quota import check_can_chat
+    from services.usage_meter import record_chat_message
+    check_can_chat(getattr(request.state, "profile", None))
+    _quota_user_id = (request.state.profile or {}).get("id") if hasattr(request.state, "profile") else None
+
     # Guard: wait for models to finish preloading on cold start
     from model_preloader import models_ready, wait_for_models
     if not models_ready():
@@ -1029,6 +1035,12 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         if visual_query_used:
             response["visual_query_used"] = visual_query_used
 
+        # Meter (best-effort; never blocks the response)
+        try:
+            record_chat_message(_quota_user_id, llm_tokens=0)
+        except Exception as _meter_err:
+            print(f"[chat] meter failed: {_meter_err}")
+
         return response
 
     except HTTPException:
@@ -1062,6 +1074,12 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
     """
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
+
+    # Plan gate: free tier has chat disabled; admins always pass
+    from middleware.quota import check_can_chat
+    from services.usage_meter import record_chat_message
+    check_can_chat(getattr(request.state, "profile", None))
+    _stream_user_id = (request.state.profile or {}).get("id") if hasattr(request.state, "profile") else None
 
     from model_preloader import models_ready, wait_for_models
 
@@ -1287,6 +1305,12 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 "provider_used": provider_name or llm_manager.default_provider,
                 "video_hash": video_hash
             })
+
+            # Meter the chat message (best-effort; never breaks the stream)
+            try:
+                record_chat_message(_stream_user_id, llm_tokens=0)
+            except Exception as _meter_err:
+                print(f"[chat/stream] meter failed: {_meter_err}")
 
         except Exception as e:
             print(f"Error in streaming chat: {str(e)}")

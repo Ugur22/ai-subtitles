@@ -6,12 +6,15 @@ import subprocess
 import asyncio
 import tempfile
 import shutil
+import time
 import traceback
 import threading
 import hashlib
 import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
+
+from .usage_meter import record_transcription
 
 # Single worker executor for CPU/GPU-bound tasks
 # This prevents blocking the event loop while allowing other requests (auth, status) to be served
@@ -205,6 +208,7 @@ class BackgroundWorker:
         temp_files = []
         temp_dirs = []
         heartbeat_thread = None
+        gpu_start_ts = time.monotonic()  # for cost-accounting (gpu_seconds)
 
         try:
             # Get job
@@ -855,16 +859,34 @@ class BackgroundWorker:
                 },
             }
 
+            # Compute video duration (last segment end time, in seconds)
+            video_duration_seconds: Optional[int] = None
+            if formatted_segments:
+                try:
+                    last_end = formatted_segments[-1].get("end")
+                    if last_end is not None:
+                        video_duration_seconds = int(round(float(last_end)))
+                except (ValueError, TypeError):
+                    video_duration_seconds = None
+
+            gpu_seconds = round(time.monotonic() - gpu_start_ts, 2)
+
             # Step 7: Mark completed (95-100%)
             JobQueueService.mark_completed(
                 job_id=job_id,
                 video_hash=video_hash,
                 result_json=result_json,
                 result_srt=srt_content,
-                result_vtt=vtt_content
+                result_vtt=vtt_content,
+                video_duration_seconds=video_duration_seconds,
+                gpu_seconds=gpu_seconds,
             )
 
-            print(f"[Worker] Job {job_id} completed successfully")
+            # Roll into the user's monthly usage (best-effort; never blocks)
+            if video_duration_seconds:
+                record_transcription(user_id, video_duration_seconds)
+
+            print(f"[Worker] Job {job_id} completed: {video_duration_seconds}s video, {gpu_seconds}s GPU")
             return True
 
         except Exception as e:
