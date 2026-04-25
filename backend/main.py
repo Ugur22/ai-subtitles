@@ -47,7 +47,7 @@ from services.translation_service import TranslationService
 from services.speaker_service import SpeakerService
 
 # Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing
 
 # Import LLM and vector store modules (optional)
 try:
@@ -166,6 +166,7 @@ app.include_router(auth_new.router)  # Email/password auth
 app.include_router(keys.router)      # API keys management
 app.include_router(admin.router)     # Admin panel
 app.include_router(settings.router)  # User settings
+app.include_router(billing.router)   # Pricing tiers + usage snapshot (Stripe wired in Phase 1.5)
 app.include_router(diagnostics.router)
 app.include_router(face_tags.router)  # Face tagging for scene search
 app.include_router(chapters.router, prefix="/api/chapters", tags=["chapters"])  # Auto chapter markers

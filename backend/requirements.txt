@@ -52,3 +52,6 @@ onnxruntime-gpu>=1.16.0
 
 # Memory monitoring
 psutil>=5.9.0
+
+# Billing / subscriptions
+stripe>=10.0.0
