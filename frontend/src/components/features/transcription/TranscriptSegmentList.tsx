@@ -1,6 +1,7 @@
 import React from "react";
 import { useSpring, animated } from "react-spring";
 import { formatScreenshotUrl } from "../../../utils/url";
+import { getSpeakerIndex } from "../../../utils/speaker";
 
 interface Segment {
   id: string;
@@ -51,30 +52,23 @@ const AnimatedSegment = ({
     <animated.div
       style={{
         ...style,
-        backgroundColor: isActive
-          ? 'var(--bg-surface)'
-          : 'var(--bg-subtle)',
-        borderColor: isActive
-          ? 'var(--accent)'
-          : isSilent
-          ? 'var(--border-subtle)'
-          : 'var(--border-subtle)',
-        borderWidth: '1px',
-        borderStyle: isSilent ? 'dashed' : 'solid',
-        borderRadius: '8px',
-        padding: '14px 16px',
+        backgroundColor: isActive ? 'var(--accent-dim)' : 'transparent',
+        borderRadius: 'var(--radius-sm)',
+        padding: '10px 12px',
         cursor: 'pointer',
-        transition: 'border-color 150ms ease, background-color 150ms ease',
+        position: 'relative',
+        border: isSilent ? '1px dashed var(--border-subtle)' : '1px solid transparent',
+        transition: 'background-color 120ms ease, border-color 120ms ease',
       }}
       id={`transcript-segment-${segment.id}`}
       onClick={props.onClick}
       role="button"
       tabIndex={0}
       onMouseEnter={e => {
-        if (!isActive) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-default)';
+        if (!isActive) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'var(--bg-subtle)';
       }}
       onMouseLeave={e => {
-        if (!isActive) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-subtle)';
+        if (!isActive) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -84,6 +78,20 @@ const AnimatedSegment = ({
       }}
       aria-label={`Transcript segment ${segment.id}: ${segment.text || 'Visual moment'}`}
     >
+      {isActive && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 6,
+            bottom: 6,
+            width: 3,
+            background: 'var(--accent)',
+            borderRadius: '0 2px 2px 0',
+          }}
+        />
+      )}
       {props.children}
     </animated.div>
   );
@@ -103,7 +111,7 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
       setEditSpeakerName,
       handleSpeakerRename,
       isRenamingSpeaker,
-      getSpeakerColor,
+      getSpeakerColor: _getSpeakerColor,
       formatSpeakerLabel,
       onEnrollSpeaker,
     }) => {
@@ -269,13 +277,12 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
                                 setEditingSegmentId(segment.id);
                                 setEditSpeakerName(formatSpeakerLabel(segment.speaker!));
                               }}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${getSpeakerColor(segment.speaker).bg} ${getSpeakerColor(segment.speaker).text} ${getSpeakerColor(segment.speaker).border}`}
+                              className="sp-pill"
+                              data-sp={getSpeakerIndex(segment.speaker)}
                               title="Click to rename speaker"
                               aria-label={`Edit speaker: ${formatSpeakerLabel(segment.speaker!)}`}
                             >
-                              <svg style={{ width: '11px', height: '11px' }} fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                              </svg>
+                              <span className="sp-dot" />
                               {formatSpeakerLabel(segment.speaker)}
                             </button>
                           )}

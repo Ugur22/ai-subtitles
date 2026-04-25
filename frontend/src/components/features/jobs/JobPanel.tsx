@@ -52,13 +52,17 @@ export const JobPanel: React.FC<JobPanelProps> = ({
     if (e.key === "Escape") onClose();
   };
 
-  const sectionBadgeStyle = (color: string) => ({
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    padding: '1px 7px', borderRadius: '9999px', fontSize: '11px', fontWeight: 500,
-    backgroundColor: color === 'accent' ? 'var(--accent-dim)' : color === 'success' ? 'oklch(70% 0.15 145 / 0.15)' : color === 'error' ? 'oklch(65% 0.20 25 / 0.12)' : 'var(--bg-overlay)',
-    color: color === 'accent' ? 'var(--accent)' : color === 'success' ? 'var(--c-success)' : color === 'error' ? 'var(--c-error)' : 'var(--text-tertiary)',
-    border: '1px solid ' + (color === 'accent' ? 'oklch(78% 0.17 75 / 0.3)' : color === 'success' ? 'oklch(70% 0.15 145 / 0.3)' : color === 'error' ? 'oklch(65% 0.20 25 / 0.3)' : 'var(--border-subtle)'),
-  });
+  const sectionChip = (variant: 'accent' | 'success' | 'error' | 'default', label: number) => {
+    const styleMap: Record<typeof variant, React.CSSProperties> = {
+      accent:  { background: 'var(--accent-dim)', color: 'var(--accent)', borderColor: 'var(--accent-border)' },
+      success: { background: 'oklch(70% 0.15 145 / 0.12)', color: 'var(--c-success)', borderColor: 'oklch(70% 0.15 145 / 0.30)' },
+      error:   { background: 'oklch(65% 0.20 25 / 0.10)', color: 'var(--c-error)', borderColor: 'oklch(65% 0.20 25 / 0.25)' },
+      default: { background: 'var(--bg-subtle)', color: 'var(--text-quaternary)', borderColor: 'var(--border-subtle)' },
+    };
+    return (
+      <span className="chip mono" style={{ ...styleMap[variant], padding: '1px 7px' }}>{label}</span>
+    );
+  };
 
   return (
     <>
@@ -76,8 +80,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({
       <div
         className={`fixed right-0 top-0 h-full w-full sm:w-96 transform transition-transform duration-300 ease-in-out z-50 flex flex-col`}
         style={{
-          backgroundColor: 'var(--bg-subtle)',
+          backgroundColor: 'var(--bg-app)',
           borderLeft: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-lg)',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
         }}
         onKeyDown={handleKeyDown}
@@ -86,14 +91,14 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         aria-labelledby="job-panel-title"
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-          <div>
-            <h2 id="job-panel-title" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-              My Transcriptions
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px 14px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, background: 'var(--bg-surface)' }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 id="job-panel-title" style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>
+              Library
             </h2>
             {!isLoading && jobs.length > 0 && (
-              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                {activeJobs.length} active · {completedJobs.length} completed
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px', margin: 0 }}>
+                {jobs.length} {jobs.length === 1 ? 'transcript' : 'transcripts'}{activeJobs.length > 0 ? ` · ${activeJobs.length} processing` : ''}
               </p>
             )}
           </div>
@@ -139,8 +144,8 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               {activeJobs.length > 0 && (
                 <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Active</span>
-                    <span style={sectionBadgeStyle('accent')}>{activeJobs.length}</span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Active</span>
+                    {sectionChip('accent', activeJobs.length)}
                   </div>
                   <JobList jobs={activeJobs} onViewTranscript={onViewTranscript} onCancel={handleCancelJob} />
                 </section>
@@ -149,8 +154,8 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               {completedJobs.length > 0 && (
                 <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Completed</span>
-                    <span style={sectionBadgeStyle('success')}>{completedJobs.length}</span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Completed</span>
+                    {sectionChip('success', completedJobs.length)}
                   </div>
                   <JobList jobs={completedJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
                 </section>
@@ -159,8 +164,8 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               {failedJobs.length > 0 && (
                 <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Failed</span>
-                    <span style={sectionBadgeStyle('error')}>{failedJobs.length}</span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Failed</span>
+                    {sectionChip('error', failedJobs.length)}
                   </div>
                   <JobList jobs={failedJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
                 </section>
@@ -169,8 +174,8 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               {cancelledJobs.length > 0 && (
                 <section style={{ padding: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Cancelled</span>
-                    <span style={sectionBadgeStyle('default')}>{cancelledJobs.length}</span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cancelled</span>
+                    {sectionChip('default', cancelledJobs.length)}
                   </div>
                   <JobList jobs={cancelledJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
                 </section>

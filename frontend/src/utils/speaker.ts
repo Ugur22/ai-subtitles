@@ -40,3 +40,13 @@ export const getSpeakerColor = (speaker: string): SpeakerColors => {
   const hash = speaker.split("").reduce((acc, char) => char.charCodeAt(0) + acc, 0);
   return colors[hash % colors.length];
 };
+
+/**
+ * Returns a 1-based index (1..5) for the speaker palette (--sp-1 .. --sp-5).
+ * Use as `data-sp={getSpeakerIndex(speaker)}` on a `.sp-pill`.
+ */
+export const getSpeakerIndex = (speaker: string): 1 | 2 | 3 | 4 | 5 => {
+  if (!speaker) return 1;
+  const hash = speaker.split("").reduce((acc, char) => char.charCodeAt(0) + acc, 0);
+  return ((hash % 5) + 1) as 1 | 2 | 3 | 4 | 5;
+};
