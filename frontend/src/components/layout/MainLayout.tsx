@@ -1,9 +1,9 @@
 /**
- * MainLayout - Main application layout with header
+ * MainLayout — sidebar + content grid.
  */
 
 import React from 'react';
-import { Header } from './Header';
+import { Sidebar } from './Sidebar';
 import { SettingsPanel } from '../settings/SettingsPanel';
 
 interface MainLayoutProps {
@@ -12,9 +12,9 @@ interface MainLayoutProps {
 
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-base)' }}>
-      <Header />
-      <main className="w-full">{children}</main>
+    <div className="app-shell">
+      <Sidebar />
+      <main>{children}</main>
       <SettingsPanel />
     </div>
   );

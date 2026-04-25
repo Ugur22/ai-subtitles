@@ -11,6 +11,7 @@ import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { listSpeakers, getFaceTagSpeakers } from "../../../services/api";
 import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
+import { useAuth } from "../../../hooks/useAuth";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
@@ -803,7 +804,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [reindexStatus, setReindexStatus] = useState<string | null>(null);
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [citeOn, setCiteOn] = useState(true);
 
   const speech = useSpeechRecognition({
     onFinalTranscript: (text) => {
@@ -811,6 +813,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       setInput(prev => (prev ? prev.trimEnd() + ' ' : '') + text);
     },
   });
+
+  const { user } = useAuth();
 
 
   // @mention autocomplete state
@@ -1349,7 +1353,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return null;
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setInput(value);
     const cursorPos = e.target.selectionStart || value.length;
@@ -1361,6 +1365,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     } else {
       setShowMentions(false);
     }
+    // Autosize
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
   };
 
   const selectMention = (speaker: string) => {
@@ -1446,9 +1454,38 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "var(--bg-subtle)" }}>
-      {/* Header */}
-      <div className="px-4 py-3" style={{ background: "var(--bg-subtle)" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg-surface)" }}>
+      {/* Chat Header — spark + title */}
+      <div className="chat-head">
+        <div className="spark" aria-hidden="true">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M12 2v4m6.364.636l-2.828 2.828M22 12h-4m-.636 6.364l-2.828-2.828M12 22v-4m-6.364-.636l2.828-2.828M2 12h4m.636-6.364l2.828 2.828" />
+          </svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3>Ask this transcript anything</h3>
+          <p>Every answer cites the exact moment in the video — click to jump there.</p>
+        </div>
+      </div>
+
+      {/* Controls (model selector, scene search) — collapsible */}
+      <Disclosure>
+        {({ open }) => (
+          <div style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}>
+            <DisclosureButton
+              className="flex items-center gap-1.5 w-full px-4 py-2 text-xs font-medium transition-colors"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              <svg
+                className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-90' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              <span>{open ? 'Hide settings' : 'Model & search settings'}</span>
+            </DisclosureButton>
+            <DisclosurePanel className="px-4 pb-3 pt-1">
           {/* Controls Row */}
           <div className="flex items-center gap-3 flex-wrap">
             {/* Model Selector */}
@@ -1631,7 +1668,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
             )}
           </div>
+            </DisclosurePanel>
+          </div>
+        )}
+      </Disclosure>
 
+      <div className="px-4 py-2" style={{ background: "var(--bg-surface)" }}>
         {/* Re-index Status */}
         {reindexStatus && (
           <div
@@ -1720,39 +1762,62 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div
+        className="flex-1 overflow-y-auto"
+        style={{ padding: "18px 16px 12px", display: "flex", flexDirection: "column", gap: "18px" }}
+      >
         {messages.length === 0 && (
-          <div className="text-center py-8">
-            <p className="mb-4" style={{ color: "var(--text-secondary)" }}>Start a conversation!</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl mx-auto">
-              {quickQuestions.map((question, index) => (
+          <div className="sug-list">
+            <div className="sug-list-label">Try asking</div>
+            {quickQuestions.map((question, index) => {
+              const icons = [
+                "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+                "M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z",
+                "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
+                "M5 13l4 4L19 7",
+              ];
+              return (
                 <button
                   key={index}
                   onClick={() => sendMessage(question)}
-                  className="px-4 py-2 text-sm text-left rounded-lg transition-colors"
-                  style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}
+                  className="sug"
                 >
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={icons[index % icons.length]} />
+                  </svg>
                   {question}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
 
         {messageTransitions((style, message) => (
           <animated.div
             style={style}
-            className={`flex flex-col gap-2 ${
-              message.role === "user" ? "items-end" : "items-start"
-            }`}
+            className={`msg ${message.role === "user" ? "user" : "ai"}`}
           >
+            <div className="msg-av" aria-hidden="true">
+              {message.role === "user"
+                ? (user?.email?.charAt(0).toUpperCase() || "U")
+                : ""}
+            </div>
+            <div
+              className="flex flex-col"
+              style={{
+                maxWidth: "85%",
+                minWidth: 0,
+                gap: "8px",
+                alignItems: message.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
             {/* Show query transformation notification for assistant messages */}
             {message.role === "assistant" &&
               message.visual_query_used &&
               message.original_question &&
               message.visual_query_used !== message.original_question && (
                 <div
-                  className="max-w-3xl px-3 py-2 rounded-lg text-xs flex items-start gap-2 border"
+                  className="px-3 py-2 rounded-lg text-xs flex items-start gap-2 border"
                   style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
                 >
                   <svg className="w-4 h-4 flex-shrink-0 mt-px" style={{ color: "var(--accent)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1766,13 +1831,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               )}
 
             <div
-              className="max-w-3xl rounded-xl"
+              className="msg-bubble"
               style={
-                message.role === "user"
-                  ? { padding: "0.75rem 1rem", background: "var(--accent)", color: "var(--accent-text)" }
-                  : message.isError
-                  ? { padding: "1rem 1.25rem", background: "oklch(65% 0.20 25 / 0.08)", border: "1px solid oklch(65% 0.20 25 / 0.25)", color: "var(--text-primary)" }
-                  : { padding: "1rem 1.25rem", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }
+                message.isError
+                  ? { background: "oklch(65% 0.20 25 / 0.08)", border: "1px solid oklch(65% 0.20 25 / 0.25)", padding: "12px 14px" }
+                  : undefined
               }
             >
               {message.isError ? (
@@ -2064,6 +2127,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 </div>
               )}
             </div>
+            </div>
           </animated.div>
         ))}
 
@@ -2085,7 +2149,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
 
       {/* Input */}
-      <div className="px-6 py-4 border-t" style={{ background: "var(--bg-subtle)", borderColor: "var(--border-subtle)" }}>
+      <div className="composer">
         {/* Custom Instructions Section */}
         <div className="mb-3">
           <button
@@ -2153,8 +2217,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           )}
         </div>
 
-        {/* Chat Input */}
-        <div className="relative flex gap-2">
+        {/* Composer box */}
+        <div className="relative">
           {showMentions && filteredSpeakers.length > 0 && (
             <div className="absolute bottom-full mb-1 left-0 w-64 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50 border" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
               {filteredSpeakers.map((speaker, i) => (
@@ -2177,68 +2241,78 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               ))}
             </div>
           )}
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyPress}
-            placeholder="Ask about the video... (type @ to mention a speaker)"
-            className="input-base flex-1 px-4 py-3"
-            disabled={loading}
-          />
-          {speech.isSupported && (
-            <button
-              type="button"
-              onClick={() => (speech.status === 'listening' ? speech.stop() : speech.start())}
+          <div className="composer-box">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyPress}
+              placeholder="Ask about this transcript… (type @ to mention a speaker)"
               disabled={loading}
-              aria-label={speech.status === 'listening' ? 'Stop dictation' : 'Start dictation'}
-              title={speech.status === 'denied' ? 'Microphone permission denied' : 'Voice input'}
-              className={`relative px-3 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                speech.status === 'listening' ? 'bg-red-500/15 text-red-500' : 'btn-ghost'
-              }`}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
-              </svg>
-              {speech.status === 'listening' && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            />
+            <div className="composer-row">
+              {speech.isSupported && (
+                <button
+                  type="button"
+                  onClick={() => (speech.status === 'listening' ? speech.stop() : speech.start())}
+                  disabled={loading}
+                  aria-label={speech.status === 'listening' ? 'Stop dictation' : 'Start dictation'}
+                  title={speech.status === 'denied' ? 'Microphone permission denied' : 'Voice input'}
+                  className={`comp-chip ${speech.status === 'listening' ? 'active' : ''}`}
+                  style={speech.status === 'listening' ? { color: 'var(--c-error)', borderColor: 'var(--c-error)', background: 'oklch(65% 0.20 25 / 0.10)' } : undefined}
+                >
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round"
+                      d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round"
+                      d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+                  </svg>
+                  {speech.status === 'listening' ? 'Listening' : 'Voice'}
+                </button>
               )}
-            </button>
-          )}
-          <button
-            onClick={sendMessage}
-            disabled={loading || !input.trim()}
-            className="px-6 py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-            style={{ background: "var(--accent)", color: "var(--accent-text)" }}
-          >
-            <svg
-              className="w-5 h-5 transform rotate-90"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
-            </svg>
-          </button>
-        </div>
-        {speech.status === 'listening' && (
-          <div className="px-2 pt-2 text-xs flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
-            <span className="inline-flex w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-            <span>
-              Listening — click mic to stop
-              {speech.interim ? ` · "${speech.interim}"` : '…'}
-            </span>
+              <button
+                type="button"
+                className={`comp-chip ${citeOn ? 'active' : ''}`}
+                onClick={() => setCiteOn(!citeOn)}
+                title="Cite timestamps automatically"
+              >
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Cite
+              </button>
+              <button
+                onClick={sendMessage}
+                disabled={loading || !input.trim()}
+                className="send-btn"
+                aria-label="Send"
+                title="Send message"
+              >
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-7 7m7-7l7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
-        )}
+          {speech.status === 'listening' && (
+            <div className="px-2 pt-2 text-xs flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+              <span className="inline-flex w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              <span>
+                Listening — click mic to stop
+                {speech.interim ? ` · "${speech.interim}"` : '…'}
+              </span>
+            </div>
+          )}
+        </div>
+        <div className="composer-foot">
+          <div className="tips-k">
+            <span><span className="kbd">↵</span> send</span>
+            <span><span className="kbd">⇧</span>+<span className="kbd">↵</span> new line</span>
+          </div>
+          <span>Answers cite the original audio — not trained knowledge.</span>
+        </div>
       </div>
 
       {/* Screenshot Modal with Slideshow */}
