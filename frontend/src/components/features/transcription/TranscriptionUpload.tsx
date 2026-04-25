@@ -1077,44 +1077,25 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                 {/* Tabs for Transcript, Chat, Chapters, Summary */}
                 <div
-                  className="overflow-hidden flex-grow flex flex-col w-full xl:w-1/4"
-                  style={{ backgroundColor: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                  className="rp overflow-hidden flex-grow flex flex-col w-full xl:w-1/4"
                 >
                   {/* Tab bar */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      borderBottom: '1px solid var(--border-subtle)',
-                      backgroundColor: 'var(--bg-subtle)',
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 10,
-                    }}
-                  >
+                  <div className="rp-tabs">
                     {[
-                      { key: 'transcript', label: 'Transcript', active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
-                      { key: 'chat',       label: 'Chat',       active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); } },
-                      { key: 'chapters',   label: 'Chapters',   active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
-                      { key: 'summary',    label: 'Summary',    active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
-                    ].map(({ key, label, active, onClick }) => (
+                      { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length, active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
+                      { key: 'chat',       label: 'Chat',                                                            active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); } },
+                      { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length,                  active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
+                      { key: 'summary',    label: 'Summary',                                                         active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
+                    ].map(({ key, label, count, active, onClick }) => (
                       <button
                         key={key}
                         onClick={onClick}
-                        style={{
-                          flex: 1,
-                          padding: '10px 4px',
-                          fontSize: '12px',
-                          fontWeight: active ? 600 : 400,
-                          color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-                          transition: 'color 150ms ease, border-color 150ms ease',
-                          backgroundColor: 'transparent',
-                          cursor: 'pointer',
-                        }}
-                        onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
-                        onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; }}
+                        className={`rp-tab ${active ? 'on' : ''}`}
                       >
                         {label}
+                        {typeof count === 'number' && count > 0 && (
+                          <span className="ct mono">{count}</span>
+                        )}
                       </button>
                     ))}
                   </div>
