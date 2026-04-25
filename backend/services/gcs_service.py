@@ -3,8 +3,10 @@ GCS (Google Cloud Storage) service for handling large file uploads.
 
 This service enables direct-to-GCS uploads which bypass Cloud Run's 32MB request limit.
 """
+import concurrent.futures
 import os
 import tempfile
+import time
 from datetime import timedelta
 from typing import Optional, Tuple, Dict
 from google.cloud import storage
@@ -333,49 +335,71 @@ class GCSService:
     def upload_screenshots_batch(
         cls,
         screenshot_paths: Dict[float, str],
-        video_hash: str
+        video_hash: str,
+        max_workers: int = 16
     ) -> Dict[float, str]:
         """
-        Batch upload screenshots to GCS and return signed URLs.
+        Batch upload screenshots to GCS in parallel and return signed URLs.
+
+        Uses a bounded ThreadPoolExecutor to cap in-flight uploads, which
+        keeps peak memory low and avoids the OOM SIGKILL we hit when uploading
+        hundreds of screenshots sequentially on Cloud Run.
 
         Args:
             screenshot_paths: Dict mapping timestamp -> local file path
             video_hash: Video hash for organizing screenshots
+            max_workers: Concurrent upload threads (default 16; I/O-bound work)
 
         Returns:
             Dict mapping timestamp -> signed URL (or None if upload failed)
         """
         bucket = cls._get_bucket()
-        result = {}
+        # Pre-warm credentials so worker threads don't race on lazy init
+        cls._get_credentials()
 
-        for timestamp, local_path in screenshot_paths.items():
+        result: Dict[float, Optional[str]] = {}
+        total = len(screenshot_paths)
+        if total == 0:
+            print("[GCS] Batch upload called with 0 screenshots")
+            return result
+
+        def upload_single(timestamp: float, local_path: str) -> Tuple[float, Optional[str]]:
             try:
                 if not local_path or not os.path.exists(local_path):
-                    result[timestamp] = None
-                    continue
+                    return (timestamp, None)
 
-                # Generate GCS path
                 filename = f"{timestamp:.2f}.jpg"
                 gcs_path = f"{settings.GCS_SCREENSHOTS_PREFIX}{video_hash}/{filename}"
 
-                # Upload the file
                 blob = bucket.blob(gcs_path)
                 blob.upload_from_filename(local_path)
 
-                # Generate signed URL
                 signed_url = cls.generate_download_signed_url(
                     gcs_path,
                     expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
                 )
-
-                result[timestamp] = signed_url
-
+                return (timestamp, signed_url)
             except Exception as e:
                 print(f"[GCS] Failed to upload screenshot at {timestamp}s: {e}")
-                result[timestamp] = None
+                return (timestamp, None)
 
+        start = time.monotonic()
+        completed = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(upload_single, ts, path): ts
+                for ts, path in screenshot_paths.items()
+            }
+            for future in concurrent.futures.as_completed(futures):
+                ts, url = future.result()
+                result[ts] = url
+                completed += 1
+                if completed % 50 == 0 or completed == total:
+                    print(f"[GCS] Upload progress: {completed}/{total}", flush=True)
+
+        elapsed = time.monotonic() - start
         uploaded_count = sum(1 for v in result.values() if v is not None)
-        print(f"[GCS] Batch uploaded {uploaded_count}/{len(screenshot_paths)} screenshots")
+        print(f"[GCS] Batch uploaded {uploaded_count}/{total} screenshots in {elapsed:.1f}s")
 
         return result
 
