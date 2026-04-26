@@ -48,6 +48,11 @@ export interface Job {
   // Deduplication metadata
   cached?: boolean;
   cached_at?: string;
+
+  // Pre-signed video playback URL (populated by backend for completed jobs).
+  // When present the frontend can mount the video player without a separate
+  // GET /api/jobs/{id}/video_url call.
+  video_url?: string | null;
 }
 
 /**

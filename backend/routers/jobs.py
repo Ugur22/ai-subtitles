@@ -79,6 +79,24 @@ class JobStatusResponse(BaseModel):
     completed_at: Optional[str] = None
     cached: Optional[bool] = None
     cached_at: Optional[str] = None
+    # Pre-signed video playback URL for completed jobs. Lets the frontend mount
+    # the video player without a separate /video_url round-trip.
+    video_url: Optional[str] = None
+
+
+def _safe_video_url(job: dict) -> Optional[str]:
+    """Generate a short-lived signed video URL for a completed job, or None."""
+    if job.get('status') != 'completed' or not settings.ENABLE_GCS_UPLOADS:
+        return None
+    gcs_path = job.get('gcs_path') or (job.get('result_json') or {}).get('gcs_path')
+    if not gcs_path:
+        return None
+    try:
+        from services.gcs_service import gcs_service
+        return gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+    except Exception as e:
+        print(f"[Jobs] Skipping video_url for {job.get('id')}: {e}")
+        return None
 
 
 class JobListResponse(BaseModel):
@@ -375,7 +393,8 @@ async def get_job_status(
             started_at=job.get('started_at'),
             completed_at=job.get('completed_at'),
             cached=job.get('cached'),
-            cached_at=job.get('cached_at')
+            cached_at=job.get('cached_at'),
+            video_url=_safe_video_url(job)
         )
 
     except HTTPException:
@@ -451,7 +470,8 @@ async def list_jobs(
                 started_at=job.get('started_at'),
                 completed_at=job.get('completed_at'),
                 cached=job.get('cached'),
-                cached_at=job.get('cached_at')
+                cached_at=job.get('cached_at'),
+                video_url=_safe_video_url(job)
             ))
 
         return JobListResponse(

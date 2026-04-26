@@ -345,6 +345,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     if (!job.result_json) return;
     setTranscription(job.result_json);
     setShowJobPanel(false);
+    if (job.video_url) {
+      setVideoUrl(job.video_url);
+      return;
+    }
     try {
       const { download_url } = await getJobVideoUrl(job.job_id, job.access_token);
       setVideoUrl(download_url);
@@ -867,13 +871,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               <div
                 className={`flex-grow flex flex-col xl:flex-row overflow-hidden gap-4 w-full`}
               >
-                {/* Video Player (Top/Left) */}
-                {videoUrl && (
+                {/* Video Player (Top/Left) — always mounted so layout is stable; shows skeleton until videoUrl arrives */}
                   <div
                     className="overflow-hidden flex-shrink-0 w-full xl:w-3/4 flex flex-col"
                     style={{ backgroundColor: '#000', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
                   >
                     <div className="w-full bg-black flex justify-center relative flex-grow items-center">
+                      {videoUrl ? (
                       <video
                         ref={setVideoRef}
                         src={videoUrl}
@@ -929,6 +933,16 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           />
                         )}
                       </video>
+                      ) : (
+                      <div
+                        className="w-full flex items-center justify-center"
+                        style={{ minHeight: '320px', aspectRatio: '16 / 9' }}
+                      >
+                        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                          Loading video…
+                        </span>
+                      </div>
+                      )}
                     </div>
                     {/* Custom Progress Bar with Tooltip and Screenshot Preview */}
                     {videoRef && (
@@ -1073,7 +1087,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       </>
                     )}
                   </div>
-                )}
 
                 {/* Tabs for Transcript, Chat, Chapters, Summary */}
                 <div
