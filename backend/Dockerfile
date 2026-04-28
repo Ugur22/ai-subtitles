@@ -59,6 +59,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY download_models.py /tmp/download_models.py
 RUN python /tmp/download_models.py && rm /tmp/download_models.py
 
+# Verify critical pre-downloaded artifacts are baked into the image so failures
+# surface at build time, not as silent runtime re-downloads on Cloud Run.
+RUN test -f /root/panns_data/Cnn14_mAP=0.431.pth \
+    && test -f /root/panns_data/class_labels_indices.csv \
+    && ls -la /root/panns_data/
+
 # Copy the rest of the application
 COPY . .
 

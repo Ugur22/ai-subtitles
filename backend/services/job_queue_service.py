@@ -671,6 +671,42 @@ class JobQueueService:
         return estimated
 
     @staticmethod
+    def trigger_worker_job(job_id: str) -> bool:
+        """Kick off a Cloud Run Job execution that runs `python -m worker_main <job_id>`. Returns True if the run_job request was accepted (the actual pipeline runs asynchronously). Falls back to in-process BackgroundTasks when WORKER_JOB_NAME is unset (local dev)."""
+        from config import settings
+
+        try:
+            from google.cloud import run_v2
+        except ImportError:
+            print("[JobQueue] google-cloud-run not installed; cannot trigger worker job")
+            return False
+
+        job_resource = (
+            f"projects/{settings.WORKER_JOB_PROJECT}"
+            f"/locations/{settings.WORKER_JOB_REGION}"
+            f"/jobs/{settings.WORKER_JOB_NAME}"
+        )
+
+        try:
+            client = run_v2.JobsClient()
+            # ContainerOverride.args REPLACES the Job's default args. The Job's
+            # entrypoint is `python`, so we pass the full `-m worker_main <job_id>`.
+            overrides = run_v2.RunJobRequest.Overrides(
+                container_overrides=[
+                    run_v2.RunJobRequest.Overrides.ContainerOverride(
+                        args=["-m", "worker_main", job_id]
+                    )
+                ]
+            )
+            request = run_v2.RunJobRequest(name=job_resource, overrides=overrides)
+            client.run_job(request=request)
+            print(f"[JobQueue] Triggered worker job execution for {job_id} on {job_resource}")
+            return True
+        except Exception as e:
+            print(f"[JobQueue] Failed to trigger worker job for {job_id}: {e}")
+            return False
+
+    @staticmethod
     def cleanup_old_jobs() -> int:
         """
         Delete jobs older than 7 days.

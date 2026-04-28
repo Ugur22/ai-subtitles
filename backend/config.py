@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     # Leave empty to disable password protection
     APP_PASSWORD_HASH: Optional[str] = os.getenv("APP_PASSWORD_HASH")
 
+    # Cloud Run Worker Job (background pipeline lives here, not in this Service)
+    WORKER_JOB_PROJECT: str = os.getenv("WORKER_JOB_PROJECT", "ai-subs-poc")
+    WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
+    WORKER_JOB_NAME: str = os.getenv("WORKER_JOB_NAME", "ai-subs-worker")
+
     class Config:
         case_sensitive = True
         env_file = ".env"

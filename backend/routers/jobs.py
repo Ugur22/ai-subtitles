@@ -265,7 +265,6 @@ async def submit_job(
     """
     try:
         from services.job_queue_service import JobQueueService
-        from services.background_worker import background_worker
     except ImportError:
         raise HTTPException(
             status_code=503,
@@ -294,12 +293,19 @@ async def submit_job(
             force_language=job_request.force_language
         )
 
-        # If not cached, trigger background processing
+        # If not cached, trigger the Cloud Run Job worker (runs to completion outside the Service).
         if not result.get('cached', False):
-            background_tasks.add_task(
-                background_worker.process_job,
-                result['id']
-            )
+            triggered = JobQueueService.trigger_worker_job(result['id'])
+            if not triggered:
+                JobQueueService.mark_failed(
+                    result['id'],
+                    "Failed to dispatch worker job",
+                    "dispatch_error"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Could not dispatch background worker. Try again shortly."
+                )
 
             # Get estimated duration if available
             estimated_duration = JobQueueService.get_estimated_duration(
@@ -592,7 +598,6 @@ async def retry_job(
 
     try:
         from services.job_queue_service import JobQueueService
-        from services.background_worker import background_worker
 
         if job['status'] != 'failed':
             raise HTTPException(
@@ -608,9 +613,18 @@ async def retry_job(
 
         new_job_id = new_job['id']
 
-        # Trigger background processing for the NEW job
-        if background_tasks:
-            background_tasks.add_task(background_worker.process_job, new_job_id)
+        # Trigger the Cloud Run Job worker for the NEW job.
+        triggered = JobQueueService.trigger_worker_job(new_job_id)
+        if not triggered:
+            JobQueueService.mark_failed(
+                new_job_id,
+                "Failed to dispatch worker job",
+                "dispatch_error"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Could not dispatch background worker. Try again shortly."
+            )
 
         return JobRetryResponse(
             job_id=new_job_id,
