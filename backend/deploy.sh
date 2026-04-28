@@ -28,21 +28,25 @@ NC='\033[0m' # No Color
 PROJECT_ID="ai-subs-poc"
 REGION="us-central1"
 SERVICE_NAME="ai-subs-backend"
+WORKER_JOB_NAME="ai-subs-worker"
 IMAGE_NAME="us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest"
 SERVICE_ACCOUNT="1052285886390-compute@developer.gserviceaccount.com"
 
-# Resource limits (GPU requires minimum 4 CPU and 16Gi memory)
-MEMORY="16Gi"
-CPU="4"
-TIMEOUT="300"
-MIN_INSTANCES="0"
-MAX_INSTANCES="1"  # Set to 1 for GPU quota (10 units per instance, request more quota for 3)
+# Service (HTTP only) — no GPU; the heavy work has moved to the worker Job.
+SERVICE_MEMORY="8Gi"
+SERVICE_CPU="2"
+SERVICE_TIMEOUT="300"
+SERVICE_MIN_INSTANCES="0"
+SERVICE_MAX_INSTANCES="2"
 PORT="8000"
 
-# GPU configuration
+# Worker Job (GPU pipeline). 1h is the GPU task-timeout cap on Cloud Run Jobs.
+WORKER_MEMORY="16Gi"
+WORKER_CPU="4"
+WORKER_TASK_TIMEOUT="3600"
+WORKER_MAX_RETRIES="0"  # Don't auto-retry — leave it to our own retry endpoint.
 GPU_COUNT="1"
 GPU_TYPE="nvidia-l4"
-GPU_ZONAL_REDUNDANCY="false"  # Requires less quota (10 vs 30 per instance)
 
 # Environment variables (non-sensitive)
 CORS_ORIGINS='["https://ai-subs.netlify.app"]'
@@ -118,32 +122,60 @@ build_and_push() {
     fi
 }
 
-# Deploy to Cloud Run
+# Deploy the FastAPI Service (HTTP API only — no GPU, no background pipeline).
 deploy_to_cloud_run() {
-    print_step "Deploying to Cloud Run..."
+    print_step "Deploying Cloud Run Service (HTTP, no GPU)..."
 
-    # Deploy with all configurations (GPU-enabled)
     if gcloud run deploy "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --platform=managed \
         --region="${REGION}" \
         --project="${PROJECT_ID}" \
         --service-account="${SERVICE_ACCOUNT}" \
-        --memory="${MEMORY}" \
-        --cpu="${CPU}" \
+        --memory="${SERVICE_MEMORY}" \
+        --cpu="${SERVICE_CPU}" \
+        --gpu=0 \
+        --timeout="${SERVICE_TIMEOUT}" \
+        --min-instances="${SERVICE_MIN_INSTANCES}" \
+        --max-instances="${SERVICE_MAX_INSTANCES}" \
+        --port="${PORT}" \
+        --allow-unauthenticated \
+        --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE},PUBLIC_APP_URL=${PUBLIC_APP_URL},WORKER_JOB_PROJECT=${PROJECT_ID},WORKER_JOB_REGION=${REGION},WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
+        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"; then
+        print_info "Service deployment successful"
+    else
+        print_error "Service deployment failed"
+        exit 1
+    fi
+}
+
+# Deploy / update the Cloud Run Job that runs the transcription pipeline.
+# Same image as the Service, different entrypoint (python -m worker_main).
+deploy_worker_job() {
+    print_step "Deploying Cloud Run Worker Job (GPU)..."
+
+    # `gcloud run jobs deploy` is upsert: creates if missing, updates if present.
+    if gcloud run jobs deploy "${WORKER_JOB_NAME}" \
+        --image="${IMAGE_NAME}" \
+        --region="${REGION}" \
+        --project="${PROJECT_ID}" \
+        --service-account="${SERVICE_ACCOUNT}" \
+        --memory="${WORKER_MEMORY}" \
+        --cpu="${WORKER_CPU}" \
         --gpu="${GPU_COUNT}" \
         --gpu-type="${GPU_TYPE}" \
         --no-gpu-zonal-redundancy \
-        --timeout="${TIMEOUT}" \
-        --min-instances="${MIN_INSTANCES}" \
-        --max-instances="${MAX_INSTANCES}" \
-        --port="${PORT}" \
-        --allow-unauthenticated \
-        --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE},PUBLIC_APP_URL=${PUBLIC_APP_URL}" \
-        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"; then
-        print_info "Deployment successful"
+        --task-timeout="${WORKER_TASK_TIMEOUT}" \
+        --max-retries="${WORKER_MAX_RETRIES}" \
+        --parallelism=1 \
+        --tasks=1 \
+        --command="python" \
+        --args="-m,worker_main" \
+        --set-env-vars="ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}" \
+        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest"; then
+        print_info "Worker Job deployment successful"
     else
-        print_error "Deployment failed"
+        print_error "Worker Job deployment failed"
         exit 1
     fi
 }
@@ -211,10 +243,9 @@ main() {
 
     print_info "Project: ${PROJECT_ID}"
     print_info "Region: ${REGION}"
-    print_info "Service: ${SERVICE_NAME}"
+    print_info "Service: ${SERVICE_NAME} (HTTP, ${SERVICE_CPU} vCPU / ${SERVICE_MEMORY}, no GPU)"
+    print_info "Worker Job: ${WORKER_JOB_NAME} (${WORKER_CPU} vCPU / ${WORKER_MEMORY} + ${GPU_COUNT}x ${GPU_TYPE})"
     print_info "Image: ${IMAGE_NAME}"
-    print_info "GPU: ${GPU_COUNT}x ${GPU_TYPE}"
-    print_info "Resources: ${CPU} vCPU, ${MEMORY} memory"
     echo ""
 
     # Confirm deployment
@@ -229,6 +260,7 @@ main() {
     check_prerequisites
     build_and_push
     deploy_to_cloud_run
+    deploy_worker_job
     get_service_url
     verify_deployment
 

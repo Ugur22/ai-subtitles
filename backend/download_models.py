@@ -90,7 +90,9 @@ def download_panns_model():
 
     try:
         # Download class labels CSV
-        labels_url = "http://storage.googleapis.com/panns_data/class_labels_indices.csv"
+        # NOTE: original storage.googleapis.com/panns_data bucket returns 404 (taken
+        # down). GitHub raw is the surviving canonical source for these labels.
+        labels_url = "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/metadata/class_labels_indices.csv"
         labels_path = os.path.join(panns_dir, "class_labels_indices.csv")
         print(f"Downloading class labels from {labels_url}...")
         urllib.request.urlretrieve(labels_url, labels_path)
@@ -124,11 +126,10 @@ def download_panns_model():
         del model  # Free memory
 
     except Exception as e:
-        print(f"  WARNING: PANNs model download failed: {e}")
+        print(f"  ERROR: PANNs model download failed: {e}")
         import traceback
         traceback.print_exc()
-        # Don't raise - PANNs is optional, allow build to continue
-        print("  PANNs will auto-download on first use if needed")
+        raise
 
 
 def download_sentence_transformers_model():
@@ -181,11 +182,10 @@ def download_clip_model():
         del model  # Free memory
 
     except Exception as e:
-        print(f"  WARNING: CLIP model download failed: {e}")
+        print(f"  ERROR: CLIP model download failed: {e}")
         import traceback
         traceback.print_exc()
-        # Don't raise - visual search is optional
-        print("  Visual search will be unavailable if CLIP model fails")
+        raise
 
 
 def download_bart_model():
@@ -240,11 +240,10 @@ def download_emotion_model():
         print(f"  OK: Emotion model downloaded successfully")
 
     except Exception as e:
-        print(f"  WARNING: Emotion model download failed: {e}")
+        print(f"  ERROR: Emotion model download failed: {e}")
         import traceback
         traceback.print_exc()
-        # Don't raise - emotion detection is optional
-        print("  Emotion detection will be skipped if model unavailable")
+        raise
 
 
 def download_translation_models():
@@ -285,10 +284,10 @@ def download_insightface_model():
         del app
 
     except Exception as e:
-        print(f"  WARNING: InsightFace model download failed: {e}")
+        print(f"  ERROR: InsightFace model download failed: {e}")
         import traceback
         traceback.print_exc()
-        print("  Face tagging will be unavailable if model fails to load at runtime")
+        raise
 
 
 def main():

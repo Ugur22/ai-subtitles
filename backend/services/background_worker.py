@@ -56,6 +56,17 @@ from services.pipeline_cache_service import PipelineCacheService
 HEARTBEAT_INTERVAL = 30  # seconds
 
 
+class JobCancelled(Exception):
+    """Raised when a job is cancelled mid-pipeline so finally/except handlers can distinguish it from real failures."""
+
+
+def _check_cancelled(job_id: str) -> None:
+    """Re-fetch the job and raise JobCancelled if the user/admin cancelled it. Cheap (single Supabase row read) — call between pipeline stages, not inside hot loops."""
+    job = JobQueueService.get_job(job_id)
+    if job and job.get("status") == "cancelled":
+        raise JobCancelled(f"Job {job_id} was cancelled")
+
+
 class HeartbeatThread(threading.Thread):
     """
     Independent heartbeat thread that runs outside the asyncio event loop.
@@ -108,11 +119,14 @@ class HeartbeatThread(threading.Thread):
             except Exception as e:
                 print(f"[HeartbeatThread] Error sending heartbeat for job {self.job_id}: {e}")
 
-            # Self-ping to generate inbound HTTP traffic so Cloud Run keeps the instance alive
-            try:
-                httpx.get('http://localhost:8000/', timeout=5)
-            except Exception:
-                pass
+            # Self-ping to generate inbound HTTP traffic so Cloud Run keeps the instance alive.
+            # Only relevant inside the FastAPI Service container — Cloud Run Jobs (worker_main)
+            # don't run an HTTP server, so the call would always fail noisily.
+            if not os.environ.get("CLOUD_RUN_JOB"):
+                try:
+                    httpx.get('http://localhost:8000/', timeout=5)
+                except Exception:
+                    pass
 
         print(f"[HeartbeatThread] Stopped for job {self.job_id} (sent {heartbeat_count} heartbeats)")
 
@@ -272,6 +286,7 @@ class BackgroundWorker:
 
             if need_audio or is_video_format:
                 # Step 1: Download from GCS (0-10%)
+                _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 5, "downloading", "Downloading video from cloud storage...")
 
                 if not gcs_service.file_exists(gcs_path):
@@ -351,6 +366,7 @@ class BackgroundWorker:
                 print(f"[Worker] Using cached transcription: {len(formatted_segments)} segments, language={detected_language}")
                 JobQueueService.update_progress(job_id, 50, "transcribing", "Transcription loaded from cache")
             else:
+                _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 35, "transcribing", "Starting transcription...")
 
                 # Get Whisper model
@@ -468,6 +484,7 @@ class BackgroundWorker:
                 print(f"[Worker] Using cached diarization: {len(speaker_segments)} speaker segments")
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Diarization loaded from cache")
             elif settings.ENABLE_SPEAKER_DIARIZATION:
+                _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
                 try:
                     total_duration = len(audio_chunks) * 300
@@ -551,6 +568,7 @@ class BackgroundWorker:
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
 
             # Step 4.25: Audio analysis (non-critical)
+            _check_cancelled(job_id)
             try:
                 audio_for_analysis = full_audio_path
                 if audio_for_analysis and os.path.exists(audio_for_analysis):
@@ -583,6 +601,7 @@ class BackgroundWorker:
                     print(f"[Worker] Restored {screenshot_count} screenshot URLs from cache")
                     JobQueueService.update_progress(job_id, 79, "extracting", f"Screenshots loaded from cache ({screenshot_count})")
                 else:
+                    _check_cancelled(job_id)
                     try:
                         JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
 
@@ -806,6 +825,7 @@ class BackgroundWorker:
                     segment['translation'] = segment['text']
             else:
                 # Translate to English using MarianMT with progress updates
+                _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 87, "translating", "Translating to English...")
                 try:
                     total_segments = len(formatted_segments)
@@ -888,6 +908,12 @@ class BackgroundWorker:
 
             print(f"[Worker] Job {job_id} completed: {video_duration_seconds}s video, {gpu_seconds}s GPU")
             return True
+
+        except JobCancelled as e:
+            # Job was cancelled (status row already 'cancelled' by whoever triggered it).
+            # Don't overwrite with mark_failed; just log and exit cleanly.
+            print(f"[Worker] {e}; aborting pipeline")
+            return False
 
         except Exception as e:
             # Extract user-friendly error message
