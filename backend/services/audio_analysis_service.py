@@ -1,6 +1,7 @@
 """
 Audio analysis service for enhanced transcription segments
 """
+import gc
 import os
 import traceback
 from typing import List, Dict, Optional
@@ -9,7 +10,12 @@ from collections import Counter
 from config import settings
 
 try:
-    from audio_analyzer import analyze_audio_segment, get_simplified_events
+    from audio_analyzer import (
+        analyze_audio_segment,
+        analyze_audio_segment_from_array,
+        get_simplified_events,
+        load_audio_full,
+    )
     AUDIO_ANALYZER_AVAILABLE = True
 except ImportError:
     AUDIO_ANALYZER_AVAILABLE = False
@@ -72,59 +78,74 @@ class AudioAnalysisService:
         if threshold is None:
             threshold = settings.AUDIO_EVENT_THRESHOLD
 
+        # Load the audio once. Per-segment full-file reloads were OOM-killing
+        # the worker on long videos (see audio_analyzer.load_audio_full docstring).
+        try:
+            audio_array, sr = load_audio_full(audio_path)
+        except Exception as e:
+            print(f"Failed to load audio for analysis: {e}; skipping audio analysis")
+            traceback.print_exc()
+            return segments
+
         enriched_segments = []
         successful_analyses = 0
         failed_analyses = 0
 
-        for idx, segment in enumerate(segments):
-            try:
-                # Extract segment timing
-                start = segment.get('start', 0)
-                end = segment.get('end', 0)
+        try:
+            for idx, segment in enumerate(segments):
+                try:
+                    # Extract segment timing
+                    start = segment.get('start', 0)
+                    end = segment.get('end', 0)
 
-                if start >= end:
-                    print(f"Warning: Invalid segment timing for segment {idx}: start={start}, end={end}")
-                    # Add empty analysis
+                    if start >= end:
+                        print(f"Warning: Invalid segment timing for segment {idx}: start={start}, end={end}")
+                        # Add empty analysis
+                        segment['audio_events'] = []
+                        segment['speech_emotion'] = None
+                        segment['energy_level'] = 0.0
+                        segment['audio_analysis'] = None
+                        enriched_segments.append(segment)
+                        failed_analyses += 1
+                        continue
+
+                    # Perform audio analysis on the preloaded array
+                    analysis_result = analyze_audio_segment_from_array(
+                        audio_array=audio_array,
+                        sr=sr,
+                        start=start,
+                        end=end,
+                        threshold=threshold
+                    )
+
+                    # Add analysis fields to segment
+                    segment['audio_events'] = analysis_result.get('audio_events', [])
+                    segment['speech_emotion'] = analysis_result.get('speech_emotion')
+                    segment['energy_level'] = analysis_result.get('energy_level', 0.0)
+                    segment['audio_analysis'] = analysis_result
+
+                    enriched_segments.append(segment)
+                    successful_analyses += 1
+
+                    # Log progress every 10 segments
+                    if (idx + 1) % 10 == 0:
+                        print(f"Progress: Analyzed {idx + 1}/{len(segments)} segments...")
+
+                except Exception as e:
+                    print(f"Error analyzing segment {idx} (start={segment.get('start')}, end={segment.get('end')}): {str(e)}")
+                    traceback.print_exc()
+
+                    # Add empty analysis on error
                     segment['audio_events'] = []
                     segment['speech_emotion'] = None
                     segment['energy_level'] = 0.0
                     segment['audio_analysis'] = None
                     enriched_segments.append(segment)
                     failed_analyses += 1
-                    continue
-
-                # Perform audio analysis
-                analysis_result = analyze_audio_segment(
-                    audio_path=audio_path,
-                    start=start,
-                    end=end,
-                    threshold=threshold
-                )
-
-                # Add analysis fields to segment
-                segment['audio_events'] = analysis_result.get('audio_events', [])
-                segment['speech_emotion'] = analysis_result.get('speech_emotion')
-                segment['energy_level'] = analysis_result.get('energy_level', 0.0)
-                segment['audio_analysis'] = analysis_result
-
-                enriched_segments.append(segment)
-                successful_analyses += 1
-
-                # Log progress every 10 segments
-                if (idx + 1) % 10 == 0:
-                    print(f"Progress: Analyzed {idx + 1}/{len(segments)} segments...")
-
-            except Exception as e:
-                print(f"Error analyzing segment {idx} (start={segment.get('start')}, end={segment.get('end')}): {str(e)}")
-                traceback.print_exc()
-
-                # Add empty analysis on error
-                segment['audio_events'] = []
-                segment['speech_emotion'] = None
-                segment['energy_level'] = 0.0
-                segment['audio_analysis'] = None
-                enriched_segments.append(segment)
-                failed_analyses += 1
+        finally:
+            # Release the ~150 MB array before the next pipeline stage runs
+            del audio_array
+            gc.collect()
 
         # Print summary statistics
         print(f"\n{'='*60}")
@@ -193,51 +214,64 @@ class AudioAnalysisService:
         print(f"Analyzing {len(silent_segments)} silent segments for ambient sounds...")
         print(f"{'='*60}")
 
+        # Load the audio once for the whole loop (see analyze_segments for rationale).
+        try:
+            audio_array, sr = load_audio_full(audio_path)
+        except Exception as e:
+            print(f"Failed to load audio for silent-segment analysis: {e}; skipping")
+            traceback.print_exc()
+            return segments
+
         processed_count = 0
 
-        for idx, segment in silent_segments:
-            try:
-                start = segment.get('start', 0)
-                end = segment.get('end', 0)
+        try:
+            for idx, segment in silent_segments:
+                try:
+                    start = segment.get('start', 0)
+                    end = segment.get('end', 0)
 
-                if start >= end:
-                    print(f"Warning: Invalid silent segment timing: start={start}, end={end}")
+                    if start >= end:
+                        print(f"Warning: Invalid silent segment timing: start={start}, end={end}")
+                        continue
+
+                    # Perform audio analysis on the preloaded array
+                    analysis_result = analyze_audio_segment_from_array(
+                        audio_array=audio_array,
+                        sr=sr,
+                        start=start,
+                        end=end,
+                        threshold=threshold
+                    )
+
+                    # Check if speech was detected
+                    has_speech = analysis_result.get('has_speech', False)
+
+                    if not has_speech:
+                        # Update speaker to AMBIENT
+                        segment['speaker'] = "AMBIENT"
+
+                        # Add audio events if not already present
+                        if 'audio_events' not in segment or not segment['audio_events']:
+                            segment['audio_events'] = analysis_result.get('audio_events', [])
+
+                        # Add energy level if not already present
+                        if 'energy_level' not in segment:
+                            segment['energy_level'] = analysis_result.get('energy_level', 0.0)
+
+                        # Get top ambient events for logging
+                        events = get_simplified_events(segment['audio_events'], top_n=3)
+                        if events:
+                            print(f"Segment {idx}: Detected ambient sounds: {', '.join(events)}")
+
+                    processed_count += 1
+
+                except Exception as e:
+                    print(f"Error analyzing silent segment {idx}: {str(e)}")
+                    traceback.print_exc()
                     continue
-
-                # Perform audio analysis
-                analysis_result = analyze_audio_segment(
-                    audio_path=audio_path,
-                    start=start,
-                    end=end,
-                    threshold=threshold
-                )
-
-                # Check if speech was detected
-                has_speech = analysis_result.get('has_speech', False)
-
-                if not has_speech:
-                    # Update speaker to AMBIENT
-                    segment['speaker'] = "AMBIENT"
-
-                    # Add audio events if not already present
-                    if 'audio_events' not in segment or not segment['audio_events']:
-                        segment['audio_events'] = analysis_result.get('audio_events', [])
-
-                    # Add energy level if not already present
-                    if 'energy_level' not in segment:
-                        segment['energy_level'] = analysis_result.get('energy_level', 0.0)
-
-                    # Get top ambient events for logging
-                    events = get_simplified_events(segment['audio_events'], top_n=3)
-                    if events:
-                        print(f"Segment {idx}: Detected ambient sounds: {', '.join(events)}")
-
-                processed_count += 1
-
-            except Exception as e:
-                print(f"Error analyzing silent segment {idx}: {str(e)}")
-                traceback.print_exc()
-                continue
+        finally:
+            del audio_array
+            gc.collect()
 
         print(f"\n{'='*60}")
         print(f"Silent segment analysis complete!")

@@ -683,6 +683,23 @@ def calculate_energy_level(audio_path: str) -> float:
 # Audio Segment Extraction
 # ============================================================================
 
+def load_audio_full(audio_path: str) -> Tuple[np.ndarray, int]:
+    """
+    Load an entire audio file once via librosa.
+
+    Use this when you plan to analyze many segments from the same file: load
+    once here, then call ``extract_audio_segment_from_array`` /
+    ``analyze_audio_segment_from_array`` per segment instead of re-reading the
+    file each iteration. Repeated full-file loads inside a per-segment loop
+    cause peak-memory drift and trigger OOM on long videos.
+
+    Returns:
+        Tuple of (mono float32 samples, sample_rate).
+    """
+    librosa = ModelManager.get_librosa()
+    return librosa.load(audio_path, sr=None, mono=True)
+
+
 def extract_audio_segment(audio_path: str, start: float, end: float) -> Optional[str]:
     """
     Extract a segment from an audio file.
@@ -721,6 +738,49 @@ def extract_audio_segment(audio_path: str, start: float, end: float) -> Optional
 
     except Exception as e:
         logger.error(f"Error extracting audio segment: {e}")
+        return None
+
+
+def extract_audio_segment_from_array(
+    y: np.ndarray,
+    sr: int,
+    start: float,
+    end: float
+) -> Optional[str]:
+    """
+    Slice a segment out of a preloaded audio array and write it to a temp wav.
+
+    Same output as ``extract_audio_segment`` but skips the per-call full-file
+    decode. Caller owns ``y``; this function does not retain a reference.
+
+    Args:
+        y: Preloaded mono float32 audio samples
+        sr: Sample rate of ``y``
+        start: Start time in seconds
+        end: End time in seconds
+
+    Returns:
+        Path to the extracted segment (temporary wav file) or None on error
+    """
+    try:
+        soundfile = ModelManager.get_soundfile()
+
+        start_sample = max(int(start * sr), 0)
+        end_sample = min(int(end * sr), len(y))
+        if end_sample <= start_sample:
+            logger.warning(f"Empty segment requested ({start}s -> {end}s); skipping extract")
+            return None
+
+        segment = y[start_sample:end_sample]
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+        soundfile.write(temp_file.name, segment, sr)
+
+        logger.debug(f"Sliced segment from {start}s to {end}s -> {temp_file.name}")
+        return temp_file.name
+
+    except Exception as e:
+        logger.error(f"Error slicing audio segment from array: {e}")
         return None
 
 
@@ -833,6 +893,86 @@ def analyze_audio_segment(
     finally:
         # Clean up temporary segment file
         if segment_path and segment_path != audio_path and os.path.exists(segment_path):
+            try:
+                os.unlink(segment_path)
+                logger.debug(f"Cleaned up temporary segment: {segment_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {segment_path}: {e}")
+
+
+def analyze_audio_segment_from_array(
+    audio_array: np.ndarray,
+    sr: int,
+    start: float,
+    end: float,
+    threshold: float = 0.2
+) -> Dict:
+    """
+    Analyze one segment of a preloaded audio array.
+
+    Same downstream behavior as ``analyze_audio_segment`` (PANNs events +
+    wav2vec2 emotion + RMS energy), but slices from an in-memory array
+    instead of reloading the source file. Use this in per-segment loops on
+    long audio: load the file once with ``load_audio_full`` then call this
+    repeatedly to avoid OOM from repeated full-file decodes.
+    """
+    logger.info(f"Analyzing audio segment: array [{start}s - {end}s]")
+
+    duration = end - start
+    segment_path = None
+    try:
+        segment_path = extract_audio_segment_from_array(audio_array, sr, start, end)
+        if segment_path is None:
+            return {
+                "has_speech": False,
+                "audio_events": [],
+                "speech_emotion": None,
+                "energy_level": 0.0,
+                "duration": duration,
+            }
+
+        audio_events = detect_audio_events(segment_path, threshold)
+
+        has_speech = any(
+            event.event_type in ['speech', 'conversation', 'narration']
+            for event in audio_events
+        )
+
+        speech_emotion = None
+        if has_speech:
+            emotion_result = detect_speech_emotion(segment_path)
+            if emotion_result:
+                speech_emotion = emotion_result.to_dict()
+
+        energy_level = calculate_energy_level(segment_path)
+
+        result = AudioAnalysisResult(
+            has_speech=has_speech,
+            audio_events=[event.to_dict() for event in audio_events],
+            speech_emotion=speech_emotion,
+            energy_level=energy_level,
+            duration=duration,
+        )
+
+        logger.info(
+            f"Analysis complete: {len(audio_events)} events, "
+            f"speech={has_speech}, energy={energy_level:.2f}"
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Error in analyze_audio_segment_from_array: {e}", exc_info=True)
+        return {
+            "has_speech": False,
+            "audio_events": [],
+            "speech_emotion": None,
+            "energy_level": 0.0,
+            "duration": duration,
+        }
+
+    finally:
+        if segment_path and os.path.exists(segment_path):
             try:
                 os.unlink(segment_path)
                 logger.debug(f"Cleaned up temporary segment: {segment_path}")
