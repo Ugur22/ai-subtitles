@@ -397,6 +397,7 @@ interface PhaseEntry {
   id: PhaseId;
   label: string;
   status: "active" | "done";
+  startedAt: number;
 }
 
 interface ChatPanelProps {
@@ -719,60 +720,86 @@ const AssistantMessageContent: React.FC<{
   );
 };
 
-const PhaseIndicator: React.FC<{ phases: PhaseEntry[] }> = ({ phases }) => {
+const PhaseIndicator: React.FC<{
+  phases: PhaseEntry[];
+  screenshotCount?: number;
+}> = ({ phases, screenshotCount }) => {
+  const hasActive = phases.some((p) => p.status === "active");
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!hasActive) return;
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [hasActive]);
+
   if (phases.length === 0) return null;
   return (
     <div className="flex flex-col gap-1.5 mb-3">
-      {phases.map((phase) => (
-        <div
-          key={phase.id}
-          className="flex items-center gap-2 text-xs"
-          style={{
-            color:
-              phase.status === "active"
-                ? "var(--text-primary)"
-                : "var(--text-tertiary)",
-          }}
-        >
-          {phase.status === "done" ? (
-            <svg
-              className="w-3.5 h-3.5 flex-shrink-0"
-              style={{ color: "var(--c-success, oklch(70% 0.15 150))" }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2.5}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          ) : (
-            <span
-              className="relative flex h-3.5 w-3.5 items-center justify-center flex-shrink-0"
-            >
-              <span
-                className="absolute inline-flex h-full w-full rounded-full animate-ping opacity-60"
-                style={{ background: "var(--accent)" }}
-              />
-              <span
-                className="relative inline-flex rounded-full h-2 w-2"
-                style={{ background: "var(--accent)" }}
-              />
-            </span>
-          )}
-          <span
-            className={phase.status === "active" ? "phase-shimmer" : ""}
+      {phases.map((phase) => {
+        const isActive = phase.status === "active";
+        const elapsedSec = isActive
+          ? Math.max(0, Math.floor((Date.now() - phase.startedAt) / 1000))
+          : 0;
+        const displayLabel =
+          isActive && phase.id === "generating" && screenshotCount && screenshotCount > 0
+            ? `Analyzing ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"}`
+            : phase.label;
+        return (
+          <div
+            key={phase.id}
+            className="flex items-center gap-2 text-xs"
             style={{
-              fontWeight: phase.status === "active" ? 500 : 400,
+              color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
             }}
           >
-            {phase.label}
-          </span>
-        </div>
-      ))}
+            {phase.status === "done" ? (
+              <svg
+                className="w-3.5 h-3.5 flex-shrink-0"
+                style={{ color: "var(--c-success, oklch(70% 0.15 150))" }}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2.5}
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            ) : (
+              <span
+                className="relative flex h-3.5 w-3.5 items-center justify-center flex-shrink-0"
+              >
+                <span
+                  className="absolute inline-flex h-full w-full rounded-full animate-ping opacity-60"
+                  style={{ background: "var(--accent)" }}
+                />
+                <span
+                  className="relative inline-flex rounded-full h-2 w-2"
+                  style={{ background: "var(--accent)" }}
+                />
+              </span>
+            )}
+            <span
+              className={isActive ? "phase-shimmer" : ""}
+              style={{
+                fontWeight: isActive ? 500 : 400,
+              }}
+            >
+              {displayLabel}
+            </span>
+            {isActive && elapsedSec >= 2 && (
+              <span
+                className="tabular-nums"
+                style={{ color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}
+              >
+                · {elapsedSec}s
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -803,6 +830,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [reindexing, setReindexing] = useState(false);
   const [reindexStatus, setReindexStatus] = useState<string | null>(null);
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
+  const [screenshotCount, setScreenshotCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [citeOn, setCiteOn] = useState(true);
@@ -1148,8 +1176,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setLoading(true);
     setRetryCount(0);
     setPhases([
-      { id: "searching", label: PHASE_LABELS.searching, status: "active" },
+      { id: "searching", label: PHASE_LABELS.searching, status: "active", startedAt: Date.now() },
     ]);
+    setScreenshotCount(0);
 
     const history = messages
       .filter((m) => !m.isError && !m.isStreaming)
@@ -1180,15 +1209,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             if (existing) return prev;
             return [
               ...prev.map((p) => ({ ...p, status: "done" as const })),
-              { id, label, status: "active" as const },
+              { id, label, status: "active" as const, startedAt: Date.now() },
             ];
           });
           break;
         }
         case "sources": {
+          const sources = evt.sources || [];
+          const screenshots = sources.filter((s: Source) => s.screenshot_url).length;
+          setScreenshotCount(screenshots);
           updateStreamingMessage((m) => ({
             ...m,
-            sources: evt.sources || [],
+            sources,
             visual_query_used: evt.visual_query_used || undefined,
           }));
           break;
@@ -1312,6 +1344,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setRetryCount(0);
     setLoading(false);
     setPhases([]);
+    setScreenshotCount(0);
   };
 
   // Fetch speakers for @mention autocomplete
@@ -1863,7 +1896,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               ) : (
                 <>
                   {message.role === "assistant" && message.isStreaming && (
-                    <PhaseIndicator phases={phases} />
+                    <PhaseIndicator phases={phases} screenshotCount={screenshotCount} />
                   )}
                   {message.content && (
                     <AssistantMessageContent
