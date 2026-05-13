@@ -6,6 +6,7 @@ allowing users to submit videos, track progress, and retrieve results without
 maintaining an active connection.
 """
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Callable, Any
 from datetime import datetime
@@ -16,6 +17,8 @@ from pydantic import BaseModel
 
 from config import settings
 from middleware.auth import require_auth, require_admin, optional_auth
+
+logger = logging.getLogger(__name__)
 
 
 # Executor for non-blocking database operations
@@ -130,6 +133,15 @@ class StaleJobCheckResponse(BaseModel):
     """Response model for stale job check."""
     processed: int
     message: str
+
+
+class RefreshUrlsResponse(BaseModel):
+    """Response model for the scheduled screenshot URL refresh job."""
+    refreshed_jobs: int
+    refreshed_image_rows: int
+    skipped: int
+    failed: int
+    cutoff_days: int
 
 
 # =============================================================================
@@ -368,18 +380,11 @@ async def get_job_status(
     try:
         result_json = job.get('result_json')
 
-        # Refresh stale GCS screenshot URLs in completed jobs so thumbnails
-        # don't go blank after the original signed URL expires.
-        if result_json and job.get('status') == 'completed':
-            try:
-                from config import settings as _cfg
-                if _cfg.ENABLE_GCS_UPLOADS:
-                    from services.gcs_service import gcs_service
-                    segments = result_json.get('transcription', {}).get('segments', [])
-                    if segments:
-                        gcs_service.refresh_screenshot_urls_in_segments(segments)
-            except Exception as _e:
-                print(f"[Jobs] Screenshot URL refresh skipped: {_e}")
+        # IAM-signed screenshot URLs expire after 7 days. Refresh them on every
+        # response so the frontend never serves stale URLs (which 403).
+        if job.get('status') == 'completed':
+            from services.gcs_service import maybe_refresh_segment_urls
+            maybe_refresh_segment_urls(result_json)
 
         # Map database fields to response model
         return JobStatusResponse(
@@ -457,8 +462,12 @@ async def list_jobs(
         total = result['total']
 
         # Map jobs to response format
+        from services.gcs_service import maybe_refresh_segment_urls
         mapped_jobs = []
         for job in jobs:
+            result_json = job.get('result_json')
+            if job.get('status') == 'completed':
+                maybe_refresh_segment_urls(result_json)
             mapped_jobs.append(JobStatusResponse(
                 job_id=job['id'],
                 status=job['status'],
@@ -469,7 +478,7 @@ async def list_jobs(
                 progress_message=job.get('message'),
                 error_message=job.get('error_message'),
                 error_code=job.get('error_code'),
-                result_json=job.get('result_json'),
+                result_json=result_json,
                 result_srt=job.get('result_srt'),
                 result_vtt=job.get('result_vtt'),
                 created_at=job['created_at'],
@@ -862,6 +871,126 @@ async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
             processed=0,
             message=f"Error: {str(e)}"
         )
+
+
+@router.post("/refresh-screenshot-urls", response_model=RefreshUrlsResponse)
+@require_admin
+async def refresh_screenshot_urls(request: Request):
+    """Refresh GCS signed URLs for completed jobs whose at-rest URLs are nearing expiry.
+
+    V4 IAM-signed URLs cap at 7 days. Cloud Scheduler should hit this daily so the
+    URLs stored in `jobs.result_json` and `image_embeddings.screenshot_url` are
+    never more than ~24 hours old, keeping screenshots reachable for the full
+    `URL_REFRESH_CUTOFF_DAYS` window without any user-side refresh.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff_days = settings.URL_REFRESH_CUTOFF_DAYS
+
+    if not settings.ENABLE_GCS_UPLOADS:
+        return RefreshUrlsResponse(
+            refreshed_jobs=0,
+            refreshed_image_rows=0,
+            skipped=0,
+            failed=0,
+            cutoff_days=cutoff_days,
+        )
+
+    from services.gcs_service import maybe_refresh_segment_urls, gcs_service
+    from services.supabase_service import supabase
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=cutoff_days)).isoformat()
+    batch_size = settings.URL_REFRESH_BATCH_SIZE
+
+    client = supabase()
+    refreshed_jobs = 0
+    refreshed_image_rows = 0
+    skipped = 0
+    failed = 0
+    video_hashes: set[str] = set()
+
+    # 1. Refresh jobs.result_json segments
+    try:
+        resp = await _run_in_executor(
+            lambda: client.table("jobs")
+            .select("id, video_hash, result_json")
+            .eq("status", "completed")
+            .gte("completed_at", cutoff)
+            .not_.is_("result_json", "null")
+            .order("completed_at", desc=False)
+            .limit(batch_size)
+            .execute()
+        )
+        for job in resp.data or []:
+            result_json = job.get("result_json")
+            if not result_json:
+                skipped += 1
+                continue
+            try:
+                maybe_refresh_segment_urls(result_json)  # Mutates in place
+                job_id = job["id"]
+                await _run_in_executor(
+                    lambda jid=job_id, rj=result_json: client.table("jobs")
+                    .update({"result_json": rj})
+                    .eq("id", jid)
+                    .execute()
+                )
+                refreshed_jobs += 1
+                vh = job.get("video_hash")
+                if vh:
+                    video_hashes.add(vh)
+            except Exception:
+                logger.exception("[Jobs] refresh-screenshot-urls failed for job %s", job.get("id"))
+                failed += 1
+    except Exception:
+        logger.exception("[Jobs] refresh-screenshot-urls: jobs query failed")
+
+    # 2. Refresh image_embeddings.screenshot_url for the same video_hashes
+    for vh in video_hashes:
+        try:
+            rows_resp = await _run_in_executor(
+                lambda v=vh: client.table("image_embeddings")
+                .select("id, screenshot_url")
+                .eq("video_hash", v)
+                .execute()
+            )
+            for row in rows_resp.data or []:
+                url = row.get("screenshot_url")
+                if not url or not url.startswith("https://storage.googleapis.com"):
+                    continue
+                gcs_path = gcs_service.extract_gcs_path_from_signed_url(url)
+                if not gcs_path:
+                    continue
+                try:
+                    new_url = gcs_service.generate_download_signed_url(
+                        gcs_path, expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+                    )
+                    row_id = row["id"]
+                    await _run_in_executor(
+                        lambda rid=row_id, u=new_url: client.table("image_embeddings")
+                        .update({"screenshot_url": u})
+                        .eq("id", rid)
+                        .execute()
+                    )
+                    refreshed_image_rows += 1
+                except Exception:
+                    logger.exception("[Jobs] image_embeddings refresh failed for path %s", gcs_path)
+                    failed += 1
+        except Exception:
+            logger.exception("[Jobs] image_embeddings query failed for video_hash %s", vh)
+
+    logger.info(
+        "[Jobs] refresh-screenshot-urls done: jobs=%d image_rows=%d skipped=%d failed=%d cutoff_days=%d",
+        refreshed_jobs, refreshed_image_rows, skipped, failed, cutoff_days,
+    )
+
+    return RefreshUrlsResponse(
+        refreshed_jobs=refreshed_jobs,
+        refreshed_image_rows=refreshed_image_rows,
+        skipped=skipped,
+        failed=failed,
+        cutoff_days=cutoff_days,
+    )
 
 
 @router.get("/{job_id}/download/{format}")

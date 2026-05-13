@@ -4,6 +4,7 @@ GCS (Google Cloud Storage) service for handling large file uploads.
 This service enables direct-to-GCS uploads which bypass Cloud Run's 32MB request limit.
 """
 import concurrent.futures
+import logging
 import os
 import tempfile
 import time
@@ -15,6 +16,8 @@ from google.auth import default
 from google.auth.transport import requests as auth_requests
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class GCSService:
@@ -474,8 +477,8 @@ class GCSService:
                     expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
                 )
                 seg['screenshot_url'] = new_url
-            except Exception as e:
-                print(f"[GCS] Failed to refresh screenshot URL for {gcs_path}: {e}")
+            except Exception:
+                logger.exception("[GCS] Failed to refresh screenshot URL for %s", gcs_path)
         return segments
 
     @classmethod
@@ -575,3 +578,21 @@ class GCSService:
 
 # Singleton instance for easy import
 gcs_service = GCSService
+
+
+def maybe_refresh_segment_urls(result_json: Optional[dict]) -> None:
+    """Refresh GCS screenshot URLs in result_json.transcription.segments, in place.
+
+    IAM-signed URLs cap at 7 days, so any cached URL older than that 403s. Call this
+    on every endpoint that returns segments to clients (or to downstream consumers
+    like the chat vision pipeline) so the URLs are always within expiry.
+    No-ops when GCS is disabled or there are no segments.
+    """
+    if not result_json or not settings.ENABLE_GCS_UPLOADS:
+        return
+    try:
+        segments = (result_json.get('transcription') or {}).get('segments') or []
+        if segments:
+            gcs_service.refresh_screenshot_urls_in_segments(segments)
+    except Exception:
+        logger.exception("[GCS] maybe_refresh_segment_urls failed")

@@ -382,6 +382,8 @@ interface Message {
   original_question?: string;
   isError?: boolean;
   errorType?: "timeout" | "server" | "network" | "unknown";
+  errorCode?: string;
+  errorDetail?: string;
   retryQuestion?: string;
   isStreaming?: boolean;
 }
@@ -720,6 +722,84 @@ const AssistantMessageContent: React.FC<{
   );
 };
 
+const ErrorMessageDisplay: React.FC<{
+  message: Message;
+  onRetry: (q: string) => void;
+}> = ({ message, onRetry }) => {
+  const [showDetails, setShowDetails] = useState(false);
+  const hasDetails = !!message.errorDetail && message.errorDetail !== message.content;
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <svg
+          className="w-5 h-5 flex-shrink-0"
+          style={{ color: "var(--c-error)" }}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+          />
+        </svg>
+        <span className="font-medium text-sm" style={{ color: "var(--c-error)" }}>
+          Something went wrong
+        </span>
+      </div>
+      <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>
+        {message.content}
+      </p>
+      {hasDetails && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="text-xs underline"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            {showDetails ? "Hide details" : "Show details"}
+          </button>
+          {showDetails && (
+            <pre
+              className="mt-2 text-xs whitespace-pre-wrap break-words rounded-md p-2"
+              style={{
+                background: "var(--bg-surface)",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--border-subtle)",
+                maxHeight: "12em",
+                overflow: "auto",
+              }}
+            >
+              {message.errorCode ? `[${message.errorCode}] ` : ""}
+              {message.errorDetail}
+            </pre>
+          )}
+        </div>
+      )}
+      {message.retryQuestion && (
+        <button
+          onClick={() => onRetry(message.retryQuestion!)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+          style={{ color: "var(--c-error)", background: "oklch(65% 0.20 25 / 0.12)" }}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          Retry
+        </button>
+      )}
+    </div>
+  );
+};
+
 const PhaseIndicator: React.FC<{
   phases: PhaseEntry[];
   screenshotCount?: number;
@@ -1030,6 +1110,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return { message: "Something went wrong. Please try again.", errorType: "unknown" };
   };
 
+  // Map backend error codes from SSE error events to user-facing messages.
+  // Keep these short — the raw server message is still available in errorDetail.
+  const messageForServerErrorCode = (code?: string, fallback?: string): string => {
+    switch (code) {
+      case "llm_config":
+        return "Chat service is misconfigured. The xAI API key is missing or invalid — contact the admin.";
+      case "llm_rate_limited":
+        return "We've hit the chat provider's rate limit. Please wait a minute and try again.";
+      case "llm_unavailable":
+        return "The chat provider is temporarily unavailable. Please try again in a moment.";
+      case "llm_image_403":
+        return "Couldn't load this video's screenshots for visual analysis. Try turning off visual analysis, or re-process the video.";
+      default:
+        return fallback || "Something went wrong. Please try again.";
+    }
+  };
+
   const isRetryableError = (error: any): boolean => {
     const status = error.response?.status;
     return status === 502 || status === 503 || status === 504 || error.code === "ECONNABORTED" || error.message?.includes("timeout");
@@ -1244,12 +1341,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           break;
         }
         case "error": {
-          const message = evt.message || "Something went wrong.";
+          const rawMessage: string = evt.message || "";
+          const code: string | undefined = evt.code;
+          const friendly = messageForServerErrorCode(code, rawMessage || "Something went wrong. Please try again.");
           updateStreamingMessage((m) => ({
             ...m,
-            content: message,
+            content: friendly,
             isError: true,
             errorType: "server",
+            errorCode: code,
+            errorDetail: rawMessage || undefined,
             retryQuestion: textToSend,
             isStreaming: false,
           }));
@@ -1872,27 +1973,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               }
             >
               {message.isError ? (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <svg className="w-5 h-5 flex-shrink-0" style={{ color: "var(--c-error)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                    </svg>
-                    <span className="font-medium text-sm" style={{ color: "var(--c-error)" }}>Something went wrong</span>
-                  </div>
-                  <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{message.content}</p>
-                  {message.retryQuestion && (
-                    <button
-                      onClick={() => sendMessage(message.retryQuestion)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
-                      style={{ color: "var(--c-error)", background: "oklch(65% 0.20 25 / 0.12)" }}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Retry
-                    </button>
-                  )}
-                </div>
+                <ErrorMessageDisplay
+                  message={message}
+                  onRetry={sendMessage}
+                />
               ) : (
                 <>
                   {message.role === "assistant" && message.isStreaming && (

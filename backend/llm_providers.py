@@ -535,7 +535,7 @@ class GrokProvider(BaseLLMProvider):
     ) -> str:
         """Generate response using Grok (xAI)"""
         if not self.api_key or self.api_key == "your_xai_api_key_here":
-            raise Exception("xAI API key not configured")
+            raise Exception("xai_api_key_missing: xAI API key not configured")
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -572,7 +572,7 @@ class GrokProvider(BaseLLMProvider):
         import json as _json
 
         if not self.api_key or self.api_key == "your_xai_api_key_here":
-            raise Exception("xAI API key not configured")
+            raise Exception("xai_api_key_missing: xAI API key not configured")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
@@ -627,7 +627,7 @@ class GrokProvider(BaseLLMProvider):
     ) -> str:
         """Generate response with images using Grok Vision API (OpenAI-compatible)"""
         if not self.api_key or self.api_key == "your_xai_api_key_here":
-            raise Exception("xAI API key not configured")
+            raise Exception("xai_api_key_missing: xAI API key not configured")
 
         try:
             # Convert images to base64 (supports both URLs and local paths)

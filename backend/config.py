@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
     GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "604800"))  # 7 days for playback
     GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "2592000"))  # 30 days for screenshots
+    # Background URL refresh job: V4 signed URLs cap at 7 days, so a daily
+    # scheduler call re-signs URLs in jobs.result_json and image_embeddings
+    # so anything completed within the cutoff window never goes stale at rest.
+    URL_REFRESH_CUTOFF_DAYS: int = int(os.getenv("URL_REFRESH_CUTOFF_DAYS", "30"))
+    URL_REFRESH_BATCH_SIZE: int = int(os.getenv("URL_REFRESH_BATCH_SIZE", "100"))
 
     # Supabase Configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

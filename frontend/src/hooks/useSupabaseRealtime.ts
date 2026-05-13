@@ -55,6 +55,9 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
 
     // Subscribe to real-time updates via Supabase
     // Note: Database column is 'id', but frontend uses 'job_id' for the same value
+    // We don't trust the raw payload because it contains stale GCS signed URLs
+    // (7-day max IAM expiry). Re-fetch via the API so the backend can refresh
+    // screenshot URLs before they reach the UI.
     subscription = supabase
       .channel(`job:${jobId}`)
       .on(
@@ -65,8 +68,22 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
           table: 'jobs',
           filter: `id=eq.${jobId}`,
         },
-        (payload: { new: Record<string, unknown> }) => {
-          // Update job state with real-time data
+        async (payload: { new: Record<string, unknown> }) => {
+          const incomingStatus = (payload.new as { status?: string } | undefined)?.status;
+          // For terminal/completion transitions, fetch through the API so the
+          // response has freshly-signed screenshot URLs.
+          if (incomingStatus === 'completed' || incomingStatus === 'failed') {
+            try {
+              const data = await getJob(jobId, accessToken);
+              setJob(data);
+              setError(null);
+              return;
+            } catch (err) {
+              // Fall through to using the raw payload as a fallback so the UI
+              // still updates if the API call fails.
+              console.warn('Realtime refetch failed, using raw payload:', err);
+            }
+          }
           setJob(payload.new as unknown as Job);
           setError(null);
         }
