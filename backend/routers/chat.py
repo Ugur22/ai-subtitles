@@ -25,6 +25,33 @@ from dependencies import _last_transcription_data
 from middleware.auth import require_auth
 
 
+def _classify_provider_error(err: Optional[BaseException]) -> str:
+    """Map a provider exception to a short error code the frontend can switch on.
+
+    Codes:
+      - llm_config: API key missing/invalid
+      - llm_rate_limited: 429 from provider
+      - llm_unavailable: 5xx, timeout, connection refused
+      - llm_image_403: vision pipeline could not load screenshots (stale URLs)
+      - llm_unknown: anything else
+    """
+    if err is None:
+        return "llm_unknown"
+    msg = (str(err) or "").lower()
+    if "api key" in msg or "unauthorized" in msg or "401" in msg or "xai_api_key_missing" in msg:
+        return "llm_config"
+    if "429" in msg or "rate limit" in msg or "quota" in msg:
+        return "llm_rate_limited"
+    if "timeout" in msg or "timed out" in msg or "connecterror" in msg or "5xx" in msg:
+        return "llm_unavailable"
+    for code in ("500", "502", "503", "504"):
+        if code in msg:
+            return "llm_unavailable"
+    if "403" in msg and ("storage.googleapis" in msg or "screenshot" in msg or "image" in msg):
+        return "llm_image_403"
+    return "llm_unknown"
+
+
 def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
     """
     Get transcription from any available source:
@@ -67,6 +94,13 @@ def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
                 # Add user_id from job record for RLS compliance
                 if job.get("user_id"):
                     result_json["user_id"] = job["user_id"]
+                # IAM-signed URLs expire (7 days max). Refresh before downstream
+                # vision/face/audio consumers try to fetch the screenshots.
+                try:
+                    from services.gcs_service import maybe_refresh_segment_urls
+                    maybe_refresh_segment_urls(result_json)
+                except Exception as refresh_err:
+                    print(f"[Chat] Screenshot URL refresh skipped: {refresh_err}")
                 print(f"[Chat] Found transcription in Supabase job for video_hash={video_hash}")
                 return result_json
 
@@ -1236,10 +1270,13 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                         })
                     except Exception:
                         break
+                vision_err: Optional[Exception] = None
+                text_err: Optional[Exception] = None
                 try:
                     answer = vision_task.result()
-                except Exception as vision_err:
-                    print(f"[chat/stream] generate_with_images failed: {vision_err}")
+                except Exception as e:
+                    vision_err = e
+                    print(f"[chat/stream] generate_with_images failed: {e}")
                     answer = ""
                 answer = (answer or "").strip()
                 print(f"[chat/stream] vision answer length: {len(answer)}")
@@ -1255,12 +1292,22 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     print("[chat/stream] Vision returned empty/short; falling back to text-only generate()")
                     try:
                         answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
-                    except Exception as gen_err:
-                        print(f"[chat/stream] text fallback after vision failed: {gen_err}")
+                    except Exception as e:
+                        text_err = e
+                        print(f"[chat/stream] text fallback after vision failed: {e}")
                         answer = ""
                     print(f"[chat/stream] text fallback returned {len(answer or '')} chars")
                 if answer:
                     yield _sse({"type": "token", "content": answer})
+                elif vision_err or text_err:
+                    # Both paths failed — surface the underlying provider error
+                    # instead of pretending the model returned nothing.
+                    underlying = text_err or vision_err
+                    yield _sse({
+                        "type": "error",
+                        "message": str(underlying),
+                        "code": _classify_provider_error(underlying),
+                    })
                 else:
                     yield _sse({
                         "type": "token",
@@ -1271,13 +1318,16 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
                 streamed_chunks: list[str] = []
                 chunk_count = 0
+                stream_err: Optional[Exception] = None
+                gen_err: Optional[Exception] = None
                 try:
                     async for chunk in provider.generate_stream(messages, temperature=0.7, max_tokens=2000):
                         chunk_count += 1
                         streamed_chunks.append(chunk)
                         yield _sse({"type": "token", "content": chunk})
-                except Exception as stream_err:
-                    print(f"[chat/stream] generate_stream raised: {stream_err}")
+                except Exception as e:
+                    stream_err = e
+                    print(f"[chat/stream] generate_stream raised: {e}")
                 total_streamed = "".join(streamed_chunks).strip()
                 print(
                     f"[chat/stream] provider={provider_name or llm_manager.default_provider} "
@@ -1291,14 +1341,22 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     print("[chat/stream] Streaming output too short; falling back to generate()")
                     try:
                         answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
-                    except Exception as gen_err:
-                        print(f"[chat/stream] generate() fallback failed: {gen_err}")
+                    except Exception as e:
+                        gen_err = e
+                        print(f"[chat/stream] generate() fallback failed: {e}")
                         answer = ""
                     print(f"[chat/stream] fallback generate() returned {len(answer or '')} chars")
                     if chunk_count > 0:
                         yield _sse({"type": "reset"})
                     if answer:
                         yield _sse({"type": "token", "content": answer})
+                    elif stream_err or gen_err:
+                        underlying = gen_err or stream_err
+                        yield _sse({
+                            "type": "error",
+                            "message": str(underlying),
+                            "code": _classify_provider_error(underlying),
+                        })
 
             yield _sse({
                 "type": "done",
@@ -1313,10 +1371,14 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 print(f"[chat/stream] meter failed: {_meter_err}")
 
         except Exception as e:
-            print(f"Error in streaming chat: {str(e)}")
+            print(f"Error in streaming chat: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
-            yield _sse({"type": "error", "message": str(e)})
+            yield _sse({
+                "type": "error",
+                "message": f"{type(e).__name__}: {e}",
+                "code": _classify_provider_error(e),
+            })
 
     return StreamingResponse(
         _event_stream(),

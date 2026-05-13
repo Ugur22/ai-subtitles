@@ -454,6 +454,17 @@ class ImageEmbeddingService:
                     'similarity': item['similarity']
                 })
 
+            # Stored screenshot URLs are IAM-signed and expire after 7 days. Refresh
+            # them in place before downstream consumers (vision LLM, face matching)
+            # try to fetch the images and 403.
+            try:
+                from services.gcs_service import gcs_service
+                from config import settings as _settings
+                if _settings.ENABLE_GCS_UPLOADS:
+                    gcs_service.refresh_screenshot_urls_in_segments(formatted_results)
+            except Exception as refresh_err:
+                print(f"[ImageEmbedding] URL refresh skipped: {refresh_err}")
+
             print(f"[ImageEmbedding] Found {len(formatted_results)} results for query: {query}")
             return formatted_results
 
