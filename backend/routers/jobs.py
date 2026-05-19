@@ -380,12 +380,6 @@ async def get_job_status(
     try:
         result_json = job.get('result_json')
 
-        # IAM-signed screenshot URLs expire after 7 days. Refresh them on every
-        # response so the frontend never serves stale URLs (which 403).
-        if job.get('status') == 'completed':
-            from services.gcs_service import maybe_refresh_segment_urls
-            maybe_refresh_segment_urls(result_json)
-
         # Map database fields to response model
         return JobStatusResponse(
             job_id=job['id'],
@@ -461,13 +455,13 @@ async def list_jobs(
         jobs = result['jobs']
         total = result['total']
 
-        # Map jobs to response format
-        from services.gcs_service import maybe_refresh_segment_urls
+        # Map jobs to response format. The list endpoint intentionally skips
+        # per-segment URL refresh and per-job video_url signing — both cost an
+        # IAM signBlob HTTP call each and used to time out the page. URLs are
+        # kept fresh at rest by the daily refresh-screenshot-urls cron; the
+        # opened-video player gets its video_url from get_job_status instead.
         mapped_jobs = []
         for job in jobs:
-            result_json = job.get('result_json')
-            if job.get('status') == 'completed':
-                maybe_refresh_segment_urls(result_json)
             mapped_jobs.append(JobStatusResponse(
                 job_id=job['id'],
                 status=job['status'],
@@ -478,7 +472,7 @@ async def list_jobs(
                 progress_message=job.get('message'),
                 error_message=job.get('error_message'),
                 error_code=job.get('error_code'),
-                result_json=result_json,
+                result_json=job.get('result_json'),
                 result_srt=job.get('result_srt'),
                 result_vtt=job.get('result_vtt'),
                 created_at=job['created_at'],
@@ -486,7 +480,7 @@ async def list_jobs(
                 completed_at=job.get('completed_at'),
                 cached=job.get('cached'),
                 cached_at=job.get('cached_at'),
-                video_url=_safe_video_url(job)
+                video_url=None,
             ))
 
         return JobListResponse(
