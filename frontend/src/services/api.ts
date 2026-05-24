@@ -639,6 +639,22 @@ export const getJobVideoUrl = async (
 };
 
 /**
+ * Fetch a short-lived signed GCS URL for a completed job's screenshot.
+ * Authorized by cookie session (owner) or per-job access token.
+ */
+export const getJobScreenshotUrl = async (
+  jobId: string,
+  gcsPath: string,
+  token?: string | null
+): Promise<{ download_url: string; expires_in: number }> => {
+  const response = await api.get<{ download_url: string; expires_in: number }>(
+    `/api/jobs/${jobId}/screenshot_url`,
+    { params: { gcs_path: gcsPath, ...(token ? { token } : {}) } }
+  );
+  return response.data;
+};
+
+/**
  * Submission progress stages
  */
 export type SubmissionStage = 'hashing' | 'uploading' | 'submitting' | 'complete';

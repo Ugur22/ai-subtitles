@@ -101,6 +101,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showEnrolledInDropdown, setShowEnrolledInDropdown] = useState(false);
   const [confirmingDeleteEnrolled, setConfirmingDeleteEnrolled] = useState<string | null>(null);
 
+  // Refs for video URL retry on expiry
+  const currentJobRef = useRef<{ jobId: string; accessToken?: string } | null>(null);
+  const videoRetriedRef = useRef(false);
+
+  // State mirror of currentJobRef so child components receive reactive props
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [currentAccessToken, setCurrentAccessToken] = useState<string | undefined>(undefined);
+
   // Jobs context — shares active count + panel state with Header
   const { setActiveJobCount, showJobPanel, setShowJobPanel } = useJobs();
 
@@ -345,12 +353,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     if (!job.result_json) return;
     setTranscription(job.result_json);
     setShowJobPanel(false);
+    currentJobRef.current = { jobId: job.job_id, accessToken: job.access_token };
+    setCurrentJobId(job.job_id);
+    setCurrentAccessToken(job.access_token);
     if (job.video_url) {
+      videoRetriedRef.current = false;
       setVideoUrl(job.video_url);
       return;
     }
     try {
       const { download_url } = await getJobVideoUrl(job.job_id, job.access_token);
+      videoRetriedRef.current = false;
       setVideoUrl(download_url);
     } catch (err) {
       console.error("Failed to load video URL for job", job.job_id, err);
@@ -908,6 +921,19 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             }
                           }
                         }}
+                        onError={async () => {
+                          if (videoRetriedRef.current || !currentJobRef.current) return;
+                          videoRetriedRef.current = true;
+                          try {
+                            const { download_url } = await getJobVideoUrl(
+                              currentJobRef.current.jobId,
+                              currentJobRef.current.accessToken
+                            );
+                            setVideoUrl(download_url);
+                          } catch (e) {
+                            console.error("Failed to refresh video URL", e);
+                          }
+                        }}
                       >
                         {subtitleTrackUrl && (
                           <track
@@ -1402,6 +1428,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         <ChatPanel
                           videoHash={transcription?.video_hash || null}
                           onTimestampClick={seekToTimestamp}
+                          jobId={currentJobId}
+                          accessToken={currentAccessToken}
                         />
                       </div>
                     )}

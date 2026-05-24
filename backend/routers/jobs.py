@@ -96,7 +96,7 @@ def _safe_video_url(job: dict) -> Optional[str]:
         return None
     try:
         from services.gcs_service import gcs_service
-        return gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+        return gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY)
     except Exception as e:
         print(f"[Jobs] Skipping video_url for {job.get('id')}: {e}")
         return None
@@ -1185,7 +1185,7 @@ async def get_job_video_url(
         if not gcs_service.file_exists(gcs_path):
             raise HTTPException(status_code=404, detail="Video file not found in storage")
 
-        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY)
     except HTTPException:
         raise
     except Exception as e:
@@ -1194,4 +1194,66 @@ async def get_job_video_url(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to generate video URL")
 
-    return {"download_url": signed_url, "expires_in": 3600}
+    return {"download_url": signed_url, "expires_in": settings.GCS_DOWNLOAD_URL_EXPIRY}
+
+
+@router.get("/{job_id}/screenshot_url")
+@optional_auth
+async def get_job_screenshot_url(
+    request: Request,
+    job_id: str,
+    gcs_path: str = Query(..., description="GCS object path of the screenshot to re-sign"),
+    token: Optional[str] = Query(None, description="Access token for this job (optional if authenticated)")
+):
+    """
+    Return a short-lived signed GCS URL for a specific screenshot belonging to this job.
+
+    Authorization: either a valid per-job access token, or an authenticated
+    user who owns the job. The gcs_path must reside under the screenshots prefix
+    and its video_hash segment must match the job's own video_hash, preventing
+    cross-job URL theft via a leaked token.
+    """
+    from services.gcs_service import gcs_service
+
+    user = getattr(request.state, "user", None)
+    user_id = user["id"] if user else None
+
+    job = require_job_access(job_id, token, user_id)
+
+    # Validate that gcs_path belongs to the screenshots prefix
+    prefix = settings.GCS_SCREENSHOTS_PREFIX
+    if not gcs_path.startswith(prefix):
+        raise HTTPException(
+            status_code=400,
+            detail=f"gcs_path must start with '{prefix}'"
+        )
+
+    # Extract video_hash: screenshots/{video_hash}/{timestamp}.jpg
+    # Strip the prefix, then the first path segment is the video_hash
+    path_after_prefix = gcs_path[len(prefix):]
+    parts = path_after_prefix.split("/")
+    if len(parts) < 2 or not parts[0]:
+        raise HTTPException(
+            status_code=400,
+            detail="gcs_path has unexpected structure; expected screenshots/{video_hash}/{filename}"
+        )
+    extracted_hash = parts[0]
+
+    job_video_hash = job.get("video_hash")
+    if not job_video_hash or extracted_hash != job_video_hash:
+        raise HTTPException(
+            status_code=403,
+            detail="gcs_path does not belong to this job"
+        )
+
+    try:
+        signed_url = gcs_service.generate_download_signed_url(
+            gcs_path, expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+        )
+    except Exception as e:
+        print(f"[Jobs] Error generating screenshot signed URL for job {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate screenshot URL")
+
+    return {"download_url": signed_url, "expires_in": settings.GCS_SCREENSHOT_URL_EXPIRY}

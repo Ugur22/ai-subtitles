@@ -8,13 +8,22 @@ import {
   DisclosurePanel,
 } from "@headlessui/react";
 import { API_BASE_URL } from "../../../config";
-import { formatScreenshotUrlSafe } from "../../../utils/url";
-import { listSpeakers, getFaceTagSpeakers } from "../../../services/api";
+import {
+  extractGcsPathFromSignedUrl,
+  formatScreenshotUrlSafe,
+} from "../../../utils/url";
+import {
+  getJobScreenshotUrl,
+  listSpeakers,
+  getFaceTagSpeakers,
+} from "../../../services/api";
 import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
 import { useAuth } from "../../../hooks/useAuth";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
+const imagePlaceholderSrc =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='12'%3ENo Image%3C/text%3E%3C/svg%3E";
 
 // Timestamp pattern: [HH:MM:SS] or [HH:MM:SS - HH:MM:SS]
 const TIMESTAMP_REGEX =
@@ -405,6 +414,8 @@ interface PhaseEntry {
 interface ChatPanelProps {
   videoHash: string | null;
   onTimestampClick?: (timeString: string) => void;
+  jobId?: string | null;
+  accessToken?: string;
 }
 
 interface LLMProvider {
@@ -887,6 +898,8 @@ const PhaseIndicator: React.FC<{
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   videoHash,
   onTimestampClick,
+  jobId,
+  accessToken,
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -2050,9 +2063,34 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 src={formatScreenshotUrl(source.screenshot_url)}
                                 alt={`Screenshot at ${source.start_time}`}
                                 className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).src =
-                                    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='12'%3ENo Image%3C/text%3E%3C/svg%3E";
+                                onError={async (e) => {
+                                  const img = e.currentTarget;
+                                  if (img.dataset.retry === "1" || !jobId) {
+                                    img.src = imagePlaceholderSrc;
+                                    return;
+                                  }
+
+                                  const gcsPath =
+                                    extractGcsPathFromSignedUrl(img.currentSrc || img.src) ||
+                                    extractGcsPathFromSignedUrl(formatScreenshotUrl(source.screenshot_url));
+
+                                  if (!gcsPath) {
+                                    img.src = imagePlaceholderSrc;
+                                    return;
+                                  }
+
+                                  img.dataset.retry = "1";
+                                  try {
+                                    const { download_url } = await getJobScreenshotUrl(
+                                      jobId,
+                                      gcsPath,
+                                      accessToken,
+                                    );
+                                    img.src = download_url;
+                                  } catch (err) {
+                                    console.error("Failed to refresh screenshot URL", err);
+                                    img.src = imagePlaceholderSrc;
+                                  }
                                 }}
                               />
                               {/* Hover overlay */}
