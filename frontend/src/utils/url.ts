@@ -91,3 +91,32 @@ export const formatScreenshotUrlSafe = (
 ): string => {
   return formatScreenshotUrl(url) || "";
 };
+
+/**
+ * Extract the GCS object path from a signed GCS URL so it can be used to
+ * request a fresh signed URL from the backend.
+ *
+ * Handles two GCS signed URL hostname forms:
+ *   - storage.googleapis.com/<bucket>/<object...>
+ *   - <bucket>.storage.googleapis.com/<object...>
+ *
+ * Returns the object path without the bucket prefix, or null if the URL
+ * cannot be parsed or does not look like a GCS URL.
+ */
+export function extractGcsPathFromSignedUrl(signedUrl: string): string | null {
+  try {
+    const u = new URL(signedUrl);
+    if (u.hostname === "storage.googleapis.com") {
+      // path is /<bucket>/<object...>
+      const parts = u.pathname.replace(/^\//, "").split("/");
+      if (parts.length < 2) return null;
+      return parts.slice(1).join("/"); // strip bucket
+    }
+    if (u.hostname.endsWith(".storage.googleapis.com")) {
+      return u.pathname.replace(/^\//, "");
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

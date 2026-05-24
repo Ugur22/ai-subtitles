@@ -116,7 +116,9 @@ class Settings(BaseSettings):
     GCS_SCREENSHOTS_PREFIX: str = os.getenv("GCS_SCREENSHOTS_PREFIX", "screenshots/")
     GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
     GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "604800"))  # 7 days for playback
-    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "2592000"))  # 30 days for screenshots
+    # 30-day target retention is achieved via daily refresh-screenshot-urls cron;
+    # the underlying V4 sign call clamps to 7 days per GCS limit.
+    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "2592000"))
     # Background URL refresh job: V4 signed URLs cap at 7 days, so a daily
     # scheduler call re-signs URLs in jobs.result_json and image_embeddings
     # so anything completed within the cutoff window never goes stale at rest.
