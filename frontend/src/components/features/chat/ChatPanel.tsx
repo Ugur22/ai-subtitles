@@ -400,6 +400,7 @@ interface Message {
 type PhaseId =
   | "searching"
   | "analyzing_scenes"
+  | "analyzing_visuals"
   | "matching_faces"
   | "analyzing_audio"
   | "generating";
@@ -1148,6 +1149,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const PHASE_LABELS: Record<PhaseId, string> = {
     searching: "Searching transcript",
     analyzing_scenes: "Analyzing scenes",
+    analyzing_visuals: "Inspecting screenshots",
     matching_faces: "Matching faces",
     analyzing_audio: "Scanning audio events",
     generating: "Writing answer",
@@ -1245,9 +1247,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return false;
   };
 
-  const sendMessage = async (messageText?: string | React.MouseEvent) => {
+  const sendMessage = async (
+    messageText?: string | React.MouseEvent,
+    options?: { retry?: boolean }
+  ) => {
     const textToSend = typeof messageText === "string" ? messageText : input;
     if (!textToSend.trim() || !videoHash) return;
+    const isRetry = Boolean(options?.retry && typeof messageText === "string");
 
     const userMessage: Message = {
       role: "user",
@@ -1266,23 +1272,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       // placeholder drives the PhaseIndicator. A stream can get stuck
       // (backend timeout, dropped connection) and leave isStreaming=true,
       // which otherwise makes older messages keep pulsing.
-      const finalized = prev.map((m) => {
-        if (m.role !== "assistant" || !m.isStreaming) return m;
-        if (m.content) {
-          return { ...m, isStreaming: false };
+      const finalized = prev.flatMap((m) => {
+        if (isRetry && m.role === "assistant" && m.isError && m.retryQuestion === textToSend) {
+          return [];
         }
-        return {
+        if (m.role !== "assistant" || !m.isStreaming) return [m];
+        if (m.content) {
+          return [{ ...m, isStreaming: false }];
+        }
+        return [{
           ...m,
           isStreaming: false,
           isError: true,
           errorType: "server" as const,
           content: "That request didn't finish. Retry?",
           retryQuestion: m.original_question,
-        };
+        }];
       });
-      return [...finalized, userMessage, placeholderAssistant];
+      return isRetry
+        ? [...finalized, placeholderAssistant]
+        : [...finalized, userMessage, placeholderAssistant];
     });
-    setInput("");
+    if (!isRetry) setInput("");
     setLoading(true);
     setRetryCount(0);
     setPhases([
@@ -1290,7 +1301,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     ]);
     setScreenshotCount(0);
 
-    const history = messages
+    const historyBase = messages.filter((m) => !m.isError && !m.isStreaming);
+    const historyForRetry = isRetry
+      ? (() => {
+          const next = [...historyBase];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === "user" && next[i].content === textToSend) {
+              next.splice(i, 1);
+              break;
+            }
+          }
+          return next;
+        })()
+      : historyBase;
+
+    const history = historyForRetry
       .filter((m) => !m.isError && !m.isStreaming)
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
@@ -2018,7 +2043,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               {message.isError ? (
                 <ErrorMessageDisplay
                   message={message}
-                  onRetry={sendMessage}
+                  onRetry={(question) => sendMessage(question, { retry: true })}
                 />
               ) : (
                 <>

@@ -1708,13 +1708,25 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
 
             if include_visuals and image_paths and not provider_supports_vision:
                 yield _sse({"type": "phase", "phase": "analyzing_visuals", "label": "Inspecting screenshots"})
-                fallback_visual_context = await _generate_visual_observations_with_fallback(
-                    request=request,
-                    question=question,
-                    image_paths=image_paths,
-                    visual_context=visual_context,
-                    final_provider_name=provider_name,
+                fallback_task = asyncio.create_task(
+                    _generate_visual_observations_with_fallback(
+                        request=request,
+                        question=question,
+                        image_paths=image_paths,
+                        visual_context=visual_context,
+                        final_provider_name=provider_name,
+                    )
                 )
+                while not fallback_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(fallback_task), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        yield _sse({
+                            "type": "phase",
+                            "phase": "analyzing_visuals",
+                            "label": "Inspecting screenshots",
+                        })
+                fallback_visual_context = fallback_task.result()
                 if fallback_visual_context:
                     visual_context = fallback_visual_context
 
