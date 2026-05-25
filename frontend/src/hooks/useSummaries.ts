@@ -107,7 +107,9 @@ export const useSummaries = (options: UseSummariesOptions) => {
         ? `${API_BASE_URL}/generate_summary/?video_hash=${encodeURIComponent(videoHash)}`
         : `${API_BASE_URL}/generate_summary/`;
 
-      const response = await axios.post(url);
+      const response = await axios.post(url, null, {
+        withCredentials: true,
+      });
 
       const summaryData = response.data.summaries || [];
       const responseFilename = response.data.filename;

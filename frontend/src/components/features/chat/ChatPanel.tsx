@@ -1085,7 +1085,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const loadProviders = async () => {
     setLoadingProviders(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/llm/providers`);
+      const response = await axios.get(`${API_BASE_URL}/api/llm/providers`, {
+        withCredentials: true,
+      });
       setProviders(response.data.providers);
 
       // Prefer "grok" if available, otherwise fall back to first available provider
@@ -1118,12 +1120,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       // Index text transcription
       await axios.post(`${API_BASE_URL}/api/index_video/`, null, {
         params: { video_hash: videoHash },
+        withCredentials: true,
       });
 
       // Index images for visual search
       try {
         await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
           params: { video_hash: videoHash },
+          withCredentials: true,
         });
         setIndexingStatus("Video and images indexed successfully!");
       } catch (imageError) {
@@ -1147,6 +1151,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
         params: { video_hash: videoHash, force_reindex: true },
         timeout: 15000,
+        withCredentials: true,
       });
       setReindexStatus("Re-indexing started — visual search will update in a few minutes.");
       setTimeout(() => setReindexStatus(null), 8000);
@@ -1228,7 +1233,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             custom_instructions: customInstructions || undefined,
             conversation_history: history.length > 0 ? history : undefined,
           },
-          { timeout: 180000 }
+          {
+            timeout: 180000,
+            withCredentials: true,
+          }
         );
 
         setMessages((prev) => {
