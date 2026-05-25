@@ -1516,15 +1516,16 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                             "phase": "generating",
                             "label": "Writing answer",
                         })
-                    except Exception:
+                    except BaseException as e:
+                        print(f"[chat/stream] vision task interrupted before completion: {type(e).__name__}: {e}")
                         break
                 vision_err: Optional[Exception] = None
                 text_err: Optional[Exception] = None
                 try:
                     answer = vision_task.result()
-                except Exception as e:
+                except BaseException as e:
                     vision_err = e
-                    print(f"[chat/stream] generate_with_images failed: {e}")
+                    print(f"[chat/stream] generate_with_images failed: {type(e).__name__}: {e}")
                     answer = ""
                 answer = (answer or "").strip()
                 print(f"[chat/stream] vision answer length: {len(answer)}")
