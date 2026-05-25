@@ -681,13 +681,23 @@ body {
 
 .sidebar.is-collapsed .brand {
   flex: 0 0 auto;
+  width: 100%;
+  justify-content: center;
   padding-left: 0;
   padding-right: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
 .sidebar.is-collapsed .brand-mark {
   width: 34px;
   height: 34px;
+}
+
+.sidebar.is-collapsed .brand-word {
+  width: 0;
+  max-width: 0;
+  overflow: hidden;
 }
 
 .sidebar.is-collapsed .sidebar-collapse {
@@ -712,6 +722,15 @@ body {
   padding-left: 0;
   padding-right: 0;
   min-height: 36px;
+  gap: 0;
+}
+
+.sidebar.is-collapsed .nav-item-label,
+.sidebar.is-collapsed .nav-item-count {
+  width: 0;
+  max-width: 0;
+  overflow: hidden;
+  margin: 0;
 }
 
 .sidebar.is-collapsed .nav-item.is-active::before {
@@ -722,6 +741,14 @@ body {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
+  gap: 0;
+}
+
+.sidebar.is-collapsed .user-who,
+.sidebar.is-collapsed .user-caret {
+  width: 0;
+  max-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-foot {
