@@ -437,6 +437,26 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
         except Exception as e:
             print(f"[Speaker] Warning: Could not update face_tags: {e}")
 
+        # Keep Supabase image embedding speaker metadata aligned with the
+        # renamed transcript speaker. Visual search can use this field for
+        # filtering/ranking in pgvector mode.
+        try:
+            from services.supabase_service import supabase
+            image_client = supabase()
+            image_update = image_client.table("image_embeddings").update(
+                {"speaker": new_speaker_name}
+            ).eq("video_hash", video_hash).eq(
+                "speaker", original_speaker
+            ).execute()
+            image_count = len(image_update.data) if image_update.data else 0
+            if image_count > 0:
+                print(
+                    f"[Speaker] Updated {image_count} image embeddings from "
+                    f"'{original_speaker}' to '{new_speaker_name}'"
+                )
+        except Exception as e:
+            print(f"[Speaker] Warning: Could not update image_embeddings: {e}")
+
         # Update global cache if it matches
         global _last_transcription_data
         if _last_transcription_data and _last_transcription_data.get("video_hash") == video_hash:

@@ -194,6 +194,15 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     query_lower = query.lower()
     found_speakers = []
 
+    def add_if_mentioned(name: Optional[str], source: str) -> None:
+        if not name:
+            return
+        if name.lower() in query_lower and not any(
+            existing.lower() == name.lower() for existing in found_speakers
+        ):
+            print(f"Found {source} in query: {name}")
+            found_speakers.append(name)
+
     # First, check enrolled speakers (e.g., "Concetta", "John")
     try:
         from speaker_recognition import get_speaker_recognition_system
@@ -201,11 +210,25 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
         enrolled_speakers = sr_system.list_speakers()
 
         for speaker_name in enrolled_speakers:
-            if speaker_name.lower() in query_lower:
-                print(f"Found enrolled speaker in query: {speaker_name}")
-                found_speakers.append(speaker_name)
+            add_if_mentioned(speaker_name, "enrolled speaker")
     except Exception as e:
         print(f"Could not load speaker recognition system: {e}")
+
+    # Check manually tagged face/person names. The frontend exposes these names
+    # in @mention autocomplete, so chat retrieval must recognize them too.
+    try:
+        from services.supabase_service import supabase as get_supabase
+        client = get_supabase()
+        result = (
+            client.table("face_tags")
+            .select("speaker_name")
+            .eq("video_hash", video_hash)
+            .execute()
+        )
+        for row in result.data or []:
+            add_if_mentioned(row.get("speaker_name"), "face-tagged speaker")
+    except Exception as e:
+        print(f"Could not check face-tagged speakers: {e}")
 
     # Also check for SPEAKER_XX labels in segments
     # This handles cases where segments use labels like "SPEAKER_19"
@@ -223,9 +246,7 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
 
             # Check if any speaker label is mentioned in the query
             for speaker_label in speaker_labels:
-                if speaker_label.lower() in query_lower and speaker_label not in found_speakers:
-                    print(f"Found speaker label in query: {speaker_label}")
-                    found_speakers.append(speaker_label)
+                add_if_mentioned(speaker_label, "speaker label")
     except Exception as e:
         print(f"Could not check segment speakers: {e}")
 
@@ -507,12 +528,6 @@ async def _retrieve_visual_context(
     else:
         images_indexed = vector_store.image_collection_exists(video_hash)
 
-    if not images_indexed:
-        print(f"Images not indexed for video {video_hash}. Continuing with text-only analysis.")
-        return {"images_indexed": False}
-
-    print(f"Visual analysis requested, searching for {n_images} relevant images...")
-
     try:
         # Extract ALL speaker names from the query
         speaker_names = _extract_all_speakers_from_query(question, video_hash)
@@ -534,25 +549,34 @@ async def _retrieve_visual_context(
         else:
             visual_query_used = question
 
-        # Sub-stage: CLIP scene search
-        if phase_cb is not None:
-            await phase_cb("analyzing_scenes", "Analyzing scenes")
+        image_results = []
+        if images_indexed:
+            print(f"Visual analysis requested, searching for {n_images} relevant images...")
 
-        if use_supabase:
-            image_results = await _run_in_executor(
-                image_embedding_service.search_images,
-                video_hash,
-                visual_query,
-                n_results=n_images,
-                speaker_filter=None
-            )
+            # Sub-stage: CLIP scene search
+            if phase_cb is not None:
+                await phase_cb("analyzing_scenes", "Analyzing scenes")
+
+            if use_supabase:
+                image_results = await _run_in_executor(
+                    image_embedding_service.search_images,
+                    video_hash,
+                    visual_query,
+                    n_results=n_images,
+                    speaker_filter=None
+                )
+            else:
+                image_results = await _run_in_executor(
+                    vector_store.search_images,
+                    video_hash,
+                    visual_query,
+                    n_results=n_images,
+                    speaker_filter=None
+                )
         else:
-            image_results = await _run_in_executor(
-                vector_store.search_images,
-                video_hash,
-                visual_query,
-                n_results=n_images,
-                speaker_filter=None
+            print(
+                f"Images not indexed for video {video_hash}. "
+                "Checking face tags before falling back to text-only analysis."
             )
 
         face_tag_results = []
@@ -763,9 +787,11 @@ async def _retrieve_visual_context(
             print(f"Visual context: {visual_context}")
         else:
             print("No relevant images found for the query")
+            if not images_indexed:
+                return {"images_indexed": False}
 
         return {
-            "images_indexed": True,
+            "images_indexed": images_indexed or bool(image_results),
             "image_paths": image_paths,
             "visual_context": visual_context,
             "visual_sources": visual_sources,
@@ -1432,36 +1458,27 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             image_results = []
 
             if include_visuals:
-                # Determine upfront if images are indexed so we only emit phases
-                # that will actually run.
-                use_supabase = _use_supabase_for_images()
-                if use_supabase:
-                    _images_indexed_check = image_embedding_service.image_collection_exists(video_hash)
-                else:
-                    _images_indexed_check = vector_store.image_collection_exists(video_hash)
+                # The phase_cb emits SSE events from within the helper at
+                # the right moment. yield is not available inside a nested
+                # function, so we write to a shared list and drain it after
+                # the helper returns.
+                _pending_events: list = []
 
-                if _images_indexed_check:
-                    # The phase_cb emits SSE events from within the helper at
-                    # the right moment (after CLIP search, before face scoring).
-                    # yield is not available inside a nested function, so we
-                    # write to a shared list and drain it after the helper returns.
-                    _pending_events: list = []
+                async def _phase_cb(phase: str, label: str) -> None:
+                    _pending_events.append(_sse({"type": "phase", "phase": phase, "label": label}))
 
-                    async def _phase_cb(phase: str, label: str) -> None:
-                        _pending_events.append(_sse({"type": "phase", "phase": phase, "label": label}))
+                vis = await _retrieve_visual_context(video_hash, question, n_images, phase_cb=_phase_cb)
 
-                    vis = await _retrieve_visual_context(video_hash, question, n_images, phase_cb=_phase_cb)
+                # Drain any phase events that were queued during the helper call
+                for evt in _pending_events:
+                    yield evt
 
-                    # Drain any phase events that were queued during the helper call
-                    for evt in _pending_events:
-                        yield evt
-
-                    if vis.get("images_indexed"):
-                        image_paths = vis["image_paths"]
-                        visual_context = vis["visual_context"]
-                        visual_sources = vis["visual_sources"]
-                        visual_query_used = vis["visual_query_used"]
-                        image_results = vis["image_results"]
+                if vis.get("images_indexed"):
+                    image_paths = vis["image_paths"]
+                    visual_context = vis["visual_context"]
+                    visual_sources = vis["visual_sources"]
+                    visual_query_used = vis["visual_query_used"]
+                    image_results = vis["image_results"]
 
             # Audio context
             audio_indexed = vector_store.audio_collection_exists(video_hash)
