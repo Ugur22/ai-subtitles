@@ -1308,6 +1308,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       });
     };
 
+    let streamSucceeded = false;
+    let receivedAnyEvent = false;
+    let receivedAnswerContent = false;
+
+    const markStreamingMessageFailed = (
+      message = "That request didn't finish. Please retry in a few seconds."
+    ) => {
+      updateStreamingMessage((m) => ({
+        ...m,
+        content: m.content || message,
+        isError: m.isError || !m.content,
+        errorType: "server",
+        retryQuestion: textToSend,
+        isStreaming: false,
+      }));
+    };
+
     const handleEvent = (evt: any) => {
       if (!evt || typeof evt !== "object") return;
       switch (evt.type) {
@@ -1338,6 +1355,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         case "token": {
           const chunk = evt.content || "";
           if (!chunk) break;
+          receivedAnswerContent = true;
           updateStreamingMessage((m) => ({
             ...m,
             content: (m.content || "") + chunk,
@@ -1351,6 +1369,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         case "done": {
           updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
           setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
+          streamSucceeded = true;
           break;
         }
         case "error": {
@@ -1367,13 +1386,27 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             retryQuestion: textToSend,
             isStreaming: false,
           }));
+          streamSucceeded = true;
           break;
         }
       }
     };
 
-    let streamSucceeded = false;
-    let receivedAnyEvent = false;
+    const processRawSseEvent = (rawEvent: string) => {
+      const dataLines = rawEvent
+        .split("\n")
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.slice(5).trimStart());
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join("\n");
+      try {
+        const parsed = JSON.parse(payload);
+        receivedAnyEvent = true;
+        handleEvent(parsed);
+      } catch (e) {
+        console.warn("Failed to parse SSE event:", payload, e);
+      }
+    };
 
     try {
       const controller = new AbortController();
@@ -1414,23 +1447,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
           const rawEvent = buffer.slice(0, sepIndex);
           buffer = buffer.slice(sepIndex + 2);
-          const dataLines = rawEvent
-            .split("\n")
-            .filter((l) => l.startsWith("data:"))
-            .map((l) => l.slice(5).trimStart());
-          if (dataLines.length === 0) continue;
-          const payload = dataLines.join("\n");
-          try {
-            const parsed = JSON.parse(payload);
-            receivedAnyEvent = true;
-            handleEvent(parsed);
-          } catch (e) {
-            console.warn("Failed to parse SSE event:", payload, e);
-          }
+          processRawSseEvent(rawEvent);
         }
       }
 
-      streamSucceeded = true;
+      const remaining = buffer.trim();
+      if (remaining) {
+        processRawSseEvent(remaining);
+      }
+
+      if (!streamSucceeded) {
+        markStreamingMessageFailed();
+      } else if (!receivedAnswerContent) {
+        markStreamingMessageFailed("The server finished without returning an answer. Please retry.");
+      }
     } catch (error: any) {
       console.error("Stream error:", error);
       if (!receivedAnyEvent) {
@@ -1452,7 +1482,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
 
     if (!streamSucceeded) {
-      updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
+      markStreamingMessageFailed();
     }
 
     setRetryCount(0);
