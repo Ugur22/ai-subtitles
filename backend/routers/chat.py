@@ -52,6 +52,126 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
     return "llm_unknown"
 
 
+def _stored_key_provider_name(provider_name: Optional[str]) -> Optional[str]:
+    """Map chat provider ids to the provider ids used in user_api_keys."""
+    if provider_name == "grok":
+        return "xai"
+    if provider_name in ("groq", "openai", "anthropic", "deepseek"):
+        return provider_name
+    return None
+
+
+async def _get_saved_provider_key(user_id: Optional[str], provider_name: Optional[str]) -> Optional[str]:
+    """Return a user's validated saved API key for a chat provider, if present."""
+    key_provider = _stored_key_provider_name(provider_name)
+    if not user_id or not key_provider:
+        return None
+
+    try:
+        from services.supabase_service import SupabaseService
+        from services.encryption import get_encryption_key, decrypt_api_key
+
+        client = SupabaseService.get_client()
+        response = (
+            client.table("user_api_keys")
+            .select("encrypted_key,is_valid")
+            .eq("user_id", user_id)
+            .eq("provider", key_provider)
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            return None
+
+        row = response.data[0]
+        if row.get("is_valid") is not True:
+            return None
+
+        encryption_key = await get_encryption_key()
+        return decrypt_api_key(row["encrypted_key"], encryption_key)
+    except Exception as e:
+        print(f"[Chat] Could not load saved key for provider {provider_name}: {e}")
+        return None
+
+
+async def _get_chat_provider(request: Request, provider_name: Optional[str]):
+    """Resolve an LLM provider, preferring a validated user-saved key over env keys."""
+    user_id = None
+    if hasattr(request.state, "profile") and request.state.profile:
+        user_id = request.state.profile.get("id")
+    if not user_id and hasattr(request.state, "user") and request.state.user:
+        user_id = request.state.user.get("id")
+
+    saved_key = await _get_saved_provider_key(user_id, provider_name)
+    return llm_manager.get_provider(provider_name, api_key_override=saved_key)
+
+
+async def _generate_visual_observations_with_fallback(
+    request: Request,
+    question: str,
+    image_paths: List[str],
+    visual_context: str,
+    final_provider_name: Optional[str],
+) -> str:
+    """Use a real vision provider to turn screenshots into text for non-vision LLMs."""
+    if not image_paths:
+        return ""
+
+    for candidate in ("grok", "openai", "anthropic"):
+        if candidate == final_provider_name:
+            continue
+        try:
+            vision_provider = await _get_chat_provider(request, candidate)
+        except Exception as e:
+            print(f"[Chat] Vision fallback provider {candidate} unavailable: {e}")
+            continue
+
+        if not vision_provider.supports_vision():
+            continue
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You inspect video screenshots and return concise factual observations. "
+                    "Describe visible people, actions, setting, and anything relevant to the user's question. "
+                    "Use the supplied screenshot/timestamp labels when referring to images. "
+                    "Do not infer identities unless the metadata names a speaker/person."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Question:\n"
+                    f"{question}\n\n"
+                    "Screenshot/timestamp metadata:\n"
+                    f"{visual_context}\n\n"
+                    "Return concise observations that a text-only model can use to answer the question."
+                ),
+            },
+        ]
+
+        try:
+            print(f"[Chat] Using {candidate} as vision fallback for {len(image_paths)} images")
+            observations = await vision_provider.generate_with_images(
+                messages,
+                image_paths,
+                temperature=0.2,
+                max_tokens=900,
+            )
+            observations = (observations or "").strip()
+            if observations:
+                return (
+                    f"{visual_context}\n\n"
+                    f"VISION MODEL OBSERVATIONS ({candidate}):\n{observations}"
+                )
+        except Exception as e:
+            print(f"[Chat] Vision fallback provider {candidate} failed: {e}")
+
+    return ""
+
+
 def get_transcription_from_any_source(
     video_hash: str,
     refresh_screenshot_urls: bool = False,
@@ -1139,6 +1259,13 @@ Guidelines:
                 audio_context
             ])
 
+        if visual_context:
+            user_message_parts.extend([
+                "",
+                "RETRIEVED SCREENSHOT/TIMESTAMP CONTEXT (metadata only; images are not attached):",
+                visual_context
+            ])
+
         user_message_parts.extend([
             "",
             f"QUESTION: {question}",
@@ -1153,9 +1280,13 @@ Guidelines:
             user_message_parts.append("4. Considers relevant audio events and sound cues")
             user_message_parts.append("5. Uses markdown formatting for clarity")
             user_message_parts.append("6. Connects related information from different parts of the video")
+            if visual_context:
+                user_message_parts.append("7. Uses screenshot metadata only for timestamps; do not claim to see image details")
         else:
             user_message_parts.append("4. Uses markdown formatting for clarity")
             user_message_parts.append("5. Connects related information from different parts of the video")
+            if visual_context:
+                user_message_parts.append("6. Uses screenshot metadata only for timestamps; do not claim to see image details")
 
         user_message = "\n".join(user_message_parts)
 
@@ -1359,23 +1490,36 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 "video_hash": video_hash
             }
 
-        # Build prompt
-        has_images = include_visuals and bool(image_paths)
-        messages = _build_chat_messages(
-            question=question,
-            context=context,
-            visual_context=visual_context,
-            audio_context=audio_context,
-            has_images=has_images,
-            custom_instructions=custom_instructions,
-            conversation_history=chat_request.conversation_history,
-        )
-
         # Get LLM provider and generate response
         try:
-            provider = llm_manager.get_provider(provider_name)
+            provider = await _get_chat_provider(request, provider_name)
+            provider_supports_vision = provider.supports_vision()
 
-            if include_visuals and image_paths and provider.supports_vision():
+            if include_visuals and image_paths and not provider_supports_vision:
+                fallback_visual_context = await _generate_visual_observations_with_fallback(
+                    request=request,
+                    question=question,
+                    image_paths=image_paths,
+                    visual_context=visual_context,
+                    final_provider_name=provider_name,
+                )
+                if fallback_visual_context:
+                    visual_context = fallback_visual_context
+
+            # Build prompt after provider resolution so non-vision providers
+            # receive vision observations as text instead of image payloads.
+            has_images = include_visuals and bool(image_paths) and provider_supports_vision
+            messages = _build_chat_messages(
+                question=question,
+                context=context,
+                visual_context=visual_context,
+                audio_context=audio_context,
+                has_images=has_images,
+                custom_instructions=custom_instructions,
+                conversation_history=chat_request.conversation_history,
+            )
+
+            if include_visuals and image_paths and provider_supports_vision:
                 print(f"Using vision-capable model for analysis with {len(image_paths)} images")
                 answer = await provider.generate_with_images(
                     messages,
@@ -1384,8 +1528,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                     max_tokens=2000
                 )
             else:
-                if include_visuals and not provider.supports_vision():
-                    print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
+                if include_visuals and image_paths and not provider_supports_vision:
+                    print(f"Provider {provider_name} is text-only; using text prompt with vision fallback observations when available.")
                 answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
         except Exception as e:
             raise HTTPException(
@@ -1559,10 +1703,26 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
                 return
 
+            provider = await _get_chat_provider(request, provider_name)
+            provider_supports_vision = provider.supports_vision()
+
+            if include_visuals and image_paths and not provider_supports_vision:
+                yield _sse({"type": "phase", "phase": "analyzing_visuals", "label": "Inspecting screenshots"})
+                fallback_visual_context = await _generate_visual_observations_with_fallback(
+                    request=request,
+                    question=question,
+                    image_paths=image_paths,
+                    visual_context=visual_context,
+                    final_provider_name=provider_name,
+                )
+                if fallback_visual_context:
+                    visual_context = fallback_visual_context
+
             yield _sse({"type": "sources", "sources": all_sources, "visual_query_used": visual_query_used})
 
-            # Build messages
-            has_images = include_visuals and bool(image_paths)
+            # Build messages after provider resolution so non-vision providers
+            # receive vision observations as text instead of image payloads.
+            has_images = include_visuals and bool(image_paths) and provider_supports_vision
             messages = _build_chat_messages(
                 question=question,
                 context=context,
@@ -1576,9 +1736,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             # LLM generation
             yield _sse({"type": "phase", "phase": "generating", "label": "Writing answer"})
 
-            provider = llm_manager.get_provider(provider_name)
-
-            if include_visuals and image_paths and provider.supports_vision():
+            if include_visuals and image_paths and provider_supports_vision:
                 print(f"Using vision-capable model for analysis with {len(image_paths)} images")
                 # Vision providers are non-streaming, so the call blocks for
                 # ~10s with no bytes on the SSE socket. Intermediate proxies
@@ -1651,8 +1809,8 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                         "content": "The model did not return an answer for this query. Try rephrasing, or turn off visual analysis."
                     })
             else:
-                if include_visuals and image_paths and not provider.supports_vision():
-                    print(f"Warning: Provider {provider_name} does not support vision. Falling back to text-only.")
+                if include_visuals and image_paths and not provider_supports_vision:
+                    print(f"Provider {provider_name} is text-only; using text prompt with vision fallback observations when available.")
                 streamed_chunks: list[str] = []
                 chunk_count = 0
                 stream_err: Optional[Exception] = None
@@ -1744,6 +1902,33 @@ async def list_llm_providers(request: Request) -> Dict:
 
     try:
         providers = llm_manager.list_available_providers()
+
+        user_id = None
+        if hasattr(request.state, "profile") and request.state.profile:
+            user_id = request.state.profile.get("id")
+        if not user_id and hasattr(request.state, "user") and request.state.user:
+            user_id = request.state.user.get("id")
+
+        saved_key_providers = set()
+        if user_id:
+            try:
+                from services.supabase_service import SupabaseService
+                client = SupabaseService.get_client()
+                response = (
+                    client.table("user_api_keys")
+                    .select("provider")
+                    .eq("user_id", user_id)
+                    .eq("is_valid", True)
+                    .execute()
+                )
+                saved_key_providers = {row["provider"] for row in (response.data or [])}
+            except Exception as key_err:
+                print(f"[Chat] Could not load saved provider availability: {key_err}")
+
+        for provider in providers:
+            key_provider = _stored_key_provider_name(provider.get("name"))
+            if key_provider in saved_key_providers:
+                provider["available"] = True
         return {
             "providers": providers,
             "default": llm_manager.default_provider
@@ -1771,7 +1956,7 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
         provider_name = test_request.provider
         test_prompt = test_request.prompt or "Hello! Please respond with 'OK' if you can read this."
 
-        provider = llm_manager.get_provider(provider_name)
+        provider = await _get_chat_provider(request, provider_name)
 
         # Test with a simple message
         messages = [

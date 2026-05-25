@@ -8,6 +8,7 @@ import asyncio
 import httpx
 import base64
 import io
+import copy
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
@@ -812,8 +813,8 @@ class DeepSeekProvider(BaseLLMProvider):
         return bool(self.api_key and self.api_key != "your_deepseek_api_key_here")
 
     def supports_vision(self) -> bool:
-        """Probe DeepSeek vision via OpenAI-compatible image_url payloads."""
-        return True
+        """DeepSeek's direct API currently rejects OpenAI-style image_url content."""
+        return False
 
     async def generate_with_images(
         self,
@@ -915,7 +916,6 @@ class LLMManager:
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
             "grok": GrokProvider(),
-            "grok-deep": GrokProvider(model_override="grok-4-1"),
             "deepseek": DeepSeekProvider()
         }
         self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
@@ -924,7 +924,7 @@ class LLMManager:
         if self.default_provider == "local":
             self.default_provider = "ollama"
 
-    def get_provider(self, provider_name: Optional[str] = None) -> BaseLLMProvider:
+    def get_provider(self, provider_name: Optional[str] = None, api_key_override: Optional[str] = None) -> BaseLLMProvider:
         """Get a specific LLM provider or the default one"""
         name = provider_name or self.default_provider
 
@@ -936,6 +936,10 @@ class LLMManager:
             raise ValueError(f"Unknown provider: {name}")
 
         provider = self.providers[name]
+
+        if api_key_override and hasattr(provider, "api_key"):
+            provider = copy.copy(provider)
+            provider.api_key = api_key_override
 
         if not provider.is_available():
             raise Exception(f"Provider '{name}' is not available. Check configuration.")
