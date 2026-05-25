@@ -678,6 +678,10 @@ class GrokProvider(BaseLLMProvider):
             for attempt in range(max_retries):
                 try:
                     async with httpx.AsyncClient(timeout=240.0) as client:
+                        print(
+                            f"Calling xAI vision API with {len(image_data)} images "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
                         response = await client.post(
                             f"{self.base_url}/chat/completions",
                             headers={
