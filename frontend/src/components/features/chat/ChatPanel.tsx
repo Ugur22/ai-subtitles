@@ -1949,7 +1949,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         </svg>
                       }
                     >
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2.5">
                         {message.sources
                           .filter((s) => s.screenshot_url)
                           .map((source, idx) => {
@@ -1981,7 +1981,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     openScreenshot();
                                   }
                                 }}
-                                className="group relative aspect-video rounded-lg overflow-hidden border-2 transition-all hover:shadow-lg cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                                className="group relative aspect-video rounded-lg overflow-hidden border transition-all hover:shadow-md cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-emerald-600"
                                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
                                 title={`Open screenshot at ${source.start_time}`}
                                 aria-label={`Open screenshot at ${source.start_time}`}
@@ -2020,18 +2020,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     }
                                   }}
                                 />
-                              <div className="absolute inset-0 pointer-events-none bg-black/0 transition-colors group-hover:bg-black/20" />
+                              <div className="absolute inset-0 pointer-events-none bg-black/0 transition-colors group-hover:bg-black/10" />
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openScreenshot();
                                 }}
-                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/80"
+                                className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white shadow-sm transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-white/80"
                                 title={`Open screenshot at ${source.start_time}`}
                                 aria-label={`Open screenshot at ${source.start_time}`}
                               >
-                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
@@ -2041,14 +2041,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 </svg>
                               </button>
                               {/* Timestamp and speaker info badge */}
-                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-2">
+                              <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-1.5 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-1.5 pb-1.5 pt-6">
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     onTimestampClick?.(source.start_time);
                                   }}
-                                  className="mb-1 inline-flex items-center gap-1 rounded-full bg-emerald-700/90 px-2 py-1 text-xs font-mono font-bold text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-white/80"
+                                  className="inline-flex min-w-0 items-center gap-1 rounded-full bg-emerald-700/90 px-1.5 py-0.5 text-[11px] font-mono font-bold text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-white/80"
                                   title={`Jump to ${source.start_time}`}
                                   aria-label={`Jump video to ${source.start_time}`}
                                 >
@@ -2059,12 +2059,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 </button>
                                 {(source as any).likely_speakers &&
                                 (source as any).likely_speakers.length > 0 ? (
-                                  <p className="text-white/90 text-xs truncate">
+                                  <p className="min-w-0 truncate rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] text-white/90">
                                     Likely:{" "}
                                     {(source as any).likely_speakers.join(", ")}
                                   </p>
                                 ) : (
-                                  <p className="text-white/80 text-xs truncate">
+                                  <p className="min-w-0 truncate rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] text-white/85">
                                     {source.speaker}
                                   </p>
                                 )}
