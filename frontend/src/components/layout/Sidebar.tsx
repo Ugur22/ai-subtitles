@@ -50,7 +50,12 @@ const NavItem: React.FC<NavItemProps> = ({ active, icon, label, count, onClick, 
   );
 };
 
-export const Sidebar: React.FC = () => {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggleCollapse }) => {
   const { user, logout } = useAuth();
   const { openSettings } = useSettings();
   const { activeJobCount, setShowJobPanel } = useJobs();
@@ -67,14 +72,34 @@ export const Sidebar: React.FC = () => {
     .join('');
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       {/* Brand */}
-      <Link to="/" className="brand" aria-label="AI Subs home">
-        <span className="brand-mark" aria-hidden="true" />
-        <span className="brand-word">
-          AI <span>Subs</span>
-        </span>
-      </Link>
+      <div className="sidebar-top">
+        <Link to="/" className="brand" aria-label="AI Subs home">
+          <span className="brand-mark" aria-hidden="true" />
+          <span className="brand-word">
+            AI <span>Subs</span>
+          </span>
+        </Link>
+        <button
+          type="button"
+          className="sidebar-collapse"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'}
+          title={collapsed ? 'Show sidebar' : 'Hide sidebar'}
+          aria-pressed={collapsed}
+        >
+          <svg
+            className={collapsed ? 'is-collapsed' : ''}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            strokeWidth="2"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      </div>
 
       {/* Workspace */}
       <div className="side-label">Workspace</div>
