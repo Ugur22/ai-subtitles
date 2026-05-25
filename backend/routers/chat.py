@@ -258,6 +258,47 @@ def _clean_query_for_retrieval(query: str) -> str:
     return (query or "").replace("@", " ").strip()
 
 
+def _visual_query_variants(query: str) -> list[str]:
+    """
+    Build CLIP-friendly visual queries from chatty natural-language questions.
+
+    CLIP image search is sensitive to filler words. A question like
+    "is person swimming in this film?" can return fewer results than the
+    shorter scene phrase "person swimming".
+    """
+    import re
+
+    cleaned = _clean_query_for_retrieval(query).lower()
+    cleaned = re.sub(r"[^\w\s-]+", " ", cleaned)
+    cleaned = re.sub(r"\b(in|from|during|inside|within)\s+(this|the|a|an)?\s*(film|movie|video|scene|clip)\b", " ", cleaned)
+    cleaned = re.sub(r"\b(this|the|a|an)\s+(film|movie|video|scene|clip)\b", " ", cleaned)
+
+    stop_words = {
+        "is", "are", "was", "were", "does", "do", "did", "can", "could",
+        "would", "should", "show", "find", "search", "look", "see", "tell",
+        "me", "about", "whether", "if", "there", "any", "images", "image",
+        "screenshots", "screenshot", "picture", "pictures", "of", "in",
+    }
+    tokens = [tok for tok in cleaned.split() if tok and tok not in stop_words]
+    compact = " ".join(tokens)
+
+    variants = []
+    for candidate in (_clean_query_for_retrieval(query), compact):
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        if candidate and candidate.lower() not in {v.lower() for v in variants}:
+            variants.append(candidate)
+    return variants
+
+
+def _image_result_key(result: dict) -> str:
+    url = result.get('screenshot_url') or result.get('screenshot_path', '')
+    try:
+        from services.gcs_service import gcs_service
+        return gcs_service.extract_gcs_path_from_signed_url(url) or url.split("?", 1)[0]
+    except Exception:
+        return url.split("?", 1)[0]
+
+
 def _format_segment_time(seconds: float) -> str:
     seconds = max(0, int(seconds or 0))
     return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
@@ -557,22 +598,36 @@ async def _retrieve_visual_context(
             if phase_cb is not None:
                 await phase_cb("analyzing_scenes", "Analyzing scenes")
 
-            if use_supabase:
-                image_results = await _run_in_executor(
-                    image_embedding_service.search_images,
-                    video_hash,
-                    visual_query,
-                    n_results=n_images,
-                    speaker_filter=None
-                )
-            else:
-                image_results = await _run_in_executor(
-                    vector_store.search_images,
-                    video_hash,
-                    visual_query,
-                    n_results=n_images,
-                    speaker_filter=None
-                )
+            seen_image_paths = set()
+            for query_variant in _visual_query_variants(visual_query):
+                if use_supabase:
+                    variant_results = await _run_in_executor(
+                        image_embedding_service.search_images,
+                        video_hash,
+                        query_variant,
+                        n_results=n_images,
+                        speaker_filter=None
+                    )
+                else:
+                    variant_results = await _run_in_executor(
+                        vector_store.search_images,
+                        video_hash,
+                        query_variant,
+                        n_results=n_images,
+                        speaker_filter=None
+                    )
+
+                for result in variant_results:
+                    key = _image_result_key(result)
+                    if key in seen_image_paths:
+                        continue
+                    seen_image_paths.add(key)
+                    result["visual_query_variant"] = query_variant
+                    image_results.append(result)
+                    if len(image_results) >= n_images:
+                        break
+                if len(image_results) >= n_images:
+                    break
         else:
             print(
                 f"Images not indexed for video {video_hash}. "
@@ -589,17 +644,24 @@ async def _retrieve_visual_context(
             if face_tag_results:
                 deduped = []
                 seen_paths = set()
-                for result in face_tag_results + image_results:
-                    url = result.get('screenshot_url') or result.get('screenshot_path', '')
-                    try:
-                        from services.gcs_service import gcs_service
-                        key = gcs_service.extract_gcs_path_from_signed_url(url) or url.split("?", 1)[0]
-                    except Exception:
-                        key = url.split("?", 1)[0]
-                    if key in seen_paths:
-                        continue
-                    seen_paths.add(key)
-                    deduped.append(result)
+                # Keep both identity evidence (face tags) and action/object
+                # evidence (CLIP). If face tags fill the whole list first,
+                # queries like "Concetta swimming" never see swimming matches.
+                face_quota = n_images if not image_results else max(1, n_images // 2)
+                for source_results, quota in (
+                    (face_tag_results, face_quota),
+                    (image_results, n_images),
+                ):
+                    added_from_source = 0
+                    for result in source_results:
+                        key = _image_result_key(result)
+                        if key in seen_paths:
+                            continue
+                        seen_paths.add(key)
+                        deduped.append(result)
+                        added_from_source += 1
+                        if len(deduped) >= n_images or added_from_source >= quota:
+                            break
                     if len(deduped) >= n_images:
                         break
                 image_results = deduped
