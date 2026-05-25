@@ -1336,6 +1336,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     let streamSucceeded = false;
     let receivedAnyEvent = false;
     let receivedAnswerContent = false;
+    let receivedSources = false;
 
     const markStreamingMessageFailed = (
       message = "That request didn't finish. Please retry in a few seconds."
@@ -1348,6 +1349,30 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         retryQuestion: textToSend,
         isStreaming: false,
       }));
+    };
+
+    const finalizeStreamingMessage = () => {
+      updateStreamingMessage((m) => ({
+        ...m,
+        isStreaming: false,
+      }));
+      setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
+      streamSucceeded = true;
+    };
+
+    const markAnswerIncomplete = (
+      message = "Answer generation did not finish, but the retrieved evidence is still available below."
+    ) => {
+      updateStreamingMessage((m) => ({
+        ...m,
+        content: m.content || message,
+        isError: !m.content,
+        errorType: m.content ? undefined : "server",
+        retryQuestion: textToSend,
+        isStreaming: false,
+      }));
+      setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
+      streamSucceeded = true;
     };
 
     const handleEvent = (evt: any) => {
@@ -1369,6 +1394,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         case "sources": {
           const sources = evt.sources || [];
           const screenshots = sources.filter((s: Source) => s.screenshot_url).length;
+          receivedSources = sources.length > 0;
           setScreenshotCount(screenshots);
           updateStreamingMessage((m) => ({
             ...m,
@@ -1392,9 +1418,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           break;
         }
         case "done": {
-          updateStreamingMessage((m) => ({ ...m, isStreaming: false }));
-          setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
-          streamSucceeded = true;
+          finalizeStreamingMessage();
           break;
         }
         case "error": {
@@ -1482,7 +1506,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       }
 
       if (!streamSucceeded) {
-        markStreamingMessageFailed();
+        if (receivedAnswerContent) {
+          finalizeStreamingMessage();
+        } else if (receivedSources) {
+          markAnswerIncomplete();
+        } else {
+          markStreamingMessageFailed();
+        }
+      } else if (!receivedAnswerContent && receivedSources) {
+        markAnswerIncomplete();
       } else if (!receivedAnswerContent) {
         markStreamingMessageFailed("The server finished without returning an answer. Please retry.");
       }
@@ -1491,6 +1523,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       if (!receivedAnyEvent) {
         await sendViaLegacy(textToSend, history);
         streamSucceeded = true;
+      } else if (receivedAnswerContent) {
+        finalizeStreamingMessage();
+      } else if (receivedSources) {
+        const { message } = getFriendlyErrorMessage(error);
+        markAnswerIncomplete(message || undefined);
       } else {
         const { message, errorType } = getFriendlyErrorMessage(error);
         updateStreamingMessage((m) => ({
@@ -1507,7 +1544,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
 
     if (!streamSucceeded) {
-      markStreamingMessageFailed();
+      if (receivedAnswerContent) {
+        finalizeStreamingMessage();
+      } else if (receivedSources) {
+        markAnswerIncomplete();
+      } else {
+        markStreamingMessageFailed();
+      }
     }
 
     setRetryCount(0);
@@ -2035,7 +2078,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div
               className="msg-bubble"
               style={
-                message.isError
+                message.isError && (!message.sources || message.sources.length === 0)
                   ? { background: "oklch(65% 0.20 25 / 0.08)", border: "1px solid oklch(65% 0.20 25 / 0.25)", padding: "12px 14px" }
                   : undefined
               }
@@ -2076,7 +2119,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               )}
 
               {/* Sources */}
-              {!message.isError && message.sources && message.sources.length > 0 && (
+              {message.sources && message.sources.length > 0 && (
                 <div className="mt-4 space-y-3">
                   {/* Visual Sources (Screenshots) */}
                   {message.sources.filter((s) => s.screenshot_url).length >
