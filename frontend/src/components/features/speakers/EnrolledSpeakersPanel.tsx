@@ -24,7 +24,9 @@ export const EnrolledSpeakersPanel: React.FC<EnrolledSpeakersPanelProps> = ({
   const fetchSpeakers = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`);
+      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`, {
+        withCredentials: true,
+      });
       setSpeakers(response.data.speakers || []);
     } catch (error) {
       console.error("Error fetching speakers:", error);
@@ -41,7 +43,9 @@ export const EnrolledSpeakersPanel: React.FC<EnrolledSpeakersPanelProps> = ({
 
   const handleDeleteSpeaker = async (speakerName: string) => {
     try {
-      await axios.delete(`${API_BASE_URL}/api/speaker/${speakerName}`);
+      await axios.delete(`${API_BASE_URL}/api/speaker/${speakerName}`, {
+        withCredentials: true,
+      });
       setConfirmingDelete(null);
       await fetchSpeakers();
       onSpeakerDeleted?.();

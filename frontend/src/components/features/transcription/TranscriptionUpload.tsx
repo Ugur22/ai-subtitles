@@ -494,7 +494,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const fetchEnrolledSpeakers = async () => {
     setEnrolledLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`);
+      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`, {
+        withCredentials: true,
+      });
       setEnrolledSpeakers(response.data.speakers || []);
     } catch (e) {
       console.error("Failed to fetch enrolled speakers:", e);
@@ -505,7 +507,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
   const handleDeleteEnrolledSpeaker = async (name: string) => {
     try {
-      await axios.delete(`${API_BASE_URL}/api/speaker/${name}`);
+      await axios.delete(`${API_BASE_URL}/api/speaker/${name}`, {
+        withCredentials: true,
+      });
       setConfirmingDeleteEnrolled(null);
       await fetchEnrolledSpeakers();
     } catch (e) {
