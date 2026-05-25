@@ -481,14 +481,33 @@ body {
   gap: 4px;
   width: 240px;
   box-sizing: border-box;
+  overflow: hidden;
+  transition:
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sidebar.is-collapsed {
+  width: 72px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 14px;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px 22px;
+  padding: 4px 8px;
   text-decoration: none;
+  min-width: 0;
+  flex: 1;
 }
 
 .brand-mark {
@@ -520,10 +539,48 @@ body {
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--text-primary);
+  white-space: nowrap;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .brand-word span {
   color: var(--text-quaternary);
   font-weight: 500;
+}
+
+.sidebar-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sidebar-collapse:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  transform: translateX(-1px);
+}
+.sidebar-collapse svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sidebar-collapse svg.is-collapsed {
+  transform: rotate(180deg);
 }
 
 .side-label {
@@ -533,6 +590,10 @@ body {
   letter-spacing: 0.1em;
   color: var(--text-quaternary);
   padding: 14px 10px 6px;
+  white-space: nowrap;
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .nav-item {
@@ -553,6 +614,7 @@ body {
   position: relative;
   width: 100%;
   font-family: inherit;
+  overflow: hidden;
 }
 .nav-item:hover {
   background: var(--bg-subtle);
@@ -584,11 +646,70 @@ body {
 .nav-item-icon svg { width: 16px; height: 16px; }
 .nav-item.is-active .nav-item-icon { color: var(--accent); }
 .nav-item-label { flex: 1; min-width: 0; }
+.nav-item-label,
+.nav-item-count,
+.user-who,
+.user-caret {
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 .nav-item-count {
   margin-left: auto;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-quaternary);
+}
+
+.sidebar.is-collapsed .brand-word,
+.sidebar.is-collapsed .side-label,
+.sidebar.is-collapsed .nav-item-label,
+.sidebar.is-collapsed .nav-item-count,
+.sidebar.is-collapsed .user-who,
+.sidebar.is-collapsed .user-caret {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+
+.sidebar.is-collapsed .sidebar-top {
+  justify-content: center;
+}
+
+.sidebar.is-collapsed .brand {
+  flex: 0 0 auto;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.is-collapsed .sidebar-collapse {
+  position: absolute;
+  left: 56px;
+  top: 22px;
+  z-index: 2;
+  box-shadow: var(--shadow-sm);
+}
+
+.sidebar.is-collapsed .side-label {
+  height: 8px;
+  padding: 8px 0 0;
+}
+
+.sidebar.is-collapsed .nav-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+  min-height: 36px;
+}
+
+.sidebar.is-collapsed .nav-item.is-active::before {
+  left: -12px;
+}
+
+.sidebar.is-collapsed .user-card {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .sidebar-foot {
@@ -660,11 +781,30 @@ body {
   grid-template-columns: 240px 1fr;
   min-height: 100vh;
   background: var(--bg-base);
+  transition: grid-template-columns 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 72px 1fr;
 }
 .app-shell > main {
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .sidebar,
+  .brand-word,
+  .side-label,
+  .nav-item-label,
+  .nav-item-count,
+  .user-who,
+  .user-caret,
+  .sidebar-collapse,
+  .sidebar-collapse svg {
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ─── Upload hero ───────────────────────────────────────────────────────────── */
