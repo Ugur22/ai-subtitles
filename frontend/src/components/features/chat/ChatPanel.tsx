@@ -1124,23 +1124,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return { message: "Something went wrong. Please try again.", errorType: "unknown" };
   };
 
-  // Map backend error codes from SSE error events to user-facing messages.
-  // Keep these short — the raw server message is still available in errorDetail.
-  const messageForServerErrorCode = (code?: string, fallback?: string): string => {
-    switch (code) {
-      case "llm_config":
-        return "Chat service is misconfigured. The xAI API key is missing or invalid — contact the admin.";
-      case "llm_rate_limited":
-        return "We've hit the chat provider's rate limit. Please wait a minute and try again.";
-      case "llm_unavailable":
-        return "The chat provider is temporarily unavailable. Please try again in a moment.";
-      case "llm_image_403":
-        return "Couldn't load this video's screenshots for visual analysis. Try turning off visual analysis, or re-process the video.";
-      default:
-        return fallback || "Something went wrong. Please try again.";
-    }
-  };
-
   const isRetryableError = (error: any): boolean => {
     const status = error.response?.status;
     return status === 502 || status === 503 || status === 504 || error.code === "ECONNABORTED" || error.message?.includes("timeout");
@@ -1159,7 +1142,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     textToSend: string,
     history: Array<{ role: string; content: string }>
   ) => {
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 0;
     const RETRY_DELAY = 3000;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -1181,7 +1164,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             custom_instructions: customInstructions || undefined,
             conversation_history: history.length > 0 ? history : undefined,
           },
-          { timeout: 30000 }
+          { timeout: 180000 }
         );
 
         setMessages((prev) => {
@@ -1297,7 +1280,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setLoading(true);
     setRetryCount(0);
     setPhases([
-      { id: "searching", label: PHASE_LABELS.searching, status: "active", startedAt: Date.now() },
+      {
+        id: "generating",
+        label: includeVisuals ? "Analyzing video" : PHASE_LABELS.generating,
+        status: "active",
+        startedAt: Date.now(),
+      },
     ]);
     setScreenshotCount(0);
 
@@ -1320,243 +1308,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    const updateStreamingMessage = (updater: (msg: Message) => Message) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        for (let i = next.length - 1; i >= 0; i--) {
-          if (next[i].role === "assistant" && next[i].isStreaming) {
-            next[i] = updater(next[i]);
-            return next;
-          }
-        }
-        return next;
-      });
-    };
-
-    let streamSucceeded = false;
-    let receivedAnyEvent = false;
-    let receivedAnswerContent = false;
-    let receivedSources = false;
-
-    const markStreamingMessageFailed = (
-      message = "That request didn't finish. Please retry in a few seconds."
-    ) => {
-      updateStreamingMessage((m) => ({
-        ...m,
-        content: m.content || message,
-        isError: m.isError || !m.content,
-        errorType: "server",
-        retryQuestion: textToSend,
-        isStreaming: false,
-      }));
-    };
-
-    const finalizeStreamingMessage = () => {
-      updateStreamingMessage((m) => ({
-        ...m,
-        isStreaming: false,
-      }));
-      setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
-      streamSucceeded = true;
-    };
-
-    const markAnswerIncomplete = (
-      message = "Answer generation did not finish, but the retrieved evidence is still available below."
-    ) => {
-      updateStreamingMessage((m) => ({
-        ...m,
-        content: m.content || message,
-        isError: !m.content,
-        errorType: m.content ? undefined : "server",
-        retryQuestion: textToSend,
-        isStreaming: false,
-      }));
-      setPhases((prev) => prev.map((p) => ({ ...p, status: "done" })));
-      streamSucceeded = true;
-    };
-
-    const handleEvent = (evt: any) => {
-      if (!evt || typeof evt !== "object") return;
-      switch (evt.type) {
-        case "phase": {
-          const id = evt.phase as PhaseId;
-          const label = evt.label || PHASE_LABELS[id] || id;
-          setPhases((prev) => {
-            const existing = prev.find((p) => p.id === id);
-            if (existing) return prev;
-            return [
-              ...prev.map((p) => ({ ...p, status: "done" as const })),
-              { id, label, status: "active" as const, startedAt: Date.now() },
-            ];
-          });
-          break;
-        }
-        case "sources": {
-          const sources = evt.sources || [];
-          const screenshots = sources.filter((s: Source) => s.screenshot_url).length;
-          receivedSources = sources.length > 0;
-          setScreenshotCount(screenshots);
-          updateStreamingMessage((m) => ({
-            ...m,
-            sources,
-            visual_query_used: evt.visual_query_used || undefined,
-          }));
-          break;
-        }
-        case "token": {
-          const chunk = evt.content || "";
-          if (!chunk) break;
-          receivedAnswerContent = true;
-          updateStreamingMessage((m) => ({
-            ...m,
-            content: (m.content || "") + chunk,
-          }));
-          break;
-        }
-        case "reset": {
-          updateStreamingMessage((m) => ({ ...m, content: "" }));
-          break;
-        }
-        case "done": {
-          finalizeStreamingMessage();
-          break;
-        }
-        case "error": {
-          const rawMessage: string = evt.message || "";
-          const code: string | undefined = evt.code;
-          const friendly = messageForServerErrorCode(code, rawMessage || "Something went wrong. Please try again.");
-          updateStreamingMessage((m) => ({
-            ...m,
-            content: friendly,
-            isError: true,
-            errorType: "server",
-            errorCode: code,
-            errorDetail: rawMessage || undefined,
-            retryQuestion: textToSend,
-            isStreaming: false,
-          }));
-          streamSucceeded = true;
-          break;
-        }
-      }
-    };
-
-    const processRawSseEvent = (rawEvent: string) => {
-      const dataLines = rawEvent
-        .split("\n")
-        .filter((l) => l.startsWith("data:"))
-        .map((l) => l.slice(5).trimStart());
-      if (dataLines.length === 0) return;
-      const payload = dataLines.join("\n");
-      try {
-        const parsed = JSON.parse(payload);
-        receivedAnyEvent = true;
-        handleEvent(parsed);
-      } catch (e) {
-        console.warn("Failed to parse SSE event:", payload, e);
-      }
-    };
-
     try {
-      const controller = new AbortController();
-      const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
-        },
-        body: JSON.stringify({
-          question: textToSend,
-          video_hash: videoHash,
-          provider: selectedProvider,
-          n_results: 8,
-          include_visuals: includeVisuals,
-          n_images: includeVisuals ? 6 : undefined,
-          custom_instructions: customInstructions || undefined,
-          conversation_history: history.length > 0 ? history : undefined,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`Stream failed with status ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let sepIndex: number;
-        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, sepIndex);
-          buffer = buffer.slice(sepIndex + 2);
-          processRawSseEvent(rawEvent);
-        }
-      }
-
-      const remaining = buffer.trim();
-      if (remaining) {
-        processRawSseEvent(remaining);
-      }
-
-      if (!streamSucceeded) {
-        if (receivedAnswerContent) {
-          finalizeStreamingMessage();
-        } else if (receivedSources) {
-          markAnswerIncomplete();
-        } else {
-          markStreamingMessageFailed();
-        }
-      } else if (!receivedAnswerContent && receivedSources) {
-        markAnswerIncomplete();
-      } else if (!receivedAnswerContent) {
-        markStreamingMessageFailed("The server finished without returning an answer. Please retry.");
-      }
-    } catch (error: any) {
-      console.error("Stream error:", error);
-      if (!receivedAnyEvent) {
-        await sendViaLegacy(textToSend, history);
-        streamSucceeded = true;
-      } else if (receivedAnswerContent) {
-        finalizeStreamingMessage();
-      } else if (receivedSources) {
-        const { message } = getFriendlyErrorMessage(error);
-        markAnswerIncomplete(message || undefined);
-      } else {
-        const { message, errorType } = getFriendlyErrorMessage(error);
-        updateStreamingMessage((m) => ({
-          ...m,
-          content: m.content
-            ? `${m.content}\n\n${message}`
-            : message,
-          isError: !m.content,
-          errorType,
-          retryQuestion: textToSend,
-          isStreaming: false,
-        }));
-      }
+      await sendViaLegacy(textToSend, history);
+    } finally {
+      setRetryCount(0);
+      setLoading(false);
+      setPhases([]);
+      setScreenshotCount(0);
     }
-
-    if (!streamSucceeded) {
-      if (receivedAnswerContent) {
-        finalizeStreamingMessage();
-      } else if (receivedSources) {
-        markAnswerIncomplete();
-      } else {
-        markStreamingMessageFailed();
-      }
-    }
-
-    setRetryCount(0);
-    setLoading(false);
-    setPhases([]);
-    setScreenshotCount(0);
   };
 
   // Fetch speakers for @mention autocomplete
