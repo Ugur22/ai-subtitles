@@ -489,8 +489,8 @@ body {
 
 .sidebar.is-collapsed {
   width: 72px;
-  padding-left: 12px;
-  padding-right: 12px;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 .sidebar-top {
@@ -673,7 +673,10 @@ body {
 }
 
 .sidebar.is-collapsed .sidebar-top {
+  flex-direction: column;
   justify-content: center;
+  gap: 10px;
+  padding-bottom: 16px;
 }
 
 .sidebar.is-collapsed .brand {
@@ -682,12 +685,21 @@ body {
   padding-right: 0;
 }
 
+.sidebar.is-collapsed .brand-mark {
+  width: 34px;
+  height: 34px;
+}
+
 .sidebar.is-collapsed .sidebar-collapse {
-  position: absolute;
-  left: 56px;
-  top: 22px;
-  z-index: 2;
-  box-shadow: var(--shadow-sm);
+  position: static;
+  width: 34px;
+  height: 28px;
+  box-shadow: none;
+  transform: none;
+}
+
+.sidebar.is-collapsed .sidebar-collapse:hover {
+  transform: none;
 }
 
 .sidebar.is-collapsed .side-label {
