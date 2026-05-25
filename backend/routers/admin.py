@@ -32,6 +32,7 @@ class UserInfo(BaseModel):
     has_xai: bool
     has_openai: bool
     has_anthropic: bool
+    has_deepseek: bool
     is_admin: bool
 
 
@@ -105,6 +106,7 @@ async def list_users(request: Request):
                 has_xai="xai" in providers,
                 has_openai="openai" in providers,
                 has_anthropic="anthropic" in providers,
+                has_deepseek="deepseek" in providers,
                 is_admin=user.get("is_admin", False)
             ))
 

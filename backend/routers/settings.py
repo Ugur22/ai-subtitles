@@ -61,7 +61,7 @@ async def update_settings(request: Request, body: UpdateSettingsRequest):
 
         if body.default_llm_provider is not None:
             # Validate provider
-            valid_providers = ["groq", "xai", "openai", "anthropic"]
+            valid_providers = ["groq", "xai", "openai", "anthropic", "deepseek"]
             if body.default_llm_provider not in valid_providers:
                 raise HTTPException(
                     status_code=400,

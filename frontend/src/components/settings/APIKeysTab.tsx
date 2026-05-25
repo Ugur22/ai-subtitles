@@ -12,6 +12,7 @@ const PROVIDERS = [
   { id: 'xai' as LLMProvider, name: 'xAI (Grok)', placeholder: 'xai-...' },
   { id: 'openai' as LLMProvider, name: 'OpenAI', placeholder: 'sk-...' },
   { id: 'anthropic' as LLMProvider, name: 'Anthropic', placeholder: 'sk-ant-...' },
+  { id: 'deepseek' as LLMProvider, name: 'DeepSeek', placeholder: 'sk-...' },
 ];
 
 export const APIKeysTab: React.FC = () => {

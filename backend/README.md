@@ -166,7 +166,7 @@ MAX_SPEAKERS=10
 # ============================================
 # LLM PROVIDER CONFIGURATION
 # ============================================
-# Options: local (Ollama), groq, openai, anthropic, grok
+# Options: local (Ollama), groq, openai, anthropic, grok, deepseek
 DEFAULT_LLM_PROVIDER=local
 
 # Ollama Settings (Local LLM)
@@ -188,6 +188,11 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 # xAI Grok Settings
 XAI_API_KEY=your_xai_api_key
 XAI_MODEL=grok-beta
+
+# DeepSeek Settings
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 # ============================================
 # VISUAL SEARCH (CLIP)

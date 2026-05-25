@@ -15,6 +15,7 @@ export interface AdminUser {
   has_xai: boolean;
   has_openai: boolean;
   has_anthropic: boolean;
+  has_deepseek: boolean;
 }
 
 export interface InviteCode {

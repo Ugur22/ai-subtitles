@@ -18,6 +18,7 @@ const PROVIDER_NAMES: Record<LLMProvider, string> = {
   xai: 'xAI (Grok)',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
+  deepseek: 'DeepSeek',
 };
 
 export const ChatProviderSelector: React.FC<ChatProviderSelectorProps> = ({

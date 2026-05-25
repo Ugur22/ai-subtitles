@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL UNIQUE,
   display_name TEXT,
-  default_llm_provider TEXT DEFAULT 'groq' CHECK (default_llm_provider IN ('groq', 'xai', 'openai', 'anthropic')),
+  default_llm_provider TEXT DEFAULT 'groq' CHECK (default_llm_provider IN ('groq', 'xai', 'openai', 'anthropic', 'deepseek')),
   email_verified BOOLEAN DEFAULT FALSE,
   is_admin BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 
 COMMENT ON TABLE user_profiles IS 'Extended user profile information linked to Supabase auth.users';
 COMMENT ON COLUMN user_profiles.email_verified IS 'User must verify email before accessing the application';
-COMMENT ON COLUMN user_profiles.default_llm_provider IS 'Default LLM provider for chat (groq, xai, openai, anthropic)';
+COMMENT ON COLUMN user_profiles.default_llm_provider IS 'Default LLM provider for chat (groq, xai, openai, anthropic, deepseek)';
 COMMENT ON COLUMN user_profiles.is_admin IS 'Admin users can access admin dashboard and manage invites';
 
 -- User API keys (encrypted)
@@ -67,7 +67,7 @@ COMMENT ON COLUMN user_profiles.is_admin IS 'Admin users can access admin dashbo
 CREATE TABLE IF NOT EXISTS user_api_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('groq', 'xai', 'openai', 'anthropic')),
+  provider TEXT NOT NULL CHECK (provider IN ('groq', 'xai', 'openai', 'anthropic', 'deepseek')),
   encrypted_key TEXT NOT NULL, -- AES-256-GCM encrypted, hex-encoded (nonce + ciphertext)
   key_suffix TEXT NOT NULL CHECK (length(key_suffix) = 4), -- Last 4 chars for display (e.g., "abc123")
   is_valid BOOLEAN DEFAULT NULL, -- NULL=pending validation, TRUE=valid, FALSE=invalid
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
   UNIQUE(user_id, provider) -- One key per provider per user
 );
 
-COMMENT ON TABLE user_api_keys IS 'Encrypted user API keys for LLM providers (Groq, xAI, OpenAI, Anthropic)';
+COMMENT ON TABLE user_api_keys IS 'Encrypted user API keys for LLM providers (Groq, xAI, OpenAI, Anthropic, DeepSeek)';
 COMMENT ON COLUMN user_api_keys.encrypted_key IS 'AES-256-GCM encrypted key (hex format: nonce[12 bytes] + ciphertext)';
 COMMENT ON COLUMN user_api_keys.key_suffix IS 'Last 4 characters of key for UI display';
 COMMENT ON COLUMN user_api_keys.is_valid IS 'NULL=pending validation, TRUE=valid, FALSE=invalid';

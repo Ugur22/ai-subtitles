@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email);
 CREATE TABLE IF NOT EXISTS user_api_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL, -- 'groq', 'xai', 'openai', 'anthropic'
+  provider TEXT NOT NULL, -- 'groq', 'xai', 'openai', 'anthropic', 'deepseek'
   encrypted_key TEXT NOT NULL,
   key_suffix TEXT NOT NULL, -- Last 4 chars for display
   is_valid BOOLEAN DEFAULT NULL, -- NULL=pending, TRUE=valid, FALSE=invalid

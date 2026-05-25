@@ -910,7 +910,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
-  const VISION_SUPPORTED_PROVIDERS = ["grok", "grok-deep", "openai", "anthropic"];
+  const VISION_SUPPORTED_PROVIDERS = ["grok", "grok-deep", "openai", "anthropic", "deepseek"];
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{
     screenshots: string[];

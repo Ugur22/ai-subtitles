@@ -1,6 +1,6 @@
 """
 LLM Provider Abstraction Layer
-Supports multiple LLM providers: Ollama (local), Groq, OpenAI, Anthropic, Grok (xAI)
+Supports multiple LLM providers: Ollama (local), Groq, OpenAI, Anthropic, Grok (xAI), DeepSeek
 """
 
 import os
@@ -717,6 +717,194 @@ class GrokProvider(BaseLLMProvider):
             raise Exception(f"Grok vision generation failed: {str(e)}")
 
 
+class DeepSeekProvider(BaseLLMProvider):
+    """DeepSeek cloud LLM provider using its OpenAI-compatible API."""
+
+    def __init__(self):
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+        self.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+
+    async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """Generate response using DeepSeek."""
+        if not self.api_key or self.api_key == "your_deepseek_api_key_here":
+            raise Exception("deepseek_api_key_missing: DeepSeek API key not configured")
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+            raise Exception(f"DeepSeek generation failed: {str(e)}\nResponse: {error_detail}")
+        except Exception as e:
+            raise Exception(f"DeepSeek generation failed: {str(e)}")
+
+    async def generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> AsyncIterator[str]:
+        """Stream tokens from DeepSeek via OpenAI-compatible SSE."""
+        import json as _json
+
+        if not self.api_key or self.api_key == "your_deepseek_api_key_here":
+            raise Exception("deepseek_api_key_missing: DeepSeek API key not configured")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                },
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = _json.loads(payload)
+                    except Exception:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
+
+    def is_available(self) -> bool:
+        """Check if DeepSeek API key is configured."""
+        return bool(self.api_key and self.api_key != "your_deepseek_api_key_here")
+
+    def supports_vision(self) -> bool:
+        """Probe DeepSeek vision via OpenAI-compatible image_url payloads."""
+        return True
+
+    async def generate_with_images(
+        self,
+        messages: List[Dict[str, Any]],
+        image_paths: List[str],
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> str:
+        """Generate response with images using OpenAI-compatible image_url content."""
+        if not self.api_key or self.api_key == "your_deepseek_api_key_here":
+            raise Exception("deepseek_api_key_missing: DeepSeek API key not configured")
+
+        try:
+            image_data = []
+            failed_images = []
+            for img_path in image_paths:
+                result = _load_image_as_base64(img_path)
+                if result:
+                    encoded_image, _ = result
+                    image_data.append(encoded_image)
+                else:
+                    failed_images.append(img_path)
+
+            if failed_images:
+                print(f"Note: {len(failed_images)} of {len(image_paths)} DeepSeek vision images could not be loaded.")
+
+            if not image_data:
+                return await self.generate(messages, temperature, max_tokens)
+
+            formatted_messages = []
+            for msg in messages:
+                if msg["role"] == "user" and image_data:
+                    content = [{"type": "text", "text": msg["content"]}]
+                    for img_b64 in image_data:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_b64}"
+                            }
+                        })
+                    formatted_messages.append({
+                        "role": msg["role"],
+                        "content": content
+                    })
+                else:
+                    formatted_messages.append(msg)
+
+            max_retries = 2
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=240.0) as client:
+                        print(
+                            f"Calling DeepSeek vision API with {len(image_data)} images "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        response = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self.api_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={
+                                "model": self.model,
+                                "messages": formatted_messages,
+                                "temperature": temperature,
+                                "max_tokens": max_tokens
+                            }
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        return result["choices"][0]["message"]["content"]
+                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        print(f"DeepSeek vision timeout/connection error (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
+                        await asyncio.sleep(3)
+                    continue
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (502, 503, 504) and attempt < max_retries - 1:
+                        print(f"DeepSeek vision returned {e.response.status_code} (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
+                        await asyncio.sleep(3)
+                        last_exception = e
+                        continue
+                    error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+                    raise Exception(f"DeepSeek vision generation failed: {str(e)}\nResponse: {error_detail}")
+            raise Exception(f"DeepSeek vision generation failed after {max_retries} attempts: {str(last_exception)}")
+        except Exception as e:
+            raise Exception(f"DeepSeek vision generation failed: {str(e)}")
+
+
 class LLMManager:
     """Manager for LLM providers"""
 
@@ -727,7 +915,8 @@ class LLMManager:
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
             "grok": GrokProvider(),
-            "grok-deep": GrokProvider(model_override="grok-4-1")
+            "grok-deep": GrokProvider(model_override="grok-4-1"),
+            "deepseek": DeepSeekProvider()
         }
         self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
 
