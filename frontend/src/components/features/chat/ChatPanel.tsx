@@ -381,6 +381,12 @@ interface Source {
   confidence?: number;
   likely_speakers?: string[];
   overlap_score?: number;
+  visual_query_variant?: string;
+  visual_similarity?: number;
+  hybrid_score?: number;
+  face_score?: number;
+  source_kind?: "clip" | "face_tag" | string;
+  evidence_label?: string;
 }
 
 interface Message {
@@ -388,6 +394,7 @@ interface Message {
   content: string;
   sources?: Source[];
   visual_query_used?: string;
+  visual_query_variants?: string[];
   original_question?: string;
   isError?: boolean;
   errorType?: "timeout" | "server" | "network" | "unknown";
@@ -1233,6 +1240,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 content: response.data.answer,
                 sources: response.data.sources,
                 visual_query_used: response.data.visual_query_used,
+                visual_query_variants: response.data.visual_query_variants,
                 isStreaming: false,
               };
               return next;
@@ -1245,6 +1253,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               content: response.data.answer,
               sources: response.data.sources,
               visual_query_used: response.data.visual_query_used,
+              visual_query_variants: response.data.visual_query_variants,
               original_question: textToSend,
             },
           ];
@@ -1874,9 +1883,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             >
             {/* Show query transformation notification for assistant messages */}
             {message.role === "assistant" &&
-              message.visual_query_used &&
-              message.original_question &&
-              message.visual_query_used !== message.original_question && (
+              ((message.visual_query_variants &&
+                message.visual_query_variants.length > 0) ||
+                (message.visual_query_used &&
+                  message.original_question &&
+                  message.visual_query_used !== message.original_question)) && (
                 <div
                   className="px-3 py-2 rounded-lg text-xs flex items-start gap-2 border"
                   style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
@@ -1884,9 +1895,29 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   <svg className="w-4 h-4 flex-shrink-0 mt-px" style={{ color: "var(--accent)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
-                  <div>
-                    <span className="font-medium" style={{ color: "var(--text-primary)" }}>Scene search:</span> "
-                    {message.visual_query_used}"
+                  <div className="min-w-0">
+                    <span className="font-medium" style={{ color: "var(--text-primary)" }}>
+                      Searched scenes:
+                    </span>
+                    {message.visual_query_variants &&
+                    message.visual_query_variants.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {message.visual_query_variants.slice(0, 5).map((variant) => (
+                          <span
+                            key={variant}
+                            className="rounded-full px-2 py-0.5"
+                            style={{
+                              background: "var(--accent-dim)",
+                              color: "var(--accent)",
+                            }}
+                          >
+                            {variant}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span> "{message.visual_query_used}"</span>
+                    )}
                   </div>
                 </div>
               )}
@@ -1968,6 +1999,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 });
                               }
                             };
+                            const evidenceLabel =
+                              source.evidence_label ||
+                              ((source as any).likely_speakers?.length
+                                ? "Scene + identity"
+                                : "Scene match");
+                            const evidenceDetail = source.visual_query_variant
+                              ? `Matched: ${source.visual_query_variant}`
+                              : source.source_kind === "face_tag"
+                                ? "Matched by face tag"
+                                : evidenceLabel;
 
                             return (
                               <div
@@ -1983,8 +2024,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 }}
                                 className="group relative aspect-video rounded-lg overflow-hidden border transition-all hover:shadow-md cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-emerald-600"
                                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
-                                title={`Open screenshot at ${source.start_time}`}
-                                aria-label={`Open screenshot at ${source.start_time}`}
+                                title={`Open screenshot at ${source.start_time}. ${evidenceDetail}`}
+                                aria-label={`Open screenshot at ${source.start_time}. ${evidenceDetail}`}
                               >
                                 <img
                                   src={formatScreenshotUrl(source.screenshot_url)}
@@ -2057,17 +2098,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   </svg>
                                   {source.start_time}
                                 </button>
-                                {(source as any).likely_speakers &&
-                                (source as any).likely_speakers.length > 0 ? (
-                                  <p className="min-w-0 truncate rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] text-white/90">
-                                    Likely:{" "}
-                                    {(source as any).likely_speakers.join(", ")}
-                                  </p>
-                                ) : (
-                                  <p className="min-w-0 truncate rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] text-white/85">
-                                    {source.speaker}
-                                  </p>
-                                )}
+                                <p
+                                  className="min-w-0 truncate rounded-full bg-black/50 px-1.5 py-0.5 text-[11px] text-white/90"
+                                  title={evidenceDetail}
+                                >
+                                  {evidenceLabel}
+                                </p>
                               </div>
                               </div>
                             );
