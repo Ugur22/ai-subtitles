@@ -313,6 +313,107 @@ def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tupl
     return search_results, "\n\n".join(context_parts), sources
 
 
+def _timestamp_from_screenshot_url(url: str) -> float:
+    """Extract screenshot timestamp from .../<seconds>.jpg URLs."""
+    try:
+        import os
+        path = url.split("?", 1)[0]
+        filename = os.path.basename(path)
+        stem = filename.rsplit(".", 1)[0]
+        return float(stem)
+    except Exception:
+        return 0.0
+
+
+def _fresh_screenshot_url(url: str) -> str:
+    """Return a fresh signed URL when the input is a GCS signed URL."""
+    try:
+        from services.gcs_service import gcs_service
+        from config import settings as _settings
+        if not _settings.ENABLE_GCS_UPLOADS:
+            return url
+        gcs_path = gcs_service.extract_gcs_path_from_signed_url(url)
+        if not gcs_path:
+            return url
+        return gcs_service.generate_download_signed_url(
+            gcs_path,
+            expiry_seconds=_settings.GCS_SCREENSHOT_URL_EXPIRY,
+        )
+    except Exception as e:
+        print(f"[Chat] Face-tag screenshot URL refresh skipped: {e}")
+        return url
+
+
+async def _face_tag_image_results(
+    video_hash: str,
+    speaker_names: list[str],
+    limit: int,
+) -> list[dict]:
+    """Use manually tagged faces as visual candidates for named-person queries."""
+    if not speaker_names:
+        return []
+
+    try:
+        from services.supabase_service import supabase as get_supabase
+        face_client = get_supabase()
+        rows = []
+        for speaker_name in speaker_names:
+            response = (
+                face_client.table("face_tags")
+                .select("speaker_name, screenshot_url")
+                .eq("video_hash", video_hash)
+                .eq("speaker_name", speaker_name)
+                .limit(max(limit * 2, limit))
+                .execute()
+            )
+            for row in response.data or []:
+                rows.append(row)
+
+        results = []
+        seen_paths = set()
+        for row in rows:
+            screenshot_url = row.get("screenshot_url")
+            if not screenshot_url:
+                continue
+            try:
+                from services.gcs_service import gcs_service
+                dedupe_key = gcs_service.extract_gcs_path_from_signed_url(screenshot_url) or screenshot_url.split("?", 1)[0]
+            except Exception:
+                dedupe_key = screenshot_url.split("?", 1)[0]
+            if dedupe_key in seen_paths:
+                continue
+            seen_paths.add(dedupe_key)
+
+            start = _timestamp_from_screenshot_url(screenshot_url)
+            results.append({
+                "screenshot_url": _fresh_screenshot_url(screenshot_url),
+                "metadata": {
+                    "video_hash": video_hash,
+                    "segment_id": f"face_tag_{len(results)}",
+                    "start": start,
+                    "end": start + 1.0,
+                    "speaker": row.get("speaker_name") or speaker_names[0],
+                },
+                "similarity": 1.0,
+                "face_score": 1.0,
+                "overlap_score": 0,
+                "likely_speakers": [row.get("speaker_name") or speaker_names[0]],
+                "source": "face_tag",
+            })
+            if len(results) >= limit:
+                break
+
+        if results:
+            print(
+                f"Face-tag visual candidates: {len(results)} screenshots for "
+                f"{', '.join(speaker_names)}"
+            )
+        return results
+    except Exception as e:
+        print(f"Face-tag visual candidate lookup failed (non-critical): {e}")
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Pure helper functions (no SSE knowledge, shared by sync and streaming endpoints)
 # ---------------------------------------------------------------------------
@@ -453,6 +554,31 @@ async def _retrieve_visual_context(
                 n_results=n_images,
                 speaker_filter=None
             )
+
+        face_tag_results = []
+        if speaker_names:
+            face_tag_results = await _face_tag_image_results(
+                video_hash,
+                speaker_names,
+                n_images,
+            )
+            if face_tag_results:
+                deduped = []
+                seen_paths = set()
+                for result in face_tag_results + image_results:
+                    url = result.get('screenshot_url') or result.get('screenshot_path', '')
+                    try:
+                        from services.gcs_service import gcs_service
+                        key = gcs_service.extract_gcs_path_from_signed_url(url) or url.split("?", 1)[0]
+                    except Exception:
+                        key = url.split("?", 1)[0]
+                    if key in seen_paths:
+                        continue
+                    seen_paths.add(key)
+                    deduped.append(result)
+                    if len(deduped) >= n_images:
+                        break
+                image_results = deduped
 
         face_tags_available = False
 
