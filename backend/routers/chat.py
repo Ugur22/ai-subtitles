@@ -663,6 +663,15 @@ async def _retrieve_visual_context(
                     try:
                         from services.face_service import face_service
                         for result in image_results:
+                            # Manually tagged face rows are already positive
+                            # identity evidence; re-running face detection on
+                            # them is slow and can fail on marginal frames.
+                            if result.get("source") == "face_tag":
+                                result['face_score'] = 1.0
+                                if not result.get('likely_speakers'):
+                                    result['likely_speakers'] = speaker_names
+                                continue
+
                             screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
                             if not screenshot_url:
                                 result['face_score'] = 0.0
