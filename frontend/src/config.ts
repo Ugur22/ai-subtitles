@@ -4,17 +4,17 @@
  */
 
 // API base URL configuration
-// In production (Netlify), use empty string so requests go to /api/* which gets proxied
-// In development, use the full backend URL
+// Prefer VITE_API_URL whenever it is configured. In production this avoids
+// long-running chat requests being capped by the Netlify /api proxy.
 const isProduction = import.meta.env.PROD;
-const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const configuredApiUrl = import.meta.env.VITE_API_URL;
 
-export const API_BASE_URL = isProduction ? '' : rawApiUrl;
+export const API_BASE_URL = configuredApiUrl || (isProduction ? '' : 'http://localhost:8000');
 
 // Debug logging for URL configuration (will show in browser console)
 if (typeof window !== 'undefined') {
   console.log('[Config] Production mode:', isProduction);
-  console.log('[Config] API_BASE_URL:', API_BASE_URL || '(empty - using Netlify proxy)');
+  console.log('[Config] API_BASE_URL:', API_BASE_URL || '(empty - using same-origin proxy)');
 }
 
 // Helper to construct full API URLs
