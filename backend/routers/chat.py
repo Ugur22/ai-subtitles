@@ -52,7 +52,10 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
     return "llm_unknown"
 
 
-def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
+def get_transcription_from_any_source(
+    video_hash: str,
+    refresh_screenshot_urls: bool = False,
+) -> Optional[Dict]:
     """
     Get transcription from any available source:
     1. First check legacy database (SQLite/Firestore)
@@ -94,13 +97,16 @@ def get_transcription_from_any_source(video_hash: str) -> Optional[Dict]:
                 # Add user_id from job record for RLS compliance
                 if job.get("user_id"):
                     result_json["user_id"] = job["user_id"]
-                # IAM-signed URLs expire (7 days max). Refresh before downstream
-                # vision/face/audio consumers try to fetch the screenshots.
-                try:
-                    from services.gcs_service import maybe_refresh_segment_urls
-                    maybe_refresh_segment_urls(result_json)
-                except Exception as refresh_err:
-                    print(f"[Chat] Screenshot URL refresh skipped: {refresh_err}")
+                # Refresh only for callers that are about to return full
+                # transcript segments. Chat retrieval does not need every
+                # segment URL, and refreshing all of them can create hundreds
+                # of IAM SignBlob calls per chat request.
+                if refresh_screenshot_urls:
+                    try:
+                        from services.gcs_service import maybe_refresh_segment_urls
+                        maybe_refresh_segment_urls(result_json)
+                    except Exception as refresh_err:
+                        print(f"[Chat] Screenshot URL refresh skipped: {refresh_err}")
                 print(f"[Chat] Found transcription in Supabase job for video_hash={video_hash}")
                 return result_json
 
@@ -226,6 +232,87 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     return found_speakers
 
 
+def _clean_query_for_retrieval(query: str) -> str:
+    """Normalize UI mention syntax before embedding/search providers see it."""
+    return (query or "").replace("@", " ").strip()
+
+
+def _format_segment_time(seconds: float) -> str:
+    seconds = max(0, int(seconds or 0))
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+
+
+def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tuple[list, str, list]:
+    """
+    Build deterministic transcript context for speaker/person mention queries.
+
+    Semantic search can miss short mention-only prompts like "tell me about
+    @concetta". When the query names a known transcript speaker, use that
+    speaker's segments directly instead of returning no context.
+    """
+    speaker_names = _extract_all_speakers_from_query(question, video_hash)
+    if not speaker_names:
+        return [], "", []
+
+    transcription = get_transcription_from_any_source(video_hash)
+    if not transcription:
+        return [], "", []
+
+    segments = transcription.get("transcription", {}).get("segments", [])
+    speaker_lowers = {name.lower() for name in speaker_names}
+    matching_segments = [
+        seg for seg in segments
+        if (seg.get("speaker") or "").lower() in speaker_lowers
+    ]
+    if not matching_segments:
+        return [], "", []
+
+    selected = matching_segments[:max(1, limit)]
+    context_parts = []
+    sources = []
+    search_results = []
+
+    for seg in selected:
+        text = (seg.get("translation") or seg.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start", 0) or 0)
+        end = float(seg.get("end", start) or start)
+        start_time = seg.get("start_time") or _format_segment_time(start)
+        end_time = seg.get("end_time") or _format_segment_time(end)
+        speaker = seg.get("speaker") or speaker_names[0]
+        metadata = {
+            "video_hash": video_hash,
+            "start": start,
+            "end": end,
+            "start_time": start_time,
+            "end_time": end_time,
+            "speaker": speaker,
+        }
+        search_results.append({"text": text, "metadata": metadata, "distance": None})
+        context_parts.append(
+            f"[Timestamp: {start_time} - {end_time}] "
+            f"[Speaker: {speaker}]\n{text}"
+        )
+        sources.append({
+            "start_time": start_time,
+            "end_time": end_time,
+            "start": start,
+            "end": end,
+            "speaker": speaker,
+            "text": text[:200] + "..." if len(text) > 200 else text,
+        })
+
+    if not search_results:
+        return [], "", []
+
+    print(
+        f"Speaker fallback context: {len(search_results)} segments for "
+        f"{', '.join(speaker_names)}"
+    )
+    return search_results, "\n\n".join(context_parts), sources
+
+
 # ---------------------------------------------------------------------------
 # Pure helper functions (no SSE knowledge, shared by sync and streaming endpoints)
 # ---------------------------------------------------------------------------
@@ -242,10 +329,32 @@ async def _retrieve_text_context(
         (search_results, context_text, sources)
         search_results is the raw list from vector_store.search; empty list if none found.
     """
-    print(f"Searching for relevant context for question: {question}")
-    search_results = await _run_in_executor(vector_store.search, video_hash, question, n_results=n_results)
+    query = _clean_query_for_retrieval(question)
+    print(f"Searching for relevant context for question: {query}")
+    search_results = await _run_in_executor(vector_store.search, video_hash, query, n_results=n_results)
 
     if not search_results:
+        # Existing empty Chroma collections can make collection_exists() true
+        # while search() returns nothing. Rebuild from the persisted transcript
+        # once, then retry.
+        transcription = get_transcription_from_any_source(video_hash)
+        segments = (transcription or {}).get("transcription", {}).get("segments", [])
+        if segments:
+            try:
+                await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+                search_results = await _run_in_executor(
+                    vector_store.search,
+                    video_hash,
+                    query,
+                    n_results=n_results,
+                )
+            except Exception as e:
+                print(f"Transcript reindex/search retry failed: {e}")
+
+    if not search_results:
+        fallback = _speaker_segment_context(video_hash, query, limit=max(n_results * 3, 12))
+        if fallback[0]:
+            return fallback
         return [], "", []
 
     context_parts = []
@@ -308,7 +417,7 @@ async def _retrieve_visual_context(
         speaker_names = _extract_all_speakers_from_query(question, video_hash)
 
         # CLIP doesn't know specific people by name; replace names with generic "person"/"people"
-        visual_query = question
+        visual_query = _clean_query_for_retrieval(question)
         if speaker_names:
             import re
             replacement = "person" if len(speaker_names) == 1 else "people"
@@ -988,7 +1097,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         # Retrieve text context
         search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
 
-        if not search_results:
+        if not search_results and not include_visuals:
             return {
                 "answer": "I couldn't find relevant information in the video to answer your question.",
                 "sources": [],
@@ -1016,6 +1125,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         audio_context, audio_sources, _ = await _retrieve_audio_context(
             video_hash, question, search_results, image_results
         )
+
+        # Combine text, visual, and audio sources
+        all_sources = sources + visual_sources + audio_sources
+        if not all_sources:
+            return {
+                "answer": "I couldn't find relevant information in the video to answer your question.",
+                "sources": [],
+                "provider_used": provider_name or "none",
+                "video_hash": video_hash
+            }
 
         # Build prompt
         has_images = include_visuals and bool(image_paths)
@@ -1050,9 +1169,6 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 status_code=500,
                 detail=f"LLM generation failed: {str(e)}"
             )
-
-        # Combine text, visual, and audio sources
-        all_sources = sources + visual_sources + audio_sources
 
         # Debug logging
         print(f"DEBUG: text sources: {len(sources)}, visual sources: {len(visual_sources)}, audio sources: {len(audio_sources)}")
@@ -1167,7 +1283,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
 
             search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
 
-            if not search_results:
+            if not search_results and not include_visuals:
                 yield _sse({"type": "sources", "sources": [], "visual_query_used": None})
                 yield _sse({"type": "token", "content": "I couldn't find relevant information in the video to answer your question."})
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
@@ -1223,6 +1339,12 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
 
             # Emit sources event
             all_sources = sources + visual_sources + audio_sources
+            if not all_sources:
+                yield _sse({"type": "sources", "sources": [], "visual_query_used": visual_query_used})
+                yield _sse({"type": "token", "content": "I couldn't find relevant information in the video to answer your question."})
+                yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
+                return
+
             yield _sse({"type": "sources", "sources": all_sources, "visual_query_used": visual_query_used})
 
             # Build messages
