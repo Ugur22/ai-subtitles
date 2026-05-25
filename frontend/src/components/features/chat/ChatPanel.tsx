@@ -1952,30 +1952,37 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       <div className="grid grid-cols-3 gap-2">
                         {message.sources
                           .filter((s) => s.screenshot_url)
-                          .map((source, idx) => (
-                            <div
-                              key={idx}
-                              className="group relative aspect-video rounded-lg overflow-hidden border-2 transition-all hover:shadow-lg"
-                              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (source.screenshot_url) {
-                                    const visualSources = message.sources!.filter(
-                                      (s) => s.screenshot_url,
-                                    );
-                                    const screenshots = visualSources.map((s) =>
-                                      formatScreenshotUrl(s.screenshot_url),
-                                    );
-                                    setScreenshotModal({
-                                      screenshots,
-                                      currentIndex: idx,
-                                      sources: visualSources,
-                                    });
+                          .map((source, idx) => {
+                            const openScreenshot = () => {
+                              if (source.screenshot_url) {
+                                const visualSources = message.sources!.filter(
+                                  (s) => s.screenshot_url,
+                                );
+                                const screenshots = visualSources.map((s) =>
+                                  formatScreenshotUrl(s.screenshot_url),
+                                );
+                                setScreenshotModal({
+                                  screenshots,
+                                  currentIndex: idx,
+                                  sources: visualSources,
+                                });
+                              }
+                            };
+
+                            return (
+                              <div
+                                key={idx}
+                                role="button"
+                                tabIndex={0}
+                                onClick={openScreenshot}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    openScreenshot();
                                   }
                                 }}
-                                className="absolute inset-0 cursor-zoom-in"
+                                className="group relative aspect-video rounded-lg overflow-hidden border-2 transition-all hover:shadow-lg cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                                style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
                                 title={`Open screenshot at ${source.start_time}`}
                                 aria-label={`Open screenshot at ${source.start_time}`}
                               >
@@ -2013,26 +2020,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     }
                                   }}
                                 />
-                              </button>
                               <div className="absolute inset-0 pointer-events-none bg-black/0 transition-colors group-hover:bg-black/20" />
                               <button
                                 type="button"
-                                onClick={() => {
-                                  if (source.screenshot_url) {
-                                    const visualSources = message.sources!.filter(
-                                      (s) => s.screenshot_url,
-                                    );
-                                    const screenshots = visualSources.map((s) =>
-                                      formatScreenshotUrl(s.screenshot_url),
-                                    );
-                                    setScreenshotModal({
-                                      screenshots,
-                                      currentIndex: idx,
-                                      sources: visualSources,
-                                    });
-                                  }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openScreenshot();
                                 }}
-                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus:opacity-100"
+                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/80"
                                 title={`Open screenshot at ${source.start_time}`}
                                 aria-label={`Open screenshot at ${source.start_time}`}
                               >
@@ -2074,8 +2069,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   </p>
                                 )}
                               </div>
-                            </div>
-                          ))}
+                              </div>
+                            );
+                          })}
                       </div>
                     </EvidenceDisclosure>
                   )}
