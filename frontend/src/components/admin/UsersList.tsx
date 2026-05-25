@@ -84,6 +84,7 @@ export const UsersList: React.FC<UsersListProps> = ({
                     {user.has_xai && <span className="badge badge-default">xAI</span>}
                     {user.has_openai && <span className="badge badge-default">OpenAI</span>}
                     {user.has_anthropic && <span className="badge badge-default">Anthropic</span>}
+                    {user.has_deepseek && <span className="badge badge-default">DeepSeek</span>}
                   </div>
                 </td>
                 <td className="px-5 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>

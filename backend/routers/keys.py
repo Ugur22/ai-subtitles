@@ -1,7 +1,7 @@
 """
 API Keys management router.
 
-Handles user API keys for LLM providers (groq, xai, openai, anthropic).
+Handles user API keys for LLM providers (groq, xai, openai, anthropic, deepseek).
 Keys are encrypted at rest using AES-256-GCM.
 """
 import asyncio
@@ -19,7 +19,7 @@ from services.key_validator import validate_api_key_async, test_provider_key_syn
 router = APIRouter(prefix="/api/keys", tags=["API Keys"])
 
 # Supported providers
-SUPPORTED_PROVIDERS = ["groq", "xai", "openai", "anthropic"]
+SUPPORTED_PROVIDERS = ["groq", "xai", "openai", "anthropic", "deepseek"]
 
 
 # =============================================================================

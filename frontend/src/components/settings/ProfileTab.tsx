@@ -13,6 +13,7 @@ const PROVIDER_OPTIONS = [
   { value: 'xai', label: 'xAI (Grok)' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
+  { value: 'deepseek', label: 'DeepSeek' },
 ];
 
 export const ProfileTab: React.FC = () => {

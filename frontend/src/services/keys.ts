@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../config';
 
-export type LLMProvider = 'groq' | 'xai' | 'openai' | 'anthropic';
+export type LLMProvider = 'groq' | 'xai' | 'openai' | 'anthropic' | 'deepseek';
 
 export interface APIKey {
   id: string;

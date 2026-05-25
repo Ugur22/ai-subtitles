@@ -20,7 +20,7 @@ async def validate_api_key_async(user_id: str, provider: str, encrypted_key: str
 
     Args:
         user_id: User UUID
-        provider: Provider name (groq, xai, openai, anthropic)
+        provider: Provider name (groq, xai, openai, anthropic, deepseek)
         encrypted_key: Encrypted API key from database
     """
     try:
@@ -73,7 +73,7 @@ async def test_provider_key(provider: str, api_key: str) -> Tuple[bool, Optional
     Test if API key is valid by making a minimal API call.
 
     Args:
-        provider: Provider name (groq, xai, openai, anthropic)
+        provider: Provider name (groq, xai, openai, anthropic, deepseek)
         api_key: Plain text API key to test
 
     Returns:
@@ -92,6 +92,8 @@ async def test_provider_key(provider: str, api_key: str) -> Tuple[bool, Optional
             return await _test_openai(api_key, timeout)
         elif provider == "anthropic":
             return await _test_anthropic(api_key, timeout)
+        elif provider == "deepseek":
+            return await _test_deepseek(api_key, timeout)
         else:
             return False, f"Unknown provider: {provider}"
 
@@ -216,6 +218,32 @@ async def _test_anthropic(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, O
         return False, "Request timed out"
     except httpx.ConnectError:
         return False, "Could not connect to Anthropic API"
+    except Exception as e:
+        return False, f"Test error: {str(e)}"
+
+
+async def _test_deepseek(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Optional[str]]:
+    """Test DeepSeek API key by listing models through its OpenAI-compatible API."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                "https://api.deepseek.com/models",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+
+            if response.status_code == 200:
+                return True, None
+            elif response.status_code == 401:
+                return False, "Invalid API key"
+            elif response.status_code == 403:
+                return False, "API key does not have required permissions"
+            else:
+                return False, f"API returned status {response.status_code}: {response.text[:200]}"
+
+    except httpx.TimeoutException:
+        return False, "Request timed out"
+    except httpx.ConnectError:
+        return False, "Could not connect to DeepSeek API"
     except Exception as e:
         return False, f"Test error: {str(e)}"
 
