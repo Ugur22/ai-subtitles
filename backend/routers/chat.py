@@ -424,6 +424,226 @@ def _format_segment_time(seconds: float) -> str:
     return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
+def _segment_text(segment: dict) -> str:
+    """Return the transcript text used for chat context."""
+    return (segment.get("translation") or segment.get("text") or "").strip()
+
+
+def _segment_bounds(segment: dict) -> tuple[float, float, str, str]:
+    start = float(segment.get("start", 0) or 0)
+    end = float(segment.get("end", start) or start)
+    return (
+        start,
+        end,
+        segment.get("start_time") or _format_segment_time(start),
+        segment.get("end_time") or _format_segment_time(end),
+    )
+
+
+def _segment_key(segment: dict) -> tuple[float, float, str]:
+    start, end, _, _ = _segment_bounds(segment)
+    return (round(start, 3), round(end, 3), _segment_text(segment)[:80])
+
+
+def _segment_as_search_result(video_hash: str, segment: dict) -> dict:
+    text = _segment_text(segment)
+    start, end, start_time, end_time = _segment_bounds(segment)
+    speaker = segment.get("speaker") or "SPEAKER_00"
+    return {
+        "text": text,
+        "metadata": {
+            "video_hash": video_hash,
+            "start": start,
+            "end": end,
+            "start_time": start_time,
+            "end_time": end_time,
+            "speaker": speaker,
+        },
+        "distance": None,
+    }
+
+
+def _format_text_context(video_hash: str, search_results: list) -> tuple[str, list]:
+    context_parts = []
+    sources = []
+
+    for result in search_results:
+        metadata = result["metadata"]
+        text = result["text"]
+        context_parts.append(
+            f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
+            f"[Speaker: {metadata['speaker']}]\n{text}"
+        )
+        sources.append({
+            "start_time": metadata["start_time"],
+            "end_time": metadata["end_time"],
+            "start": metadata["start"],
+            "end": metadata["end"],
+            "speaker": metadata["speaker"],
+            "text": text[:200] + "..." if len(text) > 200 else text,
+        })
+
+    return "\n\n".join(context_parts), sources
+
+
+def _expand_text_hits_with_neighbors(
+    video_hash: str,
+    search_results: list,
+    segments: list,
+    neighbor_count: int = 1,
+    max_results: int = 24,
+) -> list:
+    """
+    Add nearby transcript segments around vector hits.
+
+    Vector hits are indexed as small chunks. For movie/chat questions the
+    surrounding line or two often carries the setup, referent, or resolution,
+    so we include adjacent transcript segments before prompting the LLM.
+    """
+    if not search_results or not segments:
+        return search_results
+
+    selected_indexes: set[int] = set()
+
+    for result in search_results:
+        metadata = result.get("metadata") or {}
+        hit_start = float(metadata.get("start", 0) or 0)
+        hit_end = float(metadata.get("end", hit_start) or hit_start)
+
+        overlapping = []
+        for idx, segment in enumerate(segments):
+            text = _segment_text(segment)
+            if not text:
+                continue
+            seg_start, seg_end, _, _ = _segment_bounds(segment)
+            if seg_start <= hit_end and seg_end >= hit_start:
+                overlapping.append(idx)
+
+        if not overlapping:
+            continue
+
+        start_idx = max(0, min(overlapping) - neighbor_count)
+        end_idx = min(len(segments) - 1, max(overlapping) + neighbor_count)
+        selected_indexes.update(range(start_idx, end_idx + 1))
+
+    expanded = []
+    seen = set()
+    for idx in sorted(selected_indexes):
+        segment = segments[idx]
+        text = _segment_text(segment)
+        if not text:
+            continue
+        key = _segment_key(segment)
+        if key in seen:
+            continue
+        seen.add(key)
+        expanded.append(_segment_as_search_result(video_hash, segment))
+        if len(expanded) >= max_results:
+            break
+
+    return expanded or search_results
+
+
+def _lexical_segment_matches(
+    video_hash: str,
+    question: str,
+    segments: list,
+    limit: int,
+) -> list:
+    """Find transcript segments with exact query term/phrase overlap."""
+    import re
+
+    query = _clean_query_for_retrieval(question).lower()
+    if not query or not segments:
+        return []
+
+    quoted_phrases = []
+    for double_quoted, single_quoted in re.findall(r'"([^"]+)"|\'([^\']+)\'', query):
+        phrase = (double_quoted or single_quoted).strip().lower()
+        if phrase:
+            quoted_phrases.append(phrase)
+    stop_words = {
+        "a", "an", "and", "are", "about", "at", "can", "could", "did", "do",
+        "does", "for", "from", "happen", "happened", "how", "i", "in", "is",
+        "it", "me", "movie", "of", "on", "or", "scene", "show", "tell",
+        "the", "this", "to", "video", "was", "what", "when", "where", "who",
+        "why", "with", "would",
+    }
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9_'-]+", query)
+        if len(token) > 2 and token not in stop_words
+    ]
+    if not tokens and not quoted_phrases:
+        return []
+
+    scored: list[tuple[int, int, dict]] = []
+    for idx, segment in enumerate(segments):
+        text = _segment_text(segment)
+        if not text:
+            continue
+        haystack = f"{segment.get('speaker', '')} {text}".lower()
+        haystack_tokens = set(re.findall(r"[a-z0-9_'-]+", haystack))
+        score = 0
+
+        for phrase in quoted_phrases:
+            if phrase in haystack:
+                score += 8 + len(phrase.split())
+
+        token_hits = len(set(tokens) & haystack_tokens)
+        score += token_hits
+
+        if score > 0:
+            scored.append((score, idx, segment))
+
+    if not scored:
+        return []
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected_indexes: set[int] = set()
+    for _, idx, _ in scored[:limit]:
+        selected_indexes.update(range(max(0, idx - 1), min(len(segments), idx + 2)))
+
+    results = []
+    seen = set()
+    for idx in sorted(selected_indexes):
+        segment = segments[idx]
+        text = _segment_text(segment)
+        if not text:
+            continue
+        key = _segment_key(segment)
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append(_segment_as_search_result(video_hash, segment))
+        if len(results) >= max(limit * 3, limit):
+            break
+
+    print(f"Lexical transcript matches: {len(results)} context segments")
+    return results
+
+
+def _merge_text_results(primary: list, supplemental: list, max_results: int) -> list:
+    merged = []
+    seen = set()
+
+    for result in primary + supplemental:
+        metadata = result.get("metadata") or {}
+        key = (
+            round(float(metadata.get("start", 0) or 0), 3),
+            round(float(metadata.get("end", 0) or 0), 3),
+            (result.get("text") or "")[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(result)
+        if len(merged) >= max_results:
+            break
+
+    return merged
+
+
 def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tuple[list, str, list]:
     """
     Build deterministic transcript context for speaker/person mention queries.
@@ -576,7 +796,11 @@ async def _face_tag_image_results(
                     "end": start + 1.0,
                     "speaker": row.get("speaker_name") or speaker_names[0],
                 },
-                "similarity": 1.0,
+                # A manual face tag is strong identity evidence, but it is
+                # not evidence that the frame matches the requested action or
+                # object. Keep it below CLIP scene matches so named-person
+                # action queries do not get flooded by face-only examples.
+                "similarity": 0.25,
                 "face_score": 1.0,
                 "overlap_score": 0,
                 "likely_speakers": [row.get("speaker_name") or speaker_names[0]],
@@ -616,12 +840,13 @@ async def _retrieve_text_context(
     print(f"Searching for relevant context for question: {query}")
     search_results = await _run_in_executor(vector_store.search, video_hash, query, n_results=n_results)
 
+    transcription = get_transcription_from_any_source(video_hash)
+    segments = (transcription or {}).get("transcription", {}).get("segments", [])
+
     if not search_results:
         # Existing empty Chroma collections can make collection_exists() true
         # while search() returns nothing. Rebuild from the persisted transcript
         # once, then retry.
-        transcription = get_transcription_from_any_source(video_hash)
-        segments = (transcription or {}).get("transcription", {}).get("segments", [])
         if segments:
             try:
                 await _run_in_executor(vector_store.index_transcription, video_hash, segments)
@@ -638,30 +863,45 @@ async def _retrieve_text_context(
         fallback = _speaker_segment_context(video_hash, query, limit=max(n_results * 3, 12))
         if fallback[0]:
             return fallback
+        lexical_results = _lexical_segment_matches(
+            video_hash,
+            question,
+            segments,
+            limit=max(n_results, 6),
+        )
+        if lexical_results:
+            context, sources = _format_text_context(video_hash, lexical_results)
+            return lexical_results, context, sources
         return [], "", []
 
-    context_parts = []
-    sources = []
+    max_context_results = max(n_results * 4, 16)
+    expanded_results = _expand_text_hits_with_neighbors(
+        video_hash,
+        search_results,
+        segments,
+        neighbor_count=1,
+        max_results=max_context_results,
+    )
+    lexical_results = _lexical_segment_matches(
+        video_hash,
+        question,
+        segments,
+        limit=max(3, n_results // 2),
+    )
+    combined_results = _merge_text_results(
+        expanded_results,
+        lexical_results,
+        max_results=max_context_results,
+    )
 
-    for i, result in enumerate(search_results):
-        metadata = result['metadata']
-        text = result['text']
-
-        context_parts.append(
-            f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
-            f"[Speaker: {metadata['speaker']}]\n{text}"
+    if len(combined_results) != len(search_results):
+        print(
+            f"Text retrieval context expanded: semantic={len(search_results)}, "
+            f"context_segments={len(combined_results)}"
         )
 
-        sources.append({
-            "start_time": metadata['start_time'],
-            "end_time": metadata['end_time'],
-            "start": metadata['start'],
-            "end": metadata['end'],
-            "speaker": metadata['speaker'],
-            "text": text[:200] + "..." if len(text) > 200 else text
-        })
-
-    context = "\n\n".join(context_parts)
+    context, sources = _format_text_context(video_hash, combined_results)
+    search_results = combined_results
     return search_results, context, sources
 
 
