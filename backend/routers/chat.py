@@ -3,6 +3,8 @@ Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
 import asyncio
 import json
+import re
+from dataclasses import dataclass
 from typing import AsyncIterator, Dict, Optional, List, Callable, Any, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -313,6 +315,12 @@ except Exception as e:
 router = APIRouter(prefix="/api", tags=["Chat & RAG"])
 
 
+@dataclass
+class ComparisonIntent:
+    person_name: Optional[str]
+    unmatched_name: Optional[str] = None
+
+
 def _use_supabase_for_images() -> bool:
     """
     Determine whether to use Supabase for image embeddings.
@@ -415,6 +423,72 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
         print(f"Could not check segment speakers: {e}")
 
     return found_speakers
+
+
+def _load_face_tag_names(video_hash: str) -> list[str]:
+    """Return unique manually tagged person names for a video."""
+    try:
+        from services.supabase_service import supabase as get_supabase
+
+        client = get_supabase()
+        result = (
+            client.table("face_tags")
+            .select("speaker_name")
+            .eq("video_hash", video_hash)
+            .execute()
+        )
+        names = []
+        for row in result.data or []:
+            name = (row.get("speaker_name") or "").strip()
+            if name and not any(existing.lower() == name.lower() for existing in names):
+                names.append(name)
+        return names
+    except Exception as e:
+        print(f"Could not load face-tag names: {e}")
+        return []
+
+
+def _detect_comparison_intent(query: str, video_hash: str) -> Optional[ComparisonIntent]:
+    """
+    Detect person state comparison questions without stealing unrelated
+    comparison queries from normal RAG.
+    """
+    if not query:
+        return None
+
+    cleaned = _clean_query_for_retrieval(query)
+    query_lower = cleaned.lower()
+    has_comparison_phrase = bool(re.search(
+        r"\b(compare|contrast|versus|vs\.?|different|change(?:d)?|before and after)\b",
+        query_lower,
+    )) or bool(re.search(r"\bhow\s+did\b.+\bchange\b", query_lower))
+    if not has_comparison_phrase:
+        return None
+
+    known_names = _load_face_tag_names(video_hash)
+    for name in known_names:
+        if re.search(rf"(?<!\w){re.escape(name.lower())}(?:'s)?(?!\w)", query_lower):
+            return ComparisonIntent(person_name=name)
+
+    candidate_patterns = [
+        r"\b(?:compare|contrast)\s+([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\b",
+        r"\bhow\s+did\s+([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\s+change\b",
+        r"\b([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\s+(?:early|beginning|before)\s+(?:vs\.?|versus|and)\s+(?:late|end|after)\b",
+    ]
+    stop_targets = {"the", "this", "that", "with", "against", "between", "book", "version", "video", "movie", "scene"}
+    for pattern in candidate_patterns:
+        match = re.search(pattern, cleaned)
+        if not match:
+            continue
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ?.,:;!\"'")
+        if not candidate:
+            continue
+        first = candidate.split()[0].lower()
+        if first in stop_targets:
+            continue
+        return ComparisonIntent(person_name=None, unmatched_name=candidate)
+
+    return None
 
 
 def _clean_query_for_retrieval(query: str) -> str:
@@ -960,47 +1034,55 @@ async def _face_tag_image_results(
         return []
 
 
-def _load_speaker_face_embeddings(video_hash: str, speaker_names: list[str]) -> dict[str, list[float]]:
-    """Load averaged manual face-tag embeddings for named speakers."""
-    speaker_face_embeddings: dict[str, list[float]] = {}
-    if not speaker_names:
-        return speaker_face_embeddings
-
+def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Optional[list[float]]:
+    """Load the normalized average manual face-tag embedding for one person."""
     try:
         import numpy as np
         import json as _json
         from services.supabase_service import supabase as get_supabase
 
         face_client = get_supabase()
-        for name in speaker_names:
-            face_result = face_client.table("face_tags").select(
-                "embedding"
-            ).eq("video_hash", video_hash).eq(
-                "speaker_name", name
-            ).execute()
-            if not face_result.data:
-                continue
+        face_result = face_client.table("face_tags").select(
+            "embedding"
+        ).eq("video_hash", video_hash).eq(
+            "speaker_name", speaker_name
+        ).execute()
+        if not face_result.data:
+            return None
 
-            raw_embeddings = []
-            for row in face_result.data:
-                emb = row.get("embedding")
-                if not emb:
-                    continue
-                if isinstance(emb, str):
-                    emb = _json.loads(emb)
-                raw_embeddings.append(emb)
-            if not raw_embeddings:
+        raw_embeddings = []
+        for row in face_result.data:
+            emb = row.get("embedding")
+            if not emb:
                 continue
+            if isinstance(emb, str):
+                emb = _json.loads(emb)
+            raw_embeddings.append(emb)
+        if not raw_embeddings:
+            return None
 
-            embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
-            avg_emb = np.mean(embeddings, axis=0)
-            norm = np.linalg.norm(avg_emb)
-            if norm > 0:
-                avg_emb = avg_emb / norm
-            speaker_face_embeddings[name] = avg_emb.tolist()
-            print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
+        embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
+        avg_emb = np.mean(embeddings, axis=0)
+        norm = np.linalg.norm(avg_emb)
+        if norm > 0:
+            avg_emb = avg_emb / norm
+        print(f"  Face tags for '{speaker_name}': {len(embeddings)} embeddings loaded")
+        return avg_emb.tolist()
     except Exception as e:
         print(f"  Face tags lookup failed (non-critical): {e}")
+        return None
+
+
+def _load_speaker_face_embeddings(video_hash: str, speaker_names: list[str]) -> dict[str, list[float]]:
+    """Load averaged manual face-tag embeddings for named speakers."""
+    speaker_face_embeddings: dict[str, list[float]] = {}
+    if not speaker_names:
+        return speaker_face_embeddings
+
+    for name in speaker_names:
+        embedding = _load_speaker_reference_embedding(video_hash, name)
+        if embedding:
+            speaker_face_embeddings[name] = embedding
 
     return speaker_face_embeddings
 
@@ -1061,6 +1143,320 @@ async def _load_face_presence(
             print(f"  Face presence for '{speaker}': {len(timeline)} matched screenshots")
 
     return face_presence_by_image, presence_timelines
+
+
+def _parse_vector(value: Any) -> Optional[list[float]]:
+    """Parse pgvector/list values returned by Supabase into a float list."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [float(v) for v in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            return [float(v) for v in text.strip("[]").split(",") if v.strip()]
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [float(v) for v in parsed]
+        except Exception:
+            return None
+    return None
+
+
+def _cosine_similarity(a: Any, b: Any) -> float:
+    import numpy as np
+
+    va = np.array(a, dtype=np.float32)
+    vb = np.array(b, dtype=np.float32)
+    denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
+    if denom <= 0:
+        return 0.0
+    return float(np.dot(va, vb) / denom)
+
+
+def _video_duration_seconds(video_hash: str, appearances: list[dict]) -> float:
+    transcription = get_transcription_from_any_source(video_hash)
+    segments = (transcription or {}).get("transcription", {}).get("segments", [])
+    duration = 0.0
+    for segment in segments:
+        try:
+            duration = max(duration, float(segment.get("end") or segment.get("start") or 0))
+        except Exception:
+            continue
+    for appearance in appearances:
+        duration = max(duration, float(appearance.get("end_time") or appearance.get("start_time") or 0))
+    return max(duration, 1.0)
+
+
+async def _load_person_appearances(video_hash: str, person_name: str) -> list[dict]:
+    """Find indexed face appearances for a manually tagged person."""
+    from config import settings
+    from services.supabase_service import supabase as get_supabase
+
+    reference_embedding = _load_speaker_reference_embedding(video_hash, person_name)
+    if not reference_embedding:
+        return []
+
+    client = get_supabase()
+    response = await _run_in_executor(
+        lambda: client.rpc(
+            "match_faces_by_embedding",
+            {
+                "target_video_hash": video_hash,
+                "query_embedding": reference_embedding,
+                "similarity_threshold": settings.FACE_PRESENCE_SIMILARITY_THRESHOLD,
+                "match_limit": 500,
+            },
+        ).execute()
+    )
+    matches = response.data or []
+    image_ids = [
+        str(row.get("image_embedding_id"))
+        for row in matches
+        if row.get("image_embedding_id")
+    ]
+    if not image_ids:
+        return []
+
+    face_response, image_response = await asyncio.gather(
+        _run_in_executor(
+            lambda: client.table("image_face_presence")
+            .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
+            .eq("video_hash", video_hash)
+            .in_("image_embedding_id", image_ids)
+            .execute()
+        ),
+        _run_in_executor(
+            lambda: client.table("image_embeddings")
+            .select("id,start_time,end_time,speaker,screenshot_url,embedding")
+            .eq("video_hash", video_hash)
+            .in_("id", image_ids)
+            .execute()
+        ),
+    )
+
+    match_similarity = {
+        str(row.get("image_embedding_id")): float(row.get("similarity") or 0.0)
+        for row in matches
+    }
+    images_by_id = {
+        str(row.get("id")): row
+        for row in image_response.data or []
+        if row.get("id")
+    }
+
+    best_faces: dict[str, dict] = {}
+    for row in face_response.data or []:
+        image_id = str(row.get("image_embedding_id") or "")
+        face_embedding = _parse_vector(row.get("face_embedding"))
+        if not image_id or not face_embedding:
+            continue
+        similarity = _cosine_similarity(reference_embedding, face_embedding)
+        if similarity < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD:
+            continue
+        current = best_faces.get(image_id)
+        if current is None or similarity > current["similarity"]:
+            best_faces[image_id] = {
+                "face_embedding": face_embedding,
+                "bbox": row.get("bbox"),
+                "similarity": similarity,
+                "start_time": float(row.get("start_time") or 0.0),
+                "end_time": float(row.get("end_time") or row.get("start_time") or 0.0),
+            }
+
+    appearances = []
+    for image_id, face in best_faces.items():
+        image = images_by_id.get(image_id)
+        if not image:
+            continue
+        scene_embedding = _parse_vector(image.get("embedding"))
+        screenshot_url = image.get("screenshot_url")
+        if not scene_embedding or not screenshot_url:
+            continue
+        start = float(image.get("start_time") or face["start_time"])
+        end = float(image.get("end_time") or face["end_time"] or start)
+        appearances.append({
+            "image_embedding_id": image_id,
+            "start_time": start,
+            "end_time": end,
+            "speaker": image.get("speaker") or person_name,
+            "screenshot_url": _fresh_screenshot_url(screenshot_url),
+            "bbox": face.get("bbox"),
+            "face_embedding": face["face_embedding"],
+            "scene_embedding": scene_embedding,
+            "similarity": max(face["similarity"], match_similarity.get(image_id, 0.0)),
+        })
+
+    appearances.sort(key=lambda row: row.get("similarity", 0.0), reverse=True)
+    return appearances
+
+
+def _select_state_pair(appearances: list[dict], video_duration: float) -> Optional[tuple[dict, dict]]:
+    """Select two appearances with the largest combined person/scene/time change."""
+    if len(appearances) < 2:
+        return None
+
+    candidates = sorted(
+        appearances,
+        key=lambda row: row.get("similarity", 0.0),
+        reverse=True,
+    )[:30]
+    best_pair = None
+    best_score = -1.0
+    for i, first in enumerate(candidates):
+        for second in candidates[i + 1:]:
+            d_face = 1.0 - _cosine_similarity(first["face_embedding"], second["face_embedding"])
+            d_scene = 1.0 - _cosine_similarity(first["scene_embedding"], second["scene_embedding"])
+            d_time = min(
+                1.0,
+                abs(float(first.get("start_time") or 0.0) - float(second.get("start_time") or 0.0)) / max(video_duration, 1.0),
+            )
+            # Weights emphasize visible person-state change, then context, with time as a tie-breaker toward early/late moments.
+            score = 0.5 * d_face + 0.3 * d_scene + 0.2 * d_time
+            if score > best_score:
+                best_score = score
+                best_pair = (first, second)
+
+    if not best_pair:
+        return None
+    return tuple(sorted(best_pair, key=lambda row: float(row.get("start_time") or 0.0)))
+
+
+def _transcript_window_context(video_hash: str, timestamps: list[float], window_seconds: float = 15.0) -> str:
+    transcription = get_transcription_from_any_source(video_hash)
+    segments = (transcription or {}).get("transcription", {}).get("segments", [])
+    if not segments:
+        return "No transcript context is available for these moments."
+
+    blocks = []
+    for timestamp in timestamps:
+        nearby = []
+        for segment in segments:
+            text = _segment_text(segment)
+            if not text:
+                continue
+            start, end, start_time, end_time = _segment_bounds(segment)
+            if start <= timestamp + window_seconds and end >= timestamp - window_seconds:
+                nearby.append(f"[{start_time} - {end_time}] {segment.get('speaker') or 'Unknown'}: {text}")
+        label = _format_segment_time(timestamp)
+        blocks.append(f"Moment around [{label}]:\n" + ("\n".join(nearby) if nearby else "No nearby transcript lines."))
+    return "\n\n".join(blocks)
+
+
+def _comparison_frame_metadata(appearance: dict) -> dict:
+    start = float(appearance.get("start_time") or 0.0)
+    return {
+        "url": appearance.get("screenshot_url"),
+        "timestamp_seconds": start,
+        "timestamp": _format_segment_time(start),
+        "bbox": appearance.get("bbox"),
+    }
+
+
+def _format_person_comparison_answer(person_name: str, frame_a: dict, frame_b: dict, prose: str) -> str:
+    metadata = {
+        "person": person_name,
+        "frame_a": frame_a,
+        "frame_b": frame_b,
+    }
+    return (
+        "## Person Comparison\n\n"
+        "```json\n"
+        f"{json.dumps(metadata, ensure_ascii=False)}\n"
+        "```\n\n"
+        f"{(prose or '').strip()}"
+    )
+
+
+async def _handle_person_comparison(
+    request: Request,
+    chat_request: ChatRequest,
+    intent: ComparisonIntent,
+) -> Dict:
+    if not intent.person_name:
+        name_text = f" {intent.unmatched_name}" if intent.unmatched_name else " that person"
+        return {
+            "answer": f"I don't recognise{name_text} yet. Tag a face in any screenshot first.",
+            "sources": [],
+            "provider_used": chat_request.provider or "none",
+            "video_hash": chat_request.video_hash,
+        }
+
+    video_hash = chat_request.video_hash
+    appearances = await _load_person_appearances(video_hash, intent.person_name)
+    if len(appearances) < 2:
+        return {
+            "answer": (
+                f"I found {intent.person_name}, but not enough separate face appearances "
+                "to compare yet. Ask a normal chat question, or index more screenshots first."
+            ),
+            "sources": [],
+            "provider_used": chat_request.provider or "none",
+            "video_hash": video_hash,
+        }
+
+    pair = _select_state_pair(appearances, _video_duration_seconds(video_hash, appearances))
+    if not pair:
+        return {
+            "answer": f"I found {intent.person_name}, but couldn't choose two comparable moments.",
+            "sources": [],
+            "provider_used": chat_request.provider or "none",
+            "video_hash": video_hash,
+        }
+
+    first, second = pair
+    frame_a = _comparison_frame_metadata(first)
+    frame_b = _comparison_frame_metadata(second)
+    transcript_context = _transcript_window_context(
+        video_hash,
+        [frame_a["timestamp_seconds"], frame_b["timestamp_seconds"]],
+        window_seconds=15.0,
+    )
+
+    provider_name = chat_request.provider
+    provider = await _get_chat_provider(request, provider_name)
+    if not provider.supports_vision():
+        provider = await _get_chat_provider(request, "grok")
+        provider_name = "grok"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You compare two video frames of the same tagged person. "
+                "Focus on visible evidence only and be explicit about uncertainty. "
+                "Compare exactly these axes: emotion/facial expression, physical appearance "
+                "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
+                "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question: {chat_request.question}\n\n"
+                f"Tagged person: {intent.person_name}\n"
+                f"Frame A timestamp: [{frame_a['timestamp']}]\n"
+                f"Frame B timestamp: [{frame_b['timestamp']}]\n\n"
+                f"Nearby transcript context:\n{transcript_context}\n\n"
+                "Write a concise comparison. Use bullets grouped by the three requested axes, "
+                "then end with one sentence summarizing the biggest visible change."
+            ),
+        },
+    ]
+    prose = await provider.generate_with_images(
+        messages,
+        image_paths=[frame_a["url"], frame_b["url"]],
+        temperature=0.3,
+        max_tokens=1200,
+    )
+
+    return {
+        "answer": _format_person_comparison_answer(intent.person_name, frame_a, frame_b, prose),
+        "sources": [],
+        "provider_used": provider_name or llm_manager.default_provider,
+        "video_hash": video_hash,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2041,6 +2437,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                     detail="Video not indexed. Please index it first using /api/index_video/"
                 )
 
+        comparison_intent = _detect_comparison_intent(question, video_hash)
+        if comparison_intent:
+            comparison_request = chat_request.copy(update={"video_hash": video_hash})
+            response = await _handle_person_comparison(request, comparison_request, comparison_intent)
+            try:
+                record_chat_message(_quota_user_id, llm_tokens=0)
+            except Exception as _meter_err:
+                print(f"[chat] meter failed: {_meter_err}")
+            return response
+
         # Retrieve text context
         search_results, context, sources = await _retrieve_text_context(video_hash, retrieval_question, n_results)
 
@@ -2260,6 +2666,29 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 else:
                     yield _sse({"type": "error", "message": "Video not indexed. Please index it first using /api/index_video/"})
                     return
+
+            comparison_intent = _detect_comparison_intent(question, video_hash)
+            if comparison_intent:
+                yield _sse({"type": "phase", "phase": "comparing", "label": "Comparing person states"})
+                comparison_request = chat_request.copy(update={"video_hash": video_hash})
+                response = await _handle_person_comparison(request, comparison_request, comparison_intent)
+                yield _sse({
+                    "type": "sources",
+                    "sources": response.get("sources") or [],
+                    "visual_query_used": None,
+                    "visual_query_variants": [],
+                })
+                yield _sse({"type": "token", "content": response.get("answer", "")})
+                yield _sse({
+                    "type": "done",
+                    "provider_used": response.get("provider_used") or provider_name or llm_manager.default_provider,
+                    "video_hash": video_hash,
+                })
+                try:
+                    record_chat_message(_stream_user_id, llm_tokens=0)
+                except Exception as _meter_err:
+                    print(f"[chat/stream] meter failed: {_meter_err}")
+                return
 
             # Phase: text search
             yield _sse({"type": "phase", "phase": "searching", "label": "Searching transcript"})
