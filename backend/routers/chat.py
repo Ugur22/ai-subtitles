@@ -30,6 +30,7 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
 
     Codes:
       - llm_config: API key missing/invalid
+      - llm_provider_quota: provider account credits/quota exhausted
       - llm_rate_limited: 429 from provider
       - llm_unavailable: 5xx, timeout, connection refused
       - llm_image_403: vision pipeline could not load screenshots (stale URLs)
@@ -40,6 +41,15 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
     msg = (str(err) or "").lower()
     if "api key" in msg or "unauthorized" in msg or "401" in msg or "xai_api_key_missing" in msg:
         return "llm_config"
+    if (
+        "credit" in msg
+        or "insufficient balance" in msg
+        or "insufficient_quota" in msg
+        or "payment required" in msg
+        or "billing" in msg
+        or "usage limit" in msg
+    ):
+        return "llm_provider_quota"
     if "429" in msg or "rate limit" in msg or "quota" in msg:
         return "llm_rate_limited"
     if "timeout" in msg or "timed out" in msg or "connecterror" in msg or "5xx" in msg:
@@ -50,6 +60,40 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
     if "403" in msg and ("storage.googleapis" in msg or "screenshot" in msg or "image" in msg):
         return "llm_image_403"
     return "llm_unknown"
+
+
+def _provider_error_message(err: Optional[BaseException], provider_name: Optional[str]) -> str:
+    """Return a concise user-facing message for provider failures."""
+    provider_label = provider_name or llm_manager.default_provider
+    code = _classify_provider_error(err)
+    if code == "llm_provider_quota":
+        return (
+            f"{provider_label} could not generate a response because the provider account "
+            "appears to be out of credits or over its billing quota. Add credits or switch models, then retry."
+        )
+    if code == "llm_rate_limited":
+        return f"{provider_label} is rate-limiting requests right now. Wait a moment or switch models, then retry."
+    if code == "llm_config":
+        return f"{provider_label} is not configured correctly. Check the API key for this provider."
+    if code == "llm_unavailable":
+        return f"{provider_label} is temporarily unavailable. Please retry in a few moments."
+    if code == "llm_image_403":
+        return "The screenshots needed for visual chat are no longer accessible. Re-index images and retry."
+    return f"{provider_label} failed to generate a response. Please retry or switch models."
+
+
+def _provider_http_status(err: Optional[BaseException]) -> int:
+    """Choose an HTTP status that lets clients distinguish provider quota from server bugs."""
+    code = _classify_provider_error(err)
+    if code == "llm_provider_quota":
+        return 402
+    if code == "llm_rate_limited":
+        return 429
+    if code == "llm_config":
+        return 400
+    if code == "llm_unavailable":
+        return 503
+    return 502
 
 
 def _stored_key_provider_name(provider_name: Optional[str]) -> Optional[str]:
@@ -378,13 +422,100 @@ def _clean_query_for_retrieval(query: str) -> str:
     return (query or "").replace("@", " ").strip()
 
 
-def _visual_query_variants(query: str) -> list[str]:
+def _split_user_visual_lines(value: Optional[str]) -> list[str]:
+    """Parse user-owned visual search settings from comma/newline text."""
+    import re
+
+    if not value:
+        return []
+    items = []
+    for item in re.split(r"[\n,]+", value):
+        item = re.sub(r"\s+", " ", item).strip().lower()
+        if item and item not in items:
+            items.append(item)
+    return items
+
+
+def _user_visual_search_config(profile: Optional[dict]) -> tuple[set[str], list[str]]:
+    """Return private per-user visual search trigger terms and CLIP phrases."""
+    terms = set(_split_user_visual_lines((profile or {}).get("visual_search_terms")))
+    phrases = _split_user_visual_lines((profile or {}).get("visual_search_phrases"))
+    return terms, phrases
+
+
+def _query_matches_user_visual_terms(query: str, user_terms: set[str]) -> bool:
+    """Return True when the query contains a user-configured visual trigger."""
+    import re
+
+    if not user_terms:
+        return False
+    cleaned = _clean_query_for_retrieval(query).lower()
+    cleaned = re.sub(r"[^\w\s-]+", " ", cleaned)
+    words = set(cleaned.split())
+    return any(term in cleaned or term in words for term in user_terms)
+
+
+def _resolve_contextual_visual_question(
+    question: str,
+    conversation_history: Optional[list],
+    user_visual_terms: Optional[set[str]] = None,
+    user_visual_phrases: Optional[list[str]] = None,
+) -> str:
+    """
+    Expand short follow-up questions for retrieval.
+
+    Users often ask "while doing it" or "that scene" after a previous visual
+    question. CLIP/text retrieval needs the implied action repeated explicitly.
+    """
+    import re
+
+    if not conversation_history:
+        return question
+
+    q = question or ""
+    q_lower = q.lower()
+    has_followup_reference = bool(re.search(
+        r"\b(doing it|that|this|there|those|them|same scene|while doing)\b",
+        q_lower,
+    ))
+    if not has_followup_reference:
+        return question
+
+    recent_user_text = " ".join(
+        str(msg.get("content", ""))
+        for msg in conversation_history[-6:]
+        if msg.get("role") == "user"
+    ).lower()
+
+    additions = []
+    user_visual_terms = user_visual_terms or set()
+    user_visual_phrases = user_visual_phrases or []
+    if _query_matches_user_visual_terms(recent_user_text, user_visual_terms):
+        additions.extend(user_visual_phrases[:3])
+    if re.search(r"\b(concetta|conchetta|concheta)\b", recent_user_text) and "concetta" not in q_lower:
+        additions.append("involving concetta")
+
+    if not additions:
+        return question
+
+    resolved = f"{question} {' '.join(additions)}"
+    print(f"Resolved contextual visual question: '{question}' -> '{resolved}'")
+    return resolved
+
+
+def _visual_query_variants(
+    query: str,
+    user_visual_terms: Optional[set[str]] = None,
+    user_visual_phrases: Optional[list[str]] = None,
+) -> list[str]:
     """
     Build CLIP-friendly visual queries from chatty natural-language questions.
 
     CLIP image search is sensitive to filler words. A question like
     "is person swimming in this film?" can return fewer results than the
-    shorter scene phrase "person swimming".
+    shorter scene phrase "person swimming". For common movie-scene intents,
+    add concrete visual phrases because CLIP performs better on descriptions
+    of what appears in a frame than on conversational questions.
     """
     import re
 
@@ -398,15 +529,24 @@ def _visual_query_variants(query: str) -> list[str]:
         "would", "should", "show", "find", "search", "look", "see", "tell",
         "me", "about", "whether", "if", "there", "any", "images", "image",
         "screenshots", "screenshot", "picture", "pictures", "of", "in",
+        "looks", "looking", "amazing", "beautiful", "hot",
     }
     tokens = [tok for tok in cleaned.split() if tok and tok not in stop_words]
     compact = " ".join(tokens)
 
+    intent_phrases: list[str] = []
+    user_visual_terms = user_visual_terms or set()
+    user_visual_phrases = user_visual_phrases or []
+    if _query_matches_user_visual_terms(cleaned, user_visual_terms):
+        intent_phrases.extend(user_visual_phrases)
+
     variants = []
-    for candidate in (_clean_query_for_retrieval(query), compact):
+    for candidate in (*intent_phrases, compact, _clean_query_for_retrieval(query)):
         candidate = re.sub(r"\s+", " ", candidate).strip()
         if candidate and candidate.lower() not in {v.lower() for v in variants}:
             variants.append(candidate)
+    if len(variants) > 1:
+        print(f"Visual query variants for '{query}': {variants[:6]}")
     return variants
 
 
@@ -909,6 +1049,8 @@ async def _retrieve_visual_context(
     video_hash: str,
     question: str,
     n_images: int,
+    user_visual_terms: Optional[set[str]] = None,
+    user_visual_phrases: Optional[list[str]] = None,
     phase_cb: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> dict:
     """
@@ -951,6 +1093,10 @@ async def _retrieve_visual_context(
             visual_query_used = question
 
         image_results = []
+        query_variants = []
+        user_visual_terms = user_visual_terms or set()
+        user_visual_phrases = user_visual_phrases or []
+        configured_visual_query = _query_matches_user_visual_terms(visual_query, user_visual_terms)
         if images_indexed:
             print(f"Visual analysis requested, searching for {n_images} relevant images...")
 
@@ -959,13 +1105,19 @@ async def _retrieve_visual_context(
                 await phase_cb("analyzing_scenes", "Analyzing scenes")
 
             seen_image_paths = set()
-            for query_variant in _visual_query_variants(visual_query):
+            query_variants = _visual_query_variants(
+                visual_query,
+                user_visual_terms=user_visual_terms,
+                user_visual_phrases=user_visual_phrases,
+            )[:6]
+            per_variant_results = max(n_images, 4)
+            for query_variant in query_variants:
                 if use_supabase:
                     variant_results = await _run_in_executor(
                         image_embedding_service.search_images,
                         video_hash,
                         query_variant,
-                        n_results=n_images,
+                        n_results=per_variant_results,
                         speaker_filter=None
                     )
                 else:
@@ -973,7 +1125,7 @@ async def _retrieve_visual_context(
                         vector_store.search_images,
                         video_hash,
                         query_variant,
-                        n_results=n_images,
+                        n_results=per_variant_results,
                         speaker_filter=None
                     )
 
@@ -984,10 +1136,23 @@ async def _retrieve_visual_context(
                     seen_image_paths.add(key)
                     result["visual_query_variant"] = query_variant
                     image_results.append(result)
-                    if len(image_results) >= n_images:
-                        break
-                if len(image_results) >= n_images:
-                    break
+
+            if len(query_variants) > 1:
+                print(
+                    f"Visual multi-query search: {len(query_variants)} variants, "
+                    f"{len(image_results)} unique CLIP candidates"
+                )
+
+            clip_candidate_limit = max(n_images * 4, n_images)
+            if len(image_results) > clip_candidate_limit:
+                image_results.sort(
+                    key=lambda result: result.get(
+                        'similarity',
+                        max(0, 1 - result.get('distance', 1)) if 'distance' in result else 0,
+                    ),
+                    reverse=True,
+                )
+                image_results = image_results[:clip_candidate_limit]
         else:
             print(
                 f"Images not indexed for video {video_hash}. "
@@ -1002,29 +1167,27 @@ async def _retrieve_visual_context(
                 n_images,
             )
             if face_tag_results:
-                deduped = []
-                seen_paths = set()
-                # Keep both identity evidence (face tags) and action/object
-                # evidence (CLIP). If face tags fill the whole list first,
-                # queries like "Concetta swimming" never see swimming matches.
-                face_quota = n_images if not image_results else max(1, n_images // 2)
-                for source_results, quota in (
-                    (face_tag_results, face_quota),
-                    (image_results, n_images),
-                ):
-                    added_from_source = 0
-                    for result in source_results:
-                        key = _image_result_key(result)
-                        if key in seen_paths:
-                            continue
-                        seen_paths.add(key)
-                        deduped.append(result)
-                        added_from_source += 1
-                        if len(deduped) >= n_images or added_from_source >= quota:
-                            break
-                    if len(deduped) >= n_images:
-                        break
-                image_results = deduped
+                if configured_visual_query and image_results:
+                    print(
+                        "Face-tag candidates available, but using them for identity "
+                        "scoring only because the query matches configured visual search terms."
+                    )
+                else:
+                    deduped = []
+                    seen_paths = set()
+                    # For identity-only questions, include manually tagged
+                    # face screenshots as candidates. For action questions,
+                    # keep CLIP scene matches as the candidate pool and use
+                    # face tags only to score whether those scenes include the
+                    # named person.
+                    for source_results in (image_results, face_tag_results):
+                        for result in source_results:
+                            key = _image_result_key(result)
+                            if key in seen_paths:
+                                continue
+                            seen_paths.add(key)
+                            deduped.append(result)
+                    image_results = deduped
 
         face_tags_available = False
 
@@ -1151,19 +1314,28 @@ async def _retrieve_visual_context(
 
                     if face_tags_available:
                         face_score = result.get('face_score', 0.0)
-                        result['hybrid_score'] = 0.6 * clip_score + 0.15 * normalized_overlap + 0.25 * face_score
+                        if configured_visual_query:
+                            result['hybrid_score'] = 0.95 * clip_score + 0.05 * face_score
+                        else:
+                            result['hybrid_score'] = 0.6 * clip_score + 0.15 * normalized_overlap + 0.25 * face_score
                     else:
                         result['hybrid_score'] = 0.8 * clip_score + 0.2 * normalized_overlap
 
                 image_results.sort(key=lambda x: x.get('hybrid_score', 0), reverse=True)
 
-                ranking_mode = "60% CLIP + 15% temporal + 25% face" if face_tags_available else "80% CLIP + 20% temporal"
+                if face_tags_available and configured_visual_query:
+                    ranking_mode = "95% CLIP + 5% face"
+                elif face_tags_available:
+                    ranking_mode = "60% CLIP + 15% temporal + 25% face"
+                else:
+                    ranking_mode = "80% CLIP + 20% temporal"
                 print(f"Scored {len(image_results)} visual results with hybrid ranking ({ranking_mode})")
                 for i, result in enumerate(image_results[:3]):
                     face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
                     print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
                           f"clip={result.get('similarity', 0):.3f}, "
                           f"overlap={result.get('overlap_score', 0)}{face_info}, "
+                          f"variant={result.get('visual_query_variant', result.get('source', 'unknown'))}, "
                           f"speakers={result.get('likely_speakers', [])}")
 
         image_paths = []
@@ -1171,6 +1343,15 @@ async def _retrieve_visual_context(
         visual_sources = []
 
         if image_results:
+            if not any("hybrid_score" in result for result in image_results):
+                image_results.sort(
+                    key=lambda result: result.get(
+                        'similarity',
+                        max(0, 1 - result.get('distance', 1)) if 'distance' in result else 0,
+                    ),
+                    reverse=True,
+                )
+            image_results = image_results[:n_images]
             print(f"Found {len(image_results)} relevant images")
             image_paths = [result.get('screenshot_url') or result.get('screenshot_path') for result in image_results]
 
@@ -1202,7 +1383,19 @@ async def _retrieve_visual_context(
                     "screenshot_url": screenshot_url,
                     "type": "visual",
                     "likely_speakers": img_result.get('likely_speakers', []),
-                    "overlap_score": img_result.get('overlap_score', 0)
+                    "overlap_score": img_result.get('overlap_score', 0),
+                    "visual_query_variant": img_result.get('visual_query_variant'),
+                    "visual_similarity": img_result.get('similarity'),
+                    "hybrid_score": img_result.get('hybrid_score'),
+                    "face_score": img_result.get('face_score'),
+                    "source_kind": img_result.get('source') or "clip",
+                    "evidence_label": (
+                        "Identity match"
+                        if img_result.get('source') == "face_tag"
+                        else "Scene + identity"
+                        if img_result.get('likely_speakers')
+                        else "Scene match"
+                    )
                 })
 
             visual_context = "\n".join(visual_parts)
@@ -1218,6 +1411,7 @@ async def _retrieve_visual_context(
             "visual_context": visual_context,
             "visual_sources": visual_sources,
             "visual_query_used": visual_query_used,
+            "visual_query_variants": query_variants,
             "image_results": image_results,
             "face_tags_available": face_tags_available,
             "speaker_names": speaker_names,
@@ -1231,6 +1425,7 @@ async def _retrieve_visual_context(
             "visual_context": "",
             "visual_sources": [],
             "visual_query_used": question,
+            "visual_query_variants": [],
             "image_results": [],
             "face_tags_available": False,
             "speaker_names": [],
@@ -1400,6 +1595,7 @@ Response structure (use these exact markdown headers):
 
 Guidelines:
 - When analyzing screenshots, describe what you observe and how it relates to the question
+- For sexual or body-appearance questions, stay factual and neutral: describe visible evidence, timing, and uncertainty. Do not rate attractiveness or make subjective sexualized judgments.
 - Include relevant quotes from speakers when appropriate
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
@@ -1476,6 +1672,7 @@ Response structure (use these exact markdown headers):
 
 Guidelines:
 - Be thorough and detailed in your responses
+- For sexual or body-appearance questions, stay factual and neutral: describe evidence in the transcript, timing, and uncertainty. Do not rate attractiveness or make subjective sexualized judgments.
 - Include relevant quotes from speakers when appropriate
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
@@ -1663,9 +1860,19 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         include_visuals = chat_request.include_visuals or False
         n_images = chat_request.n_images or 4
         custom_instructions = chat_request.custom_instructions
+        user_visual_terms, user_visual_phrases = _user_visual_search_config(
+            getattr(request.state, "profile", None)
+        )
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
+
+        retrieval_question = _resolve_contextual_visual_question(
+            question,
+            chat_request.conversation_history,
+            user_visual_terms,
+            user_visual_phrases,
+        )
 
         # Get video_hash from last transcription if not provided
         if not video_hash:
@@ -1689,7 +1896,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 )
 
         # Retrieve text context
-        search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
+        search_results, context, sources = await _retrieve_text_context(video_hash, retrieval_question, n_results)
 
         if not search_results and not include_visuals:
             return {
@@ -1704,20 +1911,28 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         visual_context = ""
         visual_sources = []
         visual_query_used = None
+        visual_query_variants = []
         image_results = []
 
         if include_visuals:
-            vis = await _retrieve_visual_context(video_hash, question, n_images)
+            vis = await _retrieve_visual_context(
+                video_hash,
+                retrieval_question,
+                n_images,
+                user_visual_terms=user_visual_terms,
+                user_visual_phrases=user_visual_phrases,
+            )
             if vis.get("images_indexed"):
                 image_paths = vis["image_paths"]
                 visual_context = vis["visual_context"]
                 visual_sources = vis["visual_sources"]
                 visual_query_used = vis["visual_query_used"]
+                visual_query_variants = vis.get("visual_query_variants", [])
                 image_results = vis["image_results"]
 
         # Retrieve audio context
         audio_context, audio_sources, _ = await _retrieve_audio_context(
-            video_hash, question, search_results, image_results
+            video_hash, retrieval_question, search_results, image_results
         )
 
         # Combine text, visual, and audio sources
@@ -1772,9 +1987,11 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                     print(f"Provider {provider_name} is text-only; using text prompt with vision fallback observations when available.")
                 answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
         except Exception as e:
+            print(f"[chat] provider generation failed: {type(e).__name__}: {e}")
             raise HTTPException(
-                status_code=500,
-                detail=f"LLM generation failed: {str(e)}"
+                status_code=_provider_http_status(e),
+                detail=_provider_error_message(e, provider_name),
+                headers={"X-LLM-Error-Code": _classify_provider_error(e)},
             )
 
         # Debug logging
@@ -1791,6 +2008,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
         if visual_query_used:
             response["visual_query_used"] = visual_query_used
+        if visual_query_variants:
+            response["visual_query_variants"] = visual_query_variants
 
         # Meter (best-effort; never blocks the response)
         try:
@@ -1861,10 +2080,20 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             include_visuals = chat_request.include_visuals or False
             n_images = chat_request.n_images or 4
             custom_instructions = chat_request.custom_instructions
+            user_visual_terms, user_visual_phrases = _user_visual_search_config(
+                getattr(request.state, "profile", None)
+            )
 
             if not question:
                 yield _sse({"type": "error", "message": "Question is required"})
                 return
+
+            retrieval_question = _resolve_contextual_visual_question(
+                question,
+                chat_request.conversation_history,
+                user_visual_terms,
+                user_visual_phrases,
+            )
 
             # Resolve video_hash
             if not video_hash:
@@ -1888,10 +2117,10 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             # Phase: text search
             yield _sse({"type": "phase", "phase": "searching", "label": "Searching transcript"})
 
-            search_results, context, sources = await _retrieve_text_context(video_hash, question, n_results)
+            search_results, context, sources = await _retrieve_text_context(video_hash, retrieval_question, n_results)
 
             if not search_results and not include_visuals:
-                yield _sse({"type": "sources", "sources": [], "visual_query_used": None})
+                yield _sse({"type": "sources", "sources": [], "visual_query_used": None, "visual_query_variants": []})
                 yield _sse({"type": "token", "content": "I couldn't find relevant information in the video to answer your question."})
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
                 return
@@ -1901,6 +2130,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             visual_context = ""
             visual_sources = []
             visual_query_used = None
+            visual_query_variants = []
             image_results = []
 
             if include_visuals:
@@ -1913,7 +2143,14 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 async def _phase_cb(phase: str, label: str) -> None:
                     _pending_events.append(_sse({"type": "phase", "phase": phase, "label": label}))
 
-                vis = await _retrieve_visual_context(video_hash, question, n_images, phase_cb=_phase_cb)
+                vis = await _retrieve_visual_context(
+                    video_hash,
+                    retrieval_question,
+                    n_images,
+                    user_visual_terms=user_visual_terms,
+                    user_visual_phrases=user_visual_phrases,
+                    phase_cb=_phase_cb,
+                )
 
                 # Drain any phase events that were queued during the helper call
                 for evt in _pending_events:
@@ -1924,6 +2161,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     visual_context = vis["visual_context"]
                     visual_sources = vis["visual_sources"]
                     visual_query_used = vis["visual_query_used"]
+                    visual_query_variants = vis.get("visual_query_variants", [])
                     image_results = vis["image_results"]
 
             # Audio context
@@ -1932,13 +2170,18 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 yield _sse({"type": "phase", "phase": "analyzing_audio", "label": "Scanning audio events"})
 
             audio_context, audio_sources, _ = await _retrieve_audio_context(
-                video_hash, question, search_results, image_results
+                video_hash, retrieval_question, search_results, image_results
             )
 
             # Emit sources event
             all_sources = sources + visual_sources + audio_sources
             if not all_sources:
-                yield _sse({"type": "sources", "sources": [], "visual_query_used": visual_query_used})
+                yield _sse({
+                    "type": "sources",
+                    "sources": [],
+                    "visual_query_used": visual_query_used,
+                    "visual_query_variants": visual_query_variants,
+                })
                 yield _sse({"type": "token", "content": "I couldn't find relevant information in the video to answer your question."})
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
                 return
@@ -1970,7 +2213,12 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 if fallback_visual_context:
                     visual_context = fallback_visual_context
 
-            yield _sse({"type": "sources", "sources": all_sources, "visual_query_used": visual_query_used})
+            yield _sse({
+                "type": "sources",
+                "sources": all_sources,
+                "visual_query_used": visual_query_used,
+                "visual_query_variants": visual_query_variants,
+            })
 
             # Build messages after provider resolution so non-vision providers
             # receive vision observations as text instead of image payloads.
@@ -2052,7 +2300,8 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     underlying = text_err or vision_err
                     yield _sse({
                         "type": "error",
-                        "message": str(underlying),
+                        "message": _provider_error_message(underlying, provider_name),
+                        "detail": str(underlying),
                         "code": _classify_provider_error(underlying),
                     })
                 else:
@@ -2101,7 +2350,8 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                         underlying = gen_err or stream_err
                         yield _sse({
                             "type": "error",
-                            "message": str(underlying),
+                            "message": _provider_error_message(underlying, provider_name),
+                            "detail": str(underlying),
                             "code": _classify_provider_error(underlying),
                         })
 
@@ -2123,7 +2373,8 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             traceback.print_exc()
             yield _sse({
                 "type": "error",
-                "message": f"{type(e).__name__}: {e}",
+                "message": _provider_error_message(e, chat_request.provider),
+                "detail": f"{type(e).__name__}: {e}",
                 "code": _classify_provider_error(e),
             })
 

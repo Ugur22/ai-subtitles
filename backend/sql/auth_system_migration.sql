@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   email TEXT NOT NULL,
   display_name TEXT,
   default_llm_provider TEXT DEFAULT 'groq',
+  visual_search_terms TEXT DEFAULT '',
+  visual_search_phrases TEXT DEFAULT '',
   email_verified BOOLEAN DEFAULT FALSE,
   is_admin BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),

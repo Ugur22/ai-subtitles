@@ -149,6 +149,8 @@ export const getAdminStats = async (): Promise<AdminStats> => {
 export const updateSettings = async (settings: {
   display_name?: string;
   default_llm_provider?: string;
+  visual_search_terms?: string;
+  visual_search_phrases?: string;
 }): Promise<{ success: boolean }> => {
   const response = await fetch(`${API_BASE_URL}/api/settings`, {
     method: 'PATCH',

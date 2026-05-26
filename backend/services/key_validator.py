@@ -4,6 +4,7 @@ API key validation service for async background validation.
 Tests API keys against provider endpoints and updates validation status in database.
 """
 import asyncio
+import os
 from datetime import datetime
 from typing import Tuple, Optional
 import httpx
@@ -128,12 +129,26 @@ async def _test_groq(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Option
 
 
 async def _test_xai(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Optional[str]]:
-    """Test xAI (Grok) API key by listing models."""
+    """Test xAI (Grok) API key by making a minimal generation request.
+
+    Listing models can succeed when the account is out of credits. A one-token
+    completion verifies that chat can actually run.
+    """
     try:
+        model = os.getenv("XAI_MODEL", "grok-beta")
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                "https://api.x.ai/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"}
+            response = await client.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 1,
+                    "temperature": 0,
+                },
             )
 
             if response.status_code == 200:
@@ -142,8 +157,23 @@ async def _test_xai(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Optiona
                 return False, "Invalid API key"
             elif response.status_code == 403:
                 return False, "API key does not have required permissions"
+            elif response.status_code == 402:
+                return False, "xAI account is out of credits or billing quota"
+            elif response.status_code == 429:
+                return False, "xAI rate limit or quota exceeded"
             else:
-                return False, f"API returned status {response.status_code}"
+                error_text = response.text[:300]
+                error_lower = error_text.lower()
+                if (
+                    "credit" in error_lower
+                    or "insufficient balance" in error_lower
+                    or "insufficient_quota" in error_lower
+                    or "payment required" in error_lower
+                    or "billing" in error_lower
+                    or "usage limit" in error_lower
+                ):
+                    return False, "xAI account is out of credits or billing quota"
+                return False, f"API returned status {response.status_code}: {error_text}"
 
     except httpx.TimeoutException:
         return False, "Request timed out"
