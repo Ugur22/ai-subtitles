@@ -481,7 +481,8 @@ body {
   gap: 4px;
   width: 240px;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
+  z-index: 20;
   transition:
     width 260ms cubic-bezier(0.22, 1, 0.36, 1),
     padding 260ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -757,6 +758,26 @@ body {
   position: relative;
 }
 .user-menu { position: relative; }
+.sidebar-user-menu-items {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  min-width: 0;
+  padding: 4px 0;
+  border-radius: var(--radius-sm);
+  transform-origin: bottom;
+}
+.sidebar-user-menu-item {
+  min-height: 36px;
+  white-space: nowrap;
+}
+.sidebar.is-collapsed .sidebar-user-menu-items {
+  left: 0;
+  right: auto;
+  width: min(176px, calc(100vw - 84px));
+}
 .user-card {
   display: flex;
   align-items: center;
