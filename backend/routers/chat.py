@@ -1191,6 +1191,22 @@ async def _retrieve_visual_context(
 
         face_tags_available = False
 
+        if configured_visual_query and image_results:
+            before_trim = len(image_results)
+            image_results.sort(
+                key=lambda result: result.get(
+                    'similarity',
+                    max(0, 1 - result.get('distance', 1)) if 'distance' in result else 0,
+                ),
+                reverse=True,
+            )
+            image_results = image_results[:n_images]
+            if before_trim != len(image_results):
+                print(
+                    "Configured visual query: trimmed scene candidates before "
+                    f"face scoring ({before_trim} -> {len(image_results)})"
+                )
+
         # Phase 1: Temporal Correlation Scoring
         if speaker_names and image_results:
             print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
