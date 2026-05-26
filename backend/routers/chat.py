@@ -1250,9 +1250,13 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
     for row in face_response.data or []:
         image_id = str(row.get("image_embedding_id") or "")
         face_embedding = _parse_vector(row.get("face_embedding"))
-        if not image_id or not face_embedding:
+        if not image_id:
             continue
-        similarity = _cosine_similarity(reference_embedding, face_embedding)
+        similarity = (
+            _cosine_similarity(reference_embedding, face_embedding)
+            if face_embedding
+            else match_similarity.get(image_id, 0.0)
+        )
         if similarity < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD:
             continue
         current = best_faces.get(image_id)
@@ -1272,7 +1276,7 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
             continue
         scene_embedding = _parse_vector(image.get("embedding"))
         screenshot_url = image.get("screenshot_url")
-        if not scene_embedding or not screenshot_url:
+        if not screenshot_url:
             continue
         start = float(image.get("start_time") or face["start_time"])
         end = float(image.get("end_time") or face["end_time"] or start)
@@ -1289,7 +1293,84 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
         })
 
     appearances.sort(key=lambda row: row.get("similarity", 0.0), reverse=True)
+    if len(appearances) < 2:
+        print(
+            f"[Chat] Face comparison presence matches for '{person_name}' yielded "
+            f"{len(appearances)} usable appearances; falling back to manual face tags"
+        )
+        appearances = _merge_comparison_appearances(
+            appearances,
+            _load_face_tag_appearances(video_hash, person_name, reference_embedding),
+        )
     return appearances
+
+
+def _comparison_appearance_key(appearance: dict) -> str:
+    url = appearance.get("screenshot_url") or ""
+    try:
+        from services.gcs_service import gcs_service
+        return gcs_service.extract_gcs_path_from_signed_url(url) or url.split("?", 1)[0]
+    except Exception:
+        return url.split("?", 1)[0]
+
+
+def _merge_comparison_appearances(primary: list[dict], fallback: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for appearance in [*primary, *fallback]:
+        key = _comparison_appearance_key(appearance)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(appearance)
+    merged.sort(key=lambda row: row.get("similarity", 0.0), reverse=True)
+    return merged
+
+
+def _load_face_tag_appearances(
+    video_hash: str,
+    person_name: str,
+    reference_embedding: Optional[list[float]],
+) -> list[dict]:
+    """Fallback appearances from manually tagged screenshots."""
+    try:
+        from services.supabase_service import supabase as get_supabase
+
+        client = get_supabase()
+        result = (
+            client.table("face_tags")
+            .select("screenshot_url,bbox,embedding")
+            .eq("video_hash", video_hash)
+            .eq("speaker_name", person_name)
+            .execute()
+        )
+        appearances = []
+        for idx, row in enumerate(result.data or []):
+            screenshot_url = row.get("screenshot_url")
+            if not screenshot_url:
+                continue
+            face_embedding = _parse_vector(row.get("embedding"))
+            start = _timestamp_from_screenshot_url(screenshot_url)
+            appearances.append({
+                "image_embedding_id": f"face_tag_{idx}",
+                "start_time": start,
+                "end_time": start + 1.0,
+                "speaker": person_name,
+                "screenshot_url": _fresh_screenshot_url(screenshot_url),
+                "bbox": row.get("bbox"),
+                "face_embedding": face_embedding,
+                "scene_embedding": None,
+                "similarity": (
+                    _cosine_similarity(reference_embedding, face_embedding)
+                    if reference_embedding and face_embedding
+                    else 1.0
+                ),
+            })
+        appearances.sort(key=lambda row: row.get("similarity", 0.0), reverse=True)
+        return appearances
+    except Exception as e:
+        print(f"[Chat] Face-tag comparison fallback failed: {e}")
+        return []
 
 
 def _select_state_pair(appearances: list[dict], video_duration: float) -> Optional[tuple[dict, dict]]:
@@ -1306,8 +1387,12 @@ def _select_state_pair(appearances: list[dict], video_duration: float) -> Option
     best_score = -1.0
     for i, first in enumerate(candidates):
         for second in candidates[i + 1:]:
-            d_face = 1.0 - _cosine_similarity(first["face_embedding"], second["face_embedding"])
-            d_scene = 1.0 - _cosine_similarity(first["scene_embedding"], second["scene_embedding"])
+            face_a = first.get("face_embedding")
+            face_b = second.get("face_embedding")
+            scene_a = first.get("scene_embedding")
+            scene_b = second.get("scene_embedding")
+            d_face = 1.0 - _cosine_similarity(face_a, face_b) if face_a and face_b else 0.0
+            d_scene = 1.0 - _cosine_similarity(scene_a, scene_b) if scene_a and scene_b else 0.0
             d_time = min(
                 1.0,
                 abs(float(first.get("start_time") or 0.0) - float(second.get("start_time") or 0.0)) / max(video_duration, 1.0),
