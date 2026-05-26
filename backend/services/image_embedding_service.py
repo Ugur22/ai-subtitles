@@ -159,6 +159,217 @@ class ImageEmbeddingService:
                 time.sleep(backoff)
         raise last_err if last_err else RuntimeError("batch upsert failed")
 
+    def _insert_face_presence_with_retry(
+        self,
+        client,
+        records: List[Dict],
+        batch_num: int,
+        total_batches: int,
+        max_retries: int = 3,
+    ) -> None:
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                client.table('image_face_presence').insert(records).execute()
+                print(
+                    f"[ImageEmbedding] Inserted face batch {batch_num}/{total_batches} "
+                    f"({len(records)} rows)"
+                )
+                return
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
+                last_err = e
+                try:
+                    session = getattr(client.postgrest, 'session', None)
+                    if session is not None:
+                        session.close()
+                except Exception:
+                    pass
+                backoff = 0.5 * (2 ** attempt)
+                print(
+                    f"[ImageEmbedding] Retry {attempt + 1}/{max_retries} for face batch "
+                    f"{batch_num} after {type(e).__name__}: {e}. Sleeping {backoff}s"
+                )
+                time.sleep(backoff)
+        raise last_err if last_err else RuntimeError("face batch insert failed")
+
+    def _normalize_embedding(self, embedding: List[float]) -> List[float]:
+        import numpy as np
+
+        arr = np.array(embedding, dtype=np.float32)
+        norm = np.linalg.norm(arr)
+        if norm == 0:
+            return arr.tolist()
+        return (arr / norm).tolist()
+
+    def _index_face_presence_from_segments(
+        self,
+        client,
+        video_hash: str,
+        indexed_segments: List[Dict],
+        force_reindex: bool = False,
+    ) -> int:
+        """Detect faces in already-indexed screenshots and persist ArcFace vectors."""
+        if not indexed_segments:
+            return 0
+
+        try:
+            existing = client.table('image_face_presence').select('id').eq(
+                'video_hash', video_hash
+            ).limit(1).execute()
+            if existing.data and not force_reindex:
+                print(f"[ImageEmbedding] Face presence already indexed for video {video_hash}")
+                return 0
+        except Exception as e:
+            print(f"[ImageEmbedding] Face presence existence check skipped: {e}")
+
+        segment_ids = [str(seg.get('segment_id', '')) for seg in indexed_segments if seg.get('segment_id') is not None]
+        id_by_segment: Dict[str, str] = {}
+        for i in range(0, len(segment_ids), 100):
+            chunk_ids = segment_ids[i:i + 100]
+            try:
+                rows = client.table('image_embeddings').select(
+                    'id, segment_id'
+                ).eq('video_hash', video_hash).in_('segment_id', chunk_ids).execute()
+                for row in rows.data or []:
+                    id_by_segment[str(row.get('segment_id'))] = row.get('id')
+            except Exception as e:
+                print(f"[ImageEmbedding] Could not load image embedding ids for face indexing: {e}")
+
+        if not id_by_segment:
+            print(f"[ImageEmbedding] No image embedding ids found for face indexing ({video_hash})")
+            return 0
+
+        if force_reindex:
+            try:
+                client.table('image_face_presence').delete().eq('video_hash', video_hash).execute()
+            except Exception as e:
+                print(f"[ImageEmbedding] Could not clear old face presence rows: {e}")
+
+        print(f"[ImageEmbedding] Indexing face presence for video {video_hash}...")
+        face_records: List[Dict] = []
+        try:
+            from services.face_service import face_service
+            for seg in indexed_segments:
+                image_embedding_id = id_by_segment.get(str(seg.get('segment_id', '')))
+                image_path = seg.get('local_path') or seg.get('screenshot_url')
+                if not image_embedding_id or not image_path:
+                    continue
+
+                try:
+                    detections = face_service.detect_faces(image_path)
+                except Exception as e:
+                    print(f"[ImageEmbedding] Face detection failed for segment {seg.get('segment_id')}: {e}")
+                    continue
+
+                for face in detections or []:
+                    embedding = face.get('embedding')
+                    if not embedding:
+                        continue
+                    face_records.append({
+                        'image_embedding_id': image_embedding_id,
+                        'video_hash': video_hash,
+                        'start_time': seg.get('start', 0.0),
+                        'end_time': seg.get('end', 0.0),
+                        'face_embedding': self._normalize_embedding(embedding),
+                        'bbox': face.get('bbox'),
+                        'det_score': face.get('confidence'),
+                    })
+        except Exception as e:
+            print(f"[ImageEmbedding] Face presence indexing unavailable: {e}")
+            return 0
+
+        if not face_records:
+            print(f"[ImageEmbedding] No faces detected for video {video_hash}")
+            return 0
+
+        insert_batch_size = 50
+        total_batches = (len(face_records) + insert_batch_size - 1) // insert_batch_size
+        inserted_count = 0
+        for i in range(0, len(face_records), insert_batch_size):
+            batch = face_records[i:i + insert_batch_size]
+            batch_num = i // insert_batch_size + 1
+            try:
+                self._insert_face_presence_with_retry(client, batch, batch_num, total_batches)
+                inserted_count += len(batch)
+            except Exception as e:
+                print(
+                    f"[ImageEmbedding] Face batch {batch_num}/{total_batches} permanently "
+                    f"failed after retries: {e}"
+                )
+
+        print(
+            f"[ImageEmbedding] Successfully indexed {inserted_count}/{len(face_records)} "
+            f"face presence rows for video {video_hash}"
+        )
+        return inserted_count
+
+    def index_face_presence_for_video(
+        self,
+        video_hash: str,
+        force_reindex: bool = False,
+    ) -> int:
+        """Backfill face presence from persisted image_embeddings rows."""
+        client = supabase()
+
+        try:
+            existing = client.table('image_face_presence').select('id').eq(
+                'video_hash', video_hash
+            ).limit(1).execute()
+            if existing.data and not force_reindex:
+                return 0
+        except Exception as e:
+            print(f"[ImageEmbedding] Face presence backfill check failed: {e}")
+
+        rows = client.table('image_embeddings').select(
+            'id, segment_id, start_time, end_time, speaker, screenshot_url'
+        ).eq('video_hash', video_hash).execute()
+
+        segments = []
+        temp_files = []
+        for row in rows.data or []:
+            screenshot_url = row.get('screenshot_url')
+            if not screenshot_url:
+                continue
+            try:
+                from config import settings as _settings
+                if _settings.ENABLE_GCS_UPLOADS:
+                    from services.gcs_service import gcs_service
+                    gcs_path = gcs_service.extract_gcs_path_from_signed_url(screenshot_url)
+                    if gcs_path:
+                        screenshot_url = gcs_service.generate_download_signed_url(
+                            gcs_path,
+                            expiry_seconds=_settings.GCS_SCREENSHOT_URL_EXPIRY,
+                        )
+            except Exception as e:
+                print(f"[ImageEmbedding] Screenshot URL refresh skipped for face backfill: {e}")
+            local_path = self._download_image_to_temp(screenshot_url)
+            if not local_path:
+                continue
+            if local_path.startswith(tempfile.gettempdir()):
+                temp_files.append(local_path)
+            segments.append({
+                'local_path': local_path,
+                'screenshot_url': screenshot_url,
+                'segment_id': row.get('segment_id'),
+                'start': row.get('start_time', 0.0),
+                'end': row.get('end_time', 0.0),
+                'speaker': row.get('speaker', 'SPEAKER_00'),
+            })
+
+        try:
+            return self._index_face_presence_from_segments(
+                client,
+                video_hash,
+                segments,
+                force_reindex=force_reindex,
+            )
+        finally:
+            for temp_path in temp_files:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
     def index_video_images(
         self,
         video_hash: str,
@@ -196,6 +407,10 @@ class ImageEmbeddingService:
                 ).eq('video_hash', video_hash).execute()
                 count = count_result.count if count_result.count else len(existing.data)
                 print(f"[ImageEmbedding] Video {video_hash} already has {count} indexed images")
+                try:
+                    self.index_face_presence_for_video(video_hash, force_reindex=False)
+                except Exception as e:
+                    print(f"[ImageEmbedding] Face presence catch-up failed (non-critical): {e}")
                 return count
 
         # Upsert on (video_hash, segment_id) overwrites rows in place, so we intentionally
@@ -288,8 +503,6 @@ class ImageEmbeddingService:
             return 0
 
         total = len(segments_to_index)
-        tmp_dir = tempfile.gettempdir()
-
         # Phase A: encode all images into an in-memory records list (no DB traffic).
         # Doing this up front keeps the Supabase TCP connection idle-free during Phase B,
         # avoiding the Cloudflare edge timeout that was killing the old interleaved loop.
@@ -297,72 +510,63 @@ class ImageEmbeddingService:
         encode_batch_size = 32
         records: List[Dict] = []
 
-        try:
-            for start_i in range(0, total, encode_batch_size):
-                chunk = segments_to_index[start_i:start_i + encode_batch_size]
-                images: List[Image.Image] = []
-                kept: List[Dict] = []
-                for seg in chunk:
-                    try:
-                        images.append(Image.open(seg['local_path']).convert('RGB'))
-                        kept.append(seg)
-                    except Exception as e:
-                        print(f"[ImageEmbedding] Failed to load {seg['local_path']}: {e}")
+        for start_i in range(0, total, encode_batch_size):
+            chunk = segments_to_index[start_i:start_i + encode_batch_size]
+            images: List[Image.Image] = []
+            kept: List[Dict] = []
+            for seg in chunk:
+                try:
+                    images.append(Image.open(seg['local_path']).convert('RGB'))
+                    kept.append(seg)
+                except Exception as e:
+                    print(f"[ImageEmbedding] Failed to load {seg['local_path']}: {e}")
 
-                if images:
-                    try:
-                        embeddings = self.clip_model.encode(
-                            images,
-                            convert_to_numpy=True,
-                            batch_size=encode_batch_size,
-                        ).tolist()
-                    except Exception as e:
-                        print(
-                            f"[ImageEmbedding] CLIP encode failed for chunk at offset "
-                            f"{start_i}: {e}"
-                        )
-                        embeddings = []
+            if images:
+                try:
+                    embeddings = self.clip_model.encode(
+                        images,
+                        convert_to_numpy=True,
+                        batch_size=encode_batch_size,
+                    ).tolist()
+                except Exception as e:
+                    print(
+                        f"[ImageEmbedding] CLIP encode failed for chunk at offset "
+                        f"{start_i}: {e}"
+                    )
+                    embeddings = []
 
-                    for seg, emb in zip(kept, embeddings):
-                        record = {
-                            'video_hash': video_hash,
-                            'segment_id': str(seg['segment_id']),
-                            'start_time': seg['start'],
-                            'end_time': seg['end'],
-                            'speaker': seg['speaker'],
-                            'screenshot_url': seg['screenshot_url'],
-                            'embedding': emb,
-                        }
-                        if user_id:
-                            record['user_id'] = user_id
-                        records.append(record)
+                for seg, emb in zip(kept, embeddings):
+                    record = {
+                        'video_hash': video_hash,
+                        'segment_id': str(seg['segment_id']),
+                        'start_time': seg['start'],
+                        'end_time': seg['end'],
+                        'speaker': seg['speaker'],
+                        'screenshot_url': seg['screenshot_url'],
+                        'embedding': emb,
+                    }
+                    if user_id:
+                        record['user_id'] = user_id
+                    records.append(record)
 
-                # Free PIL handles and per-chunk temp files immediately.
-                for img in images:
-                    try:
-                        img.close()
-                    except Exception:
-                        pass
-                for seg in chunk:
-                    path = seg.get('local_path', '')
-                    if path.startswith(tmp_dir):
-                        try:
-                            os.unlink(path)
-                        except Exception:
-                            pass
+            # Free PIL handles immediately. Keep temp files until Phase C so
+            # face indexing can reuse the same downloaded screenshots.
+            for img in images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
 
-                done = min(start_i + encode_batch_size, total)
-                print(f"[ImageEmbedding] Encoded {done}/{total} images")
-        finally:
-            # Safety net in case a code path skipped chunk-local cleanup above.
+            done = min(start_i + encode_batch_size, total)
+            print(f"[ImageEmbedding] Encoded {done}/{total} images")
+
+        if not records:
+            print("[ImageEmbedding] No embeddings generated")
             for temp_path in temp_files:
                 try:
                     os.unlink(temp_path)
                 except Exception:
                     pass
-
-        if not records:
-            print("[ImageEmbedding] No embeddings generated")
             return 0
 
         # Phase B: bulk insert back-to-back. Connection stays warm, and each batch is
@@ -393,6 +597,21 @@ class ImageEmbeddingService:
             f"[ImageEmbedding] Successfully indexed {indexed_count}/{len(records)} "
             f"images for video {video_hash}"
         )
+        try:
+            self._index_face_presence_from_segments(
+                client,
+                video_hash,
+                segments_to_index,
+                force_reindex=force_reindex,
+            )
+        except Exception as e:
+            print(f"[ImageEmbedding] Face presence indexing failed (non-critical): {e}")
+        finally:
+            for temp_path in temp_files:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
         return indexed_count
 
     def search_images(
@@ -447,6 +666,7 @@ class ImageEmbeddingService:
                     'metadata': {
                         'video_hash': item['video_hash'],
                         'segment_id': item['segment_id'],
+                        'image_embedding_id': item.get('id'),
                         'start': item['start_time'],
                         'end': item['end_time'],
                         'speaker': item['speaker']

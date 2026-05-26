@@ -28,7 +28,9 @@ export interface UploadConfig {
  * Get upload configuration from the server
  */
 export async function getUploadConfig(): Promise<UploadConfig> {
-  const response = await fetch(`${API_BASE_URL}/api/upload/config`);
+  const response = await fetch(`${API_BASE_URL}/api/upload/config`, {
+    credentials: 'include',
+  });
   if (!response.ok) {
     throw new Error('Failed to get upload config');
   }
@@ -45,6 +47,7 @@ export async function getSignedUploadUrl(
 ): Promise<SignedUrlResponse> {
   const response = await fetch(`${API_BASE_URL}/api/upload/signed-url`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },

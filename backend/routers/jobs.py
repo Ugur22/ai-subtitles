@@ -144,6 +144,15 @@ class RefreshUrlsResponse(BaseModel):
     cutoff_days: int
 
 
+class BackfillFacePresenceResponse(BaseModel):
+    """Response model for the manual face-presence backfill job."""
+    processed_videos: int
+    indexed_face_rows: int
+    skipped: int
+    failed: int
+    batch_size: int
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -984,6 +993,88 @@ async def refresh_screenshot_urls(request: Request):
         skipped=skipped,
         failed=failed,
         cutoff_days=cutoff_days,
+    )
+
+
+@router.post("/backfill-face-presence", response_model=BackfillFacePresenceResponse)
+@require_admin
+async def backfill_face_presence(
+    request: Request,
+    batch_size: int = Query(10, ge=1, le=50, description="Maximum videos to backfill in one invocation"),
+):
+    """Backfill image_face_presence rows for videos that already have image embeddings."""
+    from services.image_embedding_service import image_embedding_service
+    from services.supabase_service import supabase
+
+    client = supabase()
+    processed_videos = 0
+    indexed_face_rows = 0
+    skipped = 0
+    failed = 0
+
+    candidate_hashes: list[str] = []
+    try:
+        rows_resp = await _run_in_executor(
+            lambda: client.rpc(
+                "videos_missing_face_presence",
+                {"batch_limit": batch_size},
+            ).execute()
+        )
+        for row in rows_resp.data or []:
+            video_hash = row.get("video_hash")
+            if video_hash and video_hash not in candidate_hashes:
+                candidate_hashes.append(video_hash)
+    except Exception:
+        logger.exception("[Jobs] backfill-face-presence: videos_missing_face_presence RPC failed")
+        return BackfillFacePresenceResponse(
+            processed_videos=0,
+            indexed_face_rows=0,
+            skipped=0,
+            failed=1,
+            batch_size=batch_size,
+        )
+
+    for video_hash in candidate_hashes:
+        if processed_videos >= batch_size:
+            break
+        try:
+            existing = await _run_in_executor(
+                lambda vh=video_hash: client.table("image_face_presence")
+                .select("id")
+                .eq("video_hash", vh)
+                .limit(1)
+                .execute()
+            )
+            if existing.data:
+                skipped += 1
+                continue
+
+            count = await _run_in_executor(
+                image_embedding_service.index_face_presence_for_video,
+                video_hash,
+                False,
+            )
+            processed_videos += 1
+            indexed_face_rows += count
+        except Exception:
+            logger.exception("[Jobs] backfill-face-presence failed for video_hash %s", video_hash)
+            failed += 1
+
+    logger.info(
+        "[Jobs] backfill-face-presence done: videos=%d rows=%d skipped=%d failed=%d batch_size=%d",
+        processed_videos,
+        indexed_face_rows,
+        skipped,
+        failed,
+        batch_size,
+    )
+
+    return BackfillFacePresenceResponse(
+        processed_videos=processed_videos,
+        indexed_face_rows=indexed_face_rows,
+        skipped=skipped,
+        failed=failed,
+        batch_size=batch_size,
     )
 
 
