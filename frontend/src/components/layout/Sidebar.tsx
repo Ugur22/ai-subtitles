@@ -201,7 +201,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggleCollapse })
             leaveTo="transform opacity-0 scale-95"
           >
             <Menu.Items
-              className="absolute bottom-full mb-2 left-0 right-0 origin-bottom rounded-md z-50 py-1"
+              className="sidebar-user-menu-items"
               style={{
                 backgroundColor: 'var(--bg-overlay)',
                 border: '1px solid var(--border-subtle)',
@@ -212,7 +212,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggleCollapse })
                 {({ active }) => (
                   <button
                     onClick={() => openSettings('profile')}
-                    className="block w-full text-left px-3 py-1.5 text-sm transition-colors duration-100"
+                    className="sidebar-user-menu-item block w-full text-left px-3 py-1.5 text-sm transition-colors duration-100"
                     style={{
                       color: 'var(--text-secondary)',
                       backgroundColor: active ? 'var(--bg-surface)' : 'transparent',
@@ -227,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggleCollapse })
                   {({ active }) => (
                     <button
                       onClick={() => logout()}
-                      className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm transition-colors duration-100"
+                      className="sidebar-user-menu-item flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm transition-colors duration-100"
                       style={{
                         color: 'var(--text-secondary)',
                         backgroundColor: active ? 'var(--bg-surface)' : 'transparent',

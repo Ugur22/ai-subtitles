@@ -650,6 +650,11 @@ class GrokProvider(BaseLLMProvider):
                 # No images could be loaded, fall back to text-only
                 return await self.generate(messages, temperature, max_tokens)
 
+            max_images = int(os.getenv("XAI_VISION_MAX_IMAGES", "3"))
+            if len(image_data) > max_images:
+                print(f"Limiting xAI vision request from {len(image_data)} to {max_images} images")
+                image_data = image_data[:max_images]
+
             # Format messages for Grok Vision API (OpenAI-compatible format)
             formatted_messages = []
             for msg in messages:
@@ -674,32 +679,37 @@ class GrokProvider(BaseLLMProvider):
             vision_model = self.model.replace("-reasoning", "-non-reasoning") if "reasoning" in self.model.lower() else self.model
             print(f"Using vision model: {vision_model} (base model: {self.model})")
 
-            max_retries = 2
+            request_timeout = float(os.getenv("XAI_VISION_TIMEOUT_SECONDS", "45"))
+            max_retries = int(os.getenv("XAI_VISION_MAX_RETRIES", "1"))
             last_exception = None
             for attempt in range(max_retries):
                 try:
-                    async with httpx.AsyncClient(timeout=240.0) as client:
+                    timeout = httpx.Timeout(request_timeout, connect=10.0, write=30.0, pool=10.0)
+                    async with httpx.AsyncClient(timeout=timeout) as client:
                         print(
                             f"Calling xAI vision API with {len(image_data)} images "
-                            f"(attempt {attempt + 1}/{max_retries})"
+                            f"(attempt {attempt + 1}/{max_retries}, timeout={request_timeout:.0f}s)"
                         )
-                        response = await client.post(
-                            f"{self.base_url}/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
-                                "model": vision_model,
-                                "messages": formatted_messages,
-                                "temperature": temperature,
-                                "max_tokens": max_tokens
-                            }
+                        response = await asyncio.wait_for(
+                            client.post(
+                                f"{self.base_url}/chat/completions",
+                                headers={
+                                    "Authorization": f"Bearer {self.api_key}",
+                                    "Content-Type": "application/json"
+                                },
+                                json={
+                                    "model": vision_model,
+                                    "messages": formatted_messages,
+                                    "temperature": temperature,
+                                    "max_tokens": max_tokens
+                                }
+                            ),
+                            timeout=request_timeout,
                         )
                         response.raise_for_status()
                         result = response.json()
                         return result["choices"][0]["message"]["content"]
-                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                except (asyncio.TimeoutError, httpx.TimeoutException, httpx.ConnectError) as e:
                     last_exception = e
                     if attempt < max_retries - 1:
                         print(f"Vision API timeout/connection error (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
