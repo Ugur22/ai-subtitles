@@ -19,6 +19,8 @@ interface SettingsContextType {
   updateUserSettings: (settings: {
     display_name?: string;
     default_llm_provider?: string;
+    visual_search_terms?: string;
+    visual_search_phrases?: string;
   }) => Promise<void>;
   isUpdating: boolean;
 }
@@ -51,7 +53,12 @@ export const SettingsProvider = ({ children }: { children: React.ReactNode }) =>
   }, []);
 
   const updateUserSettings = useCallback(
-    async (settings: { display_name?: string; default_llm_provider?: string }) => {
+    async (settings: {
+      display_name?: string;
+      default_llm_provider?: string;
+      visual_search_terms?: string;
+      visual_search_phrases?: string;
+    }) => {
       await updateMutation.mutateAsync(settings);
     },
     [updateMutation]

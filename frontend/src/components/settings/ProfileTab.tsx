@@ -22,6 +22,8 @@ export const ProfileTab: React.FC = () => {
   const { keys } = useAPIKeys();
   const [displayName, setDisplayName] = useState('');
   const [defaultProvider, setDefaultProvider] = useState<string>('groq');
+  const [visualSearchTerms, setVisualSearchTerms] = useState('');
+  const [visualSearchPhrases, setVisualSearchPhrases] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
 
   // Initialize form with user data
@@ -29,6 +31,8 @@ export const ProfileTab: React.FC = () => {
     if (user) {
       setDisplayName(user.display_name || '');
       setDefaultProvider(user.default_llm_provider || 'groq');
+      setVisualSearchTerms(user.visual_search_terms || '');
+      setVisualSearchPhrases(user.visual_search_phrases || '');
     }
   }, [user]);
 
@@ -37,12 +41,19 @@ export const ProfileTab: React.FC = () => {
     if (!user) return;
     const changed =
       displayName !== (user.display_name || '') ||
-      defaultProvider !== (user.default_llm_provider || 'groq');
+      defaultProvider !== (user.default_llm_provider || 'groq') ||
+      visualSearchTerms !== (user.visual_search_terms || '') ||
+      visualSearchPhrases !== (user.visual_search_phrases || '');
     setHasChanges(changed);
-  }, [displayName, defaultProvider, user]);
+  }, [displayName, defaultProvider, visualSearchTerms, visualSearchPhrases, user]);
 
   const handleSave = async () => {
-    const updates: { display_name?: string; default_llm_provider?: string } = {};
+    const updates: {
+      display_name?: string;
+      default_llm_provider?: string;
+      visual_search_terms?: string;
+      visual_search_phrases?: string;
+    } = {};
 
     if (displayName !== (user?.display_name || '')) {
       updates.display_name = displayName;
@@ -50,6 +61,14 @@ export const ProfileTab: React.FC = () => {
 
     if (defaultProvider !== (user?.default_llm_provider || 'groq')) {
       updates.default_llm_provider = defaultProvider;
+    }
+
+    if (visualSearchTerms !== (user?.visual_search_terms || '')) {
+      updates.visual_search_terms = visualSearchTerms;
+    }
+
+    if (visualSearchPhrases !== (user?.visual_search_phrases || '')) {
+      updates.visual_search_phrases = visualSearchPhrases;
     }
 
     await updateUserSettings(updates);
@@ -123,6 +142,53 @@ export const ProfileTab: React.FC = () => {
             <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
               The default provider to use for chat features
             </p>
+          </div>
+
+          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+            <h4 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+              Visual Search Rewrites
+            </h4>
+            <p className="text-xs mb-3" style={{ color: 'var(--text-tertiary)' }}>
+              Add private trigger terms and image-search phrases for your own retrieval needs. These are stored in your profile and used only when your query matches a trigger.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="visualSearchTerms"
+                  className="block text-xs font-medium mb-1"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  Trigger terms
+                </label>
+                <textarea
+                  id="visualSearchTerms"
+                  value={visualSearchTerms}
+                  onChange={(e) => setVisualSearchTerms(e.target.value)}
+                  placeholder="One term per line, or comma-separated"
+                  className="input-base w-full min-h-[88px] resize-y"
+                  disabled={isUpdating}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="visualSearchPhrases"
+                  className="block text-xs font-medium mb-1"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  Search phrases
+                </label>
+                <textarea
+                  id="visualSearchPhrases"
+                  value={visualSearchPhrases}
+                  onChange={(e) => setVisualSearchPhrases(e.target.value)}
+                  placeholder="One visual phrase per line"
+                  className="input-base w-full min-h-[112px] resize-y"
+                  disabled={isUpdating}
+                />
+              </div>
+            </div>
           </div>
 
           {hasChanges && (

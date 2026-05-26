@@ -23,6 +23,8 @@ class UpdateSettingsRequest(BaseModel):
     """Request to update user settings."""
     display_name: Optional[str] = None
     default_llm_provider: Optional[str] = None
+    visual_search_terms: Optional[str] = None
+    visual_search_phrases: Optional[str] = None
 
 
 class UpdateSettingsResponse(BaseModel):
@@ -68,6 +70,12 @@ async def update_settings(request: Request, body: UpdateSettingsRequest):
                     detail=f"Invalid provider. Must be one of: {', '.join(valid_providers)}"
                 )
             updates["default_llm_provider"] = body.default_llm_provider
+
+        if body.visual_search_terms is not None:
+            updates["visual_search_terms"] = body.visual_search_terms.strip()
+
+        if body.visual_search_phrases is not None:
+            updates["visual_search_phrases"] = body.visual_search_phrases.strip()
 
         if not updates:
             return UpdateSettingsResponse(

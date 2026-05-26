@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   email TEXT NOT NULL UNIQUE,
   display_name TEXT,
   default_llm_provider TEXT DEFAULT 'groq' CHECK (default_llm_provider IN ('groq', 'xai', 'openai', 'anthropic', 'deepseek')),
+  visual_search_terms TEXT DEFAULT '',
+  visual_search_phrases TEXT DEFAULT '',
   email_verified BOOLEAN DEFAULT FALSE,
   is_admin BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -60,6 +62,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 COMMENT ON TABLE user_profiles IS 'Extended user profile information linked to Supabase auth.users';
 COMMENT ON COLUMN user_profiles.email_verified IS 'User must verify email before accessing the application';
 COMMENT ON COLUMN user_profiles.default_llm_provider IS 'Default LLM provider for chat (groq, xai, openai, anthropic, deepseek)';
+COMMENT ON COLUMN user_profiles.visual_search_terms IS 'Private comma/newline-separated trigger terms for visual query rewriting';
+COMMENT ON COLUMN user_profiles.visual_search_phrases IS 'Private newline-separated CLIP-friendly visual search phrases';
 COMMENT ON COLUMN user_profiles.is_admin IS 'Admin users can access admin dashboard and manage invites';
 
 -- User API keys (encrypted)

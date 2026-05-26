@@ -10,6 +10,8 @@ export interface User {
   email: string;
   display_name: string | null;
   default_llm_provider: string;
+  visual_search_terms?: string;
+  visual_search_phrases?: string;
   is_admin: boolean;
   email_verified: boolean;
 }
