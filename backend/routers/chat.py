@@ -1470,21 +1470,30 @@ async def _handle_person_comparison(
 
     video_hash = chat_request.video_hash
     appearances = await _load_person_appearances(video_hash, intent.person_name)
-    if len(appearances) < 2:
+    video_duration = _video_duration_seconds(video_hash, appearances)
+    pair = _select_state_pair(appearances, video_duration)
+    if not pair:
+        print(
+            f"[Chat] Face comparison could not select a distinct pair from "
+            f"{len(appearances)} presence appearances for '{intent.person_name}'; "
+            "retrying with manual face tags"
+        )
+        reference_embedding = _load_speaker_reference_embedding(video_hash, intent.person_name)
+        tagged_appearances = (
+            _load_face_tag_appearances(video_hash, intent.person_name, reference_embedding)
+            if reference_embedding
+            else []
+        )
+        appearances = _merge_comparison_appearances(appearances, tagged_appearances)
+        video_duration = _video_duration_seconds(video_hash, appearances)
+        pair = _select_state_pair(appearances, video_duration)
+
+    if not pair:
         return {
             "answer": (
                 f"I found {intent.person_name}, but not enough separate face appearances "
                 "to compare yet. Ask a normal chat question, or index more screenshots first."
             ),
-            "sources": [],
-            "provider_used": chat_request.provider or "none",
-            "video_hash": video_hash,
-        }
-
-    pair = _select_state_pair(appearances, _video_duration_seconds(video_hash, appearances))
-    if not pair:
-        return {
-            "answer": f"I found {intent.person_name}, but couldn't choose two comparable moments.",
             "sources": [],
             "provider_used": chat_request.provider or "none",
             "video_hash": video_hash,
