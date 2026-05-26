@@ -29,9 +29,18 @@ const imagePlaceholderSrc =
 const TIMESTAMP_REGEX =
   /\[(\d{1,2}:\d{2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}:\d{2}))?\]/g;
 
+const formatSecondsToTimestamp = (seconds: number): string => {
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+  const h = Math.floor(safeSeconds / 3600);
+  const m = Math.floor((safeSeconds % 3600) / 60);
+  const s = safeSeconds % 60;
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+};
+
 // Section icon map for h2 headings
 const SECTION_ICONS: Record<string, string> = {
   "direct answer": "sparkles",
+  "person comparison": "user",
   "key analysis": "magnifying-glass",
   analysis: "magnifying-glass",
   "visual observations": "eye",
@@ -311,6 +320,158 @@ function splitIntoSections(
   return sections;
 }
 
+interface ComparisonFrame {
+  url?: string;
+  timestamp_seconds?: number;
+  timestamp?: string;
+  bbox?: { x: number; y: number; w: number; h: number } | null;
+}
+
+interface PersonComparisonData {
+  person?: string;
+  frame_a?: ComparisonFrame;
+  frame_b?: ComparisonFrame;
+}
+
+function parsePersonComparisonSection(body: string): {
+  metadata: PersonComparisonData | null;
+  prose: string;
+} {
+  const match = body.match(/```json\s*([\s\S]*?)```/i);
+  if (!match) {
+    return { metadata: null, prose: body.trim() };
+  }
+
+  try {
+    const metadata = JSON.parse(match[1]) as PersonComparisonData;
+    return {
+      metadata,
+      prose: body.replace(match[0], "").trim(),
+    };
+  } catch {
+    return { metadata: null, prose: body.trim() };
+  }
+}
+
+const PersonComparisonSection: React.FC<{
+  body: string;
+  components: Components;
+  onTimestampClick?: (ts: string) => void;
+  onOpenScreenshots?: (sources: Source[], index: number) => void;
+}> = ({ body, components, onTimestampClick, onOpenScreenshots }) => {
+  const { metadata, prose } = parsePersonComparisonSection(body);
+  const frames = [metadata?.frame_a, metadata?.frame_b].filter(
+    (frame): frame is ComparisonFrame => !!frame?.url,
+  );
+  const sources: Source[] = frames.map((frame, idx) => ({
+    start_time:
+      frame.timestamp ||
+      formatSecondsToTimestamp(Number(frame.timestamp_seconds || 0)),
+    end_time:
+      frame.timestamp ||
+      formatSecondsToTimestamp(Number(frame.timestamp_seconds || 0)),
+    start: Number(frame.timestamp_seconds || 0),
+    end: Number(frame.timestamp_seconds || 0),
+    speaker: metadata?.person || "Person",
+    screenshot_url: frame.url,
+    type: "visual",
+    evidence_label: idx === 0 ? "Earlier state" : "Later state",
+  }));
+
+  return (
+    <section className="my-3 border-y py-3" style={{ borderColor: "var(--border-subtle)" }}>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {getSectionIcon("Person Comparison")}
+          <h2 className="truncate text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+            Person Comparison{metadata?.person ? `: ${metadata.person}` : ""}
+          </h2>
+        </div>
+      </div>
+
+      {frames.length === 2 && (
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          {frames.map((frame, idx) => {
+            const timestamp =
+              frame.timestamp ||
+              formatSecondsToTimestamp(Number(frame.timestamp_seconds || 0));
+            const bbox = frame.bbox;
+            return (
+              <div
+                key={`${frame.url}-${idx}`}
+                className="group overflow-hidden rounded-lg border"
+                style={{
+                  borderColor: "var(--border-default)",
+                  background: "var(--bg-overlay)",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => onOpenScreenshots?.(sources, idx)}
+                  className="relative block aspect-video w-full overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  title={`Open ${idx === 0 ? "first" : "second"} comparison frame at ${timestamp}`}
+                  aria-label={`Open ${idx === 0 ? "first" : "second"} comparison frame at ${timestamp}`}
+                >
+                  <img
+                    src={formatScreenshotUrl(frame.url)}
+                    alt={`${metadata?.person || "Person"} comparison frame at ${timestamp}`}
+                    className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-[1.015]"
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.src = imagePlaceholderSrc;
+                    }}
+                  />
+                  {bbox && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute rounded"
+                      style={{
+                        left: `${bbox.x * 100}%`,
+                        top: `${bbox.y * 100}%`,
+                        width: `${bbox.w * 100}%`,
+                        height: `${bbox.h * 100}%`,
+                        border: "2px solid var(--accent)",
+                        boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.18)",
+                      }}
+                    />
+                  )}
+                  <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white">
+                    {idx === 0 ? "Frame A" : "Frame B"}
+                  </span>
+                </button>
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onTimestampClick?.(timestamp)}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-mono font-bold tabular-nums transition-colors"
+                    style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+                    title={`Jump to ${timestamp}`}
+                    aria-label={`Jump video to ${timestamp}`}
+                  >
+                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M6.3 3.8A1 1 0 005 4.7v10.6a1 1 0 001.5.9l8.8-5.3a1 1 0 000-1.8L6.5 3.8a1 1 0 00-.2 0z" />
+                    </svg>
+                    {timestamp}
+                  </button>
+                  <span className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                    {idx === 0 ? "Earlier state" : "Later state"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {prose && (
+        <div className="prose prose-sm mt-3 max-w-none">
+          <ReactMarkdown components={components}>{prose}</ReactMarkdown>
+        </div>
+      )}
+    </section>
+  );
+};
+
 /** Build custom ReactMarkdown renderers */
 function buildMarkdownComponents(
   onTimestampClick?: (ts: string) => void,
@@ -409,6 +570,7 @@ type PhaseId =
   | "analyzing_scenes"
   | "analyzing_visuals"
   | "matching_faces"
+  | "comparing"
   | "analyzing_audio"
   | "generating";
 
@@ -590,7 +752,8 @@ const AssistantMessageContent: React.FC<{
   content: string;
   role: "user" | "assistant";
   onTimestampClick?: (ts: string) => void;
-}> = ({ content, role, onTimestampClick }) => {
+  onOpenScreenshots?: (sources: Source[], index: number) => void;
+}> = ({ content, role, onTimestampClick, onOpenScreenshots }) => {
   const components = useMemo(
     () => buildMarkdownComponents(onTimestampClick),
     [onTimestampClick],
@@ -637,6 +800,21 @@ const AssistantMessageContent: React.FC<{
         const isPreHeading = !section.heading; // content before any heading
         const shouldStartCollapsed =
           shouldCollapse && !isDirectAnswer && !isPreHeading;
+        const isPersonComparison = section.heading
+          .toLowerCase()
+          .includes("person comparison");
+
+        if (isPersonComparison) {
+          return (
+            <PersonComparisonSection
+              key={idx}
+              body={section.body}
+              components={components}
+              onTimestampClick={onTimestampClick}
+              onOpenScreenshots={onOpenScreenshots}
+            />
+          );
+        }
 
         // Direct Answer gets a highlight card
         if (isDirectAnswer) {
@@ -1203,6 +1381,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     analyzing_scenes: "Analyzing scenes",
     analyzing_visuals: "Inspecting screenshots",
     matching_faces: "Matching faces",
+    comparing: "Comparing person states",
     analyzing_audio: "Scanning audio events",
     generating: "Writing answer",
   };
@@ -1953,6 +2132,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       content={message.content}
                       role={message.role}
                       onTimestampClick={onTimestampClick}
+                      onOpenScreenshots={(sources, currentIndex) => {
+                        setScreenshotModal({
+                          screenshots: sources.map((s) =>
+                            formatScreenshotUrl(s.screenshot_url),
+                          ),
+                          currentIndex,
+                          sources,
+                        });
+                      }}
                     />
                   )}
                   {message.role === "assistant" &&
