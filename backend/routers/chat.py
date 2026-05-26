@@ -960,6 +960,109 @@ async def _face_tag_image_results(
         return []
 
 
+def _load_speaker_face_embeddings(video_hash: str, speaker_names: list[str]) -> dict[str, list[float]]:
+    """Load averaged manual face-tag embeddings for named speakers."""
+    speaker_face_embeddings: dict[str, list[float]] = {}
+    if not speaker_names:
+        return speaker_face_embeddings
+
+    try:
+        import numpy as np
+        import json as _json
+        from services.supabase_service import supabase as get_supabase
+
+        face_client = get_supabase()
+        for name in speaker_names:
+            face_result = face_client.table("face_tags").select(
+                "embedding"
+            ).eq("video_hash", video_hash).eq(
+                "speaker_name", name
+            ).execute()
+            if not face_result.data:
+                continue
+
+            raw_embeddings = []
+            for row in face_result.data:
+                emb = row.get("embedding")
+                if not emb:
+                    continue
+                if isinstance(emb, str):
+                    emb = _json.loads(emb)
+                raw_embeddings.append(emb)
+            if not raw_embeddings:
+                continue
+
+            embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
+            avg_emb = np.mean(embeddings, axis=0)
+            norm = np.linalg.norm(avg_emb)
+            if norm > 0:
+                avg_emb = avg_emb / norm
+            speaker_face_embeddings[name] = avg_emb.tolist()
+            print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
+    except Exception as e:
+        print(f"  Face tags lookup failed (non-critical): {e}")
+
+    return speaker_face_embeddings
+
+
+async def _load_face_presence(
+    video_hash: str,
+    speaker_face_embeddings: dict[str, list[float]],
+) -> tuple[dict[str, dict[str, float]], dict[str, list[tuple[float, float]]]]:
+    """
+    Load pre-indexed face-presence matches for named speakers.
+
+    Returns:
+      - face_presence_by_image: image_embedding_id -> speaker_name -> similarity
+      - presence_timelines: speaker_name -> [(start, end), ...]
+    """
+    face_presence_by_image: dict[str, dict[str, float]] = {}
+    presence_timelines: dict[str, list[tuple[float, float]]] = {
+        speaker: [] for speaker in speaker_face_embeddings
+    }
+    if not speaker_face_embeddings:
+        return face_presence_by_image, presence_timelines
+
+    try:
+        from config import settings
+        from services.supabase_service import supabase as get_supabase
+
+        face_client = get_supabase()
+        for speaker, embedding in speaker_face_embeddings.items():
+            response = await _run_in_executor(
+                lambda emb=embedding: face_client.rpc(
+                    "match_faces_by_embedding",
+                    {
+                        "target_video_hash": video_hash,
+                        "query_embedding": emb,
+                        "similarity_threshold": settings.FACE_PRESENCE_SIMILARITY_THRESHOLD,
+                    },
+                ).execute()
+            )
+            for row in response.data or []:
+                image_id = str(row.get("image_embedding_id") or "")
+                if not image_id:
+                    continue
+                similarity = float(row.get("similarity") or 0.0)
+                face_presence_by_image.setdefault(image_id, {})[speaker] = max(
+                    similarity,
+                    face_presence_by_image.get(image_id, {}).get(speaker, 0.0),
+                )
+                presence_timelines.setdefault(speaker, []).append((
+                    float(row.get("start_time") or 0.0),
+                    float(row.get("end_time") or 0.0),
+                ))
+    except Exception as e:
+        print(f"  Face presence lookup failed (non-critical): {e}")
+        return {}, {speaker: [] for speaker in speaker_face_embeddings}
+
+    for speaker, timeline in presence_timelines.items():
+        if timeline:
+            print(f"  Face presence for '{speaker}': {len(timeline)} matched screenshots")
+
+    return face_presence_by_image, presence_timelines
+
+
 # ---------------------------------------------------------------------------
 # Pure helper functions (no SSE knowledge, shared by sync and streaming endpoints)
 # ---------------------------------------------------------------------------
@@ -1074,6 +1177,13 @@ async def _retrieve_visual_context(
     try:
         # Extract ALL speaker names from the query
         speaker_names = _extract_all_speakers_from_query(question, video_hash)
+        transcription = None
+        segments = []
+        total_segments = 0
+        transcription = get_transcription_from_any_source(video_hash)
+        if transcription:
+            segments = transcription.get('transcription', {}).get('segments', [])
+            total_segments = len(segments)
 
         # CLIP doesn't know specific people by name; replace names with generic "person"/"people"
         visual_query = _clean_query_for_retrieval(question)
@@ -1143,7 +1253,7 @@ async def _retrieve_visual_context(
                     f"{len(image_results)} unique CLIP candidates"
                 )
 
-            clip_candidate_limit = max(n_images * 4, n_images)
+            clip_candidate_limit = max(n_images * 4, min(32, n_images * (1 + total_segments // 100)))
             if len(image_results) > clip_candidate_limit:
                 image_results.sort(
                     key=lambda result: result.get(
@@ -1209,20 +1319,30 @@ async def _retrieve_visual_context(
 
         # Phase 1: Temporal Correlation Scoring
         if speaker_names and image_results:
-            print(f"Applying temporal correlation scoring for speakers: {speaker_names}")
+            print(f"Applying presence correlation scoring for speakers: {speaker_names}")
 
-            transcription = get_transcription_from_any_source(video_hash)
+            speaker_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+            face_tags_available = bool(speaker_face_embeddings)
+            face_presence_by_image, presence_timelines = await _load_face_presence(
+                video_hash,
+                speaker_face_embeddings,
+            )
+            has_face_presence = any(presence_timelines.values())
+
             if transcription:
-                segments = transcription.get('transcription', {}).get('segments', [])
-
-                speaker_timelines = {}
-                for name in speaker_names:
-                    speaker_timelines[name] = [
-                        (seg['start'], seg['end'])
-                        for seg in segments
-                        if seg.get('speaker', '').lower() == name.lower()
-                    ]
-                    print(f"  Speaker '{name}': {len(speaker_timelines[name])} segments")
+                if has_face_presence:
+                    speaker_timelines = presence_timelines
+                    for name in speaker_names:
+                        print(f"  Speaker '{name}': {len(speaker_timelines.get(name, []))} face-presence spans")
+                else:
+                    speaker_timelines = {}
+                    for name in speaker_names:
+                        speaker_timelines[name] = [
+                            (seg['start'], seg['end'])
+                            for seg in segments
+                            if seg.get('speaker', '').lower() == name.lower()
+                        ]
+                        print(f"  Speaker '{name}': {len(speaker_timelines[name])} voice segments")
 
                 for result in image_results:
                     img_start = float(result['metadata'].get('start', 0) or 0)
@@ -1238,7 +1358,8 @@ async def _retrieve_visual_context(
                                 if speaker not in overlapping_speakers:
                                     overlapping_speakers.append(speaker)
 
-                    if overlap_score == 0 and speaker_timelines:
+                    from config import settings
+                    if settings.CHAT_DEBUG_LOGS and overlap_score == 0 and speaker_timelines:
                         first_speaker = list(speaker_timelines.keys())[0]
                         tl = speaker_timelines[first_speaker]
                         if tl:
@@ -1250,35 +1371,6 @@ async def _retrieve_visual_context(
                     result['overlap_score'] = overlap_score
                     result['likely_speakers'] = overlapping_speakers
 
-                # Check if any mentioned speaker has face tags
-                speaker_face_embeddings = {}
-                try:
-                    from services.supabase_service import supabase as get_supabase
-                    face_client = get_supabase()
-                    for name in speaker_names:
-                        face_result = face_client.table("face_tags").select(
-                            "embedding"
-                        ).eq("video_hash", video_hash).eq(
-                            "speaker_name", name
-                        ).execute()
-                        if face_result.data:
-                            import numpy as np
-                            import json as _json
-                            raw_embeddings = []
-                            for row in face_result.data:
-                                emb = row["embedding"]
-                                if isinstance(emb, str):
-                                    emb = _json.loads(emb)
-                                raw_embeddings.append(emb)
-                            embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
-                            avg_emb = np.mean(embeddings, axis=0)
-                            avg_emb = avg_emb / np.linalg.norm(avg_emb)
-                            speaker_face_embeddings[name] = avg_emb.tolist()
-                            face_tags_available = True
-                            print(f"  Face tags for '{name}': {len(embeddings)} embeddings loaded")
-                except Exception as e:
-                    print(f"  Face tags lookup failed (non-critical): {e}")
-
                 # Sub-stage: face re-ranking (only if face tags exist)
                 if face_tags_available:
                     if phase_cb is not None:
@@ -1286,7 +1378,6 @@ async def _retrieve_visual_context(
 
                     print("Computing face scores for visual results...")
                     try:
-                        from services.face_service import face_service
                         for result in image_results:
                             # Manually tagged face rows are already positive
                             # identity evidence; re-running face detection on
@@ -1297,29 +1388,55 @@ async def _retrieve_visual_context(
                                     result['likely_speakers'] = speaker_names
                                 continue
 
-                            screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
-                            if not screenshot_url:
-                                result['face_score'] = 0.0
+                            image_id = str(result.get('metadata', {}).get('image_embedding_id') or "")
+                            speaker_scores = face_presence_by_image.get(image_id, {})
+                            if speaker_scores:
+                                result['face_score'] = max(speaker_scores.values())
+                                likely = [
+                                    speaker for speaker, score in speaker_scores.items()
+                                    if score >= 0.5
+                                ]
+                                if likely:
+                                    result['likely_speakers'] = sorted(set(result.get('likely_speakers', []) + likely))
                                 continue
 
-                            detected = await _run_in_executor(face_service.detect_faces, screenshot_url)
-                            if not detected:
-                                result['face_score'] = 0.0
-                                continue
+                            result['face_score'] = 0.0
 
-                            max_sim = 0.0
-                            for det_face in detected:
-                                for speaker, ref_emb in speaker_face_embeddings.items():
-                                    sim = face_service.compute_face_similarity(
-                                        det_face['embedding'], ref_emb
+                        if not has_face_presence:
+                            from services.face_service import face_service
+                            print("No face-presence rows found; falling back to query-time face detection")
+                            for result in image_results:
+                                if result.get("source") == "face_tag":
+                                    continue
+                                screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
+                                if not screenshot_url:
+                                    continue
+
+                                detected = await _run_in_executor(face_service.detect_faces, screenshot_url)
+                                if not detected:
+                                    continue
+
+                                max_sim = 0.0
+                                matched_speakers = []
+                                for det_face in detected:
+                                    for speaker, ref_emb in speaker_face_embeddings.items():
+                                        sim = face_service.compute_face_similarity(
+                                            det_face['embedding'], ref_emb
+                                        )
+                                        if sim >= 0.5:
+                                            matched_speakers.append(speaker)
+                                        max_sim = max(max_sim, sim)
+                                result['face_score'] = max(0.0, max_sim)
+                                if matched_speakers:
+                                    result['likely_speakers'] = sorted(
+                                        set(result.get('likely_speakers', []) + matched_speakers)
                                     )
-                                    max_sim = max(max_sim, sim)
-                            result['face_score'] = max(0.0, max_sim)
                     except Exception as e:
                         print(f"  Face scoring failed (falling back to no face): {e}")
                         face_tags_available = False
 
-                # Hybrid ranking
+                # Hybrid ranking: temporal is on-screen face presence when the
+                # face-presence index exists, otherwise speaker voice overlap.
                 for result in image_results:
                     clip_score = result.get('similarity', 0)
                     if clip_score == 0 and 'distance' in result:
@@ -1346,13 +1463,15 @@ async def _retrieve_visual_context(
                 else:
                     ranking_mode = "80% CLIP + 20% temporal"
                 print(f"Scored {len(image_results)} visual results with hybrid ranking ({ranking_mode})")
-                for i, result in enumerate(image_results[:3]):
-                    face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
-                    print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
-                          f"clip={result.get('similarity', 0):.3f}, "
-                          f"overlap={result.get('overlap_score', 0)}{face_info}, "
-                          f"variant={result.get('visual_query_variant', result.get('source', 'unknown'))}, "
-                          f"speakers={result.get('likely_speakers', [])}")
+                from config import settings
+                if settings.CHAT_DEBUG_LOGS:
+                    for i, result in enumerate(image_results[:3]):
+                        face_info = f", face={result.get('face_score', 0):.3f}" if face_tags_available else ""
+                        print(f"  Result {i+1}: hybrid={result.get('hybrid_score', 0):.3f}, "
+                              f"clip={result.get('similarity', 0):.3f}, "
+                              f"overlap={result.get('overlap_score', 0)}{face_info}, "
+                              f"variant={result.get('visual_query_variant', result.get('source', 'unknown'))}, "
+                              f"speakers={result.get('likely_speakers', [])}")
 
         image_paths = []
         visual_context = ""
@@ -1748,13 +1867,24 @@ Guidelines:
     ]
 
     if conversation_history:
-        history = conversation_history[-10:]
+        valid_history = []
+        for msg in conversation_history:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            content = msg.get("content")
+            if role not in ("user", "assistant") or not isinstance(content, str):
+                continue
+            valid_history.append({
+                "role": role,
+                "content": content[:8192],
+            })
+        history = valid_history[-10:]
         for msg in history:
-            if msg.get("role") in ("user", "assistant"):
-                messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
+            messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
 
     messages.append({"role": "user", "content": user_message})
     return messages
@@ -2010,10 +2140,11 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 headers={"X-LLM-Error-Code": _classify_provider_error(e)},
             )
 
-        # Debug logging
-        print(f"DEBUG: text sources: {len(sources)}, visual sources: {len(visual_sources)}, audio sources: {len(audio_sources)}")
-        if audio_sources:
-            print(f"DEBUG: First audio source: {audio_sources[0]}")
+        from config import settings
+        if settings.CHAT_DEBUG_LOGS:
+            print(f"DEBUG: text sources: {len(sources)}, visual sources: {len(visual_sources)}, audio sources: {len(audio_sources)}")
+            if audio_sources:
+                print(f"DEBUG: First audio source: {audio_sources[0]}")
 
         response = {
             "answer": answer,

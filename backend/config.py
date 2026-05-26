@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
     CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
 
+    # Face Presence Index Configuration
+    # Cosine similarity threshold for matching a detected face against a
+    # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
+    FACE_PRESENCE_SIMILARITY_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_SIMILARITY_THRESHOLD", "0.5"))
+
+    # Verbose per-query debug logging from the chat retrieval pipeline
+    # (overlap_score=0 diagnostics, per-result hybrid score dumps). Off in prod.
+    CHAT_DEBUG_LOGS: bool = os.getenv("CHAT_DEBUG_LOGS", "false").lower() == "true"
+
     # Audio Analysis Configuration
     ENABLE_AUDIO_ANALYSIS: bool = os.getenv("ENABLE_AUDIO_ANALYSIS", "true").lower() == "true"
     PANNS_MODEL: str = os.getenv("PANNS_MODEL", "Cnn14_mAP=0.431")
