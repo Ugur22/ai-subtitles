@@ -53,7 +53,7 @@ CORS_ORIGINS='["https://ai-subs.netlify.app"]'
 ENABLE_GCS_UPLOADS="true"
 GCS_BUCKET_NAME="ai-subs-uploads"
 SUPABASE_URL="https://ngfcjdxfhppnzpocgktw.supabase.co"
-XAI_MODEL="grok-4-1-fast-reasoning"
+XAI_MODEL="grok-4.3"
 ENVIRONMENT="production"
 # Where Stripe redirects users after Checkout / Customer Portal
 PUBLIC_APP_URL="https://ai-subs.netlify.app"
@@ -96,12 +96,13 @@ check_prerequisites() {
     fi
 
     # Check if authenticated
-    if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" &> /dev/null; then
+    ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null || true)
+    if [ -z "${ACTIVE_ACCOUNT}" ]; then
         print_error "Not authenticated with gcloud. Please run: gcloud auth login"
         exit 1
     fi
 
-    print_info "Prerequisites check passed"
+    print_info "Prerequisites check passed (${ACTIVE_ACCOUNT})"
 }
 
 # Build and push Docker image
@@ -140,8 +141,8 @@ deploy_to_cloud_run() {
         --max-instances="${SERVICE_MAX_INSTANCES}" \
         --port="${PORT}" \
         --allow-unauthenticated \
-        --set-env-vars="CORS_ORIGINS=${CORS_ORIGINS},ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE},PUBLIC_APP_URL=${PUBLIC_APP_URL},WORKER_JOB_PROJECT=${PROJECT_ID},WORKER_JOB_REGION=${REGION},WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
-        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,APP_PASSWORD_HASH=app-password-hash:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"; then
+        --set-env-vars="^@^CORS_ORIGINS=${CORS_ORIGINS}@ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@PUBLIC_APP_URL=${PUBLIC_APP_URL}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
+        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@APP_PASSWORD_HASH=app-password-hash:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest@STRIPE_SECRET_KEY=stripe-secret-key:latest@STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest@STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"; then
         print_info "Service deployment successful"
     else
         print_error "Service deployment failed"
@@ -171,8 +172,8 @@ deploy_worker_job() {
         --tasks=1 \
         --command="python" \
         --args="-m,worker_main" \
-        --set-env-vars="ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS},GCS_BUCKET_NAME=${GCS_BUCKET_NAME},SUPABASE_URL=${SUPABASE_URL},XAI_MODEL=${XAI_MODEL},ENVIRONMENT=${ENVIRONMENT},MIN_SPEAKERS=${MIN_SPEAKERS},MAX_SPEAKERS=${MAX_SPEAKERS},FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}" \
-        --set-secrets="SUPABASE_SERVICE_KEY=supabase-service-key:latest,HUGGINGFACE_TOKEN=huggingface-token:latest,GROQ_API_KEY=groq-api-key:latest,XAI_API_KEY=xai-api-key:latest"; then
+        --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}" \
+        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest"; then
         print_info "Worker Job deployment successful"
     else
         print_error "Worker Job deployment failed"
