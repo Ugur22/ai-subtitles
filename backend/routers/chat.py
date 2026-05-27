@@ -1894,6 +1894,18 @@ async def _run_person_comparison_llm(
         window_seconds=15.0,
     )
 
+    # Resolve timeline intermediates (frames that are neither A nor B).
+    intermediates: list[dict] = []
+    if timeline_appearances:
+        a_key = _comparison_appearance_key(frame_a_appearance)
+        b_key = _comparison_appearance_key(frame_b_appearance)
+        intermediates = [
+            appearance for appearance in timeline_appearances
+            if appearance.get("screenshot_url")
+            and _comparison_appearance_key(appearance) not in {a_key, b_key}
+        ]
+        intermediates.sort(key=lambda row: float(row.get("start_time") or 0.0))
+
     provider = await _get_chat_provider(request, provider_name)
     if not provider.supports_vision():
         provider = await _get_chat_provider(request, "grok")
@@ -1911,6 +1923,17 @@ async def _run_person_comparison_llm(
             f" Frame A may be selected because it contains both {person_name} "
             f"and {secondary_person_name}; do not claim the second person is present "
             "in Frame B unless visibly shown or supported by the metadata."
+        )
+    if intermediates:
+        system_message += (
+            "\n\nAdditional intermediate frames are provided (image positions 3 onward) at "
+            "timestamps spread across the video. After the three-axis comparison and the "
+            "closing change sentence, add ONE FINAL paragraph that begins with "
+            "\"**Timeline arc:**\" (bold lead-in, same line as content, no heading). In that "
+            "paragraph, walk through ALL frames in chronological order — including Frame A and "
+            "Frame B — briefly noting visible change at each timestamp in [HH:MM:SS] format. "
+            "Aim for ~12 words per timestamp. Keep it grounded in what you actually see; do "
+            "not invent. The whole paragraph should read as a short narrative."
         )
     if custom_instructions:
         system_message += (
@@ -1936,12 +1959,28 @@ async def _run_person_comparison_llm(
     user_message_parts.extend([
         f"Frame A timestamp: [{frame_a['timestamp']}]",
         f"Frame B timestamp: [{frame_b['timestamp']}]",
+    ])
+    if intermediates:
+        intermediate_lines = []
+        for offset, appearance in enumerate(intermediates, start=3):
+            ts = _format_segment_time(float(appearance.get("start_time") or 0.0))
+            intermediate_lines.append(f"  - Image {offset} → [{ts}]")
+        user_message_parts.extend([
+            "",
+            "Intermediate timeline frames (in chronological order, for the Timeline arc):",
+            *intermediate_lines,
+        ])
+    user_message_parts.extend([
         "",
         f"Nearby transcript context:\n{transcript_context}",
         "",
         "Write a concise comparison. Use bullets grouped by the three requested axes, "
         "then end with one sentence summarizing the biggest visible change.",
     ])
+    if intermediates:
+        user_message_parts[-1] += (
+            " Then add the **Timeline arc:** paragraph as described in the system message."
+        )
 
     messages = [
         {
@@ -1953,11 +1992,15 @@ async def _run_person_comparison_llm(
             "content": "\n".join(user_message_parts),
         },
     ]
+    image_paths = [frame_a["url"], frame_b["url"]]
+    image_paths.extend(
+        appearance["screenshot_url"] for appearance in intermediates
+    )
     prose = await provider.generate_with_images(
         messages,
-        image_paths=[frame_a["url"], frame_b["url"]],
+        image_paths=image_paths,
         temperature=0.3,
-        max_tokens=1200,
+        max_tokens=1800,
     )
 
     return {
