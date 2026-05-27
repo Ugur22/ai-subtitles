@@ -377,8 +377,9 @@ const PersonComparisonSection: React.FC<{
   onOpenScreenshots?: (sources: Source[], index: number) => void;
   isSwapping?: boolean;
   pendingBSeconds?: number | null;
+  pendingSwapTarget?: "a" | "b" | null;
   swapError?: string;
-  onSwapFrame?: (meta: PersonComparisonData, newB: TimelineFrame) => void;
+  onSwapFrame?: (meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
   onDismissSwapError?: () => void;
 }> = ({
   body,
@@ -387,11 +388,13 @@ const PersonComparisonSection: React.FC<{
   onOpenScreenshots,
   isSwapping = false,
   pendingBSeconds = null,
+  pendingSwapTarget = null,
   swapError,
   onSwapFrame,
   onDismissSwapError,
 }) => {
   const { metadata, prose } = parsePersonComparisonSection(body);
+  const [replaceTarget, setReplaceTarget] = useState<"a" | "b">("b");
   const frames = [metadata?.frame_a, metadata?.frame_b].filter(
     (frame): frame is ComparisonFrame => !!frame?.url,
   );
@@ -449,7 +452,10 @@ const PersonComparisonSection: React.FC<{
               : frame.bbox
                 ? [{ person: metadata?.person, bbox: frame.bbox }]
                 : [];
-            const isFrameB = idx === 1;
+            const isPendingFrame =
+              isSwapping &&
+              ((idx === 0 && pendingSwapTarget === "a") ||
+                (idx === 1 && (pendingSwapTarget === "b" || pendingSwapTarget == null)));
             return (
               <div
                 key={`${frame.url}-${idx}`}
@@ -459,7 +465,7 @@ const PersonComparisonSection: React.FC<{
                   background: "var(--bg-overlay)",
                 }}
               >
-                {isFrameB && isSwapping && (
+                {isPendingFrame && (
                   <div
                     aria-hidden
                     className="absolute left-0 right-0 top-0 z-10 h-0.5 overflow-hidden"
@@ -538,8 +544,10 @@ const PersonComparisonSection: React.FC<{
           person={metadata.person || "Person"}
           isSwapping={isSwapping}
           pendingBSeconds={pendingBSeconds}
+          replaceTarget={replaceTarget}
           swapError={swapError}
-          onSwap={(frame) => onSwapFrame?.(metadata, frame)}
+          onReplaceTargetChange={setReplaceTarget}
+          onSwap={(frame, target) => onSwapFrame?.(metadata, frame, target)}
           onDismissError={onDismissSwapError}
         />
       )}
@@ -708,6 +716,7 @@ interface Message {
   isStreaming?: boolean;
   isSwapping?: boolean;
   pendingBSeconds?: number | null;
+  pendingSwapTarget?: "a" | "b" | null;
   swapError?: string;
 }
 
@@ -901,8 +910,9 @@ const AssistantMessageContent: React.FC<{
   onOpenScreenshots?: (sources: Source[], index: number) => void;
   isSwapping?: boolean;
   pendingBSeconds?: number | null;
+  pendingSwapTarget?: "a" | "b" | null;
   swapError?: string;
-  onSwapFrame?: (meta: PersonComparisonData, newB: TimelineFrame) => void;
+  onSwapFrame?: (meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
   onDismissSwapError?: () => void;
 }> = ({
   content,
@@ -911,6 +921,7 @@ const AssistantMessageContent: React.FC<{
   onOpenScreenshots,
   isSwapping,
   pendingBSeconds,
+  pendingSwapTarget,
   swapError,
   onSwapFrame,
   onDismissSwapError,
@@ -975,6 +986,7 @@ const AssistantMessageContent: React.FC<{
               onOpenScreenshots={onOpenScreenshots}
               isSwapping={isSwapping}
               pendingBSeconds={pendingBSeconds}
+              pendingSwapTarget={pendingSwapTarget}
               swapError={swapError}
               onSwapFrame={onSwapFrame}
               onDismissSwapError={onDismissSwapError}
@@ -1654,7 +1666,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const swapComparisonFrame = async (
     messageIndex: number,
     meta: PersonComparisonData,
-    newB: TimelineFrame,
+    frame: TimelineFrame,
+    target: "a" | "b",
     originalQuestion: string,
   ) => {
     if (!videoHash) return;
@@ -1671,7 +1684,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           ? {
               ...m,
               isSwapping: true,
-              pendingBSeconds: newB.timestamp_seconds,
+              pendingBSeconds: frame.timestamp_seconds,
+              pendingSwapTarget: target,
               swapError: undefined,
             }
           : m,
@@ -1685,8 +1699,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           video_hash: videoHash,
           person: meta.person,
           secondary_person: meta.secondary_person,
-          frame_a_seconds: meta.frame_a.timestamp_seconds,
-          frame_b_seconds: newB.timestamp_seconds,
+          frame_a_seconds:
+            target === "a" ? frame.timestamp_seconds : meta.frame_a.timestamp_seconds,
+          frame_b_seconds:
+            target === "b" ? frame.timestamp_seconds : meta.frame_b.timestamp_seconds,
           question: originalQuestion,
           custom_instructions: customInstructions || undefined,
           provider: selectedProvider,
@@ -1708,6 +1724,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 content: response.data.answer,
                 isSwapping: false,
                 pendingBSeconds: null,
+                pendingSwapTarget: null,
                 swapError: undefined,
               }
             : m,
@@ -1725,6 +1742,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 ...m,
                 isSwapping: false,
                 pendingBSeconds: null,
+                pendingSwapTarget: null,
                 swapError: message,
               }
             : m,
@@ -2407,10 +2425,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       }}
                       isSwapping={message.isSwapping}
                       pendingBSeconds={message.pendingBSeconds}
+                      pendingSwapTarget={message.pendingSwapTarget}
                       swapError={message.swapError}
                       onSwapFrame={
                         message.role === "assistant"
-                          ? (meta, newB) => {
+                          ? (meta, frame, target) => {
                               const messageIndex = messages.indexOf(message);
                               if (messageIndex < 0) return;
                               const question =
@@ -2419,7 +2438,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                   ? messages[messageIndex - 1].content
                                   : "");
                               if (!question) return;
-                              swapComparisonFrame(messageIndex, meta, newB, question);
+                              swapComparisonFrame(messageIndex, meta, frame, target, question);
                             }
                           : undefined
                       }

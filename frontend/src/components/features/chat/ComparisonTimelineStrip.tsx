@@ -16,8 +16,10 @@ interface ComparisonTimelineStripProps {
   person: string;
   isSwapping: boolean;
   pendingBSeconds: number | null;
+  replaceTarget: "a" | "b";
   swapError?: string;
-  onSwap: (frame: TimelineFrame) => void;
+  onReplaceTargetChange: (target: "a" | "b") => void;
+  onSwap: (frame: TimelineFrame, target: "a" | "b") => void;
   onDismissError?: () => void;
 }
 
@@ -37,7 +39,9 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
   person,
   isSwapping,
   pendingBSeconds,
+  replaceTarget,
   swapError,
+  onReplaceTargetChange,
   onSwap,
   onDismissError,
 }) => {
@@ -45,15 +49,16 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const focusableIndex = useMemo(() => {
-    // Roving tabindex: first index that is neither A nor current B.
+    // Roving tabindex: first index that is neither the current A nor B frame.
     for (let i = 0; i < frames.length; i++) {
       const t = frames[i].timestamp_seconds;
-      if (!isSameMoment(t, activeASeconds) && !isSameMoment(t, activeBSeconds)) {
+      const blocked = isSameMoment(t, activeASeconds) || isSameMoment(t, activeBSeconds);
+      if (!blocked) {
         return i;
       }
     }
     return 0;
-  }, [frames, activeASeconds, activeBSeconds]);
+  }, [frames, activeASeconds, activeBSeconds, replaceTarget]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -76,8 +81,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
     let nextIdx = currentIdx + dir;
     while (nextIdx >= 0 && nextIdx < frames.length) {
       const t = frames[nextIdx].timestamp_seconds;
-      const inert =
-        isSameMoment(t, activeASeconds) || isSameMoment(t, activeBSeconds);
+      const inert = isSameMoment(t, activeASeconds) || isSameMoment(t, activeBSeconds);
       if (!inert) break;
       nextIdx += dir;
     }
@@ -134,7 +138,29 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
         <span className="font-medium uppercase tracking-wider">
           Other moments of {person}
         </span>
-        <span aria-hidden>{frames.length} frames</span>
+        <div className="flex items-center gap-2">
+          <div
+            className="inline-flex rounded-full border p-0.5"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+            aria-label="Choose comparison frame to replace"
+          >
+            {(["a", "b"] as const).map((target) => (
+              <button
+                key={target}
+                type="button"
+                onClick={() => onReplaceTargetChange(target)}
+                className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase transition-colors"
+                style={{
+                  background: replaceTarget === target ? "var(--accent-dim)" : "transparent",
+                  color: replaceTarget === target ? "var(--accent)" : "var(--text-tertiary)",
+                }}
+              >
+                Replace {target.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <span aria-hidden>{frames.length} frames</span>
+        </div>
       </div>
 
       <ol
@@ -181,17 +207,21 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
                 tabIndex={idx === focusableIndex ? 0 : -1}
                 onClick={() => {
                   if (inert || disabledByLock) return;
-                  onSwap(frame);
+                  onSwap(frame, replaceTarget);
                 }}
                 disabled={inert || disabledByLock}
                 aria-disabled={inert || disabledByLock}
                 aria-current={isCurrentB ? "true" : undefined}
                 title={
                   isA
-                    ? `Frame A (anchor) at ${frame.timestamp}`
+                    ? replaceTarget === "a"
+                      ? `Current Frame A at ${frame.timestamp}`
+                      : `Frame A (anchor) at ${frame.timestamp}`
                     : isCurrentB
-                      ? `Current Frame B at ${frame.timestamp}`
-                      : `Swap Frame B to ${frame.timestamp}`
+                      ? replaceTarget === "b"
+                        ? `Current Frame B at ${frame.timestamp}`
+                        : `Frame B (locked while replacing A) at ${frame.timestamp}`
+                      : `Replace Frame ${replaceTarget.toUpperCase()} with ${frame.timestamp}`
                 }
                 className={`relative block aspect-video w-24 overflow-hidden rounded-md border outline-none transition-transform focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   inert ? "cursor-default" : disabledByLock ? "cursor-not-allowed" : "cursor-pointer hover:scale-[1.03]"

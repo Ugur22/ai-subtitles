@@ -1230,25 +1230,31 @@ async def _load_comparison_presence_rows(client, video_hash: str, image_ids: lis
     """
     face_rows: list[dict] = []
     image_rows: list[dict] = []
-    for batch in _chunks(image_ids, 20):
-        face_response, image_response = await asyncio.gather(
-            _run_in_executor(
-                lambda ids=batch: client.table("image_face_presence")
-                .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
-                .eq("video_hash", video_hash)
-                .in_("image_embedding_id", ids)
-                .execute()
-            ),
-            _run_in_executor(
+    for batch in _chunks(image_ids, 8):
+        try:
+            image_response = await _run_in_executor(
                 lambda ids=batch: client.table("image_embeddings")
                 .select("id,start_time,end_time,speaker,screenshot_url,embedding")
                 .eq("video_hash", video_hash)
                 .in_("id", ids)
                 .execute()
-            ),
-        )
-        face_rows.extend(face_response.data or [])
-        image_rows.extend(image_response.data or [])
+            )
+            image_rows.extend(image_response.data or [])
+        except Exception as e:
+            print(f"[Chat] Face comparison image batch skipped ({len(batch)} ids): {e}")
+            continue
+
+        try:
+            face_response = await _run_in_executor(
+                lambda ids=batch: client.table("image_face_presence")
+                .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
+                .eq("video_hash", video_hash)
+                .in_("image_embedding_id", ids)
+                .execute()
+            )
+            face_rows.extend(face_response.data or [])
+        except Exception as e:
+            print(f"[Chat] Face comparison face batch skipped ({len(batch)} ids): {e}")
     return face_rows, image_rows
 
 
@@ -1274,11 +1280,11 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
         ).execute()
     )
     matches = response.data or []
-    image_ids = [
+    image_ids = list(dict.fromkeys(
         str(row.get("image_embedding_id"))
         for row in matches
         if row.get("image_embedding_id")
-    ]
+    ))
     if not image_ids:
         return []
 
