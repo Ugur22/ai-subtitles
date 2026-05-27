@@ -325,10 +325,17 @@ interface ComparisonFrame {
   timestamp_seconds?: number;
   timestamp?: string;
   bbox?: { x: number; y: number; w: number; h: number } | null;
+  bboxes?: Array<{
+    person?: string;
+    bbox?: { x: number; y: number; w: number; h: number } | null;
+  }>;
+  label?: string;
+  people?: string[];
 }
 
 interface PersonComparisonData {
   person?: string;
+  secondary_person?: string;
   frame_a?: ComparisonFrame;
   frame_b?: ComparisonFrame;
 }
@@ -395,7 +402,11 @@ const PersonComparisonSection: React.FC<{
             const timestamp =
               frame.timestamp ||
               formatSecondsToTimestamp(Number(frame.timestamp_seconds || 0));
-            const bbox = frame.bbox;
+            const boxes = frame.bboxes?.length
+              ? frame.bboxes
+              : frame.bbox
+                ? [{ person: metadata?.person, bbox: frame.bbox }]
+                : [];
             return (
               <div
                 key={`${frame.url}-${idx}`}
@@ -421,20 +432,22 @@ const PersonComparisonSection: React.FC<{
                       e.currentTarget.src = imagePlaceholderSrc;
                     }}
                   />
-                  {bbox && (
+                  {boxes.map(({ person, bbox }, boxIdx) => bbox && (
                     <span
-                      aria-hidden="true"
+                      aria-label={person ? `${person} face box` : "Face box"}
+                      title={person || "Face"}
+                      key={`${person || "face"}-${boxIdx}`}
                       className="absolute rounded"
                       style={{
                         left: `${bbox.x * 100}%`,
                         top: `${bbox.y * 100}%`,
                         width: `${bbox.w * 100}%`,
                         height: `${bbox.h * 100}%`,
-                        border: "2px solid var(--accent)",
-                        boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.18)",
+                        border: `2px solid ${boxIdx === 0 ? "var(--accent)" : "#f59e0b"}`,
+                        boxShadow: boxIdx === 0 ? "0 0 0 9999px rgb(0 0 0 / 0.18)" : "none",
                       }}
                     />
-                  )}
+                  ))}
                   <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white">
                     {idx === 0 ? "Frame A" : "Frame B"}
                   </span>
@@ -454,7 +467,7 @@ const PersonComparisonSection: React.FC<{
                     {timestamp}
                   </button>
                   <span className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                    {idx === 0 ? "Earlier state" : "Later state"}
+                    {frame.label || (idx === 0 ? "Earlier state" : "Later state")}
                   </span>
                 </div>
               </div>
