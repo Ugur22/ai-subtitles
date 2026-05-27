@@ -1533,16 +1533,23 @@ async def _handle_person_comparison(
         provider = await _get_chat_provider(request, "grok")
         provider_name = "grok"
 
+    system_message = (
+        "You compare two video frames of the same tagged person. "
+        "Focus on visible evidence only and be explicit about uncertainty. "
+        "Compare exactly these axes: emotion/facial expression, physical appearance "
+        "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
+        "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
+    )
+    if chat_request.custom_instructions:
+        system_message += (
+            "\n\nUser's custom instructions (follow these preferences):\n"
+            f"{chat_request.custom_instructions}"
+        )
+
     messages = [
         {
             "role": "system",
-            "content": (
-                "You compare two video frames of the same tagged person. "
-                "Focus on visible evidence only and be explicit about uncertainty. "
-                "Compare exactly these axes: emotion/facial expression, physical appearance "
-                "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
-                "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
-            ),
+            "content": system_message,
         },
         {
             "role": "user",
