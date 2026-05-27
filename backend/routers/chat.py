@@ -1339,7 +1339,7 @@ def _load_face_tag_appearances(
         client = get_supabase()
         result = (
             client.table("face_tags")
-            .select("screenshot_url,bbox,embedding")
+            .select("screenshot_url,bbox_x,bbox_y,bbox_w,bbox_h,embedding")
             .eq("video_hash", video_hash)
             .eq("speaker_name", person_name)
             .execute()
@@ -1351,13 +1351,21 @@ def _load_face_tag_appearances(
                 continue
             face_embedding = _parse_vector(row.get("embedding"))
             start = _timestamp_from_screenshot_url(screenshot_url)
+            bbox = None
+            if all(row.get(key) is not None for key in ("bbox_x", "bbox_y", "bbox_w", "bbox_h")):
+                bbox = {
+                    "x": float(row.get("bbox_x")),
+                    "y": float(row.get("bbox_y")),
+                    "w": float(row.get("bbox_w")),
+                    "h": float(row.get("bbox_h")),
+                }
             appearances.append({
                 "image_embedding_id": f"face_tag_{idx}",
                 "start_time": start,
                 "end_time": start + 1.0,
                 "speaker": person_name,
                 "screenshot_url": _fresh_screenshot_url(screenshot_url),
-                "bbox": row.get("bbox"),
+                "bbox": bbox,
                 "face_embedding": face_embedding,
                 "scene_embedding": None,
                 "similarity": (
