@@ -1225,11 +1225,12 @@ def _chunks(values: list[Any], size: int) -> list[list[Any]]:
 async def _load_comparison_presence_rows(client, video_hash: str, image_ids: list[str]) -> tuple[list[dict], list[dict]]:
     """
     Load face/image rows for comparison matches in small batches.
-    Large PostgREST in_(...) filters can exceed Cloudflare URL limits.
+    Keep batches small: each face row carries a large embedding, and Supabase/Cloudflare
+    can reject or terminate larger PostgREST responses.
     """
     face_rows: list[dict] = []
     image_rows: list[dict] = []
-    for batch in _chunks(image_ids, 75):
+    for batch in _chunks(image_ids, 20):
         face_response, image_response = await asyncio.gather(
             _run_in_executor(
                 lambda ids=batch: client.table("image_face_presence")
@@ -1786,12 +1787,6 @@ def _select_timeline_candidates(
             return list(pair)
         return []
 
-    pool = sorted(
-        with_url,
-        key=lambda row: float(row.get("similarity") or 0.0),
-        reverse=True,
-    )[: min(60, len(with_url))]
-
     times = [float(row.get("start_time") or 0.0) for row in with_url]
     t_min = min(times)
     t_max = max(times)
@@ -1803,7 +1798,7 @@ def _select_timeline_candidates(
 
     picks_by_bucket: dict[int, dict] = {}
     span = max(t_max - t_min, 1e-6)
-    for row in pool:
+    for row in with_url:
         t = float(row.get("start_time") or 0.0)
         # Map t into [0, bucket_count); clamp the upper bound exactly into the last bucket.
         idx = int(((t - t_min) / span) * bucket_count)
