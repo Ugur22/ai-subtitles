@@ -100,6 +100,22 @@ class ImageEmbeddingService:
             print(f"[ImageEmbedding] Failed to download image from {url}: {e}")
             return None
 
+    def _download_gcs_path_to_temp(self, gcs_path: str) -> Optional[str]:
+        """Download a GCS object directly with service-account credentials."""
+        try:
+            from services.gcs_service import GCSService
+
+            suffix = os.path.splitext(gcs_path.split("?", 1)[0])[1] or ".jpg"
+            bucket = GCSService._get_bucket()
+            blob = bucket.blob(gcs_path)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.close()
+            blob.download_to_filename(tmp.name)
+            return tmp.name
+        except Exception as e:
+            print(f"[ImageEmbedding] Failed to download GCS object {gcs_path}: {e}")
+            return None
+
     def _generate_embedding(self, image_path: str) -> Optional[List[float]]:
         """
         Generate CLIP embedding for a single image
@@ -330,19 +346,18 @@ class ImageEmbeddingService:
             screenshot_url = row.get('screenshot_url')
             if not screenshot_url:
                 continue
+            local_path = None
             try:
                 from config import settings as _settings
                 if _settings.ENABLE_GCS_UPLOADS:
                     from services.gcs_service import gcs_service
                     gcs_path = gcs_service.extract_gcs_path_from_signed_url(screenshot_url)
                     if gcs_path:
-                        screenshot_url = gcs_service.generate_download_signed_url(
-                            gcs_path,
-                            expiry_seconds=_settings.GCS_SCREENSHOT_URL_EXPIRY,
-                        )
+                        local_path = self._download_gcs_path_to_temp(gcs_path)
             except Exception as e:
-                print(f"[ImageEmbedding] Screenshot URL refresh skipped for face backfill: {e}")
-            local_path = self._download_image_to_temp(screenshot_url)
+                print(f"[ImageEmbedding] GCS direct download setup skipped for face backfill: {e}")
+            if not local_path:
+                local_path = self._download_image_to_temp(screenshot_url)
             if not local_path:
                 continue
             if local_path.startswith(tempfile.gettempdir()):
@@ -407,10 +422,10 @@ class ImageEmbeddingService:
                 ).eq('video_hash', video_hash).execute()
                 count = count_result.count if count_result.count else len(existing.data)
                 print(f"[ImageEmbedding] Video {video_hash} already has {count} indexed images")
-                try:
-                    self.index_face_presence_for_video(video_hash, force_reindex=False)
-                except Exception as e:
-                    print(f"[ImageEmbedding] Face presence catch-up failed (non-critical): {e}")
+                print(
+                    "[ImageEmbedding] Face presence catch-up skipped in image indexing path; "
+                    "use /api/jobs/backfill-face-presence for background backfill."
+                )
                 return count
 
         # Upsert on (video_hash, segment_id) overwrites rows in place, so we intentionally
