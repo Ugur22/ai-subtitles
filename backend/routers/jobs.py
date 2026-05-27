@@ -389,6 +389,18 @@ async def get_job_status(
     try:
         result_json = job.get('result_json')
 
+        # Re-sign per-segment screenshot URLs before responding. V4 IAM URLs cap
+        # at 7 days; the daily refresh-screenshot-urls cron keeps DB URLs fresh,
+        # but this handler is the user-visible read path so we also self-heal
+        # here. Runs in an executor to keep N IAM signBlob calls off the loop.
+        # Not added to list_jobs — that path's bulk refresh caused 504s.
+        if result_json and settings.ENABLE_GCS_UPLOADS:
+            try:
+                from services.gcs_service import maybe_refresh_segment_urls
+                await _run_in_executor(maybe_refresh_segment_urls, result_json)
+            except Exception:
+                logger.exception("[Jobs] per-request segment URL refresh failed for job %s", job_id)
+
         # Map database fields to response model
         return JobStatusResponse(
             job_id=job['id'],

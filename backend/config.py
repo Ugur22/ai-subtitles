@@ -146,6 +146,12 @@ class Settings(BaseSettings):
     # Leave empty to disable password protection
     APP_PASSWORD_HASH: Optional[str] = os.getenv("APP_PASSWORD_HASH")
 
+    # Internal service-to-service key. Cloud Scheduler (refresh-screenshot-urls,
+    # check-stale) sends this in the X-Internal-Key header so it can hit
+    # @require_admin endpoints without a Supabase session JWT. Leave empty to
+    # disable the bypass.
+    INTERNAL_API_KEY: Optional[str] = os.getenv("INTERNAL_API_KEY")
+
     # Cloud Run Worker Job (background pipeline lives here, not in this Service)
     WORKER_JOB_PROJECT: str = os.getenv("WORKER_JOB_PROJECT", "ai-subs-poc")
     WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
