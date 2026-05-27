@@ -1468,6 +1468,48 @@ def _select_cross_state_pair(
     return tuple(sorted(best_pair, key=lambda row: float(row.get("start_time") or 0.0)))
 
 
+def _select_boundary_state_pair(
+    appearances: list[dict],
+    video_duration: float,
+) -> Optional[tuple[dict, dict]]:
+    """For explicit beginning/end wording, use earliest/latest reliable appearances."""
+    reliable = sorted(
+        appearances,
+        key=lambda row: row.get("similarity", 0.0),
+        reverse=True,
+    )[:200]
+    by_time = sorted(reliable, key=lambda row: float(row.get("start_time") or 0.0))
+    if len(by_time) < 2:
+        return None
+
+    earliest_time = float(by_time[0].get("start_time") or 0.0)
+    latest_time = float(by_time[-1].get("start_time") or 0.0)
+    boundary_window = max(180.0, video_duration * 0.05)
+    early = [
+        row for row in by_time
+        if float(row.get("start_time") or 0.0) <= earliest_time + boundary_window
+    ]
+    late = [
+        row for row in by_time
+        if float(row.get("start_time") or 0.0) >= latest_time - boundary_window
+    ]
+    if not early or not late:
+        group_size = min(12, max(2, len(by_time) // 5))
+        early = by_time[:group_size]
+        late = by_time[-group_size:]
+
+    first = max(early, key=lambda row: row.get("similarity", 0.0))
+    second = max(late, key=lambda row: row.get("similarity", 0.0))
+    if first is second:
+        return None
+    print(
+        "[Chat] Face comparison selected boundary state pair "
+        f"early={float(first.get('start_time') or 0.0):.2f}s "
+        f"late={float(second.get('start_time') or 0.0):.2f}s"
+    )
+    return tuple(sorted((first, second), key=lambda row: float(row.get("start_time") or 0.0)))
+
+
 def _select_state_pair(
     appearances: list[dict],
     video_duration: float,
@@ -1485,6 +1527,10 @@ def _select_state_pair(
     )[:80 if mode in ("early_late", "temporal") else 30]
 
     if mode == "early_late":
+        pair = _select_boundary_state_pair(appearances, video_duration)
+        if pair:
+            return pair
+
         early_cutoff = video_duration * 0.35
         late_cutoff = video_duration * 0.65
         early = [row for row in candidates if float(row.get("start_time") or 0.0) <= early_cutoff]
