@@ -287,6 +287,7 @@ from models import (
     IndexImagesResponse,
     ChatRequest,
     ChatResponse,
+    ComparisonSwapRequest,
     TestLLMRequest,
     TestLLMResponse,
     SearchImagesRequest,
@@ -1716,12 +1717,135 @@ def _comparison_frame_metadata(appearance: dict) -> dict:
     return metadata
 
 
+def _timeline_frame_metadata(appearance: dict) -> dict:
+    start = float(appearance.get("start_time") or 0.0)
+    metadata = {
+        "url": appearance.get("screenshot_url"),
+        "timestamp_seconds": start,
+        "timestamp": _format_segment_time(start),
+        "bbox": appearance.get("bbox"),
+    }
+    similarity = appearance.get("similarity")
+    if similarity is not None:
+        try:
+            metadata["similarity"] = float(similarity)
+        except (TypeError, ValueError):
+            pass
+    return metadata
+
+
+def _select_timeline_candidates(
+    appearances: list[dict],
+    pair: Optional[tuple[dict, dict]],
+    video_duration: float,
+    target_count: int = 8,
+) -> list[dict]:
+    """
+    Pick a small set of evenly-spread, high-quality appearances for the timeline strip.
+
+    Returns appearance dicts (NOT yet projected to metadata), sorted by start_time.
+    Force-includes both Frame A and Frame B from `pair` so the strip always shows the
+    active pair in context. Enrichment fields (people/bboxes/label) on the pair are
+    preserved.
+    """
+    with_url = [
+        appearance for appearance in (appearances or [])
+        if appearance.get("screenshot_url")
+    ]
+    if not with_url:
+        if pair:
+            return list(pair)
+        return []
+
+    pool = sorted(
+        with_url,
+        key=lambda row: float(row.get("similarity") or 0.0),
+        reverse=True,
+    )[: min(60, len(with_url))]
+
+    times = [float(row.get("start_time") or 0.0) for row in with_url]
+    t_min = min(times)
+    t_max = max(times)
+    distinct_timestamps = {round(t, 2) for t in times}
+
+    bucket_count = min(target_count, len(distinct_timestamps))
+    if bucket_count <= 0:
+        bucket_count = 1
+
+    picks_by_bucket: dict[int, dict] = {}
+    span = max(t_max - t_min, 1e-6)
+    for row in pool:
+        t = float(row.get("start_time") or 0.0)
+        # Map t into [0, bucket_count); clamp the upper bound exactly into the last bucket.
+        idx = int(((t - t_min) / span) * bucket_count)
+        if idx >= bucket_count:
+            idx = bucket_count - 1
+        elif idx < 0:
+            idx = 0
+        existing = picks_by_bucket.get(idx)
+        if (
+            existing is None
+            or float(row.get("similarity") or 0.0) > float(existing.get("similarity") or 0.0)
+        ):
+            picks_by_bucket[idx] = row
+
+    picks = list(picks_by_bucket.values())
+
+    # Enforce minimum spacing between picks.
+    min_gap = max(2.0, video_duration * 0.01) if video_duration else 2.0
+    picks.sort(key=lambda row: float(row.get("start_time") or 0.0))
+    filtered: list[dict] = []
+    for row in picks:
+        if not filtered:
+            filtered.append(row)
+            continue
+        prev = filtered[-1]
+        gap = abs(float(row.get("start_time") or 0.0) - float(prev.get("start_time") or 0.0))
+        if gap < min_gap:
+            # Keep the higher-similarity of the two.
+            if float(row.get("similarity") or 0.0) > float(prev.get("similarity") or 0.0):
+                filtered[-1] = row
+            continue
+        filtered.append(row)
+
+    # Force-include Frame A and Frame B. Replace the nearest pick by timestamp so we
+    # preserve the enriched pair (joint bboxes / labels) and don't grow past the target.
+    def _force_include(target: dict) -> None:
+        target_t = float(target.get("start_time") or 0.0)
+        target_key = _comparison_appearance_key(target)
+        for i, row in enumerate(filtered):
+            if _comparison_appearance_key(row) == target_key:
+                filtered[i] = target  # replace with enriched copy
+                return
+        if not filtered:
+            filtered.append(target)
+            return
+        nearest_idx = min(
+            range(len(filtered)),
+            key=lambda i: abs(float(filtered[i].get("start_time") or 0.0) - target_t),
+        )
+        nearest = filtered[nearest_idx]
+        nearest_gap = abs(float(nearest.get("start_time") or 0.0) - target_t)
+        if nearest_gap < min_gap:
+            filtered[nearest_idx] = target
+        else:
+            filtered.append(target)
+
+    if pair:
+        _force_include(pair[0])
+        _force_include(pair[1])
+
+    filtered.sort(key=lambda row: float(row.get("start_time") or 0.0))
+    return filtered
+
+
 def _format_person_comparison_answer(
     person_name: str,
     frame_a: dict,
     frame_b: dict,
     prose: str,
     secondary_person_name: Optional[str] = None,
+    timeline_appearances: Optional[list[dict]] = None,
 ) -> str:
     metadata = {
         "person": person_name,
@@ -1730,6 +1854,12 @@ def _format_person_comparison_answer(
     }
     if secondary_person_name:
         metadata["secondary_person"] = secondary_person_name
+    if timeline_appearances:
+        metadata["timeline"] = [
+            _timeline_frame_metadata(appearance)
+            for appearance in timeline_appearances
+            if appearance.get("screenshot_url")
+        ]
     return (
         "## Person Comparison\n\n"
         "```json\n"
@@ -1737,6 +1867,112 @@ def _format_person_comparison_answer(
         "```\n\n"
         f"{(prose or '').strip()}"
     )
+
+
+async def _run_person_comparison_llm(
+    request: Request,
+    *,
+    person_name: str,
+    secondary_person_name: Optional[str],
+    frame_a_appearance: dict,
+    frame_b_appearance: dict,
+    question: str,
+    custom_instructions: Optional[str],
+    provider_name: Optional[str],
+    video_hash: str,
+    timeline_appearances: Optional[list[dict]] = None,
+) -> Dict:
+    """
+    Build the comparison prompt for the resolved pair, run the vision LLM, and return
+    the standard chat response shape. Shared by the auto-detect path and the swap endpoint.
+    """
+    frame_a = _comparison_frame_metadata(frame_a_appearance)
+    frame_b = _comparison_frame_metadata(frame_b_appearance)
+    transcript_context = _transcript_window_context(
+        video_hash,
+        [frame_a["timestamp_seconds"], frame_b["timestamp_seconds"]],
+        window_seconds=15.0,
+    )
+
+    provider = await _get_chat_provider(request, provider_name)
+    if not provider.supports_vision():
+        provider = await _get_chat_provider(request, "grok")
+        provider_name = "grok"
+
+    system_message = (
+        "You compare two video frames involving a tagged person. "
+        "Focus on visible evidence only and be explicit about uncertainty. "
+        "Compare exactly these axes: emotion/facial expression, physical appearance "
+        "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
+        "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
+    )
+    if secondary_person_name:
+        system_message += (
+            f" Frame A may be selected because it contains both {person_name} "
+            f"and {secondary_person_name}; do not claim the second person is present "
+            "in Frame B unless visibly shown or supported by the metadata."
+        )
+    if custom_instructions:
+        system_message += (
+            "\n\nUser's custom instructions (follow these preferences):\n"
+            f"{custom_instructions}"
+        )
+
+    user_message_parts = [
+        f"Question: {question}",
+        "",
+        f"Tagged person: {person_name}",
+    ]
+    if secondary_person_name:
+        user_message_parts.append(f"Additional tagged person requested: {secondary_person_name}")
+    if frame_a.get("label"):
+        user_message_parts.append(f"Frame A label: {frame_a.get('label')}")
+    if frame_b.get("label"):
+        user_message_parts.append(f"Frame B label: {frame_b.get('label')}")
+    if frame_a.get("people"):
+        user_message_parts.append(f"Frame A people: {', '.join(frame_a.get('people') or [])}")
+    if frame_b.get("people"):
+        user_message_parts.append(f"Frame B people: {', '.join(frame_b.get('people') or [])}")
+    user_message_parts.extend([
+        f"Frame A timestamp: [{frame_a['timestamp']}]",
+        f"Frame B timestamp: [{frame_b['timestamp']}]",
+        "",
+        f"Nearby transcript context:\n{transcript_context}",
+        "",
+        "Write a concise comparison. Use bullets grouped by the three requested axes, "
+        "then end with one sentence summarizing the biggest visible change.",
+    ])
+
+    messages = [
+        {
+            "role": "system",
+            "content": system_message,
+        },
+        {
+            "role": "user",
+            "content": "\n".join(user_message_parts),
+        },
+    ]
+    prose = await provider.generate_with_images(
+        messages,
+        image_paths=[frame_a["url"], frame_b["url"]],
+        temperature=0.3,
+        max_tokens=1200,
+    )
+
+    return {
+        "answer": _format_person_comparison_answer(
+            person_name,
+            frame_a,
+            frame_b,
+            prose,
+            secondary_person_name=secondary_person_name,
+            timeline_appearances=timeline_appearances,
+        ),
+        "sources": [],
+        "provider_used": provider_name or llm_manager.default_provider,
+        "video_hash": video_hash,
+    }
 
 
 async def _handle_person_comparison(
@@ -1804,94 +2040,20 @@ async def _handle_person_comparison(
             "video_hash": video_hash,
         }
 
-    first, second = pair
-    frame_a = _comparison_frame_metadata(first)
-    frame_b = _comparison_frame_metadata(second)
-    transcript_context = _transcript_window_context(
-        video_hash,
-        [frame_a["timestamp_seconds"], frame_b["timestamp_seconds"]],
-        window_seconds=15.0,
+    timeline_appearances = _select_timeline_candidates(appearances, pair, video_duration)
+
+    return await _run_person_comparison_llm(
+        request,
+        person_name=intent.person_name,
+        secondary_person_name=intent.secondary_person_name,
+        frame_a_appearance=pair[0],
+        frame_b_appearance=pair[1],
+        question=chat_request.question,
+        custom_instructions=chat_request.custom_instructions,
+        provider_name=chat_request.provider,
+        video_hash=video_hash,
+        timeline_appearances=timeline_appearances,
     )
-
-    provider_name = chat_request.provider
-    provider = await _get_chat_provider(request, provider_name)
-    if not provider.supports_vision():
-        provider = await _get_chat_provider(request, "grok")
-        provider_name = "grok"
-
-    system_message = (
-        "You compare two video frames involving a tagged person. "
-        "Focus on visible evidence only and be explicit about uncertainty. "
-        "Compare exactly these axes: emotion/facial expression, physical appearance "
-        "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
-        "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
-    )
-    if intent.secondary_person_name:
-        system_message += (
-            f" Frame A may be selected because it contains both {intent.person_name} "
-            f"and {intent.secondary_person_name}; do not claim the second person is present "
-            "in Frame B unless visibly shown or supported by the metadata."
-        )
-    if chat_request.custom_instructions:
-        system_message += (
-            "\n\nUser's custom instructions (follow these preferences):\n"
-            f"{chat_request.custom_instructions}"
-        )
-
-    user_message_parts = [
-        f"Question: {chat_request.question}",
-        "",
-        f"Tagged person: {intent.person_name}",
-    ]
-    if intent.secondary_person_name:
-        user_message_parts.append(f"Additional tagged person requested: {intent.secondary_person_name}")
-    if frame_a.get("label"):
-        user_message_parts.append(f"Frame A label: {frame_a.get('label')}")
-    if frame_b.get("label"):
-        user_message_parts.append(f"Frame B label: {frame_b.get('label')}")
-    if frame_a.get("people"):
-        user_message_parts.append(f"Frame A people: {', '.join(frame_a.get('people') or [])}")
-    if frame_b.get("people"):
-        user_message_parts.append(f"Frame B people: {', '.join(frame_b.get('people') or [])}")
-    user_message_parts.extend([
-        f"Frame A timestamp: [{frame_a['timestamp']}]",
-        f"Frame B timestamp: [{frame_b['timestamp']}]",
-        "",
-        f"Nearby transcript context:\n{transcript_context}",
-        "",
-        "Write a concise comparison. Use bullets grouped by the three requested axes, "
-        "then end with one sentence summarizing the biggest visible change.",
-    ])
-
-    messages = [
-        {
-            "role": "system",
-            "content": system_message,
-        },
-        {
-            "role": "user",
-            "content": "\n".join(user_message_parts),
-        },
-    ]
-    prose = await provider.generate_with_images(
-        messages,
-        image_paths=[frame_a["url"], frame_b["url"]],
-        temperature=0.3,
-        max_tokens=1200,
-    )
-
-    return {
-        "answer": _format_person_comparison_answer(
-            intent.person_name,
-            frame_a,
-            frame_b,
-            prose,
-            secondary_person_name=intent.secondary_person_name,
-        ),
-        "sources": [],
-        "provider_used": provider_name or llm_manager.default_provider,
-        "video_hash": video_hash,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -3014,6 +3176,181 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@router.post(
+    "/chat/comparison/swap",
+    response_model=ChatResponse,
+    summary="Swap a frame in an active Person Comparison",
+    description=(
+        "Re-run the vision LLM comparison with a specific Frame A + Frame B pair. "
+        "Used by the timeline strip to swap Frame B (or A) while preserving the original "
+        "question, custom instructions, and joint-frame enrichment for multi-person comparisons."
+    ),
+    responses={
+        503: {"model": ErrorResponse, "description": "LLM features not available"},
+        404: {"model": ErrorResponse, "description": "Person or frame not found"},
+        422: {"model": ErrorResponse, "description": "No appearance found near requested timestamp"},
+        400: {"model": ErrorResponse, "description": "Invalid request"},
+    },
+)
+@require_auth
+async def swap_comparison_frame(
+    request: Request,
+    swap_request: ComparisonSwapRequest,
+) -> Dict:
+    """Re-run a Person Comparison with a caller-specified pair of frames."""
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    from middleware.quota import check_can_chat
+    from services.usage_meter import record_chat_message
+    check_can_chat(getattr(request.state, "profile", None))
+    _quota_user_id = (request.state.profile or {}).get("id") if hasattr(request.state, "profile") else None
+
+    from model_preloader import models_ready, wait_for_models
+    if not models_ready():
+        if not wait_for_models(timeout=5.0):
+            raise HTTPException(
+                status_code=503,
+                detail="Models are still loading. Please try again in about 30 seconds.",
+            )
+
+    if not swap_request.question:
+        raise HTTPException(status_code=400, detail="question is required")
+    if not swap_request.person:
+        raise HTTPException(status_code=400, detail="person is required")
+
+    video_hash = swap_request.video_hash
+
+    try:
+        appearances = await _load_person_appearances_with_fallback(video_hash, swap_request.person)
+        if not appearances:
+            # Last-ditch fallback to manual face-tag appearances.
+            reference_embedding = _load_speaker_reference_embedding(video_hash, swap_request.person)
+            if reference_embedding:
+                appearances = _load_face_tag_appearances(
+                    video_hash, swap_request.person, reference_embedding
+                )
+
+        if not appearances:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No face appearances found for '{swap_request.person}'.",
+            )
+
+        def _nearest(target_seconds: float) -> Optional[dict]:
+            best = None
+            best_gap = float("inf")
+            for row in appearances:
+                t = float(row.get("start_time") or 0.0)
+                gap = abs(t - target_seconds)
+                if gap < best_gap:
+                    best = row
+                    best_gap = gap
+            # Tolerance: within 2 seconds OR within one frame-sample window.
+            if best is None or best_gap > 2.0:
+                return None
+            return best
+
+        frame_a_appearance = _nearest(swap_request.frame_a_seconds)
+        frame_b_appearance = _nearest(swap_request.frame_b_seconds)
+
+        if frame_a_appearance is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No appearance of '{swap_request.person}' within 2s of "
+                    f"frame_a_seconds={swap_request.frame_a_seconds}."
+                ),
+            )
+        if frame_b_appearance is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No appearance of '{swap_request.person}' within 2s of "
+                    f"frame_b_seconds={swap_request.frame_b_seconds}."
+                ),
+            )
+
+        if _same_comparison_frame(frame_a_appearance, frame_b_appearance):
+            raise HTTPException(
+                status_code=400,
+                detail="Frame A and Frame B resolve to the same appearance; pick a different moment.",
+            )
+
+        video_duration = _video_duration_seconds(video_hash, appearances)
+
+        # For multi-person comparisons, recover joint-frame enrichment on Frame A if it
+        # actually contains the secondary person too. Frame B stays primary-only by design.
+        if swap_request.secondary_person:
+            secondary_appearances = await _load_person_appearances_with_fallback(
+                video_hash, swap_request.secondary_person
+            )
+            video_duration = _video_duration_seconds(
+                video_hash, [*appearances, *secondary_appearances]
+            )
+            joint_match = None
+            for secondary in secondary_appearances:
+                if _same_comparison_frame(frame_a_appearance, secondary):
+                    joint_match = secondary
+                    break
+            if joint_match is not None:
+                frame_a_appearance = _with_comparison_people(
+                    frame_a_appearance,
+                    [
+                        (swap_request.person, frame_a_appearance.get("bbox")),
+                        (swap_request.secondary_person, joint_match.get("bbox")),
+                    ],
+                    f"{swap_request.person} with {swap_request.secondary_person}",
+                )
+            frame_b_appearance = _with_comparison_people(
+                frame_b_appearance,
+                [(swap_request.person, frame_b_appearance.get("bbox"))],
+                f"{swap_request.person} later",
+            )
+
+        timeline_appearances = _select_timeline_candidates(
+            appearances,
+            (frame_a_appearance, frame_b_appearance),
+            video_duration,
+        )
+
+        try:
+            response = await _run_person_comparison_llm(
+                request,
+                person_name=swap_request.person,
+                secondary_person_name=swap_request.secondary_person,
+                frame_a_appearance=frame_a_appearance,
+                frame_b_appearance=frame_b_appearance,
+                question=swap_request.question,
+                custom_instructions=swap_request.custom_instructions,
+                provider_name=swap_request.provider,
+                video_hash=video_hash,
+                timeline_appearances=timeline_appearances,
+            )
+        except Exception as e:
+            print(f"[chat] comparison swap provider generation failed: {type(e).__name__}: {e}")
+            raise HTTPException(
+                status_code=_provider_http_status(e),
+                detail=_provider_error_message(e, swap_request.provider),
+                headers={"X-LLM-Error-Code": _classify_provider_error(e)},
+            )
+
+        try:
+            record_chat_message(_quota_user_id, llm_tokens=0)
+        except Exception as _meter_err:
+            print(f"[chat] meter failed: {_meter_err}")
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in comparison swap: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Comparison swap failed: {str(e)}")
 
 
 @router.post(
