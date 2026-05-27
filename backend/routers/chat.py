@@ -1218,6 +1218,39 @@ def _video_duration_seconds(video_hash: str, appearances: list[dict]) -> float:
     return max(duration, 1.0)
 
 
+def _chunks(values: list[Any], size: int) -> list[list[Any]]:
+    return [values[i:i + size] for i in range(0, len(values), size)]
+
+
+async def _load_comparison_presence_rows(client, video_hash: str, image_ids: list[str]) -> tuple[list[dict], list[dict]]:
+    """
+    Load face/image rows for comparison matches in small batches.
+    Large PostgREST in_(...) filters can exceed Cloudflare URL limits.
+    """
+    face_rows: list[dict] = []
+    image_rows: list[dict] = []
+    for batch in _chunks(image_ids, 75):
+        face_response, image_response = await asyncio.gather(
+            _run_in_executor(
+                lambda ids=batch: client.table("image_face_presence")
+                .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
+                .eq("video_hash", video_hash)
+                .in_("image_embedding_id", ids)
+                .execute()
+            ),
+            _run_in_executor(
+                lambda ids=batch: client.table("image_embeddings")
+                .select("id,start_time,end_time,speaker,screenshot_url,embedding")
+                .eq("video_hash", video_hash)
+                .in_("id", ids)
+                .execute()
+            ),
+        )
+        face_rows.extend(face_response.data or [])
+        image_rows.extend(image_response.data or [])
+    return face_rows, image_rows
+
+
 async def _load_person_appearances(video_hash: str, person_name: str) -> list[dict]:
     """Find indexed face appearances for a manually tagged person."""
     from config import settings
@@ -1248,22 +1281,18 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
     if not image_ids:
         return []
 
-    face_response, image_response = await asyncio.gather(
-        _run_in_executor(
-            lambda: client.table("image_face_presence")
-            .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
-            .eq("video_hash", video_hash)
-            .in_("image_embedding_id", image_ids)
-            .execute()
-        ),
-        _run_in_executor(
-            lambda: client.table("image_embeddings")
-            .select("id,start_time,end_time,speaker,screenshot_url,embedding")
-            .eq("video_hash", video_hash)
-            .in_("id", image_ids)
-            .execute()
-        ),
-    )
+    try:
+        face_rows, image_rows = await _load_comparison_presence_rows(
+            client,
+            video_hash,
+            image_ids,
+        )
+    except Exception as e:
+        print(
+            f"[Chat] Face comparison presence row lookup failed for "
+            f"'{person_name}' ({len(image_ids)} ids): {e}"
+        )
+        return []
 
     match_similarity = {
         str(row.get("image_embedding_id")): float(row.get("similarity") or 0.0)
@@ -1271,12 +1300,12 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
     }
     images_by_id = {
         str(row.get("id")): row
-        for row in image_response.data or []
+        for row in image_rows
         if row.get("id")
     }
 
     best_faces: dict[str, dict] = {}
-    for row in face_response.data or []:
+    for row in face_rows:
         image_id = str(row.get("image_embedding_id") or "")
         face_embedding = _parse_vector(row.get("face_embedding"))
         if not image_id:
