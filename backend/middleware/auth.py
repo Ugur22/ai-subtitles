@@ -6,11 +6,13 @@ Implements token verification caching (5 min TTL) for performance.
 Uses ThreadPoolExecutor to prevent blocking the event loop during GPU processing.
 """
 import asyncio
+import hmac
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import Request, HTTPException, Response
+from config import settings
 from services.supabase_service import SupabaseService
 
 # Timeout for Supabase API calls to prevent indefinite hanging
@@ -398,7 +400,10 @@ def require_admin(func):
     """
     Decorator to require admin authentication for an endpoint.
 
-    Combines require_auth with admin check from user_profiles.is_admin.
+    Two auth paths are accepted:
+      1. Supabase session JWT + user_profiles.is_admin = true (via @require_auth)
+      2. X-Internal-Key header matching settings.INTERNAL_API_KEY — used by
+         Cloud Scheduler / internal callers that can't hold a Supabase session.
 
     Usage:
         @router.delete("/admin/users/{user_id}")
@@ -410,10 +415,11 @@ def require_admin(func):
         HTTPException 401: If not authenticated
         HTTPException 403: If not admin or email not verified
     """
+    # Build the normal Supabase-auth-protected path once at decoration time so
+    # the bypass branch doesn't re-wrap on every request.
     @wraps(func)
     @require_auth
-    async def wrapper(request: Request, *args, **kwargs):
-        # Check admin status from profile
+    async def _admin_inner(request: Request, *args, **kwargs):
         profile = request.state.profile
 
         if not profile.get("is_admin", False):
@@ -423,6 +429,19 @@ def require_admin(func):
             )
 
         return await func(request, *args, **kwargs)
+
+    @wraps(func)
+    async def wrapper(request: Request, *args, **kwargs):
+        internal_key = settings.INTERNAL_API_KEY
+        provided_key = request.headers.get("X-Internal-Key")
+        if internal_key and provided_key and hmac.compare_digest(provided_key, internal_key):
+            # Synthesize an admin-equivalent context for downstream handlers
+            # that read request.state.user / request.state.profile.
+            request.state.user = {"id": "__internal__", "email": "internal@system"}
+            request.state.profile = {"is_admin": True, "email": "internal@system"}
+            return await func(request, *args, **kwargs)
+
+        return await _admin_inner(request, *args, **kwargs)
 
     return wrapper
 

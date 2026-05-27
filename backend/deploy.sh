@@ -142,7 +142,7 @@ deploy_to_cloud_run() {
         --port="${PORT}" \
         --allow-unauthenticated \
         --set-env-vars="^@^CORS_ORIGINS=${CORS_ORIGINS}@ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@PUBLIC_APP_URL=${PUBLIC_APP_URL}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
-        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@APP_PASSWORD_HASH=app-password-hash:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest@STRIPE_SECRET_KEY=stripe-secret-key:latest@STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest@STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"; then
+        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@APP_PASSWORD_HASH=app-password-hash:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest@STRIPE_SECRET_KEY=stripe-secret-key:latest@STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest@STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest@INTERNAL_API_KEY=internal-api-key:latest"; then
         print_info "Service deployment successful"
     else
         print_error "Service deployment failed"
