@@ -69,6 +69,34 @@ class ChatRequest(BaseModel):
     }
 
 
+class ComparisonSwapRequest(BaseModel):
+    """Request to re-run a Person Comparison with a specific pair of frames."""
+    video_hash: str = Field(..., description="Video hash for the comparison")
+    person: str = Field(..., description="Primary tagged person name (the comparison anchor)")
+    secondary_person: Optional[str] = Field(
+        None,
+        description="Secondary tagged person if Frame A is a joint frame containing both people",
+    )
+    frame_a_seconds: float = Field(..., description="Start time of Frame A in seconds (the fixed anchor)")
+    frame_b_seconds: float = Field(..., description="Start time of the new Frame B in seconds")
+    question: str = Field(..., description="Original user question to keep prompt context consistent")
+    custom_instructions: Optional[str] = Field(None, description="Optional user style/format instructions")
+    provider: Optional[str] = Field(None, description="Override LLM provider (defaults to the chat default)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_hash": "abc123",
+                "person": "Concetta",
+                "secondary_person": "Santino",
+                "frame_a_seconds": 1084.0,
+                "frame_b_seconds": 3871.0,
+                "question": "compare concetta before and after the affair",
+            }
+        }
+    }
+
+
 class ChatResponse(BaseModel):
     """Response from chat with video"""
     answer: str = Field(..., description="LLM's answer to the question")

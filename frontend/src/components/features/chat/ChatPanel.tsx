@@ -19,6 +19,7 @@ import {
 } from "../../../services/api";
 import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
 import { useAuth } from "../../../hooks/useAuth";
+import { ComparisonTimelineStrip } from "./ComparisonTimelineStrip";
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
@@ -333,11 +334,20 @@ interface ComparisonFrame {
   people?: string[];
 }
 
+interface TimelineFrame {
+  url: string;
+  timestamp: string;
+  timestamp_seconds: number;
+  bbox?: { x: number; y: number; w: number; h: number } | null;
+  similarity?: number;
+}
+
 interface PersonComparisonData {
   person?: string;
   secondary_person?: string;
   frame_a?: ComparisonFrame;
   frame_b?: ComparisonFrame;
+  timeline?: TimelineFrame[];
 }
 
 function parsePersonComparisonSection(body: string): {
@@ -365,7 +375,22 @@ const PersonComparisonSection: React.FC<{
   components: Components;
   onTimestampClick?: (ts: string) => void;
   onOpenScreenshots?: (sources: Source[], index: number) => void;
-}> = ({ body, components, onTimestampClick, onOpenScreenshots }) => {
+  isSwapping?: boolean;
+  pendingBSeconds?: number | null;
+  swapError?: string;
+  onSwapFrame?: (meta: PersonComparisonData, newB: TimelineFrame) => void;
+  onDismissSwapError?: () => void;
+}> = ({
+  body,
+  components,
+  onTimestampClick,
+  onOpenScreenshots,
+  isSwapping = false,
+  pendingBSeconds = null,
+  swapError,
+  onSwapFrame,
+  onDismissSwapError,
+}) => {
   const { metadata, prose } = parsePersonComparisonSection(body);
   const frames = [metadata?.frame_a, metadata?.frame_b].filter(
     (frame): frame is ComparisonFrame => !!frame?.url,
@@ -391,6 +416,17 @@ const PersonComparisonSection: React.FC<{
         : undefined,
   }));
 
+  const activeASeconds = Number(metadata?.frame_a?.timestamp_seconds || 0);
+  const activeBSeconds = Number(metadata?.frame_b?.timestamp_seconds || 0);
+  const timeline = metadata?.timeline || [];
+  const showStrip =
+    onSwapFrame !== undefined &&
+    timeline.length > 0 &&
+    !!metadata?.frame_a &&
+    !!metadata?.frame_b &&
+    // hide if the strip would only show the inert A+B
+    timeline.length > 2;
+
   return (
     <section className="my-3 border-y py-3" style={{ borderColor: "var(--border-subtle)" }}>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -413,15 +449,27 @@ const PersonComparisonSection: React.FC<{
               : frame.bbox
                 ? [{ person: metadata?.person, bbox: frame.bbox }]
                 : [];
+            const isFrameB = idx === 1;
             return (
               <div
                 key={`${frame.url}-${idx}`}
-                className="group overflow-hidden rounded-lg border"
+                className="group relative overflow-hidden rounded-lg border"
                 style={{
                   borderColor: "var(--border-default)",
                   background: "var(--bg-overlay)",
                 }}
               >
+                {isFrameB && isSwapping && (
+                  <div
+                    aria-hidden
+                    className="absolute left-0 right-0 top-0 z-10 h-0.5 overflow-hidden"
+                  >
+                    <div
+                      className="h-full animate-pulse"
+                      style={{ background: "var(--accent)", width: "100%" }}
+                    />
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => onOpenScreenshots?.(sources, idx)}
@@ -482,8 +530,25 @@ const PersonComparisonSection: React.FC<{
         </div>
       )}
 
+      {showStrip && metadata && (
+        <ComparisonTimelineStrip
+          frames={timeline}
+          activeASeconds={activeASeconds}
+          activeBSeconds={activeBSeconds}
+          person={metadata.person || "Person"}
+          isSwapping={isSwapping}
+          pendingBSeconds={pendingBSeconds}
+          swapError={swapError}
+          onSwap={(frame) => onSwapFrame?.(metadata, frame)}
+          onDismissError={onDismissSwapError}
+        />
+      )}
+
       {prose && (
-        <div className="prose prose-sm mt-3 max-w-none">
+        <div
+          className="prose prose-sm mt-3 max-w-none transition-opacity"
+          style={{ opacity: isSwapping ? 0.4 : 1 }}
+        >
           <ReactMarkdown components={components}>{prose}</ReactMarkdown>
         </div>
       )}
@@ -641,6 +706,9 @@ interface Message {
   errorDetail?: string;
   retryQuestion?: string;
   isStreaming?: boolean;
+  isSwapping?: boolean;
+  pendingBSeconds?: number | null;
+  swapError?: string;
 }
 
 type PhaseId =
@@ -831,7 +899,22 @@ const AssistantMessageContent: React.FC<{
   role: "user" | "assistant";
   onTimestampClick?: (ts: string) => void;
   onOpenScreenshots?: (sources: Source[], index: number) => void;
-}> = ({ content, role, onTimestampClick, onOpenScreenshots }) => {
+  isSwapping?: boolean;
+  pendingBSeconds?: number | null;
+  swapError?: string;
+  onSwapFrame?: (meta: PersonComparisonData, newB: TimelineFrame) => void;
+  onDismissSwapError?: () => void;
+}> = ({
+  content,
+  role,
+  onTimestampClick,
+  onOpenScreenshots,
+  isSwapping,
+  pendingBSeconds,
+  swapError,
+  onSwapFrame,
+  onDismissSwapError,
+}) => {
   const components = useMemo(
     () => buildMarkdownComponents(onTimestampClick),
     [onTimestampClick],
@@ -890,6 +973,11 @@ const AssistantMessageContent: React.FC<{
               components={components}
               onTimestampClick={onTimestampClick}
               onOpenScreenshots={onOpenScreenshots}
+              isSwapping={isSwapping}
+              pendingBSeconds={pendingBSeconds}
+              swapError={swapError}
+              onSwapFrame={onSwapFrame}
+              onDismissSwapError={onDismissSwapError}
             />
           );
         }
@@ -1561,6 +1649,98 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return false;
   };
 
+  const swapControllerRef = useRef<AbortController | null>(null);
+
+  const swapComparisonFrame = async (
+    messageIndex: number,
+    meta: PersonComparisonData,
+    newB: TimelineFrame,
+    originalQuestion: string,
+  ) => {
+    if (!videoHash) return;
+    if (!meta.person || !meta.frame_a || !meta.frame_b) return;
+    if (typeof meta.frame_a.timestamp_seconds !== "number") return;
+
+    swapControllerRef.current?.abort();
+    const controller = new AbortController();
+    swapControllerRef.current = controller;
+
+    setMessages((prev) =>
+      prev.map((m, i) =>
+        i === messageIndex
+          ? {
+              ...m,
+              isSwapping: true,
+              pendingBSeconds: newB.timestamp_seconds,
+              swapError: undefined,
+            }
+          : m,
+      ),
+    );
+
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/api/chat/comparison/swap`,
+        {
+          video_hash: videoHash,
+          person: meta.person,
+          secondary_person: meta.secondary_person,
+          frame_a_seconds: meta.frame_a.timestamp_seconds,
+          frame_b_seconds: newB.timestamp_seconds,
+          question: originalQuestion,
+          custom_instructions: customInstructions || undefined,
+          provider: selectedProvider,
+        },
+        {
+          signal: controller.signal,
+          timeout: 180000,
+          withCredentials: true,
+        },
+      );
+
+      if (controller.signal.aborted) return;
+
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === messageIndex
+            ? {
+                ...m,
+                content: response.data.answer,
+                isSwapping: false,
+                pendingBSeconds: null,
+                swapError: undefined,
+              }
+            : m,
+        ),
+      );
+    } catch (error: any) {
+      if (axios.isCancel(error) || error?.name === "CanceledError" || error?.name === "AbortError") {
+        return;
+      }
+      const { message } = getFriendlyErrorMessage(error);
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === messageIndex
+            ? {
+                ...m,
+                isSwapping: false,
+                pendingBSeconds: null,
+                swapError: message,
+              }
+            : m,
+        ),
+      );
+    }
+  };
+
+  const dismissSwapError = (messageIndex: number) => {
+    setMessages((prev) =>
+      prev.map((m, i) =>
+        i === messageIndex ? { ...m, swapError: undefined } : m,
+      ),
+    );
+  };
+
   const sendMessage = async (
     messageText?: string | React.MouseEvent,
     options?: { retry?: boolean }
@@ -2224,6 +2404,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           currentIndex,
                           sources,
                         });
+                      }}
+                      isSwapping={message.isSwapping}
+                      pendingBSeconds={message.pendingBSeconds}
+                      swapError={message.swapError}
+                      onSwapFrame={
+                        message.role === "assistant"
+                          ? (meta, newB) => {
+                              const messageIndex = messages.indexOf(message);
+                              if (messageIndex < 0) return;
+                              const question =
+                                message.original_question ||
+                                (messageIndex > 0 && messages[messageIndex - 1]?.role === "user"
+                                  ? messages[messageIndex - 1].content
+                                  : "");
+                              if (!question) return;
+                              swapComparisonFrame(messageIndex, meta, newB, question);
+                            }
+                          : undefined
+                      }
+                      onDismissSwapError={() => {
+                        const messageIndex = messages.indexOf(message);
+                        if (messageIndex >= 0) dismissSwapError(messageIndex);
                       }}
                     />
                   )}
