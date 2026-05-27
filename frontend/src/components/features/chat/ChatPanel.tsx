@@ -382,7 +382,13 @@ const PersonComparisonSection: React.FC<{
     speaker: metadata?.person || "Person",
     screenshot_url: frame.url,
     type: "visual",
-    evidence_label: idx === 0 ? "Earlier state" : "Later state",
+    evidence_label: frame.label || (idx === 0 ? "Earlier state" : "Later state"),
+    source_kind: "person_comparison",
+    bboxes: frame.bboxes?.length
+      ? frame.bboxes
+      : frame.bbox
+        ? [{ person: metadata?.person, bbox: frame.bbox }]
+        : undefined,
   }));
 
   return (
@@ -485,6 +491,61 @@ const PersonComparisonSection: React.FC<{
   );
 };
 
+const ComparisonModalFrame: React.FC<{
+  source: Source;
+  image: string;
+  onTimestampClick?: (ts: string) => void;
+}> = ({ source, image, onTimestampClick }) => (
+  <div className="min-w-0">
+    <div
+      className="relative overflow-hidden rounded-lg border"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+    >
+      <img
+        src={image}
+        alt={`${source.evidence_label || "Comparison frame"} at ${source.start_time}`}
+        className="max-h-[78vh] w-full object-contain"
+      />
+      {(source.bboxes || []).map(({ person, bbox }, idx) => bbox && (
+        <span
+          key={`${person || "face"}-${idx}`}
+          title={person || "Face"}
+          aria-label={person ? `${person} face box` : "Face box"}
+          className="absolute rounded"
+          style={{
+            left: `${bbox.x * 100}%`,
+            top: `${bbox.y * 100}%`,
+            width: `${bbox.w * 100}%`,
+            height: `${bbox.h * 100}%`,
+            border: `2px solid ${idx === 0 ? "var(--accent)" : "#f59e0b"}`,
+            boxShadow: idx === 0 ? "0 0 0 9999px rgb(0 0 0 / 0.12)" : "none",
+          }}
+        />
+      ))}
+      <div className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+        {source.evidence_label || "Comparison frame"}
+      </div>
+    </div>
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        onClick={() => onTimestampClick?.(source.start_time)}
+        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-mono font-bold tabular-nums"
+        style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+        title={`Jump to ${source.start_time}`}
+      >
+        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M6.3 3.8A1 1 0 005 4.7v10.6a1 1 0 001.5.9l8.8-5.3a1 1 0 000-1.8L6.5 3.8a1 1 0 00-.2 0z" />
+        </svg>
+        {source.start_time}
+      </button>
+      <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+        {source.speaker}
+      </span>
+    </div>
+  </div>
+);
+
 /** Build custom ReactMarkdown renderers */
 function buildMarkdownComponents(
   onTimestampClick?: (ts: string) => void,
@@ -561,6 +622,10 @@ interface Source {
   face_score?: number;
   source_kind?: "clip" | "face_tag" | string;
   evidence_label?: string;
+  bboxes?: Array<{
+    person?: string;
+    bbox?: { x: number; y: number; w: number; h: number } | null;
+  }>;
 }
 
 interface Message {
@@ -1723,6 +1788,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     );
   }
 
+  const isComparisonModal = Boolean(
+    screenshotModal &&
+      screenshotModal.sources.length === 2 &&
+      screenshotModal.sources.every((source) => source.source_kind === "person_comparison"),
+  );
+
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg-surface)" }}>
       {/* Chat Header — spark + title */}
@@ -2688,18 +2759,38 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 borderColor: 'var(--border-subtle)',
               }}
             >
-              {screenshotModal.currentIndex + 1} / {screenshotModal.screenshots.length}
+              {isComparisonModal
+                ? "Comparison"
+                : `${screenshotModal.currentIndex + 1} / ${screenshotModal.screenshots.length}`}
             </div>
 
-            {/* Main Image */}
-            <img
-              src={screenshotModal.screenshots[screenshotModal.currentIndex]}
-              alt="Expanded screenshot"
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
-            />
+            {isComparisonModal ? (
+              <div
+                className="grid max-h-[88vh] w-[min(96vw,1500px)] gap-4 overflow-y-auto rounded-xl border p-4 lg:grid-cols-2"
+                style={{
+                  background: "var(--bg-surface)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                {screenshotModal.sources.map((source, index) => (
+                  <ComparisonModalFrame
+                    key={`${source.screenshot_url}-${index}`}
+                    source={source}
+                    image={screenshotModal.screenshots[index]}
+                    onTimestampClick={onTimestampClick}
+                  />
+                ))}
+              </div>
+            ) : (
+              <img
+                src={screenshotModal.screenshots[screenshotModal.currentIndex]}
+                alt="Expanded screenshot"
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              />
+            )}
 
             {/* Previous Button */}
-            {screenshotModal.currentIndex > 0 && (
+            {!isComparisonModal && screenshotModal.currentIndex > 0 && (
               <button
                 onClick={handlePreviousScreenshot}
                 className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center transition-all opacity-60 hover:opacity-100 border"
@@ -2727,7 +2818,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
 
             {/* Next Button */}
-            {screenshotModal.currentIndex <
+            {!isComparisonModal && screenshotModal.currentIndex <
               screenshotModal.screenshots.length - 1 && (
               <button
                 onClick={handleNextScreenshot}
@@ -2756,7 +2847,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
 
             {/* Timestamp and Speaker Info */}
-            {screenshotModal.sources[screenshotModal.currentIndex] && (
+            {!isComparisonModal && screenshotModal.sources[screenshotModal.currentIndex] && (
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-4 py-2 bg-black bg-opacity-60 text-white rounded-lg backdrop-blur-sm text-center">
                 <button
                   onClick={() =>

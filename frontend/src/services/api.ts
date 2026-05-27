@@ -452,7 +452,7 @@ export const transcribeGCSStream = async (
                   reject(new Error(data.error));
                   return;
                 }
-              } catch (e) {
+              } catch {
                 console.warn('Failed to parse SSE data:', line);
               }
             }
@@ -764,6 +764,10 @@ export interface FaceBbox {
 export interface DetectedFace {
   bbox: FaceBbox;
   confidence: number;
+  speaker_name?: string;
+  match_confidence?: number;
+  already_tagged?: boolean;
+  face_tag_id?: string;
 }
 
 export interface FaceTagSpeaker {

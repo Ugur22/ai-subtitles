@@ -30,6 +30,7 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
   const [selectedFaceIdx, setSelectedFaceIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [imageDims, setImageDims] = useState({ width: 0, height: 0 });
+  const [savedLabels, setSavedLabels] = useState<Record<number, string>>({});
   const overlayRef = useRef<HTMLDivElement>(null);
 
   // Track displayed image dimensions for coordinate mapping
@@ -67,6 +68,7 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
     setSaving(true);
     try {
       await tagFace(videoHash, screenshotUrl, speakerName, face.bbox);
+      setSavedLabels((current) => ({ ...current, [faceIdx]: speakerName }));
       setSelectedFaceIdx(null);
       onTagSaved();
     } catch (error) {
@@ -93,6 +95,13 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
         const width = w * imageDims.width;
         const height = h * imageDims.height;
         const isSelected = selectedFaceIdx === idx;
+        const assignedSpeaker = savedLabels[idx] || face.speaker_name;
+        const hasAssignedSpeaker = Boolean(assignedSpeaker);
+        const labelText = assignedSpeaker
+          ? face.already_tagged || savedLabels[idx]
+            ? `Tagged: ${assignedSpeaker}`
+            : `${assignedSpeaker} ${Math.round((face.match_confidence ?? 0) * 100)}%`
+          : `${(face.confidence * 100).toFixed(0)}%`;
 
         return (
           <div key={idx}>
@@ -107,7 +116,9 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
                 borderRadius: "4px",
                 border: isSelected
                   ? `3px solid var(--accent)`
-                  : `2px solid oklch(70% 0.18 145 / 0.5)`,
+                  : hasAssignedSpeaker
+                    ? `2px solid var(--accent)`
+                    : `2px solid oklch(70% 0.18 145 / 0.5)`,
                 boxShadow: isSelected ? `0 0 0 4px var(--accent-dim)` : 'none',
               }}
               onClick={(e) => {
@@ -115,16 +126,17 @@ export const FaceTagOverlay: React.FC<FaceTagOverlayProps> = ({
                 setSelectedFaceIdx(isSelected ? null : idx);
               }}
             >
-              {/* Confidence badge */}
+              {/* Face status badge */}
               <div
-                className="absolute -top-5 left-0 px-1.5 py-0.5 text-[10px] rounded whitespace-nowrap font-mono tabular-nums"
+                className="absolute -top-6 left-0 max-w-[180px] px-2 py-0.5 text-[11px] rounded-md whitespace-nowrap font-medium shadow-sm"
                 style={{
-                  background: 'var(--bg-overlay)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-subtle)',
+                  background: hasAssignedSpeaker ? 'var(--accent)' : 'var(--bg-overlay)',
+                  color: hasAssignedSpeaker ? 'white' : 'var(--text-primary)',
+                  border: hasAssignedSpeaker ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
                 }}
+                title={hasAssignedSpeaker ? `${assignedSpeaker} is already tagged for this video` : "Detection confidence"}
               >
-                {(face.confidence * 100).toFixed(0)}%
+                <span className="block overflow-hidden text-ellipsis">{labelText}</span>
               </div>
             </div>
 
