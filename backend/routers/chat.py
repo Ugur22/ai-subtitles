@@ -1392,32 +1392,51 @@ def _load_face_tag_appearances(
         return []
 
 
-def _select_state_pair(appearances: list[dict], video_duration: float) -> Optional[tuple[dict, dict]]:
-    """Select two appearances with the largest combined person/scene/time change."""
-    if len(appearances) < 2:
-        return None
+def _comparison_query_mode(query: str) -> str:
+    """Return how strongly the user's wording should steer pair selection."""
+    query_lower = (query or "").lower()
+    has_early = bool(re.search(r"\b(start|starts|begin|beginning|early|opening|first)\b", query_lower))
+    has_late = bool(re.search(r"\b(end|ends|ending|late|later|final|towards?\s+the\s+end|after)\b", query_lower))
+    if has_early and has_late:
+        return "early_late"
+    if bool(re.search(r"\b(before\s+and\s+after|before.+after|compared|change(?:d)?)\b", query_lower)):
+        return "temporal"
+    return "contrast"
 
-    candidates = sorted(
-        appearances,
-        key=lambda row: row.get("similarity", 0.0),
-        reverse=True,
-    )[:30]
+
+def _state_pair_score(first: dict, second: dict, video_duration: float, mode: str) -> float:
+    face_a = first.get("face_embedding")
+    face_b = second.get("face_embedding")
+    scene_a = first.get("scene_embedding")
+    scene_b = second.get("scene_embedding")
+    d_face = 1.0 - _cosine_similarity(face_a, face_b) if face_a and face_b else 0.0
+    d_scene = 1.0 - _cosine_similarity(scene_a, scene_b) if scene_a and scene_b else 0.0
+    d_time = min(
+        1.0,
+        abs(float(first.get("start_time") or 0.0) - float(second.get("start_time") or 0.0)) / max(video_duration, 1.0),
+    )
+    avg_identity = (
+        float(first.get("similarity") or 0.0) + float(second.get("similarity") or 0.0)
+    ) / 2.0
+
+    if mode == "early_late":
+        return 0.42 * d_face + 0.28 * d_scene + 0.25 * d_time + 0.05 * avg_identity
+    if mode == "temporal":
+        return 0.40 * d_face + 0.25 * d_scene + 0.30 * d_time + 0.05 * avg_identity
+    # Weights emphasize visible person-state change, then context, with time as a tie-breaker toward early/late moments.
+    return 0.50 * d_face + 0.30 * d_scene + 0.15 * d_time + 0.05 * avg_identity
+
+
+def _select_best_state_pair(
+    candidates: list[dict],
+    video_duration: float,
+    mode: str,
+) -> Optional[tuple[dict, dict]]:
     best_pair = None
     best_score = -1.0
     for i, first in enumerate(candidates):
         for second in candidates[i + 1:]:
-            face_a = first.get("face_embedding")
-            face_b = second.get("face_embedding")
-            scene_a = first.get("scene_embedding")
-            scene_b = second.get("scene_embedding")
-            d_face = 1.0 - _cosine_similarity(face_a, face_b) if face_a and face_b else 0.0
-            d_scene = 1.0 - _cosine_similarity(scene_a, scene_b) if scene_a and scene_b else 0.0
-            d_time = min(
-                1.0,
-                abs(float(first.get("start_time") or 0.0) - float(second.get("start_time") or 0.0)) / max(video_duration, 1.0),
-            )
-            # Weights emphasize visible person-state change, then context, with time as a tie-breaker toward early/late moments.
-            score = 0.5 * d_face + 0.3 * d_scene + 0.2 * d_time
+            score = _state_pair_score(first, second, video_duration, mode)
             if score > best_score:
                 best_score = score
                 best_pair = (first, second)
@@ -1425,6 +1444,65 @@ def _select_state_pair(appearances: list[dict], video_duration: float) -> Option
     if not best_pair:
         return None
     return tuple(sorted(best_pair, key=lambda row: float(row.get("start_time") or 0.0)))
+
+
+def _select_cross_state_pair(
+    first_group: list[dict],
+    second_group: list[dict],
+    video_duration: float,
+    mode: str,
+) -> Optional[tuple[dict, dict]]:
+    best_pair = None
+    best_score = -1.0
+    for first in first_group:
+        for second in second_group:
+            if first is second:
+                continue
+            score = _state_pair_score(first, second, video_duration, mode)
+            if score > best_score:
+                best_score = score
+                best_pair = (first, second)
+
+    if not best_pair:
+        return None
+    return tuple(sorted(best_pair, key=lambda row: float(row.get("start_time") or 0.0)))
+
+
+def _select_state_pair(
+    appearances: list[dict],
+    video_duration: float,
+    query: str = "",
+) -> Optional[tuple[dict, dict]]:
+    """Select two appearances, using comparison wording to steer temporal vs contrast emphasis."""
+    if len(appearances) < 2:
+        return None
+
+    mode = _comparison_query_mode(query)
+    candidates = sorted(
+        appearances,
+        key=lambda row: row.get("similarity", 0.0),
+        reverse=True,
+    )[:80 if mode in ("early_late", "temporal") else 30]
+
+    if mode == "early_late":
+        early_cutoff = video_duration * 0.35
+        late_cutoff = video_duration * 0.65
+        early = [row for row in candidates if float(row.get("start_time") or 0.0) <= early_cutoff]
+        late = [row for row in candidates if float(row.get("start_time") or 0.0) >= late_cutoff]
+        if not early or not late:
+            midpoint = video_duration * 0.5
+            early = [row for row in candidates if float(row.get("start_time") or 0.0) <= midpoint]
+            late = [row for row in candidates if float(row.get("start_time") or 0.0) > midpoint]
+        if early and late:
+            pair = _select_cross_state_pair(early, late, video_duration, mode)
+            if pair:
+                print("[Chat] Face comparison selected early/late state pair from query wording")
+                return pair
+
+    pair = _select_best_state_pair(candidates, video_duration, mode)
+    if pair:
+        print(f"[Chat] Face comparison selected state pair using mode={mode}")
+    return pair
 
 
 def _transcript_window_context(video_hash: str, timestamps: list[float], window_seconds: float = 15.0) -> str:
@@ -1490,7 +1568,7 @@ async def _handle_person_comparison(
     video_hash = chat_request.video_hash
     appearances = await _load_person_appearances(video_hash, intent.person_name)
     video_duration = _video_duration_seconds(video_hash, appearances)
-    pair = _select_state_pair(appearances, video_duration)
+    pair = _select_state_pair(appearances, video_duration, chat_request.question)
     if not pair:
         print(
             f"[Chat] Face comparison could not select a distinct pair from "
@@ -1505,7 +1583,7 @@ async def _handle_person_comparison(
         )
         appearances = _merge_comparison_appearances(appearances, tagged_appearances)
         video_duration = _video_duration_seconds(video_hash, appearances)
-        pair = _select_state_pair(appearances, video_duration)
+        pair = _select_state_pair(appearances, video_duration, chat_request.question)
 
     if not pair:
         return {
