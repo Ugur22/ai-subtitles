@@ -459,21 +459,32 @@ def _detect_comparison_intent(query: str, video_hash: str) -> Optional[Compariso
     cleaned = _clean_query_for_retrieval(query)
     query_lower = cleaned.lower()
     has_comparison_phrase = bool(re.search(
-        r"\b(compare|contrast|versus|vs\.?|different|change(?:d)?|before and after)\b",
+        r"\b(compare|compared|comparing|contrast|versus|vs\.?|different|change(?:d)?|before and after)\b",
         query_lower,
-    )) or bool(re.search(r"\bhow\s+did\b.+\bchange\b", query_lower))
+    )) or bool(re.search(r"\bhow\s+did\b.+\bchange\b", query_lower)) or bool(re.search(
+        r"\b(?:start|beginning|early)\b.+\b(?:end|ending|late|after)\b",
+        query_lower,
+    ))
     if not has_comparison_phrase:
         return None
 
     known_names = _load_face_tag_names(video_hash)
+    normalized_query = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", query_lower.replace("'s", ""))).strip()
     for name in known_names:
         if re.search(rf"(?<!\w){re.escape(name.lower())}(?:'s)?(?!\w)", query_lower):
             return ComparisonIntent(person_name=name)
+        normalized_name = re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"[^\w\s]", " ", name.lower().replace("'s", "")),
+        ).strip()
+        if normalized_name and f" {normalized_name} " in f" {normalized_query} ":
+            return ComparisonIntent(person_name=name)
 
     candidate_patterns = [
-        r"\b(?:compare|contrast)\s+([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\b",
-        r"\bhow\s+did\s+([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\s+change\b",
-        r"\b([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})\s+(?:early|beginning|before)\s+(?:vs\.?|versus|and)\s+(?:late|end|after)\b",
+        r"\b(?:compare|compared|comparing|contrast)\s+([A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|mom|mother|dad|father|wife|husband|son|daughter)){0,3})\b",
+        r"\bhow\s+(?:did|does)\s+([A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|mom|mother|dad|father|wife|husband|son|daughter)){0,3})\s+(?:change|start|begin)\b",
+        r"\b([A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|mom|mother|dad|father|wife|husband|son|daughter)){0,3})\s+(?:early|beginning|before|start)\s+(?:vs\.?|versus|and|compared|towards?)\s+(?:late|end|after)\b",
     ]
     stop_targets = {"the", "this", "that", "with", "against", "between", "book", "version", "video", "movie", "scene"}
     for pattern in candidate_patterns:
