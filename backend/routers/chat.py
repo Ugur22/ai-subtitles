@@ -319,6 +319,7 @@ router = APIRouter(prefix="/api", tags=["Chat & RAG"])
 class ComparisonIntent:
     person_name: Optional[str]
     unmatched_name: Optional[str] = None
+    secondary_person_name: Optional[str] = None
 
 
 def _use_supabase_for_images() -> bool:
@@ -464,22 +465,38 @@ def _detect_comparison_intent(query: str, video_hash: str) -> Optional[Compariso
     )) or bool(re.search(r"\bhow\s+did\b.+\bchange\b", query_lower)) or bool(re.search(
         r"\b(?:start|beginning|early)\b.+\b(?:end|ending|late|after)\b",
         query_lower,
+    )) or bool(re.search(
+        r"\bbefore\b.+\b(?:after|during|then|later)\b",
+        query_lower,
     ))
     if not has_comparison_phrase:
         return None
 
     known_names = _load_face_tag_names(video_hash)
     normalized_query = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", query_lower.replace("'s", ""))).strip()
+    matched_names: list[tuple[int, str]] = []
     for name in known_names:
-        if re.search(rf"(?<!\w){re.escape(name.lower())}(?:'s)?(?!\w)", query_lower):
-            return ComparisonIntent(person_name=name)
+        direct_match = re.search(rf"(?<!\w){re.escape(name.lower())}(?:'s)?(?!\w)", query_lower)
+        if direct_match:
+            matched_names.append((direct_match.start(), name))
+            continue
         normalized_name = re.sub(
             r"\s+",
             " ",
             re.sub(r"[^\w\s]", " ", name.lower().replace("'s", "")),
         ).strip()
-        if normalized_name and f" {normalized_name} " in f" {normalized_query} ":
-            return ComparisonIntent(person_name=name)
+        normalized_index = f" {normalized_query} ".find(f" {normalized_name} ") if normalized_name else -1
+        if normalized_index >= 0:
+            matched_names.append((normalized_index, name))
+
+    if matched_names:
+        names_by_mention = [
+            name for _, name in sorted(matched_names, key=lambda item: item[0])
+        ]
+        return ComparisonIntent(
+            person_name=names_by_mention[0],
+            secondary_person_name=names_by_mention[1] if len(names_by_mention) > 1 else None,
+        )
 
     candidate_patterns = [
         r"\b(?:compare|compared|comparing|contrast)\s+([A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|mom|mother|dad|father|wife|husband|son|daughter)){0,3})\b",
@@ -1316,6 +1333,18 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
     return appearances
 
 
+async def _load_person_appearances_with_fallback(video_hash: str, person_name: str) -> list[dict]:
+    """Load automatic face-presence appearances, then merge manual tags as a fallback."""
+    appearances = await _load_person_appearances(video_hash, person_name)
+    reference_embedding = _load_speaker_reference_embedding(video_hash, person_name)
+    tagged_appearances = (
+        _load_face_tag_appearances(video_hash, person_name, reference_embedding)
+        if reference_embedding
+        else []
+    )
+    return _merge_comparison_appearances(appearances, tagged_appearances)
+
+
 def _comparison_appearance_key(appearance: dict) -> str:
     url = appearance.get("screenshot_url") or ""
     try:
@@ -1399,7 +1428,7 @@ def _comparison_query_mode(query: str) -> str:
     has_late = bool(re.search(r"\b(end|ends|ending|late|later|final|towards?\s+the\s+end|after)\b", query_lower))
     if has_early and has_late:
         return "early_late"
-    if bool(re.search(r"\b(before\s+and\s+after|before.+after|compared|change(?:d)?)\b", query_lower)):
+    if bool(re.search(r"\b(before\s+and\s+after|before.+(?:after|during|then|later)|compared|change(?:d)?)\b", query_lower)):
         return "temporal"
     return "contrast"
 
@@ -1551,6 +1580,104 @@ def _select_state_pair(
     return pair
 
 
+def _same_comparison_frame(first: dict, second: dict, tolerance_seconds: float = 2.0) -> bool:
+    first_key = _comparison_appearance_key(first)
+    second_key = _comparison_appearance_key(second)
+    if first_key and second_key and first_key == second_key:
+        return True
+    return abs(
+        float(first.get("start_time") or 0.0) - float(second.get("start_time") or 0.0)
+    ) <= tolerance_seconds
+
+
+def _with_comparison_people(appearance: dict, people: list[tuple[str, Optional[dict]]], label: str) -> dict:
+    enriched = dict(appearance)
+    enriched["people"] = [name for name, _ in people]
+    enriched["label"] = label
+    enriched["bboxes"] = [
+        {"person": name, "bbox": bbox}
+        for name, bbox in people
+        if bbox
+    ]
+    return enriched
+
+
+def _select_multi_person_state_pair(
+    primary_appearances: list[dict],
+    secondary_appearances: list[dict],
+    video_duration: float,
+    query: str,
+    primary_person: str,
+    secondary_person: str,
+) -> Optional[tuple[dict, dict]]:
+    """Select Frame A with both people and Frame B with the primary person later/changed."""
+    if not primary_appearances or not secondary_appearances:
+        return None
+
+    joint_candidates = []
+    for primary in primary_appearances:
+        for secondary in secondary_appearances:
+            if not _same_comparison_frame(primary, secondary):
+                continue
+            joint_candidates.append(
+                _with_comparison_people(
+                    primary,
+                    [
+                        (primary_person, primary.get("bbox")),
+                        (secondary_person, secondary.get("bbox")),
+                    ],
+                    f"{primary_person} with {secondary_person}",
+                )
+            )
+            break
+
+    if not joint_candidates:
+        print(
+            f"[Chat] Face comparison found no shared frames for "
+            f"'{primary_person}' + '{secondary_person}'"
+        )
+        return None
+
+    mode = _comparison_query_mode(query)
+    primary_candidates = sorted(
+        primary_appearances,
+        key=lambda row: row.get("similarity", 0.0),
+        reverse=True,
+    )[:120]
+    best_pair = None
+    best_score = -1.0
+    for first in joint_candidates:
+        first_time = float(first.get("start_time") or 0.0)
+        for second in primary_candidates:
+            second_time = float(second.get("start_time") or 0.0)
+            if _same_comparison_frame(first, second):
+                continue
+            if mode in ("early_late", "temporal") and second_time <= first_time:
+                continue
+            score = _state_pair_score(first, second, video_duration, mode)
+            if mode in ("early_late", "temporal"):
+                score += 0.25 * min(1.0, max(0.0, (second_time - first_time) / max(video_duration, 1.0)))
+            if score > best_score:
+                best_score = score
+                best_pair = (
+                    first,
+                    _with_comparison_people(
+                        second,
+                        [(primary_person, second.get("bbox"))],
+                        f"{primary_person} later",
+                    ),
+                )
+
+    if not best_pair:
+        return None
+    print(
+        f"[Chat] Face comparison selected multi-person pair "
+        f"primary='{primary_person}' secondary='{secondary_person}' "
+        f"joint_candidates={len(joint_candidates)}"
+    )
+    return tuple(sorted(best_pair, key=lambda row: float(row.get("start_time") or 0.0)))
+
+
 def _transcript_window_context(video_hash: str, timestamps: list[float], window_seconds: float = 15.0) -> str:
     transcription = get_transcription_from_any_source(video_hash)
     segments = (transcription or {}).get("transcription", {}).get("segments", [])
@@ -1574,20 +1701,35 @@ def _transcript_window_context(video_hash: str, timestamps: list[float], window_
 
 def _comparison_frame_metadata(appearance: dict) -> dict:
     start = float(appearance.get("start_time") or 0.0)
-    return {
+    metadata = {
         "url": appearance.get("screenshot_url"),
         "timestamp_seconds": start,
         "timestamp": _format_segment_time(start),
         "bbox": appearance.get("bbox"),
     }
+    if appearance.get("label"):
+        metadata["label"] = appearance.get("label")
+    if appearance.get("people"):
+        metadata["people"] = appearance.get("people")
+    if appearance.get("bboxes"):
+        metadata["bboxes"] = appearance.get("bboxes")
+    return metadata
 
 
-def _format_person_comparison_answer(person_name: str, frame_a: dict, frame_b: dict, prose: str) -> str:
+def _format_person_comparison_answer(
+    person_name: str,
+    frame_a: dict,
+    frame_b: dict,
+    prose: str,
+    secondary_person_name: Optional[str] = None,
+) -> str:
     metadata = {
         "person": person_name,
         "frame_a": frame_a,
         "frame_b": frame_b,
     }
+    if secondary_person_name:
+        metadata["secondary_person"] = secondary_person_name
     return (
         "## Person Comparison\n\n"
         "```json\n"
@@ -1612,9 +1754,29 @@ async def _handle_person_comparison(
         }
 
     video_hash = chat_request.video_hash
-    appearances = await _load_person_appearances(video_hash, intent.person_name)
+    appearances = await _load_person_appearances_with_fallback(video_hash, intent.person_name)
     video_duration = _video_duration_seconds(video_hash, appearances)
-    pair = _select_state_pair(appearances, video_duration, chat_request.question)
+    pair = None
+    if intent.secondary_person_name:
+        secondary_appearances = await _load_person_appearances_with_fallback(
+            video_hash,
+            intent.secondary_person_name,
+        )
+        video_duration = _video_duration_seconds(
+            video_hash,
+            [*appearances, *secondary_appearances],
+        )
+        pair = _select_multi_person_state_pair(
+            primary_appearances=appearances,
+            secondary_appearances=secondary_appearances,
+            video_duration=video_duration,
+            query=chat_request.question,
+            primary_person=intent.person_name,
+            secondary_person=intent.secondary_person_name,
+        )
+
+    if not pair:
+        pair = _select_state_pair(appearances, video_duration, chat_request.question)
     if not pair:
         print(
             f"[Chat] Face comparison could not select a distinct pair from "
@@ -1658,17 +1820,48 @@ async def _handle_person_comparison(
         provider_name = "grok"
 
     system_message = (
-        "You compare two video frames of the same tagged person. "
+        "You compare two video frames involving a tagged person. "
         "Focus on visible evidence only and be explicit about uncertainty. "
         "Compare exactly these axes: emotion/facial expression, physical appearance "
         "(clothing, hair, injuries, dirt, age cues), and surroundings/context "
         "(location, lighting, nearby people or objects). Cite timestamps in [HH:MM:SS] format."
     )
+    if intent.secondary_person_name:
+        system_message += (
+            f" Frame A may be selected because it contains both {intent.person_name} "
+            f"and {intent.secondary_person_name}; do not claim the second person is present "
+            "in Frame B unless visibly shown or supported by the metadata."
+        )
     if chat_request.custom_instructions:
         system_message += (
             "\n\nUser's custom instructions (follow these preferences):\n"
             f"{chat_request.custom_instructions}"
         )
+
+    user_message_parts = [
+        f"Question: {chat_request.question}",
+        "",
+        f"Tagged person: {intent.person_name}",
+    ]
+    if intent.secondary_person_name:
+        user_message_parts.append(f"Additional tagged person requested: {intent.secondary_person_name}")
+    if frame_a.get("label"):
+        user_message_parts.append(f"Frame A label: {frame_a.get('label')}")
+    if frame_b.get("label"):
+        user_message_parts.append(f"Frame B label: {frame_b.get('label')}")
+    if frame_a.get("people"):
+        user_message_parts.append(f"Frame A people: {', '.join(frame_a.get('people') or [])}")
+    if frame_b.get("people"):
+        user_message_parts.append(f"Frame B people: {', '.join(frame_b.get('people') or [])}")
+    user_message_parts.extend([
+        f"Frame A timestamp: [{frame_a['timestamp']}]",
+        f"Frame B timestamp: [{frame_b['timestamp']}]",
+        "",
+        f"Nearby transcript context:\n{transcript_context}",
+        "",
+        "Write a concise comparison. Use bullets grouped by the three requested axes, "
+        "then end with one sentence summarizing the biggest visible change.",
+    ])
 
     messages = [
         {
@@ -1677,15 +1870,7 @@ async def _handle_person_comparison(
         },
         {
             "role": "user",
-            "content": (
-                f"Question: {chat_request.question}\n\n"
-                f"Tagged person: {intent.person_name}\n"
-                f"Frame A timestamp: [{frame_a['timestamp']}]\n"
-                f"Frame B timestamp: [{frame_b['timestamp']}]\n\n"
-                f"Nearby transcript context:\n{transcript_context}\n\n"
-                "Write a concise comparison. Use bullets grouped by the three requested axes, "
-                "then end with one sentence summarizing the biggest visible change."
-            ),
+            "content": "\n".join(user_message_parts),
         },
     ]
     prose = await provider.generate_with_images(
@@ -1696,7 +1881,13 @@ async def _handle_person_comparison(
     )
 
     return {
-        "answer": _format_person_comparison_answer(intent.person_name, frame_a, frame_b, prose),
+        "answer": _format_person_comparison_answer(
+            intent.person_name,
+            frame_a,
+            frame_b,
+            prose,
+            secondary_person_name=intent.secondary_person_name,
+        ),
         "sources": [],
         "provider_used": provider_name or llm_manager.default_provider,
         "video_hash": video_hash,
