@@ -87,11 +87,11 @@ class ComparisonSwapRequest(BaseModel):
         "json_schema_extra": {
             "example": {
                 "video_hash": "abc123",
-                "person": "Concetta",
-                "secondary_person": "Santino",
+                "person": "Alex",
+                "secondary_person": "Sam",
                 "frame_a_seconds": 1084.0,
                 "frame_b_seconds": 3871.0,
-                "question": "compare concetta before and after the affair",
+                "question": "compare alex before and after the fight",
             }
         }
     }

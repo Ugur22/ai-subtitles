@@ -377,7 +377,7 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
             print(f"Found {source} in query: {name}")
             found_speakers.append(name)
 
-    # First, check enrolled speakers (e.g., "Concetta", "John")
+    # First, check enrolled speakers (e.g., "Alex", "John")
     try:
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
@@ -563,6 +563,7 @@ def _resolve_contextual_visual_question(
     conversation_history: Optional[list],
     user_visual_terms: Optional[set[str]] = None,
     user_visual_phrases: Optional[list[str]] = None,
+    video_hash: Optional[str] = None,
 ) -> str:
     """
     Expand short follow-up questions for retrieval.
@@ -595,8 +596,14 @@ def _resolve_contextual_visual_question(
     user_visual_phrases = user_visual_phrases or []
     if _query_matches_user_visual_terms(recent_user_text, user_visual_terms):
         additions.extend(user_visual_phrases[:3])
-    if re.search(r"\b(concetta|conchetta|concheta)\b", recent_user_text) and "concetta" not in q_lower:
-        additions.append("involving concetta")
+    # If a recent message named a person tagged in this video but the current
+    # question doesn't, anchor retrieval to them so follow-ups keep the subject.
+    if video_hash:
+        for name in _load_face_tag_names(video_hash):
+            name_lower = name.lower()
+            if re.search(rf"\b{re.escape(name_lower)}\b", recent_user_text) and name_lower not in q_lower:
+                additions.append(f"involving {name_lower}")
+                break
 
     if not additions:
         return question
@@ -892,7 +899,7 @@ def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tupl
     Build deterministic transcript context for speaker/person mention queries.
 
     Semantic search can miss short mention-only prompts like "tell me about
-    @concetta". When the query names a known transcript speaker, use that
+    @alex". When the query names a known transcript speaker, use that
     speaker's segments directly instead of returning no context.
     """
     speaker_names = _extract_all_speakers_from_query(question, video_hash)
@@ -1602,14 +1609,144 @@ def _select_boundary_state_pair(
     return tuple(sorted((first, second), key=lambda row: float(row.get("start_time") or 0.0)))
 
 
+# Words that mean "a moment in time" rather than a visible state — these belong
+# to the early/late path, not query-aware visual matching.
+_TEMPORAL_PHRASE_WORDS = {
+    "start", "starts", "beginning", "begin", "early", "earlier", "opening",
+    "first", "end", "ends", "ending", "late", "later", "latest", "final",
+    "finally", "before", "after", "then", "during", "now", "younger", "older",
+}
+# Filler/structural words to drop when isolating the descriptive state phrase.
+_STATE_PHRASE_STOPWORDS = {
+    "the", "a", "an", "her", "his", "their", "him", "she", "he", "them", "it",
+    "is", "was", "are", "were", "being", "been", "get", "gets", "got",
+    "looks", "look", "looking", "appears", "appear", "appearing",
+    "scene", "scenes", "version", "shot", "frame", "frames", "moment", "part",
+    "state", "states", "when", "where", "while", "with", "and", "of", "in",
+    "on", "at", "to", "compare", "compared", "comparing", "contrast",
+    "contrasted", "show", "see", "versus", "vs", "person",
+}
+
+
+def _extract_state_phrases(
+    query: str,
+    person_names: Optional[list[str]] = None,
+) -> Optional[tuple[str, str]]:
+    """Pull two contrasting *visual-state* phrases from a comparison query.
+
+    'compare <person> calm vs angry' -> ('calm', 'angry'). Returns None for
+    temporal wording (beginning/end) or when no clear visual pair is present, so
+    those queries fall through to the existing early/late + difference logic.
+    """
+    if not query:
+        return None
+    q = " " + query.lower().replace("'s", " ") + " "
+    for name in (person_names or []):
+        if name:
+            q = re.sub(rf"\b{re.escape(name.lower())}\b", " ", q)
+
+    m = re.search(r"(.+?)\b(?:versus|vs\.?|compared to|against|or|rather than)\b(.+)", q)
+    if not m:
+        return None
+
+    def _side(text: str, take_last: bool) -> str:
+        words = [w for w in re.findall(r"[a-z]+", text) if w not in _STATE_PHRASE_STOPWORDS]
+        if not words:
+            return ""
+        words = words[-2:] if take_last else words[:2]
+        return " ".join(words)
+
+    left = _side(m.group(1), take_last=True)
+    right = _side(m.group(2), take_last=False)
+    if not left or not right or left == right:
+        return None
+    if (set(left.split()) | set(right.split())) & _TEMPORAL_PHRASE_WORDS:
+        return None
+    return (left, right)
+
+
+_CLIP_PROMPT_TEMPLATES = ("{p}", "a photo of a person {p}", "a {p} person")
+
+
+def _clip_text_embeddings(phrases: list[str]) -> Optional[list[list]]:
+    """One averaged CLIP text embedding per phrase, all encoded in a single batch.
+
+    Averages a few prompt templates — absolute CLIP text/image cosine is low and
+    noisy, so the ensemble + contrast scoring (see caller) is what gives signal.
+    """
+    try:
+        import numpy as np
+        from services.image_embedding_service import image_embedding_service
+        n = len(_CLIP_PROMPT_TEMPLATES)
+        prompts = [t.format(p=p) for p in phrases for t in _CLIP_PROMPT_TEMPLATES]
+        vecs = np.asarray(
+            image_embedding_service.clip_model.encode(prompts, convert_to_numpy=True),
+            dtype=np.float32,
+        )
+        return [vecs[i * n:(i + 1) * n].mean(axis=0).tolist() for i in range(len(phrases))]
+    except Exception as e:
+        print(f"[Chat] CLIP text embedding failed for {phrases}: {e}")
+        return None
+
+
+def _select_query_aware_state_pair(
+    appearances: list[dict],
+    phrase_a: str,
+    phrase_b: str,
+) -> Optional[tuple[dict, dict]]:
+    """Pick endpoints by how well each frame's scene matches the user's two state
+    phrases. Returns (A, B) in PHRASE order: A = most phrase_a, B = most phrase_b.
+
+    Uses *contrast* scoring (sim_b - sim_a) rather than absolute similarity:
+    CLIP text/image cosine is flat in absolute terms (~0.25 for everything), but
+    the difference between the two phrases separates frames reliably (validated:
+    'clothed vs nude' correctly lands B on the nude scene).
+    """
+    candidates = [a for a in appearances if a.get("scene_embedding")]
+    if len(candidates) < 2:
+        return None
+    texts = _clip_text_embeddings([phrase_a, phrase_b])
+    if not texts:
+        return None
+    text_a, text_b = texts
+
+    scored = [
+        (
+            a,
+            _cosine_similarity(text_b, a.get("scene_embedding"))
+            - _cosine_similarity(text_a, a.get("scene_embedding")),
+        )
+        for a in candidates
+    ]
+    frame_b = max(scored, key=lambda s: s[1])[0]  # most phrase_b vs phrase_a
+    frame_a = min(scored, key=lambda s: s[1])[0]  # most phrase_a vs phrase_b
+    if frame_a is frame_b:
+        return None
+    print(
+        f"[Chat] Face comparison used query-aware pair: A~'{phrase_a}' "
+        f"@{float(frame_a.get('start_time') or 0.0):.1f}s, B~'{phrase_b}' "
+        f"@{float(frame_b.get('start_time') or 0.0):.1f}s"
+    )
+    return (frame_a, frame_b)
+
+
 def _select_state_pair(
     appearances: list[dict],
     video_duration: float,
     query: str = "",
+    person_names: Optional[list[str]] = None,
 ) -> Optional[tuple[dict, dict]]:
     """Select two appearances, using comparison wording to steer temporal vs contrast emphasis."""
     if len(appearances) < 2:
         return None
+
+    # Query-aware: if the user named two visible states ("clothed vs nude"),
+    # pick the frames that best match each phrase rather than generic difference.
+    phrases = _extract_state_phrases(query, person_names)
+    if phrases:
+        pair = _select_query_aware_state_pair(appearances, phrases[0], phrases[1])
+        if pair:
+            return pair
 
     mode = _comparison_query_mode(query)
     candidates = sorted(
@@ -2112,8 +2249,9 @@ async def _handle_person_comparison(
             secondary_person=intent.secondary_person_name,
         )
 
+    person_names = [n for n in (intent.person_name, intent.secondary_person_name) if n]
     if not pair:
-        pair = _select_state_pair(appearances, video_duration, chat_request.question)
+        pair = _select_state_pair(appearances, video_duration, chat_request.question, person_names)
     if not pair:
         print(
             f"[Chat] Face comparison could not select a distinct pair from "
@@ -2128,7 +2266,7 @@ async def _handle_person_comparison(
         )
         appearances = _merge_comparison_appearances(appearances, tagged_appearances)
         video_duration = _video_duration_seconds(video_hash, appearances)
-        pair = _select_state_pair(appearances, video_duration, chat_request.question)
+        pair = _select_state_pair(appearances, video_duration, chat_request.question, person_names)
 
     if not pair:
         return {
@@ -3112,6 +3250,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
             chat_request.conversation_history,
             user_visual_terms,
             user_visual_phrases,
+            video_hash,
         )
 
         # Get video_hash from last transcription if not provided
@@ -3519,6 +3658,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 chat_request.conversation_history,
                 user_visual_terms,
                 user_visual_phrases,
+                video_hash,
             )
 
             # Resolve video_hash
