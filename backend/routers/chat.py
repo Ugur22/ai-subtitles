@@ -1258,10 +1258,23 @@ async def _load_comparison_presence_rows(client, video_hash: str, image_ids: lis
     return face_rows, image_rows
 
 
-async def _load_person_appearances(video_hash: str, person_name: str) -> list[dict]:
-    """Find indexed face appearances for a manually tagged person."""
+async def _load_person_appearances(
+    video_hash: str,
+    person_name: str,
+    *,
+    threshold: Optional[float] = None,
+) -> list[dict]:
+    """Find indexed face appearances for a manually tagged person.
+
+    `threshold` gates which faces qualify (cosine similarity). Defaults to the
+    relaxed comparison threshold so faint faces (dim/profile/distant scenes)
+    still surface; pass an explicit value to override.
+    """
     from config import settings
     from services.supabase_service import supabase as get_supabase
+
+    if threshold is None:
+        threshold = settings.FACE_PRESENCE_COMPARISON_THRESHOLD
 
     reference_embedding = _load_speaker_reference_embedding(video_hash, person_name)
     if not reference_embedding:
@@ -1274,7 +1287,7 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
             {
                 "target_video_hash": video_hash,
                 "query_embedding": reference_embedding,
-                "similarity_threshold": settings.FACE_PRESENCE_SIMILARITY_THRESHOLD,
+                "similarity_threshold": threshold,
                 "match_limit": 500,
             },
         ).execute()
@@ -1322,7 +1335,7 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
             if face_embedding
             else match_similarity.get(image_id, 0.0)
         )
-        if similarity < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD:
+        if similarity < threshold:
             continue
         current = best_faces.get(image_id)
         if current is None or similarity > current["similarity"]:
@@ -1345,6 +1358,7 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
             continue
         start = float(image.get("start_time") or face["start_time"])
         end = float(image.get("end_time") or face["end_time"] or start)
+        similarity = max(face["similarity"], match_similarity.get(image_id, 0.0))
         appearances.append({
             "image_embedding_id": image_id,
             "start_time": start,
@@ -1354,10 +1368,22 @@ async def _load_person_appearances(video_hash: str, person_name: str) -> list[di
             "bbox": face.get("bbox"),
             "face_embedding": face["face_embedding"],
             "scene_embedding": scene_embedding,
-            "similarity": max(face["similarity"], match_similarity.get(image_id, 0.0)),
+            "similarity": similarity,
+            # Faint match: surfaced only because of the relaxed comparison
+            # threshold. Below the global 0.5 confidence bar -> badge in the UI.
+            "low_confidence": similarity < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD,
         })
 
     appearances.sort(key=lambda row: row.get("similarity", 0.0), reverse=True)
+
+    # Guardrail: keep all confident frames (>= global threshold) plus at most the
+    # top N faint frames, so relaxing the gate widens the pool without flooding
+    # the timeline strip with low-similarity noise.
+    confident = [a for a in appearances if not a.get("low_confidence")]
+    faint = [a for a in appearances if a.get("low_confidence")]
+    FAINT_FRAME_CAP = 15
+    appearances = confident + faint[:FAINT_FRAME_CAP]
+
     if len(appearances) < 2:
         print(
             f"[Chat] Face comparison presence matches for '{person_name}' yielded "
@@ -1767,6 +1793,8 @@ def _timeline_frame_metadata(appearance: dict) -> dict:
             metadata["similarity"] = float(similarity)
         except (TypeError, ValueError):
             pass
+    if appearance.get("low_confidence"):
+        metadata["low_confidence"] = True
     return metadata
 
 

@@ -7,6 +7,7 @@ export interface TimelineFrame {
   timestamp_seconds: number;
   bbox?: { x: number; y: number; w: number; h: number } | null;
   similarity?: number;
+  low_confidence?: boolean;
 }
 
 interface ComparisonTimelineStripProps {
@@ -302,6 +303,24 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
                     style={{ background: "var(--accent)" }}
                     title={`High confidence (${Math.round(frame.similarity * 100)}%)`}
                   />
+                )}
+
+                {frame.low_confidence && !inert && !isPending && (
+                  <span
+                    className="absolute right-1 top-1 rounded-full border px-1 py-0 text-[9px] font-semibold uppercase tracking-wide"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      background: "rgba(0,0,0,0.55)",
+                      color: "var(--text-tertiary)",
+                    }}
+                    title={
+                      frame.similarity != null
+                        ? `Faint match (${Math.round(frame.similarity * 100)}%) - face is dim, partial, or distant`
+                        : "Faint match - face is dim, partial, or distant"
+                    }
+                  >
+                    Faint
+                  </span>
                 )}
 
                 <span
