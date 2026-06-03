@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
     FACE_PRESENCE_SIMILARITY_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_SIMILARITY_THRESHOLD", "0.5"))
 
+    # Relaxed cosine threshold used ONLY for the A/B person-comparison candidate
+    # pool, so faint faces (low light, profile, distance - e.g. dim/intimate
+    # scenes) still surface as selectable "other moments". Lower than the global
+    # 0.5 on purpose; auto-pick still favors confident frames via avg_identity.
+    FACE_PRESENCE_COMPARISON_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_COMPARISON_THRESHOLD", "0.38"))
+
     # Verbose per-query debug logging from the chat retrieval pipeline
     # (overlap_score=0 diagnostics, per-result hybrid score dumps). Off in prod.
     CHAT_DEBUG_LOGS: bool = os.getenv("CHAT_DEBUG_LOGS", "false").lower() == "true"
