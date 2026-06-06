@@ -361,9 +361,25 @@ async def register(request: RegisterRequest):
 
         client = SupabaseService.get_client()
 
-        # Create Supabase auth user
+        # Pre-check: reject if a profile already exists for this email so we
+        # return a clear 400 instead of failing later with a duplicate-key 500.
+        existing = (
+            client.table("user_profiles")
+            .select("id")
+            .eq("email", request.email)
+            .execute()
+        )
+        if existing.data and len(existing.data) > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="An account with this email already exists."
+            )
+
+        # Create Supabase auth user (on the dedicated auth client so the data
+        # client's session/headers are never mutated by sign_up)
+        auth_client = SupabaseService.get_auth_client()
         try:
-            auth_response = client.auth.sign_up({
+            auth_response = auth_client.auth.sign_up({
                 "email": request.email,
                 "password": request.password,
                 "options": {
@@ -382,13 +398,15 @@ async def register(request: RegisterRequest):
 
             user_id = auth_response.user.id
 
+        except HTTPException:
+            raise
         except Exception as e:
             error_msg = str(e).lower()
             if "already registered" in error_msg or "already exists" in error_msg:
                 # Generic error for privacy (don't reveal if email exists)
                 raise HTTPException(
                     status_code=400,
-                    detail="Registration failed. Please try again or use a different email."
+                    detail="An account with this email already exists."
                 )
             raise HTTPException(
                 status_code=400,
@@ -407,13 +425,21 @@ async def register(request: RegisterRequest):
             }).execute()
 
         except Exception as e:
-            # Rollback: delete auth user if profile creation fails
+            # Rollback: delete the auth user so we don't leave an orphan that
+            # blocks every future registration attempt for this email.
             try:
-                # Note: Supabase doesn't expose admin delete in client SDK
-                # This would need service role access
-                print(f"[Auth] Failed to create profile, auth user {user_id} may be orphaned: {e}")
-            except:
-                pass
+                auth_client.auth.admin.delete_user(user_id)
+                print(f"[Auth] Rolled back orphaned auth user {user_id} after profile insert failed: {e}")
+            except Exception as rollback_error:
+                print(f"[Auth] Failed to create profile AND failed to roll back auth user {user_id}: {e} / rollback: {rollback_error}")
+
+            # A duplicate-key conflict means the email is already taken -> 400, not 500.
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "already exists" in error_msg or "409" in error_msg or "conflict" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="An account with this email already exists."
+                )
 
             raise HTTPException(
                 status_code=500,
@@ -578,8 +604,13 @@ async def resend_verification(request: ResendVerificationRequest):
 
 
 def _sign_in_with_password(email: str, password: str):
-    """Blocking sign in - runs in executor."""
-    client = SupabaseService.get_client()
+    """Blocking sign in - runs in executor.
+
+    Uses the dedicated auth client so the sign-in session never poisons the
+    shared data client (which background jobs/crons rely on for service-role
+    access).
+    """
+    client = SupabaseService.get_auth_client()
     return client.auth.sign_in_with_password({
         "email": email,
         "password": password
@@ -715,9 +746,9 @@ async def logout(request: Request, response: Response):
             # Clear from cache
             clear_token_cache(token)
 
-            # Sign out from Supabase
+            # Sign out from Supabase (on the auth client, not the data client)
             try:
-                client = SupabaseService.get_client()
+                client = SupabaseService.get_auth_client()
                 client.auth.sign_out()
             except Exception as e:
                 print(f"[Auth] Error signing out from Supabase: {e}")
@@ -839,8 +870,9 @@ async def reset_password(request: ResetPasswordRequest):
         # Update password in Supabase Auth
         # Note: This requires admin/service role access
         try:
-            # Using the admin API
-            client.auth.admin.update_user_by_id(
+            # Using the admin API (on the auth client so the data client's
+            # session/headers stay on the service role key)
+            SupabaseService.get_auth_client().auth.admin.update_user_by_id(
                 user_id,
                 {"password": request.new_password}
             )
