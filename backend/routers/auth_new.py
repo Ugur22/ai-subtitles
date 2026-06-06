@@ -8,8 +8,7 @@ Uses ThreadPoolExecutor to prevent blocking the event loop during GPU processing
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Callable, Any
-from datetime import datetime, timedelta
-import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr
@@ -30,12 +29,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(_auth_executor, func, *args)
 
 
-from services.email import (
-    generate_verification_code,
-    send_verification_email,
-    send_password_reset_email,
-    send_welcome_email
-)
+from services.email import send_welcome_email
 from middleware.auth import require_auth, clear_token_cache
 
 
@@ -187,148 +181,6 @@ def _mark_invite_used(code: str, user_id: str) -> None:
         print(f"[Auth] Error marking invite as used: {e}")
 
 
-def _store_verification_code(user_id: str, code: str) -> None:
-    """
-    Store email verification code in database (expires in 15 min).
-
-    Args:
-        user_id: User UUID
-        code: 6-digit verification code
-    """
-    try:
-        client = SupabaseService.get_client()
-
-        expires_at = datetime.utcnow() + timedelta(minutes=15)
-
-        client.table("email_verifications").insert({
-            "user_id": user_id,
-            "code": code,
-            "expires_at": expires_at.isoformat()
-        }).execute()
-
-    except Exception as e:
-        print(f"[Auth] Error storing verification code: {e}")
-        raise
-
-
-def _verify_email_code(user_id: str, code: str) -> bool:
-    """
-    Verify email verification code.
-
-    Args:
-        user_id: User UUID
-        code: 6-digit verification code
-
-    Returns:
-        True if valid and not expired, False otherwise
-    """
-    try:
-        client = SupabaseService.get_client()
-
-        # Get most recent code for this user
-        response = (
-            client.table("email_verifications")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("code", code)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-
-        if not response.data or len(response.data) == 0:
-            return False
-
-        record = response.data[0]
-        expires_at = datetime.fromisoformat(record["expires_at"].replace('Z', '+00:00'))
-
-        # Check if expired
-        if datetime.utcnow() > expires_at.replace(tzinfo=None):
-            return False
-
-        # Delete used code
-        client.table("email_verifications").delete().eq("id", record["id"]).execute()
-
-        return True
-
-    except Exception as e:
-        print(f"[Auth] Error verifying email code: {e}")
-        return False
-
-
-def _store_password_reset_code(email: str, code: str) -> None:
-    """
-    Store password reset code in database (expires in 15 min).
-
-    Args:
-        email: User email
-        code: 6-digit reset code
-    """
-    try:
-        client = SupabaseService.get_client()
-
-        expires_at = datetime.utcnow() + timedelta(minutes=15)
-
-        client.table("password_resets").insert({
-            "email": email,
-            "code": code,
-            "expires_at": expires_at.isoformat(),
-            "used": False
-        }).execute()
-
-    except Exception as e:
-        print(f"[Auth] Error storing reset code: {e}")
-        raise
-
-
-def _verify_reset_code(email: str, code: str) -> bool:
-    """
-    Verify password reset code.
-
-    Args:
-        email: User email
-        code: 6-digit reset code
-
-    Returns:
-        True if valid and not expired, False otherwise
-    """
-    try:
-        client = SupabaseService.get_client()
-
-        # Get most recent unused code for this email
-        response = (
-            client.table("password_resets")
-            .select("*")
-            .eq("email", email)
-            .eq("code", code)
-            .eq("used", False)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-
-        if not response.data or len(response.data) == 0:
-            return False
-
-        record = response.data[0]
-        expires_at = datetime.fromisoformat(record["expires_at"].replace('Z', '+00:00'))
-
-        # Check if expired
-        if datetime.utcnow() > expires_at.replace(tzinfo=None):
-            return False
-
-        # Mark as used
-        client.table("password_resets").update({
-            "used": True
-        }).eq("id", record["id"]).execute()
-
-        return True
-
-    except Exception as e:
-        print(f"[Auth] Error verifying reset code: {e}")
-        return False
-
-
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -449,10 +301,10 @@ async def register(request: RegisterRequest):
         # Mark invite code as used
         _mark_invite_used(request.invite_code, user_id)
 
-        # Generate and send verification code
-        code = generate_verification_code()
-        _store_verification_code(user_id, code)
-        await send_verification_email(request.email, code)
+        # The verification email (6-digit OTP) is sent by Supabase as part of
+        # sign_up above, because "Confirm email" is enabled on the project and
+        # the "Confirm signup" template uses {{ .Token }}. We verify it later
+        # via auth.verify_otp in /verify-email.
 
         print(f"[Auth] User registered successfully: {user_id}")
 
@@ -476,45 +328,82 @@ async def register(request: RegisterRequest):
 @router.post("/verify-email", response_model=VerifyEmailResponse)
 async def verify_email(request: VerifyEmailRequest, response: Response):
     """
-    Verify email with 6-digit code.
+    Verify email with the 6-digit OTP that Supabase emailed at sign-up.
 
-    Sets HttpOnly cookie with auth token on success.
-    Marks user as email_verified in database.
+    Confirms the Supabase auth user via auth.verify_otp (type="signup"),
+    marks the profile verified, and sets HttpOnly session cookies so the
+    user lands logged in.
 
     Raises:
         400: Invalid or expired code
+        404: User not found
     """
     try:
-        # Verify code
-        if not _verify_email_code(request.user_id, request.code):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid or expired verification code"
-            )
-
         client = SupabaseService.get_client()
 
-        # Update user profile
-        client.table("user_profiles").update({
-            "email_verified": True,
-            "updated_at": datetime.utcnow().isoformat()
-        }).eq("id", request.user_id).execute()
-
-        # Update Supabase auth metadata
-        # Note: This requires admin access or the user to be signed in
-        # For now, we rely on the user_profiles.email_verified field
-
-        # Get user to create session
-        user_response = client.table("user_profiles").select("email").eq("id", request.user_id).single().execute()
+        # The frontend sends user_id; Supabase OTP verification needs the email.
+        user_response = (
+            client.table("user_profiles")
+            .select("email")
+            .eq("id", request.user_id)
+            .single()
+            .execute()
+        )
 
         if not user_response.data:
             raise HTTPException(status_code=404, detail="User not found")
 
         email = user_response.data["email"]
 
-        # Create a session token (we'll use Supabase's session)
-        # Note: In production, you'd want to have the user log in after verification
-        # For now, we'll create a temporary session
+        # Verify the OTP against Supabase (confirms the auth user + returns a session).
+        try:
+            otp_response = SupabaseService.get_auth_client().auth.verify_otp({
+                "email": email,
+                "token": request.code,
+                "type": "signup"
+            })
+        except Exception as e:
+            print(f"[Auth] verify_otp failed for {request.user_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired verification code"
+            )
+
+        if not otp_response or not otp_response.user:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired verification code"
+            )
+
+        # Mark the profile verified (login checks user_profiles.email_verified).
+        client.table("user_profiles").update({
+            "email_verified": True,
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", request.user_id).execute()
+
+        # Set session cookies from the OTP session so the user is logged in
+        # immediately (mirrors the cookie handling in /login).
+        session = otp_response.session
+        if session and session.access_token:
+            response.set_cookie(
+                key="auth_token",
+                value=session.access_token,
+                httponly=True,
+                secure=True,
+                samesite="none",
+                max_age=7 * 24 * 60 * 60,
+                path="/"
+            )
+            if session.refresh_token:
+                response.set_cookie(
+                    key="auth_refresh_token",
+                    value=session.refresh_token,
+                    httponly=True,
+                    secure=True,
+                    samesite="none",
+                    max_age=7 * 24 * 60 * 60,
+                    path="/"
+                )
 
         # Send welcome email
         await send_welcome_email(email)
@@ -523,7 +412,7 @@ async def verify_email(request: VerifyEmailRequest, response: Response):
 
         return VerifyEmailResponse(
             success=True,
-            message="Email verified successfully. You can now log in."
+            message="Email verified successfully."
         )
 
     except HTTPException:
@@ -541,15 +430,13 @@ async def verify_email(request: VerifyEmailRequest, response: Response):
 @router.post("/resend-verification", response_model=ResendVerificationResponse)
 async def resend_verification(request: ResendVerificationRequest):
     """
-    Resend email verification code.
+    Resend the email verification OTP via Supabase.
 
-    Generates a new 6-digit code and sends to email if account exists and is unverified.
     Always returns success for security (don't reveal if email exists).
 
     Security:
         - Generic response to prevent email enumeration
-        - Only sends if account exists AND email_verified is false
-        - Deletes old codes before creating new one
+        - Only resends if account exists AND email_verified is false
     """
     try:
         client = SupabaseService.get_client()
@@ -564,21 +451,15 @@ async def resend_verification(request: ResendVerificationRequest):
 
         if response_data.data and len(response_data.data) > 0:
             profile = response_data.data[0]
-            user_id = profile["id"]
             email_verified = profile.get("email_verified", False)
 
             # Only send if email is not verified
             if not email_verified:
-                # Delete any existing verification codes for this user
-                try:
-                    client.table("email_verifications").delete().eq("user_id", user_id).execute()
-                except Exception as e:
-                    print(f"[Auth] Error deleting old verification codes: {e}")
-
-                # Generate and send new code
-                code = generate_verification_code()
-                _store_verification_code(user_id, code)
-                await send_verification_email(request.email, code)
+                # Ask Supabase to resend the signup confirmation OTP email
+                SupabaseService.get_auth_client().auth.resend({
+                    "type": "signup",
+                    "email": request.email
+                })
 
                 print(f"[Auth] Verification code resent to {request.email}")
             else:
@@ -785,7 +666,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     """
     Request password reset code.
 
-    Sends 6-digit code to email if account exists.
+    Sends a 6-digit recovery OTP via Supabase if the account exists.
     Always returns success for security (don't reveal if email exists).
     """
     try:
@@ -800,10 +681,8 @@ async def forgot_password(request: ForgotPasswordRequest):
         )
 
         if response.data and len(response.data) > 0:
-            # Email exists - send reset code
-            code = generate_verification_code()
-            _store_password_reset_code(request.email, code)
-            await send_password_reset_email(request.email, code)
+            # Email exists - ask Supabase to email a recovery OTP
+            SupabaseService.get_auth_client().auth.reset_password_for_email(request.email)
 
             print(f"[Auth] Password reset code sent to {request.email}")
         else:
@@ -826,9 +705,10 @@ async def forgot_password(request: ForgotPasswordRequest):
 @router.post("/reset-password", response_model=ResetPasswordResponse)
 async def reset_password(request: ResetPasswordRequest):
     """
-    Reset password with verification code.
+    Reset password with the recovery OTP that Supabase emailed.
 
-    Validates code and updates password in Supabase Auth.
+    Verifies the OTP (type="recovery") and updates the password on the
+    resulting session.
 
     Raises:
         400: Invalid code, expired code, or weak password
@@ -841,55 +721,49 @@ async def reset_password(request: ResetPasswordRequest):
                 detail="Password must be at least 8 characters"
             )
 
-        # Verify reset code
-        if not _verify_reset_code(request.email, request.code):
+        auth_client = SupabaseService.get_auth_client()
+
+        # Verify the recovery OTP - this establishes a session for the user.
+        try:
+            otp_response = auth_client.auth.verify_otp({
+                "email": request.email,
+                "token": request.code,
+                "type": "recovery"
+            })
+        except Exception as e:
+            print(f"[Auth] Recovery verify_otp failed for {request.email}: {e}")
             raise HTTPException(
                 status_code=400,
                 detail="Invalid or expired reset code"
             )
 
-        client = SupabaseService.get_client()
-
-        # Get user ID from email
-        profile_response = (
-            client.table("user_profiles")
-            .select("id")
-            .eq("email", request.email)
-            .single()
-            .execute()
-        )
-
-        if not profile_response.data:
+        if not otp_response or not otp_response.user:
             raise HTTPException(
-                status_code=404,
-                detail="User not found"
+                status_code=400,
+                detail="Invalid or expired reset code"
             )
 
-        user_id = profile_response.data["id"]
-
-        # Update password in Supabase Auth
-        # Note: This requires admin/service role access
+        # Update the password for the now-authenticated (recovery) session.
         try:
-            # Using the admin API (on the auth client so the data client's
-            # session/headers stay on the service role key)
-            SupabaseService.get_auth_client().auth.admin.update_user_by_id(
-                user_id,
-                {"password": request.new_password}
-            )
-
-            print(f"[Auth] Password reset successfully for user: {user_id}")
-
-            return ResetPasswordResponse(
-                success=True,
-                message="Password reset successful. You can now log in with your new password."
-            )
-
+            auth_client.auth.update_user({"password": request.new_password})
+            print(f"[Auth] Password reset successfully for user: {otp_response.user.id}")
         except Exception as e:
             print(f"[Auth] Failed to update password: {e}")
             raise HTTPException(
                 status_code=500,
                 detail="Failed to reset password. Please try again."
             )
+        finally:
+            # Clean up the recovery session so it doesn't linger on the auth client.
+            try:
+                auth_client.auth.sign_out()
+            except Exception:
+                pass
+
+        return ResetPasswordResponse(
+            success=True,
+            message="Password reset successful. You can now log in with your new password."
+        )
 
     except HTTPException:
         raise
