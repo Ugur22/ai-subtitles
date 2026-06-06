@@ -12,6 +12,7 @@ import {
   extractGcsPathFromSignedUrl,
   formatScreenshotUrlSafe,
 } from "../../../utils/url";
+import { isEditableTarget } from "../../../utils/dom";
 import {
   getJobScreenshotUrl,
   listSpeakers,
@@ -1345,7 +1346,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [reindexStatus, setReindexStatus] = useState<string | null>(null);
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const [screenshotCount, setScreenshotCount] = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [citeOn, setCiteOn] = useState(true);
 
@@ -1435,7 +1436,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   // Scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
   const loadProviders = async () => {
@@ -1887,6 +1894,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const messagesContainer = messagesContainerRef.current;
+    const previousScrollTop = messagesContainer?.scrollTop ?? 0;
+    const wasPinnedToBottom = messagesContainer
+      ? messagesContainer.scrollHeight -
+          messagesContainer.scrollTop -
+          messagesContainer.clientHeight <=
+        8
+      : false;
+
     const value = e.target.value;
     setInput(value);
     const cursorPos = e.target.selectionStart || value.length;
@@ -1902,6 +1918,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     const el = e.target;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
+
+    if (messagesContainer) {
+      requestAnimationFrame(() => {
+        if (wasPinnedToBottom) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        } else {
+          messagesContainer.scrollTop = previousScrollTop;
+        }
+      });
+    }
   };
 
   const selectMention = (speaker: string) => {
@@ -1924,6 +1950,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    e.stopPropagation();
+
     if (showMentions && filteredSpeakers.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -2302,6 +2330,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       {/* Messages */}
       <div
+        ref={messagesContainerRef}
         className="flex-1 overflow-y-auto"
         style={{ padding: "18px 16px 12px", display: "flex", flexDirection: "column", gap: "18px" }}
       >
@@ -2764,8 +2793,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </div>
           </div>
         )}
-
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
@@ -2824,6 +2851,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <textarea
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isEditableTarget(e.target)) e.stopPropagation();
+                }}
+                onKeyUp={(e) => e.stopPropagation()}
+                onKeyPress={(e) => e.stopPropagation()}
                 placeholder="Add custom instructions for the AI (e.g., 'Respond in Spanish', 'Be brief and casual', 'Focus on technical details')..."
                 className="input-base w-full px-3 py-2 resize-none text-sm"
                 rows={3}
@@ -2868,6 +2900,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyPress}
+              onKeyUp={(e) => e.stopPropagation()}
+              onKeyPress={(e) => e.stopPropagation()}
               placeholder="Ask about this transcript… (type @ to mention a speaker)"
               disabled={loading}
             />
