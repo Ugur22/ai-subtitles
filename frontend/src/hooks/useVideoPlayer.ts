@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isEditableTarget } from "../utils/dom";
 
 interface UseVideoPlayerOptions {
   onJumpToTimeRequest?: () => void;
@@ -89,6 +90,8 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
       const video = videoRefInternal.current;
       if (!video) return;
 
+      if (isEditableTarget(e.target)) return;
+
       // Ctrl+J to open Jump to Time
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
@@ -109,13 +112,11 @@ export const useVideoPlayer = (options: UseVideoPlayerOptions = {}) => {
           video.currentTime = Math.max(0, video.currentTime - 5);
           break;
         case " ":
-          if (
-            document.activeElement?.tagName !== "INPUT" &&
-            document.activeElement?.tagName !== "TEXTAREA" &&
-            !(document.activeElement as HTMLElement)?.isContentEditable
-          ) {
-            e.preventDefault();
-            video.paused ? video.play() : video.pause();
+          e.preventDefault();
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
           }
           break;
       }
