@@ -24,6 +24,7 @@ class JobQueueService:
         file_size_bytes: int,
         video_hash: str,
         user_id: str = None,
+        duration_seconds: int = None,
         **params
     ) -> Dict:
         """
@@ -89,6 +90,9 @@ class JobQueueService:
             "stage": "queued",
             "message": "Job created and queued",
             "estimated_duration_seconds": estimated_duration_seconds,
+            # Client-reported duration (advisory; the worker re-probes and
+            # overwrites with the real value on completion).
+            "video_duration_seconds": duration_seconds,
             "retry_count": 0,
             # Store job parameters as JSON
             "params": params,

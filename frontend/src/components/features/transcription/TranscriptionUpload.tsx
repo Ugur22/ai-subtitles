@@ -45,6 +45,12 @@ import { useChapters } from "../../../hooks/useChapters";
 import { ChapterPanel } from "../chapters/ChapterPanel";
 import { useBackgroundJobSubmit } from "../../../hooks/useBackgroundJobSubmit";
 import { useJobTracker } from "../../../hooks/useJobTracker";
+import { useAuth } from "../../../hooks/useAuth";
+import { getMediaDurationSeconds } from "../../../utils/file";
+
+// Per-file video length cap for non-admin (free) users. Backend (middleware/quota.py)
+// is the source of truth; this just gives instant feedback before uploading.
+const FREE_MAX_FILE_MINUTES = 30;
 import { JobPanel } from "../jobs";
 
 // Note: ProcessingStage type moved to useTranscription hook
@@ -111,6 +117,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
   // Jobs context — shares active count + panel state with Header
   const { setActiveJobCount, showJobPanel, setShowJobPanel } = useJobs();
+
+  // Current user (for plan/admin-aware upload limits)
+  const { user } = useAuth();
 
   // Initialize job tracker for background processing
   const jobTracker = useJobTracker();
@@ -318,8 +327,25 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
     // Handle background processing mode
     if (transcriptionMethod === "background") {
+      // Read the media duration so the backend can enforce the per-file limit,
+      // and give instant feedback for over-limit non-admin uploads.
+      const durationSeconds = await getMediaDurationSeconds(file);
+
+      if (
+        durationSeconds &&
+        !user?.is_admin &&
+        durationSeconds > FREE_MAX_FILE_MINUTES * 60
+      ) {
+        toast.error(
+          `Videos are limited to ${FREE_MAX_FILE_MINUTES} minutes on your plan. ` +
+            `This file is ${Math.ceil(durationSeconds / 60)} minutes.`
+        );
+        return;
+      }
+
       try {
         const result = await backgroundJobSubmit.submit(file, {
+          durationSeconds: durationSeconds ?? undefined,
           language: languageCode || undefined,
           forceLanguage: true,
         });
@@ -335,8 +361,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           }
         }
       } catch (error) {
-        // Error is already set in backgroundJobSubmit state
+        const msg =
+          error instanceof Error ? error.message : "Failed to submit job";
         console.error("Background job submission failed:", error);
+        toast.error(msg);
       }
       return;
     }

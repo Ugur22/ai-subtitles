@@ -47,6 +47,7 @@ class JobSubmitRequest(BaseModel):
     gcs_path: str
     file_size_bytes: int
     video_hash: str
+    duration_seconds: Optional[int] = None  # client-reported video length (advisory; worker re-probes)
     num_speakers: Optional[int] = None
     min_speakers: Optional[int] = None
     max_speakers: Optional[int] = None
@@ -295,9 +296,14 @@ async def submit_job(
     # Get authenticated user ID
     user_id = request.state.user["id"]
 
-    # Quota check (admins bypass; free/pro/studio enforced)
+    # Quota check (admins bypass; free/pro/studio enforced). The client-reported
+    # duration gives instant feedback here; the worker re-probes the real duration
+    # before transcription so this can't be bypassed by spoofing duration_seconds.
     from middleware.quota import check_can_transcribe
-    check_can_transcribe(getattr(request.state, "profile", None))
+    check_can_transcribe(
+        getattr(request.state, "profile", None),
+        file_duration_seconds=job_request.duration_seconds,
+    )
 
     try:
         # Create job (checks queue limit and deduplication)
@@ -307,6 +313,7 @@ async def submit_job(
             file_size_bytes=job_request.file_size_bytes,
             video_hash=job_request.video_hash,
             user_id=user_id,  # Associate job with authenticated user
+            duration_seconds=job_request.duration_seconds,
             num_speakers=job_request.num_speakers,
             min_speakers=job_request.min_speakers,
             max_speakers=job_request.max_speakers,

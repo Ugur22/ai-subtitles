@@ -32,10 +32,16 @@ api.interceptors.response.use(
         if (typeof error.response.data === 'string') {
           message = error.response.data;
         } else if (error.response.data.detail) {
-          // FastAPI typically uses 'detail' field
-          message = typeof error.response.data.detail === 'string'
-            ? error.response.data.detail
-            : JSON.stringify(error.response.data.detail);
+          // FastAPI typically uses 'detail' field. For structured errors (e.g.
+          // quota 402s: { error, message, upgrade_url }), prefer the human message.
+          const detail = error.response.data.detail;
+          if (typeof detail === 'string') {
+            message = detail;
+          } else if (detail && typeof detail === 'object' && detail.message) {
+            message = detail.message;
+          } else {
+            message = JSON.stringify(detail);
+          }
         } else if (error.response.data.message) {
           // Some APIs use 'message' field
           message = error.response.data.message;
@@ -670,6 +676,7 @@ export interface SubmissionProgress {
  */
 export interface BackgroundJobOptions {
   file: File;
+  durationSeconds?: number;
   language?: string;
   forceLanguage?: boolean;
   numSpeakers?: number;
@@ -693,7 +700,7 @@ export interface BackgroundJobOptions {
 export const submitBackgroundJob = async (
   options: BackgroundJobOptions
 ): Promise<JobSubmitResponse> => {
-  const { file, language, forceLanguage = false, numSpeakers, minSpeakers, maxSpeakers, onProgress } = options;
+  const { file, durationSeconds, language, forceLanguage = false, numSpeakers, minSpeakers, maxSpeakers, onProgress } = options;
 
   const report = (stage: SubmissionStage, progress: number, message: string) => {
     if (onProgress) {
@@ -736,6 +743,7 @@ export const submitBackgroundJob = async (
     gcs_path: gcsPath,
     file_size_bytes: file.size,
     video_hash: videoHash,
+    duration_seconds: durationSeconds,
     language,
     force_language: forceLanguage,
     num_speakers: numSpeakers,
