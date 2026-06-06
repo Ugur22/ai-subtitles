@@ -106,11 +106,16 @@ def check_can_transcribe(
             },
         )
 
-    # Monthly minute cap
+    # Monthly minute cap. Project this file's duration on top of usage already
+    # recorded so a single large file can't blow past the cap (usage is only
+    # recorded after a job completes, so a "used >= cap" check alone lets the
+    # first big file through).
     monthly_cap = limits["monthly_transcription_seconds"]
     if monthly_cap is not None and user_id:
         used = get_current_month_usage(user_id)["transcription_seconds"]
-        if used >= monthly_cap:
+        projected = used + (file_duration_seconds or 0)
+        if used >= monthly_cap or (file_duration_seconds and projected > monthly_cap):
+            remaining = max(0, monthly_cap - used)
             raise HTTPException(
                 status_code=402,
                 detail={
@@ -118,6 +123,7 @@ def check_can_transcribe(
                     "message": f"You've used your {monthly_cap // 60}-minute monthly transcription quota. Upgrade for more.",
                     "limit_seconds": monthly_cap,
                     "used_seconds": used,
+                    "remaining_seconds": remaining,
                     "upgrade_url": "/pricing",
                 },
             )

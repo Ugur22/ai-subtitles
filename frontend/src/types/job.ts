@@ -92,6 +92,7 @@ export interface JobSubmitParams {
   gcs_path: string;
   file_size_bytes: number;
   video_hash: string;
+  duration_seconds?: number;
   language?: string;
   force_language?: boolean;
   num_speakers?: number;

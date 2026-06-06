@@ -22,6 +22,7 @@ export interface SubmissionState {
 }
 
 export interface SubmitOptions {
+  durationSeconds?: number;
   language?: string;
   forceLanguage?: boolean;
   numSpeakers?: number;
@@ -56,6 +57,7 @@ export const useBackgroundJobSubmit = (onJobSubmitted?: () => void) => {
     try {
       const result = await submitBackgroundJob({
         file,
+        durationSeconds: options.durationSeconds,
         language: options.language,
         forceLanguage: options.forceLanguage,
         numSpeakers: options.numSpeakers,
@@ -99,7 +101,8 @@ export const useBackgroundJobSubmit = (onJobSubmitted?: () => void) => {
         lastSubmittedJob: null,
       });
 
-      return null;
+      // Rethrow so callers can surface the reason (e.g. quota 402) to the user.
+      throw error instanceof Error ? error : new Error(errorMessage);
     }
   }, [addJob, onJobSubmitted]);
 

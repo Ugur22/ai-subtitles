@@ -14,6 +14,8 @@ import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
+from fastapi import HTTPException
+
 from .usage_meter import record_transcription
 
 # Single worker executor for CPU/GPU-bound tasks
@@ -36,6 +38,8 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
 
 from config import settings
 from services.job_queue_service import JobQueueService
+from services.supabase_service import supabase
+from middleware.quota import check_can_transcribe
 from services.gcs_service import gcs_service
 from services.audio_service import AudioService
 from services.speaker_service import SpeakerService
@@ -223,6 +227,7 @@ class BackgroundWorker:
         temp_dirs = []
         heartbeat_thread = None
         gpu_start_ts = time.monotonic()  # for cost-accounting (gpu_seconds)
+        probed_duration_seconds = None  # real duration from ffprobe (quota + usage)
 
         try:
             # Get job
@@ -303,6 +308,40 @@ class BackgroundWorker:
                     )
                     temp_files.append(temp_video_path)
                     print(f"[Worker] Downloaded video to {temp_video_path}")
+
+                    # Authoritative quota enforcement: probe the real duration and
+                    # reject over-limit jobs BEFORE the expensive transcription.
+                    # (The submit-time check uses a client-reported duration, which
+                    # could be spoofed; this re-check can't be.)
+                    try:
+                        probed = AudioService.get_audio_duration(temp_video_path)
+                        probed_duration_seconds = int(round(probed)) if probed else None
+                    except Exception as e:
+                        probed_duration_seconds = None
+                        print(f"[Worker] Could not probe duration for {job_id}: {e}")
+
+                    if probed_duration_seconds and user_id:
+                        try:
+                            profile = (
+                                supabase()
+                                .table("user_profiles")
+                                .select("id, is_admin, subscription_plan")
+                                .eq("id", user_id)
+                                .single()
+                                .execute()
+                            ).data
+                        except Exception as e:
+                            profile = None
+                            print(f"[Worker] Could not load profile for quota check ({user_id}): {e}")
+
+                        try:
+                            check_can_transcribe(profile, file_duration_seconds=probed_duration_seconds)
+                        except HTTPException as quota_error:
+                            detail = quota_error.detail
+                            msg = detail.get("message") if isinstance(detail, dict) else str(detail)
+                            print(f"[Worker] Job {job_id} blocked by quota: {msg}")
+                            JobQueueService.mark_failed(job_id, msg, "quota_exceeded")
+                            return False
 
                     JobQueueService.update_progress(job_id, 10, "downloading", "Download complete")
 
@@ -879,9 +918,10 @@ class BackgroundWorker:
                 },
             }
 
-            # Compute video duration (last segment end time, in seconds)
-            video_duration_seconds: Optional[int] = None
-            if formatted_segments:
+            # Video duration: prefer the ffprobe value (whole file, incl. trailing
+            # silence); fall back to the last segment's end time.
+            video_duration_seconds: Optional[int] = probed_duration_seconds
+            if video_duration_seconds is None and formatted_segments:
                 try:
                     last_end = formatted_segments[-1].get("end")
                     if last_end is not None:

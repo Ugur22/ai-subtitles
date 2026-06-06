@@ -39,6 +39,45 @@ export async function generateFileHash(
 }
 
 /**
+ * Read the duration (in seconds) of a video/audio file using an off-DOM media
+ * element. Resolves to null if the duration can't be determined (e.g. unknown
+ * codec) so callers can fall back to server-side probing.
+ *
+ * @param file - The media File object
+ * @returns Promise<number | null> - duration in whole seconds, or null
+ */
+export function getMediaDurationSeconds(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    let url: string | null = null;
+    try {
+      const isVideo = file.type.startsWith('video/');
+      const el = document.createElement(isVideo ? 'video' : 'audio');
+      el.preload = 'metadata';
+
+      const cleanup = () => {
+        if (url) URL.revokeObjectURL(url);
+      };
+
+      el.onloadedmetadata = () => {
+        const d = el.duration;
+        cleanup();
+        resolve(Number.isFinite(d) && d > 0 ? Math.round(d) : null);
+      };
+      el.onerror = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      url = URL.createObjectURL(file);
+      el.src = url;
+    } catch {
+      if (url) URL.revokeObjectURL(url);
+      resolve(null);
+    }
+  });
+}
+
+/**
  * Format file size for display
  */
 export function formatFileSize(bytes: number): string {
