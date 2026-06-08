@@ -501,7 +501,16 @@ def _sign_in_with_password(email: str, password: str):
 def _check_email_verified(user_id: str):
     """Blocking profile check - runs in executor."""
     client = SupabaseService.get_client()
-    return client.table("user_profiles").select("email_verified").eq("id", user_id).single().execute()
+    response = (
+        client.table("user_profiles")
+        .select("email_verified")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if response.data and len(response.data) > 0:
+        return response.data[0]
+    return None
 
 
 def _log_login_event(user_id: str, email: str):
@@ -555,9 +564,9 @@ async def login(request: LoginRequest, response: Response):
             )
 
         # Check if email verified (non-blocking)
-        profile_response = await _run_in_executor(_check_email_verified, user_id)
+        profile = await _run_in_executor(_check_email_verified, user_id)
 
-        if not profile_response.data or not profile_response.data.get("email_verified", False):
+        if not profile or not profile.get("email_verified", False):
             raise HTTPException(
                 status_code=403,
                 detail="Email not verified. Please check your email for verification code."
