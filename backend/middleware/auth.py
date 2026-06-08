@@ -88,7 +88,7 @@ def _verify_supabase_token(token: str) -> Optional[Dict]:
         User data dict or None if invalid
     """
     try:
-        client = SupabaseService.get_client()
+        client = SupabaseService.get_auth_client()
 
         # Verify JWT and get user
         response = client.auth.get_user(token)
@@ -121,10 +121,16 @@ def _get_user_profile(user_id: str) -> Optional[Dict]:
     try:
         client = SupabaseService.get_client()
 
-        response = client.table("user_profiles").select("*").eq("id", user_id).single().execute()
+        response = (
+            client.table("user_profiles")
+            .select("*")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
 
-        if response.data:
-            return response.data
+        if response.data and len(response.data) > 0:
+            return response.data[0]
 
         return None
 
@@ -191,7 +197,7 @@ def _refresh_supabase_session(refresh_token: str) -> Optional[Dict]:
         }
     """
     try:
-        client = SupabaseService.get_client()
+        client = SupabaseService.get_auth_client()
 
         # Use Supabase's refresh_session method
         response = client.auth.refresh_session(refresh_token)
