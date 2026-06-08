@@ -37,9 +37,9 @@ export const useJobTracker = () => {
       setIsLoading(true);
       setIsOffline(false);
 
-      // Call the API with stored tokens (backend also matches by user_id)
-      const tokens = storedJobs.map(j => j.access_token);
-      const response = await getJobs(tokens, page, JOBS_PER_PAGE);
+      // Authenticated job lists are scoped by server-side user_id. Stored
+      // access tokens are only used for direct shared-job actions.
+      const response = await getJobs([], page, JOBS_PER_PAGE);
 
       // Create a map of job_id -> access_token from stored jobs
       const tokenMap = new Map(storedJobs.map(j => [j.job_id, j.access_token]));

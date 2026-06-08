@@ -566,8 +566,8 @@ export const getJob = async (jobId: string, token: string): Promise<Job> => {
 };
 
 /**
- * Get a paginated list of jobs using stored access tokens
- * @param tokens - Array of access tokens for jobs to fetch
+ * Get a paginated list of jobs for the authenticated user.
+ * @param tokens - Deprecated; ignored by the backend for authenticated lists
  * @param page - Page number (1-indexed)
  * @param perPage - Number of jobs per page (default 10)
  */

@@ -21,6 +21,15 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
+
+const clearJobsCache = () => {
+  try {
+    localStorage.removeItem(JOBS_CACHE_KEY);
+  } catch {
+    // Ignore storage errors; auth should not fail because cache cleanup failed.
+  }
+};
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -70,6 +79,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setIsLoading(true);
       setError(null);
       try {
+        clearJobsCache();
         await authService.login(email, password);
         // Fetch user data from /api/auth/me after successful login
         await fetchUser();
@@ -90,6 +100,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       await authService.logout();
       setUser(null);
+      clearJobsCache();
       toast.success('Logged out successfully');
     } catch (err) {
       toast.error('Logout failed');
