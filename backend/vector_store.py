@@ -39,16 +39,30 @@ class VectorStore:
             )
         )
 
-        # Initialize text embedding model (lazy loading)
-        print("Loading text embedding model (sentence-transformers)...")
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("Text embedding model loaded successfully")
+        # Text embedding model (lazy loading) — deferred so that a model/cache
+        # issue degrades only chat/search, never crashes importers like the
+        # transcription worker (which imports this module transitively).
+        self._embedding_model = None
 
         # CLIP model for image embeddings (lazy loading)
         self._clip_model = None
 
         # Default collection name
         self.collection_name = "transcriptions"
+
+    @property
+    def embedding_model(self) -> SentenceTransformer:
+        """
+        Lazy load text embedding model for transcript embeddings
+
+        Returns:
+            Sentence-transformers all-MiniLM-L6-v2 model
+        """
+        if self._embedding_model is None:
+            print("Loading text embedding model (sentence-transformers)...")
+            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print("Text embedding model loaded successfully")
+        return self._embedding_model
 
     @property
     def clip_model(self) -> SentenceTransformer:

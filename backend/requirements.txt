@@ -20,7 +20,13 @@ av==13.1.0
 scipy>=1.11.0  # For speaker recognition similarity calculations
 
 # LLM and RAG dependencies
-sentence-transformers>=3.0.0
+# Pinned (was sentence-transformers>=3.0.0): an unpinned bump to huggingface-hub
+# 0.36.x left module-subfolder files (1_Pooling/config.json) out of the baked
+# model cache, crash-looping the worker at import. Pin both for reproducible
+# builds; download_models.py snapshot-downloads the full repo and the Dockerfile
+# asserts the cache is complete as backstops.
+sentence-transformers==3.1.1
+huggingface-hub==0.36.2
 chromadb==0.4.22
 groq==0.4.2
 

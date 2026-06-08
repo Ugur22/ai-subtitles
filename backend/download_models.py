@@ -143,6 +143,15 @@ def download_sentence_transformers_model():
     try:
         from sentence_transformers import SentenceTransformer
 
+        # Fetch the FULL repo snapshot first (no allow_patterns) so every module
+        # file — including 1_Pooling/config.json and modules.json — is baked into
+        # the image cache. SentenceTransformer(name) alone has, on some
+        # huggingface_hub/sentence-transformers versions, left these subfolder
+        # files out of the cache, crashing the model load at runtime.
+        print(f"Snapshot-downloading sentence-transformers/{model_name} (all files)...")
+        snapshot_download(f"sentence-transformers/{model_name}")
+        print(f"  OK: Full snapshot cached")
+
         print(f"Downloading sentence-transformers/{model_name}...")
         model = SentenceTransformer(model_name)
         print(f"  OK: Sentence-transformers model downloaded successfully")

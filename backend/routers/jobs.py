@@ -853,15 +853,17 @@ async def get_share_link(
 @require_admin
 async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
     """
-    Check for and recover stale jobs (admin-only endpoint).
+    Check for and recover stuck jobs (admin-only endpoint).
 
     This endpoint is called by Cloud Scheduler every 5 minutes to detect jobs
-    that are stuck in 'processing' state due to worker crashes.
+    that are stuck either in 'processing' (worker crashed mid-job) or in 'pending'
+    (worker never started — dispatch failed or crashed before mark_processing).
     Requires admin authentication to prevent unauthorized access.
 
-    **Stale Detection**: Jobs with no heartbeat for 90+ seconds
-    **Recovery**: Resets to pending and auto-retries (max 3 attempts)
-    **Rate Limit**: Processes one stale job per call
+    **Stale Detection**: processing jobs with no heartbeat for 90+ seconds, or
+      pending jobs older than PENDING_STALE_SECONDS (no other poller picks these up)
+    **Recovery**: re-dispatches the worker; after max 3 attempts marks the job failed
+    **Rate Limit**: Processes one stuck job per call
 
     Returns:
         StaleJobCheckResponse with number of jobs processed

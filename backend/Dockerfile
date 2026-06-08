@@ -65,6 +65,14 @@ RUN test -f /root/panns_data/Cnn14_mAP=0.431.pth \
     && test -f /root/panns_data/class_labels_indices.csv \
     && ls -la /root/panns_data/
 
+# Verify the sentence-transformers embedding model cache is COMPLETE. The runtime
+# loads all-MiniLM-L6-v2 and needs the module subfolder files (1_Pooling/config.json,
+# modules.json); a partial cache previously shipped and crash-looped the worker at
+# import time. Fail the build loudly instead.
+RUN find /app/.cache/huggingface -path '*all-MiniLM-L6-v2*/1_Pooling/config.json' | grep -q . \
+    && find /app/.cache/huggingface -path '*all-MiniLM-L6-v2*/modules.json' | grep -q . \
+    && echo "OK: all-MiniLM-L6-v2 cache is complete"
+
 # Copy the rest of the application
 COPY . .
 
