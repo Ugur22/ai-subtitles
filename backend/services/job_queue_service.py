@@ -11,6 +11,11 @@ from services.supabase_service import supabase
 # Configuration constants
 GLOBAL_CONCURRENT_LIMIT = 3
 STALE_THRESHOLD_SECONDS = 90
+# A job left in 'pending' longer than this never had a worker pick it up — the
+# dispatch failed or the worker crashed before mark_processing(). There is no
+# other poller for pending jobs, so the stale-check recovers these too. Must be
+# comfortably above worker cold-start + provisioning (~2-3 min observed).
+PENDING_STALE_SECONDS = 600
 MAX_RETRIES = 3
 
 
@@ -564,46 +569,94 @@ class JobQueueService:
     @staticmethod
     def check_and_recover_stale_jobs() -> Optional[str]:
         """
-        Find and recover ONE stale job (last_seen > STALE_THRESHOLD_SECONDS).
+        Find and recover ONE stuck job, then re-dispatch it (or fail it if retries
+        are exhausted). Rate-limited to one job per call.
 
-        A stale job is one that's been processing but hasn't updated its heartbeat
-        in the threshold time, indicating the worker may have crashed.
+        Two stuck conditions are handled, processing first:
+          1. status='processing' with no heartbeat for STALE_THRESHOLD_SECONDS —
+             the worker crashed mid-job.
+          2. status='pending' older than PENDING_STALE_SECONDS — the worker never
+             started (dispatch failed, or the container crashed before
+             mark_processing). There is no other poller for pending jobs, so
+             without this they would sit stranded forever.
+
+        Recovery re-dispatches the worker (recovery used to only flip the status
+        back to 'pending', which left the job stranded since nothing re-triggers
+        pending jobs). After MAX_RETRIES the job is marked failed so the user sees
+        an error and a Retry option instead of an eternal spinner.
 
         Returns:
-            Job ID of the recovered job, or None if no stale jobs found
+            Job ID of the job acted on, or None if nothing was stuck
         """
         client = supabase()
+        now = datetime.utcnow()
 
-        # Calculate stale threshold timestamp
-        threshold = datetime.utcnow() - timedelta(seconds=STALE_THRESHOLD_SECONDS)
-
-        # Find stale processing jobs
+        # 1. Stale processing jobs (crashed mid-job)
+        proc_threshold = now - timedelta(seconds=STALE_THRESHOLD_SECONDS)
         response = (
             client.table("jobs")
             .select("*")
             .eq("status", "processing")
-            .lt("last_seen", threshold.isoformat())
+            .lt("last_seen", proc_threshold.isoformat())
             .order("last_seen", desc=False)  # Oldest first
             .limit(1)
             .execute()
         )
+        stuck_job = response.data[0] if response.data else None
+        reason = "stale processing"
 
-        if not response.data or len(response.data) == 0:
+        # 2. Otherwise, pending jobs a worker never picked up
+        if not stuck_job:
+            pending_threshold = now - timedelta(seconds=PENDING_STALE_SECONDS)
+            response = (
+                client.table("jobs")
+                .select("*")
+                .eq("status", "pending")
+                .lt("last_seen", pending_threshold.isoformat())
+                .order("last_seen", desc=False)  # Oldest first
+                .limit(1)
+                .execute()
+            )
+            stuck_job = response.data[0] if response.data else None
+            reason = "stuck pending"
+
+        if not stuck_job:
             return None
 
-        stale_job = response.data[0]
-        job_id = stale_job["id"]
+        job_id = stuck_job["id"]
+        retry_count = stuck_job.get("retry_count", 0) or 0
 
-        # Reset to pending for retry
+        # Give up after MAX_RETRIES so a permanently-broken worker can't crash-loop.
+        if retry_count >= MAX_RETRIES:
+            JobQueueService.mark_failed(
+                job_id,
+                f"Worker failed to start after {MAX_RETRIES} attempts. Please retry.",
+                "startup_error",
+            )
+            print(f"[JobQueue] Job {job_id} exhausted retries ({reason}); marked failed")
+            return job_id
+
+        # Reset to pending, bump the retry counter, refresh the heartbeat so we
+        # don't re-trigger before the worker has a chance to boot, then re-dispatch.
         client.table("jobs").update({
             "status": "pending",
             "stage": "queued",
-            "message": "Job recovered from stale state - will retry",
-            "updated_at": datetime.utcnow().isoformat(),
-            "last_seen": datetime.utcnow().isoformat(),
+            "message": f"Recovered ({reason}) - retrying (attempt {retry_count + 1}/{MAX_RETRIES})",
+            "retry_count": retry_count + 1,
+            "updated_at": now.isoformat(),
+            "last_seen": now.isoformat(),
         }).eq("id", job_id).execute()
 
-        print(f"[JobQueue] Recovered stale job {job_id} (last seen: {stale_job['last_seen']})")
+        triggered = JobQueueService.trigger_worker_job(job_id)
+        if not triggered:
+            JobQueueService.mark_failed(job_id, "Failed to dispatch worker job", "dispatch_error")
+            print(f"[JobQueue] Re-dispatch failed for {reason} job {job_id}; marked failed")
+        else:
+            print(
+                f"[JobQueue] Recovered {reason} job {job_id} "
+                f"(attempt {retry_count + 1}/{MAX_RETRIES}, re-dispatched; "
+                f"last seen: {stuck_job['last_seen']})"
+            )
         return job_id
 
     @staticmethod
