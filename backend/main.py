@@ -113,7 +113,11 @@ async def startup_event():
     if app_settings.ENABLE_GCS_UPLOADS:
         try:
             from services.gcs_service import gcs_service
-            deleted = gcs_service.cleanup_old_uploads(max_age_hours=168)
+            # 720h = 30 days: align the orphan sweep with the 30-day GCS lifecycle so a
+            # video stuck in uploads/ (e.g. a failed move_to_processed) is never deleted
+            # before the lifecycle window. This sweep runs on every restart, so a shorter
+            # TTL here would pre-empt retention during crash-loops.
+            deleted = gcs_service.cleanup_old_uploads(max_age_hours=720)
             print(f"- GCS uploads enabled (bucket: {app_settings.GCS_BUCKET_NAME})")
             if deleted > 0:
                 print(f"- Cleaned up {deleted} old GCS uploads")

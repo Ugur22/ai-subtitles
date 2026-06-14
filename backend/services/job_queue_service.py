@@ -398,6 +398,7 @@ class JobQueueService:
         result_vtt: str,
         video_duration_seconds: Optional[int] = None,
         gpu_seconds: Optional[float] = None,
+        gcs_path: Optional[str] = None,
     ) -> bool:
         """
         Mark a job as completed with results.
@@ -410,6 +411,8 @@ class JobQueueService:
             result_vtt: VTT format subtitles
             video_duration_seconds: Length of the source media (for quota)
             gpu_seconds: Wall-clock processing time on the GPU instance (for cost accounting)
+            gcs_path: Final GCS path of the video (e.g. processed/...) so the
+                jobs.gcs_path column matches result_json after a move_to_processed.
 
         Returns:
             True if successful
@@ -430,6 +433,8 @@ class JobQueueService:
                 "updated_at": datetime.utcnow().isoformat(),
                 "last_seen": datetime.utcnow().isoformat(),
             }
+            if gcs_path:
+                update_payload["gcs_path"] = gcs_path
             if video_duration_seconds is not None:
                 update_payload["video_duration_seconds"] = int(video_duration_seconds)
             if gpu_seconds is not None:

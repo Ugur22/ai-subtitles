@@ -2060,8 +2060,14 @@ async def transcribe_gcs_stream(
                 segments_count = len(existing_transcription.get('transcription', {}).get('segments', []))
                 if segments_count > 0:
                     print(f"Found cached transcription with {segments_count} segments")
-                    # Move file to processed folder
-                    gcs_service.move_to_processed(gcs_path)
+                    # Move file to processed folder (best-effort; the source may
+                    # already have been moved by a prior run, so never let this fail
+                    # the cache-hit response).
+                    if gcs_path.startswith(settings.GCS_UPLOAD_PREFIX) and gcs_service.file_exists(gcs_path):
+                        try:
+                            gcs_service.move_to_processed(gcs_path)
+                        except Exception as move_err:
+                            print(f"[GCS] Cache-hit move to processed failed (keeping {gcs_path}): {move_err}")
                     yield emit("complete", 100, "Loaded from cache")
                     yield f"data: {json.dumps({'stage': 'complete', 'progress': 100, 'result': existing_transcription})}\n\n"
                     return
@@ -2455,12 +2461,15 @@ async def transcribe_gcs_stream(
                 result["video_url"] = f"/video/{video_hash}"  # Backend will proxy from GCS
                 result["gcs_video_url"] = gcs_path  # Also provide GCS path as fallback
 
-            # Move file to processed folder in GCS
-            try:
-                new_gcs_path = gcs_service.move_to_processed(gcs_path)
-                result["gcs_path"] = new_gcs_path
-            except Exception as e:
-                print(f"[GCS] Failed to move to processed: {e}")
+            # Move file to processed folder in GCS (best-effort; only if still an
+            # un-moved upload). move_to_processed verifies the copy before deleting,
+            # so a failure here never loses the video.
+            if gcs_path.startswith(settings.GCS_UPLOAD_PREFIX) and gcs_service.file_exists(gcs_path):
+                try:
+                    new_gcs_path = gcs_service.move_to_processed(gcs_path)
+                    result["gcs_path"] = new_gcs_path
+                except Exception as e:
+                    print(f"[GCS] Failed to move to processed: {e}")
 
             # Clean up temp files
             try:

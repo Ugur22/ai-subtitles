@@ -921,15 +921,29 @@ async def refresh_screenshot_urls(request: Request):
 
     from services.gcs_service import maybe_refresh_segment_urls, gcs_service
     from services.supabase_service import supabase
+    import time
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=cutoff_days)).isoformat()
     batch_size = settings.URL_REFRESH_BATCH_SIZE
+
+    # Stop well before Cloud Scheduler's 300s attempt-deadline so the run always
+    # returns a clean summary (and the next daily run picks up any remainder)
+    # instead of being killed mid-flight.
+    deadline = time.monotonic() + 240.0
+
+    # Refresh signing credentials once up front so each signBlob call reuses a valid
+    # access token instead of risking a refresh race per URL.
+    try:
+        gcs_service._get_credentials()
+    except Exception:
+        logger.exception("[Jobs] refresh-screenshot-urls: credential refresh failed")
 
     client = supabase()
     refreshed_jobs = 0
     refreshed_image_rows = 0
     skipped = 0
     failed = 0
+    stopped_early = False
     video_hashes: set[str] = set()
 
     # 1. Refresh jobs.result_json segments
@@ -945,6 +959,9 @@ async def refresh_screenshot_urls(request: Request):
             .execute()
         )
         for job in resp.data or []:
+            if time.monotonic() > deadline:
+                stopped_early = True
+                break
             result_json = job.get("result_json")
             if not result_json:
                 skipped += 1
@@ -970,6 +987,9 @@ async def refresh_screenshot_urls(request: Request):
 
     # 2. Refresh image_embeddings.screenshot_url for the same video_hashes
     for vh in video_hashes:
+        if time.monotonic() > deadline:
+            stopped_early = True
+            break
         try:
             rows_resp = await _run_in_executor(
                 lambda v=vh: client.table("image_embeddings")
@@ -985,7 +1005,7 @@ async def refresh_screenshot_urls(request: Request):
                 if not gcs_path:
                     continue
                 try:
-                    new_url = gcs_service.generate_download_signed_url(
+                    new_url = gcs_service.generate_download_signed_url_resilient(
                         gcs_path, expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
                     )
                     row_id = row["id"]
@@ -1003,8 +1023,9 @@ async def refresh_screenshot_urls(request: Request):
             logger.exception("[Jobs] image_embeddings query failed for video_hash %s", vh)
 
     logger.info(
-        "[Jobs] refresh-screenshot-urls done: jobs=%d image_rows=%d skipped=%d failed=%d cutoff_days=%d",
-        refreshed_jobs, refreshed_image_rows, skipped, failed, cutoff_days,
+        "[Jobs] refresh-screenshot-urls done: jobs=%d image_rows=%d skipped=%d failed=%d "
+        "cutoff_days=%d stopped_early=%s",
+        refreshed_jobs, refreshed_image_rows, skipped, failed, cutoff_days, stopped_early,
     )
 
     return RefreshUrlsResponse(
