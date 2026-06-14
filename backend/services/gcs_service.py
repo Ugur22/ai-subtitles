@@ -253,7 +253,15 @@ class GCSService:
         source_blob = bucket.blob(gcs_path)
         bucket.copy_blob(source_blob, bucket, new_path)
 
-        # Delete original
+        # Verify the copy actually landed before deleting the source, so a failed
+        # copy never results in the video being lost entirely.
+        new_blob = bucket.blob(new_path)
+        if not new_blob.exists():
+            raise RuntimeError(
+                f"copy to {new_path} did not produce an object; leaving source intact"
+            )
+
+        # Delete original only after the copy is confirmed
         source_blob.delete()
 
         print(f"[GCS] Moved {gcs_path} -> {new_path}")
@@ -295,6 +303,54 @@ class GCSService:
         )
 
         return signed_url
+
+    # Shared executor used to time-bound the IAM signBlob call. The storage library's
+    # signing path has a fixed ~120s retry budget that isn't configurable, and it opens
+    # a fresh TLS connection per call; under a transient SSL/network error a single hung
+    # call can otherwise consume an entire Cloud Scheduler invocation (see the
+    # refresh-screenshot-urls cron). Submitting to a shared pool lets us abandon a stuck
+    # call after a short timeout without blocking the caller.
+    _sign_executor: Optional["concurrent.futures.ThreadPoolExecutor"] = None
+
+    @classmethod
+    def _get_sign_executor(cls) -> "concurrent.futures.ThreadPoolExecutor":
+        if cls._sign_executor is None:
+            cls._sign_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="gcs-sign"
+            )
+        return cls._sign_executor
+
+    @classmethod
+    def generate_download_signed_url_resilient(
+        cls,
+        gcs_path: str,
+        expiry_seconds: Optional[int] = None,
+        attempts: int = 3,
+        per_attempt_timeout: float = 20.0,
+    ) -> str:
+        """Signed URL with bounded per-attempt timeout and fast retries.
+
+        Wraps generate_download_signed_url so a transient SSL/timeout talking to
+        iamcredentials.googleapis.com retries quickly instead of stalling for the
+        library's full ~120s budget. Intended for batch callers (the URL-refresh
+        cron) that re-sign many URLs under Cloud Scheduler's 300s deadline.
+        """
+        last_err: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            fut = cls._get_sign_executor().submit(
+                cls.generate_download_signed_url, gcs_path, expiry_seconds
+            )
+            try:
+                return fut.result(timeout=per_attempt_timeout)
+            except Exception as e:  # TimeoutError or signing/network error
+                last_err = e
+                # Don't wait on a hung future; let it drain in the background pool.
+                fut.cancel()
+                logger.warning(
+                    "[GCS] sign attempt %d/%d failed for %s: %s",
+                    attempt, attempts, gcs_path, e,
+                )
+        raise last_err if last_err else RuntimeError("signing failed")
 
     @classmethod
     def upload_screenshot(
@@ -472,7 +528,7 @@ class GCSService:
             if not gcs_path:
                 continue
             try:
-                new_url = cls.generate_download_signed_url(
+                new_url = cls.generate_download_signed_url_resilient(
                     gcs_path,
                     expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
                 )

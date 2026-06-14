@@ -905,10 +905,22 @@ class BackgroundWorker:
             # Step 6: Finalize results (90-95%)
             JobQueueService.update_progress(job_id, 95, "processing", "Finalizing results...")
 
+            # Move the source video from uploads/ to processed/ so it lives under the
+            # 30-day processed retention instead of being treated as an unprocessed
+            # orphan. Best-effort: if the move fails the original path still works
+            # (the upload sweep is also 30 days now), so we never block completion.
+            final_gcs_path = gcs_path
+            if settings.ENABLE_GCS_UPLOADS and gcs_path and gcs_path.startswith(settings.GCS_UPLOAD_PREFIX):
+                try:
+                    final_gcs_path = gcs_service.move_to_processed(gcs_path)
+                except Exception as move_err:
+                    print(f"[Worker] Failed to move video to processed/ (keeping {gcs_path}): {move_err}")
+                    final_gcs_path = gcs_path
+
             # Build result JSON
             result_json = {
                 "filename": filename,
-                "gcs_path": gcs_path,
+                "gcs_path": final_gcs_path,
                 "file_size_bytes": file_size_bytes,
                 "video_hash": video_hash,
                 "video_url": f"/video/{video_hash}",
@@ -940,6 +952,7 @@ class BackgroundWorker:
                 result_vtt=vtt_content,
                 video_duration_seconds=video_duration_seconds,
                 gpu_seconds=gpu_seconds,
+                gcs_path=final_gcs_path,
             )
 
             # Roll into the user's monthly usage (best-effort; never blocks)
