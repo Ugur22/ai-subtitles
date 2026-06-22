@@ -20,8 +20,20 @@ export const useAPIKeys = () => {
     queryFn: keysService.getAPIKeys,
     retry: 1,
     refetchInterval: (query) => {
-      const hasPendingKeys = query.state.data?.some(key => key.is_valid === null);
-      return hasPendingKeys ? 2000 : false;
+      // Poll while a key is validating (is_valid === null), but ONLY for a bounded
+      // window after the key was created. Background validation is fire-and-forget on
+      // the server, so a key can get stuck at null forever (e.g. Cloud Run scaled to
+      // zero before the task ran). Without this deadline the hook polls /api/keys every
+      // 2s indefinitely for every open tab — the cause of the Jun 2026 request spike.
+      const PENDING_POLL_DEADLINE_MS = 60_000;
+      const now = Date.now();
+      const hasRecentPendingKey = query.state.data?.some(key => {
+        if (key.is_valid !== null) return false;
+        const createdMs = new Date(key.created_at).getTime();
+        // Unparseable/missing timestamp -> treat as stale and stop polling (fail safe).
+        return Number.isFinite(createdMs) && now - createdMs < PENDING_POLL_DEADLINE_MS;
+      });
+      return hasRecentPendingKey ? 2000 : false;
     },
   });
 
