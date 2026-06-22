@@ -870,6 +870,11 @@ async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
     """
     try:
         from services.job_queue_service import JobQueueService
+        from services.key_validator import sweep_stuck_pending_keys
+
+        # Self-heal API keys stuck in 'pending' validation so the frontend stops
+        # polling /api/keys every 2s for them (see PENDING_KEY_STALE_SECONDS).
+        sweep_stuck_pending_keys()
 
         recovered_job_id = JobQueueService.check_and_recover_stale_jobs()
 

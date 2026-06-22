@@ -5,11 +5,52 @@ Tests API keys against provider endpoints and updates validation status in datab
 """
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional
 import httpx
 from services.supabase_service import SupabaseService
 from services.encryption import get_encryption_key, decrypt_api_key
+
+
+# After this many seconds a key still pending validation is considered stuck.
+# Background validation is fire-and-forget (FastAPI BackgroundTasks) and the Cloud Run
+# instance can be reclaimed before it runs, leaving is_valid = NULL forever. The frontend
+# polls /api/keys every 2s while any key is null, so a stuck key = perpetual traffic.
+PENDING_KEY_STALE_SECONDS = 600  # 10 minutes
+
+
+def sweep_stuck_pending_keys() -> int:
+    """Mark keys stuck in 'pending' validation (is_valid IS NULL) as invalid.
+
+    Guarantees every key reaches a terminal state so the frontend stops polling.
+    Intended to be called from the check-stale Cloud Scheduler job. Returns the
+    number of rows updated.
+    """
+    try:
+        client = SupabaseService.get_client()
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=PENDING_KEY_STALE_SECONDS)).isoformat()
+
+        response = (
+            client.table("user_api_keys")
+            .update({
+                "is_valid": False,
+                "validation_error": "Validation did not complete (timed out)",
+                "validated_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            })
+            .is_("is_valid", "null")
+            .lt("created_at", cutoff)
+            .execute()
+        )
+
+        count = len(response.data) if response.data else 0
+        if count:
+            print(f"[KeyValidator] Swept {count} stuck pending key(s) to is_valid=false")
+        return count
+
+    except Exception as e:
+        print(f"[KeyValidator] Failed to sweep stuck pending keys: {e}")
+        return 0
 
 
 async def validate_api_key_async(user_id: str, provider: str, encrypted_key: str) -> None:
