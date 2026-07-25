@@ -100,7 +100,7 @@ def _provider_http_status(err: Optional[BaseException]) -> int:
 
 def _stored_key_provider_name(provider_name: Optional[str]) -> Optional[str]:
     """Map chat provider ids to the provider ids used in user_api_keys."""
-    if provider_name == "grok":
+    if provider_name in ("grok", "xai"):
         return "xai"
     if provider_name in ("groq", "openai", "anthropic", "deepseek"):
         return provider_name
@@ -3224,9 +3224,12 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
     from model_preloader import models_ready, wait_for_models
     if not models_ready():
         if not wait_for_models(timeout=5.0):
+            # video_hash is required by ChatResponse — omitting it turns this
+            # friendly cold-start message into a 500 ResponseValidationError.
             return {
                 "answer": "The server just started and is still loading AI models. Please try again in about 30 seconds.",
                 "sources": [],
+                "video_hash": chat_request.video_hash,
                 "provider_used": "none",
             }
 

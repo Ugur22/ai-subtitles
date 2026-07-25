@@ -80,11 +80,19 @@ def start_preloading():
 
 def models_ready() -> bool:
     """Check if critical models are loaded."""
+    from config import settings
+    if settings.LOCAL_MODE:
+        # LOCAL_MODE never preloads (heavy models live in the worker
+        # subprocess); API-side models lazy-load on first use instead.
+        return True
     return _models_ready.is_set()
 
 
 def wait_for_models(timeout: float = 5.0) -> bool:
     """Wait up to timeout seconds for critical models. Returns True if ready."""
+    from config import settings
+    if settings.LOCAL_MODE:
+        return True
     return _models_ready.wait(timeout=timeout)
 
 
