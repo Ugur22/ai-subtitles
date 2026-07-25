@@ -632,8 +632,17 @@ class GCSService:
         return deleted_count
 
 
-# Singleton instance for easy import
-gcs_service = GCSService
+# Singleton instance for easy import.
+# LOCAL_MODE invariant: the app runs with ENABLE_GCS_UPLOADS=true so the full
+# pipeline (screenshot upload, image indexing, face presence) stays on its
+# primary code path, but the storage behind this alias is local disk — nothing
+# here may assume real GCS behavior (signed-URL expiry, lifecycle rules) when
+# settings.LOCAL_MODE is set.
+if settings.LOCAL_MODE:
+    from services.local_storage_service import LocalStorageService
+    gcs_service = LocalStorageService
+else:
+    gcs_service = GCSService
 
 
 def maybe_refresh_segment_urls(result_json: Optional[dict]) -> None:

@@ -96,6 +96,63 @@ async def cleanup_screenshots(request: Request) -> CleanupScreenshotsResponse:
         )
 
 
+@router.get("/local-media/{media_path:path}", include_in_schema=False)
+async def get_local_media(request: Request, media_path: str):
+    """
+    LOCAL_MODE: serve stored media (uploads/, processed/) with HTTP Range
+    support — the StaticFiles mount on this Starlette version returns 200/full
+    body for ranged requests, which breaks both ffmpeg screenshot extraction
+    and browser video seeking.
+
+    No cookie auth, mirroring GCS signed-URL semantics: the unguessable
+    UUID-based filename is the capability.
+    """
+    if not settings.LOCAL_MODE:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    import mimetypes
+
+    from services.local_storage_service import LocalStorageService, _abs
+
+    file_path = os.path.realpath(LocalStorageService._local_path(media_path))
+    allowed_roots = [
+        os.path.realpath(LocalStorageService._uploads_dir()),
+        os.path.realpath(_abs(settings.VIDEOS_DIR)),
+        os.path.realpath(_abs(settings.SCREENSHOTS_DIR)),
+        os.path.realpath(os.path.join(_abs(settings.LOCAL_DATA_DIR), "storage")),
+    ]
+    if not any(file_path.startswith(root + os.sep) for root in allowed_roots):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_match = range_header.replace("bytes=", "").split("-")
+        start = int(range_match[0]) if range_match[0] else 0
+        end = int(range_match[1]) if range_match[1] else file_size - 1
+        end = min(end, file_size - 1)
+        return StreamingResponse(
+            ranged_file_generator(file_path, start, end),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(end - start + 1),
+            },
+            media_type=media_type,
+        )
+
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        headers={"Accept-Ranges": "bytes", "Content-Length": str(file_size)},
+    )
+
+
 def ranged_file_generator(file_path: str, start: int, end: int, chunk_size: int = 1024 * 1024):
     """Generator that yields chunks of a file for range requests"""
     with open(file_path, "rb") as f:

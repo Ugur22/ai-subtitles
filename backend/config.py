@@ -143,6 +143,19 @@ class Settings(BaseSettings):
     URL_REFRESH_CUTOFF_DAYS: int = int(os.getenv("URL_REFRESH_CUTOFF_DAYS", "30"))
     URL_REFRESH_BATCH_SIZE: int = int(os.getenv("URL_REFRESH_BATCH_SIZE", "100"))
 
+    # Local Mode Configuration
+    # LOCAL_MODE=true swaps Supabase for a SQLite-backed fake client, GCS for
+    # local-disk storage, Cloud Run Job dispatch for a subprocess, and auth for
+    # a fixed local admin user. Production behavior is unchanged when false.
+    # NOTE: local mode runs with ENABLE_GCS_UPLOADS=true on purpose — the
+    # storage service behind that flag is swapped for a disk-backed one, which
+    # keeps the full production pipeline (screenshot upload, image indexing,
+    # face presence) on its primary code path.
+    LOCAL_MODE: bool = os.getenv("LOCAL_MODE", "false").lower() == "true"
+    LOCAL_DATA_DIR: str = os.getenv("LOCAL_DATA_DIR", "./local_data")
+    LOCAL_BASE_URL: str = os.getenv("LOCAL_BASE_URL", "http://localhost:8000")
+    LOCAL_ENCRYPTION_KEY: Optional[str] = os.getenv("LOCAL_ENCRYPTION_KEY")
+
     # Supabase Configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")

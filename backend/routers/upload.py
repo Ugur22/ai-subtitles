@@ -68,7 +68,15 @@ async def get_signed_upload_url(request: Request, body: SignedUrlRequest):
         file_size = body.file_size or 0
         threshold = 100 * 1024 * 1024  # 100MB
 
-        if file_size >= threshold:
+        if settings.LOCAL_MODE:
+            # Local uploads have no size limit and no resumable protocol —
+            # always a plain PUT to this server.
+            upload_url, gcs_path = gcs_service.generate_upload_signed_url(
+                filename=body.filename,
+                content_type=body.content_type,
+            )
+            method = "PUT"
+        elif file_size >= threshold:
             # Use resumable upload for large files
             upload_url, gcs_path = gcs_service.generate_resumable_upload_url(
                 filename=body.filename,
@@ -131,13 +139,55 @@ async def get_resumable_upload_url(request: Request, body: SignedUrlRequest):
         return SignedUrlResponse(
             upload_url=upload_url,
             gcs_path=gcs_path,
-            method="POST",
+            # Local mode has no resumable protocol — the URL is a plain PUT
+            method="PUT" if settings.LOCAL_MODE else "POST",
             expires_in=settings.GCS_SIGNED_URL_EXPIRY,
         )
 
     except Exception as e:
         print(f"[Upload] Error generating resumable URL: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate upload URL: {str(e)}")
+
+
+@router.put("/local/{upload_id}/{filename}")
+async def upload_local_file(request: Request, upload_id: str, filename: str):
+    """
+    LOCAL_MODE: receive the file the browser would otherwise PUT to a GCS
+    signed URL, streaming it to {LOCAL_DATA_DIR}/uploads/.
+
+    No cookie auth on purpose — this mirrors GCS signed-URL semantics where the
+    unguessable URL (the random upload_id issued by /signed-url) is the
+    capability. The XHR PUT in the frontend sends no credentials.
+    """
+    if not settings.LOCAL_MODE:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    import os
+    import re
+
+    if not re.fullmatch(r"[0-9a-f-]{36}", upload_id):
+        raise HTTPException(status_code=400, detail="Invalid upload id")
+    safe_filename = os.path.basename(filename).replace(" ", "_")
+
+    from services.local_storage_service import LocalStorageService
+
+    uploads_dir = LocalStorageService._uploads_dir()
+    os.makedirs(uploads_dir, exist_ok=True)
+    dest = os.path.join(uploads_dir, f"{upload_id}_{safe_filename}")
+
+    size = 0
+    try:
+        with open(dest, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                size += len(chunk)
+    except Exception as e:
+        if os.path.exists(dest):
+            os.unlink(dest)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    print(f"[Upload] LOCAL_MODE stored {dest} ({size / (1024*1024):.1f} MB)")
+    return {"gcs_path": f"{settings.GCS_UPLOAD_PREFIX}{upload_id}_{safe_filename}", "size": size}
 
 
 @router.get("/status/{gcs_path:path}", response_model=UploadStatusResponse)

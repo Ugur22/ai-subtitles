@@ -39,8 +39,12 @@ def get_whisper_model() -> WhisperModel:
     import os
 
     if _whisper_model is None:
-        # Use the same cache directory as set in Dockerfile/download_models.py
-        cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
+        # Use the same cache directory as set in Dockerfile/download_models.py.
+        # Outside Docker (no /app), pass None so faster-whisper uses the
+        # standard per-user HuggingFace cache (~/.cache/huggingface/hub).
+        cache_dir = os.environ.get(
+            'HF_HOME', '/app/.cache/huggingface' if os.path.isdir('/app') else None
+        )
 
         print(f"Initializing Whisper model: {settings.FASTWHISPER_MODEL} on {settings.FASTWHISPER_DEVICE}")
         print(f"Using cache directory: {cache_dir}")

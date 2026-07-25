@@ -105,9 +105,13 @@ async def startup_event():
     print(f"- Videos directory: {app_settings.VIDEOS_DIR}")
     print(f"- Screenshots directory: {app_settings.SCREENSHOTS_DIR}")
 
-    # Start background model preloading to avoid cold-start 504s
-    from model_preloader import start_preloading
-    start_preloading()
+    # Start background model preloading to avoid cold-start 504s.
+    # Skipped in LOCAL_MODE: heavy models live in the worker subprocess; keeping
+    # them out of the API process saves several GB of RAM. Chat models
+    # (MiniLM/CLIP) lazy-load on first use.
+    if not app_settings.LOCAL_MODE:
+        from model_preloader import start_preloading
+        start_preloading()
 
     # Clean up old GCS uploads if enabled
     if app_settings.ENABLE_GCS_UPLOADS:
@@ -127,7 +131,6 @@ async def startup_event():
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=app_settings.STATIC_DIR), name="static")
-
 
 # CORS middleware
 app.add_middleware(

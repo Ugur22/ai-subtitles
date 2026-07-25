@@ -13,6 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr
 
+from config import settings
 from services.supabase_service import SupabaseService
 
 
@@ -185,6 +186,16 @@ def _mark_invite_used(code: str, user_id: str) -> None:
 # Endpoints
 # =============================================================================
 
+def _reject_in_local_mode():
+    """Account management endpoints are meaningless in LOCAL_MODE — the app
+    runs as a single auto-signed-in local user."""
+    if settings.LOCAL_MODE:
+        raise HTTPException(
+            status_code=501,
+            detail="Not needed in local mode - you are automatically signed in as the local user."
+        )
+
+
 @router.post("/register", response_model=RegisterResponse)
 async def register(request: RegisterRequest):
     """
@@ -196,6 +207,7 @@ async def register(request: RegisterRequest):
     Raises:
         400: Invalid invite code, weak password, or duplicate email
     """
+    _reject_in_local_mode()
     try:
         # Verify invite code
         if not _verify_invite_code(request.invite_code):
@@ -338,6 +350,7 @@ async def verify_email(request: VerifyEmailRequest, response: Response):
         400: Invalid or expired code
         404: User not found
     """
+    _reject_in_local_mode()
     try:
         client = SupabaseService.get_client()
 
@@ -438,6 +451,7 @@ async def resend_verification(request: ResendVerificationRequest):
         - Generic response to prevent email enumeration
         - Only resends if account exists AND email_verified is false
     """
+    _reject_in_local_mode()
     try:
         client = SupabaseService.get_client()
 
@@ -534,6 +548,8 @@ async def login(request: LoginRequest, response: Response):
     Raises:
         401: Invalid credentials or email not verified
     """
+    if settings.LOCAL_MODE:
+        return LoginResponse(success=True, message="Local mode: automatically signed in")
     try:
         # Attempt sign in with Supabase (non-blocking)
         try:
@@ -678,6 +694,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     Sends a 6-digit recovery OTP via Supabase if the account exists.
     Always returns success for security (don't reveal if email exists).
     """
+    _reject_in_local_mode()
     try:
         client = SupabaseService.get_client()
 
@@ -722,6 +739,7 @@ async def reset_password(request: ResetPasswordRequest):
     Raises:
         400: Invalid code, expired code, or weak password
     """
+    _reject_in_local_mode()
     try:
         # Validate new password
         if len(request.new_password) < 8:
