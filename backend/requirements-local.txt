@@ -1,0 +1,73 @@
+# LOCAL_MODE requirements for macOS (Apple Silicon).
+# Identical to requirements.txt except onnxruntime-gpu -> onnxruntime (CPU/Mac);
+# torch/torchaudio come from default PyPI, whose macOS wheels include MPS.
+# The cloud SDKs (google-cloud-*, supabase) stay installed: modules import them
+# at load time even though LOCAL_MODE never calls them.
+
+fastapi==0.104.1
+python-multipart==0.0.6
+uvicorn==0.24.0
+python-dotenv==1.0.0
+openai==1.12.0
+httpx>=0.24.1
+moviepy==1.0.3
+ffmpeg-python>=0.2.0
+tqdm==4.66.1
+nltk>=3.9.1,<4.0.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+torch==2.7.0
+torchaudio==2.7.0
+transformers==4.38.2
+numpy==1.26.4
+pyannote.audio==3.1.1
+faster-whisper==1.2.1
+av==13.1.0
+scipy>=1.11.0  # For speaker recognition similarity calculations
+
+# LLM and RAG dependencies
+# Pinned (was sentence-transformers>=3.0.0): an unpinned bump to huggingface-hub
+# 0.36.x left module-subfolder files (1_Pooling/config.json) out of the baked
+# model cache, crash-looping the worker at import. Pin both for reproducible
+# builds; download_models.py snapshot-downloads the full repo and the Dockerfile
+# asserts the cache is complete as backstops.
+sentence-transformers==3.1.1
+huggingface-hub==0.36.2
+chromadb==0.4.22
+groq==0.4.2
+
+# Audio Analysis
+panns-inference>=0.1.1
+librosa>=0.10.0
+soundfile>=0.12.0
+ 
+# Image Processing (for CLIP embeddings)
+Pillow>=10.0.0
+
+# GCS Upload Support
+google-cloud-storage>=2.14.0
+google-cloud-firestore>=2.11.0
+google-cloud-run>=0.10.0
+
+# Supabase
+supabase>=2.0.0
+
+# Email sending
+aiosmtplib>=2.0.0
+email-validator>=2.0.0
+
+# Encryption (for API key encryption)
+cryptography>=41.0.0
+
+# Face detection & embedding (InsightFace/ArcFace)
+insightface>=0.7.3
+onnxruntime>=1.16.0
+# cv2 is not always pulled in transitively; headless build works everywhere.
+# <4.10 keeps numpy 1.26 compatibility (newer builds require numpy>=2).
+opencv-python-headless==4.9.0.80
+
+# Memory monitoring
+psutil>=5.9.0
+
+# Billing / subscriptions
+stripe>=10.0.0

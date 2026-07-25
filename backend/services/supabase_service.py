@@ -25,6 +25,11 @@ class SupabaseService:
             Exception: If Supabase URL or service key is not configured
         """
         if cls._client is None:
+            if settings.LOCAL_MODE:
+                from services.local_db import get_local_client
+                cls._client = get_local_client()
+                return cls._client
+
             if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_KEY:
                 raise Exception(
                     "Supabase is not configured. Please set SUPABASE_URL and "
@@ -58,6 +63,11 @@ class SupabaseService:
             Exception: If Supabase URL or service key is not configured
         """
         if cls._auth_client is None:
+            if settings.LOCAL_MODE:
+                from services.local_db import get_local_client
+                cls._auth_client = get_local_client()
+                return cls._auth_client
+
             if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_KEY:
                 raise Exception(
                     "Supabase is not configured. Please set SUPABASE_URL and "

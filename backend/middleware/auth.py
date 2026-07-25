@@ -242,6 +242,37 @@ async def _refresh_supabase_session_async(refresh_token: str) -> Optional[Dict]:
         return None
 
 
+_local_context_cache = None
+
+
+def _local_user_context():
+    """LOCAL_MODE: fixed local admin user + seeded profile, no Supabase."""
+    global _local_context_cache
+    if _local_context_cache is None:
+        from services.local_db import LOCAL_USER_ID, get_local_client
+
+        profile = (
+            get_local_client()
+            .table("user_profiles")
+            .select("*")
+            .eq("id", LOCAL_USER_ID)
+            .single()
+            .execute()
+            .data
+        )
+        # Response models require a string here; the seed leaves it NULL so the
+        # env-configured provider (e.g. Ollama) is the effective default.
+        if not profile.get("default_llm_provider"):
+            profile["default_llm_provider"] = settings.DEFAULT_LLM_PROVIDER
+        user = {
+            "id": LOCAL_USER_ID,
+            "email": profile["email"],
+            "email_confirmed_at": profile["created_at"],
+        }
+        _local_context_cache = (user, profile)
+    return _local_context_cache
+
+
 def require_auth(func):
     """
     Decorator to require authentication for an endpoint.
@@ -264,6 +295,10 @@ def require_auth(func):
     """
     @wraps(func)
     async def wrapper(request: Request, *args, **kwargs):
+        if settings.LOCAL_MODE:
+            request.state.user, request.state.profile = _local_user_context()
+            return await func(request, *args, **kwargs)
+
         # Get token from cookie
         token = _get_token_from_request(request)
 
@@ -358,6 +393,10 @@ def optional_auth(func):
     """
     @wraps(func)
     async def wrapper(request: Request, *args, **kwargs):
+        if settings.LOCAL_MODE:
+            request.state.user, request.state.profile = _local_user_context()
+            return await func(request, *args, **kwargs)
+
         request.state.user = None
         request.state.profile = None
 

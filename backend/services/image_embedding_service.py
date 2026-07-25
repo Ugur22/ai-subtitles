@@ -60,7 +60,7 @@ class ImageEmbeddingService:
                 if url.startswith('/static/screenshots/'):
                     try:
                         from config import settings as _cfg
-                        if _cfg.ENABLE_GCS_UPLOADS:
+                        if _cfg.ENABLE_GCS_UPLOADS and not _cfg.LOCAL_MODE:
                             filename = os.path.basename(url)       # e.g. "abc123_1001.64.jpg"
                             stem = filename.rsplit('.', 1)[0]       # "abc123_1001.64"
                             last_us = stem.rfind('_')
@@ -103,6 +103,12 @@ class ImageEmbeddingService:
     def _download_gcs_path_to_temp(self, gcs_path: str) -> Optional[str]:
         """Download a GCS object directly with service-account credentials."""
         try:
+            from config import settings as _cfg
+            if _cfg.LOCAL_MODE:
+                from services.local_storage_service import LocalStorageService
+                path = LocalStorageService._local_path(gcs_path)
+                return path if os.path.exists(path) else None
+
             from services.gcs_service import GCSService
 
             suffix = os.path.splitext(gcs_path.split("?", 1)[0])[1] or ".jpg"
@@ -445,7 +451,7 @@ class ImageEmbeddingService:
         _GCSService = None
         try:
             from config import settings as _gcs_cfg
-            if _gcs_cfg.ENABLE_GCS_UPLOADS:
+            if _gcs_cfg.ENABLE_GCS_UPLOADS and not _gcs_cfg.LOCAL_MODE:
                 from services.gcs_service import GCSService as _GCSService
                 _gcs_bucket = _GCSService._get_bucket()
                 prefix = f"screenshots/{video_hash}/"

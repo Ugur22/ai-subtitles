@@ -25,7 +25,7 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
       return;
     }
 
-    let subscription: ReturnType<typeof supabase.channel> | null = null;
+    let subscription: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
     // Initial fetch from API
     const fetchInitialJob = async () => {
@@ -52,6 +52,11 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
     };
 
     fetchInitialJob();
+
+    // No realtime without a Supabase client (local mode)
+    if (!supabase) {
+      return;
+    }
 
     // Subscribe to real-time updates via Supabase
     // Note: Database column is 'id', but frontend uses 'job_id' for the same value

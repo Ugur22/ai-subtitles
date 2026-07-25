@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Job } from '../types/job';
 import { useJobStorage } from './useJobStorage';
 import { useJobNotifications } from './useJobNotifications';
-import { supabase } from '../lib/supabase';
+import { supabase, IS_LOCAL_MODE } from '../lib/supabase';
 import { getJobs } from '../services/api';
 
 const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
@@ -101,6 +101,11 @@ export const useJobTracker = () => {
    * Subscribe to real-time updates for active jobs
    */
   useEffect(() => {
+    // No realtime without a Supabase client (local mode) — polling covers it
+    if (!supabase) {
+      return;
+    }
+
     // Only subscribe to jobs that are pending or processing
     const activeJobIds = jobs
       .filter(j => j.status === 'pending' || j.status === 'processing')
@@ -199,9 +204,13 @@ export const useJobTracker = () => {
 
     if (!hasActiveJobs) return;
 
+    // Local mode has no realtime channel and no Cloud Run billing concern, so
+    // poll fast enough for the progress bar to feel live.
+    const intervalMs = IS_LOCAL_MODE ? 3000 : 30000;
+
     const intervalId = setInterval(() => {
       fetchJobs();
-    }, 30000); // Poll every 30s to keep Cloud Run instance alive during processing
+    }, intervalMs); // 30s in prod keeps the Cloud Run instance alive without hammering it
 
     return () => clearInterval(intervalId);
   }, [jobs, fetchJobs]);

@@ -1,15 +1,19 @@
 """
 Job queue service for managing background transcription jobs in Supabase
 """
+import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from config import settings
 from services.supabase_service import supabase
 
 
 # Configuration constants
-GLOBAL_CONCURRENT_LIMIT = 3
+# LOCAL_MODE runs one job at a time: a single Mac can't fit two concurrent
+# model pipelines (~8-12GB each) comfortably.
+GLOBAL_CONCURRENT_LIMIT = 1 if settings.LOCAL_MODE else 3
 STALE_THRESHOLD_SECONDS = 90
 # A job left in 'pending' longer than this never had a worker pick it up — the
 # dispatch failed or the worker crashed before mark_processing(). There is no
@@ -734,8 +738,11 @@ class JobQueueService:
 
     @staticmethod
     def trigger_worker_job(job_id: str) -> bool:
-        """Kick off a Cloud Run Job execution that runs `python -m worker_main <job_id>`. Returns True if the run_job request was accepted (the actual pipeline runs asynchronously). Falls back to in-process BackgroundTasks when WORKER_JOB_NAME is unset (local dev)."""
+        """Kick off a Cloud Run Job execution that runs `python -m worker_main <job_id>`. Returns True if the run_job request was accepted (the actual pipeline runs asynchronously). In LOCAL_MODE the worker runs as a local subprocess instead."""
         from config import settings
+
+        if settings.LOCAL_MODE:
+            return JobQueueService._trigger_local_worker(job_id)
 
         try:
             from google.cloud import run_v2
@@ -766,6 +773,39 @@ class JobQueueService:
             return True
         except Exception as e:
             print(f"[JobQueue] Failed to trigger worker job for {job_id}: {e}")
+            return False
+
+    @staticmethod
+    def _trigger_local_worker(job_id: str) -> bool:
+        """LOCAL_MODE: run the same worker entrypoint as production
+        (`python -m worker_main <job_id>`) as a detached subprocess.
+
+        A subprocess (not a BackgroundTask) mirrors the Cloud Run Job execution
+        model — including SIGTERM-based cancellation — and keeps the ~8-12GB of
+        model memory out of the API process; it is freed when the job ends.
+        """
+        import subprocess
+        import sys
+        from config import settings
+
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logs_dir = os.path.join(os.path.abspath(settings.LOCAL_DATA_DIR), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_path = os.path.join(logs_dir, f"worker-{job_id}.log")
+
+        try:
+            log_file = open(log_path, "w")
+            subprocess.Popen(
+                [sys.executable, "-m", "worker_main", job_id],
+                cwd=backend_dir,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            print(f"[JobQueue] LOCAL_MODE worker started for {job_id}, log: {log_path}")
+            return True
+        except Exception as e:
+            print(f"[JobQueue] LOCAL_MODE failed to start worker for {job_id}: {e}")
             return False
 
     @staticmethod
