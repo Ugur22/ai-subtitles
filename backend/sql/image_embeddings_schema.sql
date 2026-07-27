@@ -20,6 +20,8 @@ CREATE TABLE image_embeddings (
     speaker TEXT,
     screenshot_url TEXT NOT NULL,
     embedding vector(512) NOT NULL,
+    caption TEXT,
+    caption_embedding vector(384),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
@@ -127,6 +129,122 @@ BEGIN
     ORDER BY ie.embedding <=> query_embedding
     LIMIT match_count;
 END;
+$$;
+
+-- HNSW index for caption similarity search
+CREATE INDEX idx_image_embeddings_caption_hnsw ON image_embeddings
+    USING hnsw (caption_embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 100);
+
+-- Function to search images by caption text embedding (all-MiniLM, 384-dim)
+CREATE OR REPLACE FUNCTION search_images_by_caption_embedding(
+    query_embedding vector(384),
+    target_video_hash TEXT,
+    match_count INT DEFAULT 5
+)
+RETURNS TABLE (
+    id UUID,
+    video_hash TEXT,
+    segment_id TEXT,
+    start_time FLOAT,
+    end_time FLOAT,
+    speaker TEXT,
+    screenshot_url TEXT,
+    caption TEXT,
+    similarity FLOAT
+)
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+    SET LOCAL hnsw.ef_search = 200;
+
+    RETURN QUERY
+    SELECT
+        ie.id,
+        ie.video_hash,
+        ie.segment_id,
+        ie.start_time,
+        ie.end_time,
+        ie.speaker,
+        ie.screenshot_url,
+        ie.caption,
+        1 - (ie.caption_embedding <=> query_embedding) AS similarity
+    FROM image_embeddings ie
+    WHERE ie.video_hash = target_video_hash
+      AND ie.caption_embedding IS NOT NULL
+    ORDER BY ie.caption_embedding <=> query_embedding
+    LIMIT match_count;
+END;
+$$;
+
+-- Discovery RPC for the caption backfill endpoint
+CREATE OR REPLACE FUNCTION videos_missing_captions(batch_limit INT DEFAULT 10)
+RETURNS TABLE (video_hash TEXT)
+LANGUAGE sql
+SET search_path = public
+AS $$
+    SELECT DISTINCT ie.video_hash
+    FROM image_embeddings ie
+    WHERE ie.caption IS NULL
+    ORDER BY ie.video_hash
+    LIMIT batch_limit;
+$$;
+
+-- Per-sentence caption index (see migrations/005): retrieval scores the query
+-- against each caption sentence and takes the per-image max, because
+-- full-caption embeddings dilute the action with scene details.
+CREATE TABLE IF NOT EXISTS image_caption_sentences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    image_embedding_id UUID NOT NULL REFERENCES image_embeddings(id) ON DELETE CASCADE,
+    video_hash TEXT NOT NULL,
+    sentence TEXT NOT NULL,
+    embedding vector(384) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ics_video_hash ON image_caption_sentences(video_hash);
+CREATE INDEX IF NOT EXISTS idx_ics_image_id ON image_caption_sentences(image_embedding_id);
+
+ALTER TABLE image_caption_sentences ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Service role all access ics" ON image_caption_sentences
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "Users read own caption sentences" ON image_caption_sentences
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM jobs
+      WHERE jobs.video_hash = image_caption_sentences.video_hash
+      AND jobs.user_id = auth.uid()
+    )
+  );
+
+CREATE OR REPLACE FUNCTION search_images_by_caption_sentences(
+    query_embedding vector(384),
+    target_video_hash TEXT,
+    match_count INT DEFAULT 5
+)
+RETURNS TABLE (
+    id UUID, video_hash TEXT, segment_id TEXT, start_time FLOAT, end_time FLOAT,
+    speaker TEXT, screenshot_url TEXT, caption TEXT, similarity FLOAT
+)
+LANGUAGE sql
+SET search_path = public
+AS $$
+    SELECT ie.id, ie.video_hash, ie.segment_id, ie.start_time, ie.end_time,
+           ie.speaker, ie.screenshot_url, ie.caption, s.max_sim AS similarity
+    FROM (
+        SELECT ics.image_embedding_id,
+               MAX(1 - (ics.embedding <=> query_embedding)) AS max_sim
+        FROM image_caption_sentences ics
+        WHERE ics.video_hash = target_video_hash
+        GROUP BY ics.image_embedding_id
+        ORDER BY max_sim DESC
+        LIMIT match_count
+    ) s
+    JOIN image_embeddings ie ON ie.id = s.image_embedding_id
+    ORDER BY s.max_sim DESC;
 $$;
 
 -- Comment on table

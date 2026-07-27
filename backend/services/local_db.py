@@ -31,7 +31,8 @@ LOCAL_USER_EMAIL = "local@localhost"
 _JSON_COLUMNS = {
     "jobs": {"params", "result_json"},
     "usage_logs": {"metadata"},
-    "image_embeddings": {"embedding"},
+    "image_embeddings": {"embedding", "caption_embedding"},
+    "image_caption_sentences": {"embedding"},
     "image_face_presence": {"face_embedding", "bbox"},
     "face_tags": {"embedding"},
     "pipeline_cache": {"data"},
@@ -48,6 +49,7 @@ _BOOL_COLUMNS = {
 _UUID_DEFAULTS = {
     "jobs": ("id", "access_token"),
     "invite_codes": ("id", "code"),
+    "image_caption_sentences": ("id",),
     "user_usage_monthly": (),
 }
 
@@ -464,6 +466,69 @@ class _RpcQuery:
         scored.sort(key=lambda r: r["similarity"], reverse=True)
         return scored[:match_limit]
 
+    def _rpc_search_images_by_caption_embedding(self) -> List[Dict]:
+        p = self._params
+        query = p["query_embedding"]
+        video_hash = p["target_video_hash"]
+        match_count = int(p.get("match_count") or 5)
+
+        scored = []
+        rows = self._db.conn.execute(
+            "SELECT id, video_hash, segment_id, start_time, end_time, speaker, "
+            "screenshot_url, caption, caption_embedding FROM image_embeddings "
+            "WHERE video_hash = ? AND caption_embedding IS NOT NULL",
+            [video_hash],
+        ).fetchall()
+        for row in rows:
+            row = dict(row)
+            embedding = json.loads(row.pop("caption_embedding"))
+            row["similarity"] = _cosine(query, embedding)
+            scored.append(row)
+        scored.sort(key=lambda r: r["similarity"], reverse=True)
+        return scored[:match_count]
+
+    def _rpc_search_images_by_caption_sentences(self) -> List[Dict]:
+        p = self._params
+        query = p["query_embedding"]
+        video_hash = p["target_video_hash"]
+        match_count = int(p.get("match_count") or 5)
+
+        # Per-image max over sentence similarities
+        best: Dict[str, float] = {}
+        rows = self._db.conn.execute(
+            "SELECT image_embedding_id, embedding FROM image_caption_sentences "
+            "WHERE video_hash = ?",
+            [video_hash],
+        ).fetchall()
+        for row in rows:
+            sim = _cosine(query, json.loads(row["embedding"]))
+            image_id = row["image_embedding_id"]
+            if sim > best.get(image_id, -1.0):
+                best[image_id] = sim
+
+        top = sorted(best.items(), key=lambda kv: kv[1], reverse=True)[:match_count]
+        results = []
+        for image_id, sim in top:
+            img = self._db.conn.execute(
+                "SELECT id, video_hash, segment_id, start_time, end_time, speaker, "
+                "screenshot_url, caption FROM image_embeddings WHERE id = ?",
+                [image_id],
+            ).fetchone()
+            if img:
+                row = dict(img)
+                row["similarity"] = sim
+                results.append(row)
+        return results
+
+    def _rpc_videos_missing_captions(self) -> List[Dict]:
+        limit = int(self._params.get("batch_limit") or 10)
+        rows = self._db.conn.execute(
+            "SELECT DISTINCT video_hash FROM image_embeddings "
+            "WHERE caption IS NULL ORDER BY video_hash LIMIT ?",
+            [limit],
+        ).fetchall()
+        return [{"video_hash": r["video_hash"]} for r in rows]
+
     def _rpc_videos_missing_face_presence(self) -> List[Dict]:
         limit = int(self._params.get("batch_limit") or 10)
         rows = self._db.conn.execute(
@@ -510,6 +575,8 @@ class LocalSupabaseClient:
     # IF NOT EXISTS won't alter existing DBs, so patch them explicitly here.
     _COLUMN_MIGRATIONS = [
         ("image_embeddings", "user_id", "TEXT"),
+        ("image_embeddings", "caption", "TEXT"),
+        ("image_embeddings", "caption_embedding", "TEXT"),
     ]
 
     def _init_schema(self):

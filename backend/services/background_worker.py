@@ -36,6 +36,28 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
         )
     return await loop.run_in_executor(_transcription_executor, func, *args)
 
+
+def _compute_dense_timestamps(
+    duration: float,
+    existing_ts: list,
+    interval: float,
+    min_gap: float,
+) -> list:
+    """Timestamps for dense visual sampling: every `interval` seconds, skipping
+    anything within `min_gap` of an existing screenshot. Rounded to 2 decimals
+    to match the screenshots/{hash}/{ts:.2f}.jpg naming convention; the min_gap
+    skip guarantees no filename collision with transcript/silent screenshots."""
+    if duration <= 0 or interval <= 0:
+        return []
+    timestamps = []
+    t = interval / 2
+    while t < duration:
+        ts = round(t, 2)
+        if all(abs(ts - e) > min_gap for e in existing_ts):
+            timestamps.append(ts)
+        t += interval
+    return timestamps
+
 from config import settings
 from services.job_queue_service import JobQueueService
 from services.supabase_service import supabase
@@ -814,18 +836,120 @@ class BackgroundWorker:
                                 "segment_screenshot_urls": screenshot_url_map,
                             })
 
+                        # Dense visual sampling: extract frames at a fixed interval so
+                        # low-dialogue scenes are searchable. Kept in a separate list —
+                        # dense segments are index-only and must never reach result_json.
+                        dense_segments = []
+                        if settings.ENABLE_GCS_UPLOADS and settings.DENSE_FRAME_INTERVAL_SECONDS > 0 and read_url:
+                            try:
+                                duration = probed_duration_seconds or (
+                                    formatted_segments[-1]['end'] if formatted_segments else 0
+                                )
+                                existing_ts = [
+                                    s['start'] for s in formatted_segments if s.get('screenshot_url')
+                                ] + [
+                                    s['screenshot_timestamp'] for s in formatted_segments
+                                    if s.get('is_silent') and s.get('screenshot_timestamp')
+                                ]
+                                dense_ts = _compute_dense_timestamps(
+                                    duration, existing_ts,
+                                    settings.DENSE_FRAME_INTERVAL_SECONDS,
+                                    settings.DENSE_FRAME_MIN_GAP_SECONDS,
+                                )
+                                if dense_ts:
+                                    JobQueueService.update_progress(
+                                        job_id, 79, "processing",
+                                        f"Sampling {len(dense_ts)} dense frames..."
+                                    )
+                                    print(f"[Worker] Extracting {len(dense_ts)} dense frames for visual index...")
+                                    dense_results = await _run_in_executor(
+                                        VideoService.extract_screenshots_parallel_from_url,
+                                        source_url=read_url,
+                                        timestamps=dense_ts,
+                                        output_dir=screenshots_dir,
+                                        video_hash=video_hash,
+                                        max_workers=4
+                                    )
+                                    dense_urls = gcs_service.upload_screenshots_batch(
+                                        screenshot_paths=dense_results,
+                                        video_hash=video_hash
+                                    )
+                                    for ts in dense_ts:
+                                        url = dense_urls.get(ts)
+                                        if url:
+                                            dense_segments.append({
+                                                'id': f"dense_{ts:.2f}",
+                                                'start': ts,
+                                                'end': ts,
+                                                'speaker': None,
+                                                'screenshot_url': url,
+                                            })
+                                    for local_path in dense_results.values():
+                                        if local_path and os.path.exists(local_path):
+                                            try:
+                                                os.unlink(local_path)
+                                            except Exception:
+                                                pass
+                                    print(f"[Worker] Added {len(dense_segments)} dense frames to the visual index input")
+                            except Exception as e:
+                                print(f"[Worker] Dense frame sampling failed (non-critical): {e}")
+
                         # Auto-index images into Supabase pgvector if GCS uploads are enabled
                         if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:
+                            caption_segments = []
                             try:
                                 from services.image_embedding_service import image_embedding_service
                                 JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
                                 print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
                                 log_all_memory("Worker:BeforeImageIndexing")
-                                indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False, user_id=user_id)
+                                indexed_count = image_embedding_service.index_video_images(
+                                    video_hash,
+                                    formatted_segments + dense_segments,
+                                    force_reindex=False,
+                                    user_id=user_id,
+                                    collect_segments=caption_segments,
+                                )
                                 log_all_memory("Worker:AfterImageIndexing")
                                 print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
+
+                                if settings.ENABLE_VISION_CAPTIONS and caption_segments:
+                                    try:
+                                        JobQueueService.update_progress(
+                                            job_id, 81, "captioning",
+                                            f"Captioning {len(caption_segments)} frames..."
+                                        )
+                                        api_key = None
+                                        try:
+                                            from routers.chat import _get_saved_provider_key
+                                            api_key = await _get_saved_provider_key(user_id, "xai")
+                                        except Exception:
+                                            pass
+
+                                        def _caption_progress(done, total):
+                                            JobQueueService.update_progress(
+                                                job_id, 81, "captioning",
+                                                f"Captioning frames... {done}/{total}"
+                                            )
+
+                                        captioned = await image_embedding_service.caption_video_images(
+                                            video_hash,
+                                            segments=caption_segments,
+                                            api_key=api_key,
+                                            progress_cb=_caption_progress,
+                                        )
+                                        print(f"[Worker] Captioned {captioned} frames for visual search")
+                                    except Exception as e:
+                                        print(f"[Worker] Frame captioning failed (non-critical): {e}")
                             except Exception as e:
                                 print(f"[Worker] Image indexing failed (non-critical): {e}")
+                            finally:
+                                for seg in caption_segments:
+                                    local_path = seg.get('local_path')
+                                    if local_path and local_path.startswith(tempfile.gettempdir()):
+                                        try:
+                                            os.unlink(local_path)
+                                        except Exception:
+                                            pass
 
                     except Exception as e:
                         print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
