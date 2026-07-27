@@ -135,12 +135,24 @@ CREATE TABLE IF NOT EXISTS image_embeddings (
     speaker TEXT,
     screenshot_url TEXT NOT NULL,
     embedding TEXT NOT NULL,
+    caption TEXT,
+    caption_embedding TEXT,
     user_id TEXT,
     created_at TEXT,
     updated_at TEXT,
     UNIQUE(video_hash, segment_id)
 );
 CREATE INDEX IF NOT EXISTS idx_image_embeddings_video_hash ON image_embeddings(video_hash);
+
+CREATE TABLE IF NOT EXISTS image_caption_sentences (
+    id TEXT PRIMARY KEY,
+    image_embedding_id TEXT NOT NULL,
+    video_hash TEXT NOT NULL,
+    sentence TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ics_video_hash ON image_caption_sentences(video_hash);
 
 CREATE TABLE IF NOT EXISTS image_face_presence (
     id TEXT PRIMARY KEY,

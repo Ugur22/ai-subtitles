@@ -7,6 +7,7 @@ maintaining an active connection.
 """
 import asyncio
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Callable, Any
 from datetime import datetime
@@ -149,6 +150,16 @@ class BackfillFacePresenceResponse(BaseModel):
     """Response model for the manual face-presence backfill job."""
     processed_videos: int
     indexed_face_rows: int
+    skipped: int
+    failed: int
+    batch_size: int
+
+
+class BackfillCaptionsResponse(BaseModel):
+    """Response model for the manual vision-caption backfill job."""
+    processed_videos: int
+    captioned_images: int
+    dense_frames_added: int
     skipped: int
     failed: int
     batch_size: int
@@ -1130,6 +1141,209 @@ async def backfill_face_presence(
     return BackfillFacePresenceResponse(
         processed_videos=processed_videos,
         indexed_face_rows=indexed_face_rows,
+        skipped=skipped,
+        failed=failed,
+        batch_size=batch_size,
+    )
+
+
+@router.post("/backfill-captions", response_model=BackfillCaptionsResponse)
+@require_admin
+async def backfill_captions(
+    request: Request,
+    batch_size: int = Query(3, ge=1, le=10, description="Maximum videos to caption in one invocation"),
+    video_hash: Optional[str] = Query(None, description="Caption exactly this video instead of scanning for missing ones"),
+    force: bool = Query(False, description="Re-caption rows that already have captions"),
+    dense: bool = Query(True, description="Also sample dense frames if the source video still exists"),
+):
+    """Backfill xAI vision captions (and optionally dense frames) for videos that
+    already have image embeddings.
+
+    Dense sampling degrades gracefully: if the source video was lifecycle-deleted
+    from storage, only the existing screenshots are captioned. Dense-frame
+    indexing runs with face_force=False so it never wipes existing face rows
+    (dense frames simply get no face-presence entries on backfill).
+    """
+    import tempfile as _tempfile
+    from services.image_embedding_service import image_embedding_service
+    from services.supabase_service import supabase
+    from services.gcs_service import gcs_service
+    from services.video_service import VideoService
+    from services.background_worker import _compute_dense_timestamps
+    from routers.chat import _get_saved_provider_key
+
+    client = supabase()
+    processed_videos = 0
+    captioned_images = 0
+    dense_frames_added = 0
+    skipped = 0
+    failed = 0
+
+    candidate_hashes: list[str] = []
+    if video_hash:
+        candidate_hashes = [video_hash]
+    else:
+        try:
+            rows_resp = await _run_in_executor(
+                lambda: client.rpc(
+                    "videos_missing_captions",
+                    {"batch_limit": batch_size},
+                ).execute()
+            )
+            for row in rows_resp.data or []:
+                vh = row.get("video_hash")
+                if vh and vh not in candidate_hashes:
+                    candidate_hashes.append(vh)
+        except Exception:
+            logger.exception("[Jobs] backfill-captions: videos_missing_captions RPC failed")
+            return BackfillCaptionsResponse(
+                processed_videos=0,
+                captioned_images=0,
+                dense_frames_added=0,
+                skipped=0,
+                failed=1,
+                batch_size=batch_size,
+            )
+
+    for vh in candidate_hashes:
+        if processed_videos >= batch_size:
+            break
+        collected: list = []
+        try:
+            rows = await _run_in_executor(
+                lambda v=vh: client.table("image_embeddings")
+                .select("segment_id, caption, start_time, end_time")
+                .eq("video_hash", v)
+                .execute()
+            )
+            all_rows = rows.data or []
+            pending = [r for r in all_rows if r.get("caption") is None]
+
+            job_user_id = None
+            gcs_path = None
+            try:
+                job_resp = await _run_in_executor(
+                    lambda v=vh: client.table("jobs")
+                    .select("gcs_path, user_id, result_json")
+                    .eq("video_hash", v)
+                    .limit(1)
+                    .execute()
+                )
+                if job_resp.data:
+                    job_row = job_resp.data[0]
+                    job_user_id = job_row.get("user_id")
+                    gcs_path = job_row.get("gcs_path") or (job_row.get("result_json") or {}).get("gcs_path")
+            except Exception:
+                logger.warning("[Jobs] backfill-captions: job lookup failed for %s", vh)
+
+            video_dense_frames = 0
+            if dense and all_rows and gcs_path:
+                try:
+                    if gcs_service.file_exists(gcs_path):
+                        duration = max((r.get("end_time") or 0) for r in all_rows)
+                        existing_ts = [r.get("start_time") or 0 for r in all_rows]
+                        dense_ts = _compute_dense_timestamps(
+                            duration,
+                            existing_ts,
+                            settings.DENSE_FRAME_INTERVAL_SECONDS,
+                            settings.DENSE_FRAME_MIN_GAP_SECONDS,
+                        )
+                        if dense_ts:
+                            read_url = gcs_service.generate_download_signed_url(gcs_path)
+                            screenshots_dir = os.path.join("static", "screenshots")
+                            os.makedirs(screenshots_dir, exist_ok=True)
+                            dense_results = await _run_in_executor(
+                                VideoService.extract_screenshots_parallel_from_url,
+                                source_url=read_url,
+                                timestamps=dense_ts,
+                                output_dir=screenshots_dir,
+                                video_hash=vh,
+                                max_workers=4,
+                            )
+                            dense_urls = gcs_service.upload_screenshots_batch(
+                                screenshot_paths=dense_results,
+                                video_hash=vh,
+                            )
+                            dense_segments = [
+                                {
+                                    "id": f"dense_{ts:.2f}",
+                                    "start": ts,
+                                    "end": ts,
+                                    "speaker": None,
+                                    "screenshot_url": url,
+                                }
+                                for ts, url in ((ts, dense_urls.get(ts)) for ts in dense_ts)
+                                if url
+                            ]
+                            for local_path in dense_results.values():
+                                if local_path and os.path.exists(local_path):
+                                    try:
+                                        os.unlink(local_path)
+                                    except Exception:
+                                        pass
+                            if dense_segments:
+                                await _run_in_executor(
+                                    image_embedding_service.index_video_images,
+                                    vh,
+                                    dense_segments,
+                                    force_reindex=True,
+                                    user_id=job_user_id,
+                                    collect_segments=collected,
+                                    face_force=False,
+                                )
+                                video_dense_frames = len(dense_segments)
+                                dense_frames_added += video_dense_frames
+                    else:
+                        logger.info(
+                            "[Jobs] backfill-captions: source video gone for %s; "
+                            "captioning existing screenshots only", vh
+                        )
+                except Exception:
+                    logger.exception("[Jobs] backfill-captions: dense sampling failed for %s", vh)
+
+            if not force and not pending and video_dense_frames == 0:
+                skipped += 1
+                continue
+
+            api_key = None
+            try:
+                api_key = await _get_saved_provider_key(job_user_id, "xai")
+            except Exception:
+                pass
+
+            captioned = await image_embedding_service.caption_video_images(
+                vh,
+                segments=collected or None,
+                api_key=api_key,
+                force=force,
+            )
+            processed_videos += 1
+            captioned_images += captioned
+        except Exception:
+            logger.exception("[Jobs] backfill-captions failed for video_hash %s", vh)
+            failed += 1
+        finally:
+            for seg in collected:
+                local_path = seg.get("local_path")
+                if local_path and local_path.startswith(_tempfile.gettempdir()):
+                    try:
+                        os.unlink(local_path)
+                    except Exception:
+                        pass
+
+    logger.info(
+        "[Jobs] backfill-captions done: videos=%d captions=%d dense=%d skipped=%d failed=%d",
+        processed_videos,
+        captioned_images,
+        dense_frames_added,
+        skipped,
+        failed,
+    )
+
+    return BackfillCaptionsResponse(
+        processed_videos=processed_videos,
+        captioned_images=captioned_images,
+        dense_frames_added=dense_frames_added,
         skipped=skipped,
         failed=failed,
         batch_size=batch_size,

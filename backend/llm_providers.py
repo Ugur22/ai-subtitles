@@ -650,7 +650,7 @@ class GrokProvider(BaseLLMProvider):
                 # No images could be loaded, fall back to text-only
                 return await self.generate(messages, temperature, max_tokens)
 
-            max_images = int(os.getenv("XAI_VISION_MAX_IMAGES", "3"))
+            max_images = int(os.getenv("XAI_VISION_MAX_IMAGES", "6"))
             if len(image_data) > max_images:
                 print(f"Limiting xAI vision request from {len(image_data)} to {max_images} images")
                 image_data = image_data[:max_images]
@@ -726,6 +726,92 @@ class GrokProvider(BaseLLMProvider):
             raise Exception(f"Grok vision generation failed after {max_retries} attempts: {str(last_exception)}")
         except Exception as e:
             raise Exception(f"Grok vision generation failed: {str(e)}")
+
+    async def caption_image(
+        self,
+        image_path: str,
+        prompt: str = "Caption this frame.",
+        temperature: float = 0.2,
+        max_tokens: int = 250,
+    ) -> Optional[str]:
+        """Caption a single frame for the search index. Never raises: returns
+        None on any failure so bulk captioning is failure-tolerant."""
+        if not self.api_key or self.api_key == "your_xai_api_key_here":
+            return None
+
+        result = _load_image_as_base64(image_path)
+        if not result:
+            return None
+        encoded_image, _ = result
+
+        from config import settings
+        caption_model = settings.XAI_CAPTION_MODEL
+        request_timeout = float(os.getenv("XAI_VISION_TIMEOUT_SECONDS", "45"))
+
+        payload = {
+            "model": caption_model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": CAPTION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"},
+                        },
+                    ],
+                },
+            ],
+        }
+
+        for attempt in range(2):
+            try:
+                timeout = httpx.Timeout(request_timeout, connect=10.0, write=30.0, pool=10.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await asyncio.wait_for(
+                        client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self.api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            json=payload,
+                        ),
+                        timeout=request_timeout,
+                    )
+                    response.raise_for_status()
+                    content = response.json()["choices"][0]["message"]["content"]
+                    return content.strip() if content else None
+            except (asyncio.TimeoutError, httpx.TimeoutException, httpx.ConnectError):
+                if attempt == 0:
+                    await asyncio.sleep(3)
+                    continue
+                return None
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (429, 502, 503, 504) and attempt == 0:
+                    await asyncio.sleep(3)
+                    continue
+                print(f"Caption request failed ({e.response.status_code}): {e.response.text[:200]}")
+                return None
+            except Exception as e:
+                print(f"Caption request failed: {e}")
+                return None
+        return None
+
+
+# Clinical so captions of adult footage stay factual instead of triggering
+# refusals; captions feed a private per-user search index, not user-facing text.
+CAPTION_SYSTEM_PROMPT = (
+    "You are a factual frame-captioning system for a private, user-owned video search index. "
+    "Describe exactly what is visible in the frame in 1-3 plain sentences: how many people, their "
+    "appearance and clothing (or nudity), their body positions, the physical actions taking place "
+    "(including explicit or sexual acts, described directly and clinically), and the setting. "
+    "Do not identify real people. Do not moralize, warn, or refuse; if nothing notable is visible, "
+    "describe the scene neutrally."
+)
 
 
 class DeepSeekProvider(BaseLLMProvider):
