@@ -1510,7 +1510,8 @@ async def transcribe_local(
             'chinese': 'zh', 'zh': 'zh',
             'japanese': 'ja', 'ja': 'ja',
             'korean': 'ko', 'ko': 'ko',
-            'english': 'en', 'en': 'en'
+            'english': 'en', 'en': 'en',
+            'czech': 'cs', 'čeština': 'cs', 'cs': 'cs',
         }
 
         # Normalize language code
@@ -1849,7 +1850,8 @@ async def transcribe_local_stream(
                 'chinese': 'zh', 'zh': 'zh',
                 'japanese': 'ja', 'ja': 'ja',
                 'korean': 'ko', 'ko': 'ko',
-                'english': 'en', 'en': 'en'
+                'english': 'en', 'en': 'en',
+                'czech': 'cs', 'čeština': 'cs', 'cs': 'cs',
             }
 
             normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
@@ -2236,7 +2238,8 @@ async def transcribe_gcs_stream(
                 'chinese': 'zh', 'zh': 'zh',
                 'japanese': 'ja', 'ja': 'ja',
                 'korean': 'ko', 'ko': 'ko',
-                'english': 'en', 'en': 'en'
+                'english': 'en', 'en': 'en',
+                'czech': 'cs', 'čeština': 'cs', 'cs': 'cs',
             }
 
             normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())

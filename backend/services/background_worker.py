@@ -520,7 +520,8 @@ class BackgroundWorker:
                     'chinese': 'zh', 'zh': 'zh',
                     'japanese': 'ja', 'ja': 'ja',
                     'korean': 'ko', 'ko': 'ko',
-                    'english': 'en', 'en': 'en'
+                    'english': 'en', 'en': 'en',
+                    'czech': 'cs', 'čeština': 'cs', 'cs': 'cs',
                 }
                 normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
@@ -977,7 +978,8 @@ class BackgroundWorker:
                 'chinese': 'zh', 'zh': 'zh',
                 'japanese': 'ja', 'ja': 'ja',
                 'korean': 'ko', 'ko': 'ko',
-                'english': 'en', 'en': 'en'
+                'english': 'en', 'en': 'en',
+                'czech': 'cs', 'čeština': 'cs', 'cs': 'cs',
             }
             normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 

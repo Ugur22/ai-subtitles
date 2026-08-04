@@ -26,6 +26,7 @@ LANGUAGES = [
     'pl',  # Polish
     'tr',  # Turkish
     'ko',  # Korean
+    'cs',  # Czech
 ]
 
 def download_whisper_model():

@@ -55,7 +55,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download MarianMT translation models during build
 # This prevents runtime download failures in Cloud Run/Railway
-# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic
+# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic, Polish, Turkish, Korean, Czech
 COPY download_models.py /tmp/download_models.py
 RUN python /tmp/download_models.py && rm /tmp/download_models.py
 
