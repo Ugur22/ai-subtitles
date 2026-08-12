@@ -28,7 +28,7 @@ export const VerifyEmailPage: React.FC = () => {
       await verifyEmail(userId, code);
       sessionStorage.removeItem('pendingVerificationEmail');
       navigate('/');
-    } catch (error) {
+    } catch {
       // Error handled by useAuth
     }
   };

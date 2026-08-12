@@ -230,7 +230,7 @@ class ImageSearchResult(BaseModel):
     start: float = Field(..., description="Start time in seconds")
     end: float = Field(..., description="End time in seconds")
     speaker: str = Field(..., description="Speaker at this timestamp")
-    distance: Optional[float] = Field(None, description="Distance score (lower is better)")
+    similarity: float = Field(..., ge=-1.0, le=1.0, description="Cosine similarity (higher is better)")
 
     model_config = {
         "json_schema_extra": {
@@ -240,7 +240,7 @@ class ImageSearchResult(BaseModel):
                 "start": 5.0,
                 "end": 10.0,
                 "speaker": "SPEAKER_00",
-                "distance": 0.234
+                "similarity": 0.766
             }
         }
     }
@@ -262,7 +262,7 @@ class SearchImagesResponse(BaseModel):
                         "start": 5.0,
                         "end": 10.0,
                         "speaker": "SPEAKER_00",
-                        "distance": 0.234
+                        "similarity": 0.766
                     }
                 ],
                 "video_hash": "abc123",

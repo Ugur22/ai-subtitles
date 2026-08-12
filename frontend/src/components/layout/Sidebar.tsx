@@ -9,8 +9,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { Menu, Transition } from '@headlessui/react';
 import { useAuth } from '../../hooks/useAuth';
 import { useSettings } from '../../hooks/useSettings';
-import { useJobs } from '../../contexts/JobsContext';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useJobs } from '../../hooks/useJobs';
+import { useTheme } from '../../hooks/useTheme';
 
 type NavKey = 'workspace' | 'jobs' | 'settings';
 

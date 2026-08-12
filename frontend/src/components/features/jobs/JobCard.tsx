@@ -7,7 +7,7 @@ import { useState, Fragment } from "react";
 import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
 import { ShareJobDialog } from "./ShareJobDialog";
-import { Job, JobStatus } from "../../../types/job";
+import { Job, JobStatus, isActiveJobStatus } from "../../../types/job";
 import { cancelJob } from "../../../services/api";
 
 interface JobCardProps {
@@ -21,6 +21,7 @@ interface JobCardProps {
 const statusConfig: Record<JobStatus, { label: string; color: string; bg: string; border: string }> = {
   pending:    { label: 'Pending',    color: 'var(--text-tertiary)', bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
   processing: { label: 'Processing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'oklch(78% 0.17 75 / 0.3)' },
+  finalizing: { label: 'Finalizing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'oklch(78% 0.17 75 / 0.3)' },
   completed:  { label: 'Completed',  color: 'var(--c-success)',      bg: 'oklch(70% 0.15 145 / 0.12)',    border: 'oklch(70% 0.15 145 / 0.3)' },
   failed:     { label: 'Failed',     color: 'var(--c-error)',        bg: 'oklch(65% 0.20 25 / 0.10)',     border: 'oklch(65% 0.20 25 / 0.25)' },
   cancelled:  { label: 'Cancelled',  color: 'var(--text-tertiary)',  bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
@@ -106,7 +107,7 @@ export const JobCard: React.FC<JobCardProps> = ({
         )}
 
         {/* Processing */}
-        {job.status === "processing" && (
+        {isActiveJobStatus(job.status) && job.status !== "pending" && (
           <>
             <div style={{ width: '100%', height: '3px', backgroundColor: 'var(--border-subtle)', borderRadius: '2px', overflow: 'hidden', marginBottom: '8px' }}>
               <div
@@ -120,7 +121,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                   <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                {job.progress_message || "Processing…"}
+                {job.progress_message || (job.status === "finalizing" ? "Finalizing result…" : "Processing…")}
               </span>
               {estimatedRemaining && estimatedRemaining > 0 && (
                 <span style={{ fontSize: '12px', color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>

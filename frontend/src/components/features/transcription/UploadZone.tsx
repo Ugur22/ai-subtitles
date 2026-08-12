@@ -1,11 +1,6 @@
 import React from "react";
 import { match } from "ts-pattern";
 
-interface ProcessingStatus {
-  stage: "uploading" | "downloading" | "extracting" | "transcribing" | "translating" | "complete";
-  progress: number;
-}
-
 interface LanguageOption {
   value: string;
   label: string;
@@ -22,12 +17,7 @@ interface UploadZoneProps {
   fileUploadHandleChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   selectedLanguage: string;
   handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  transcriptionMethod: string;
-  setTranscriptionMethod: React.Dispatch<React.SetStateAction<"local" | "background">>;
   handleStartTranscriptionClick: () => void;
-  isNewTranscription: boolean;
-  processingStatus: ProcessingStatus | null;
-  elapsedTime: number;
   languageOptions: LanguageOption[];
 }
 
@@ -43,12 +33,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     fileUploadHandleChange,
     selectedLanguage,
     handleLanguageChange,
-    transcriptionMethod,
-    setTranscriptionMethod,
     handleStartTranscriptionClick,
-    isNewTranscription: _isNewTranscription,
-    processingStatus: _processingStatus,
-    elapsedTime: _elapsedTime,
     languageOptions,
   }) => {
     const getFileTypeLabel = (fileType: string) =>
@@ -146,7 +131,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
         <div style={{
           marginTop: '16px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
+          gridTemplateColumns: '1fr',
           gap: '10px',
         }}>
           {/* Language card */}
@@ -199,47 +184,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             </svg>
           </label>
 
-          {/* Processing segmented */}
-          <div style={{
-            display: 'flex',
-            padding: '3px',
-            gap: '2px',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-          }}>
-            {[
-              { value: 'local', label: 'Stay here', title: 'Watch progress live' },
-              { value: 'background', label: 'In background', title: 'Close tab safely' },
-            ].map(({ value, label, title }) => {
-              const isActive = transcriptionMethod === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setTranscriptionMethod(value as "local" | "background")}
-                  disabled={isTranscribing}
-                  title={title}
-                  style={{
-                    flex: 1,
-                    padding: '6px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '12.5px',
-                    fontWeight: 500,
-                    border: 0,
-                    cursor: isTranscribing ? 'not-allowed' : 'pointer',
-                    backgroundColor: isActive ? 'var(--bg-overlay)' : 'transparent',
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                    boxShadow: isActive ? 'var(--shadow-xs)' : 'none',
-                    transition: 'background-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         {/* CTA */}

@@ -16,11 +16,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Mark this process so heartbeat self-pings and similar Service-only behaviors skip themselves.
-os.environ.setdefault("CLOUD_RUN_JOB", "1")
+# Mark the execution environment without conflating local detached workers with
+# Cloud Run Jobs.
+if os.environ.get("LOCAL_MODE", "false").lower() == "true":
+    os.environ.setdefault("LOCAL_DETACHED_WORKER", "1")
+else:
+    os.environ.setdefault("CLOUD_RUN_JOB", "1")
+
+from config import settings
+
+settings.validate_runtime()
 
 from services.background_worker import background_worker, JobCancelled
 from services.job_queue_service import JobQueueService
+from services.media_storage import get_media_storage
 
 
 def _install_sigterm_handler(job_id: str) -> None:
@@ -39,6 +48,11 @@ def _install_sigterm_handler(job_id: str) -> None:
 
 async def _run(job_id: str) -> int:
     try:
+        await asyncio.to_thread(
+            JobQueueService.drain_media_deletions_best_effort,
+            storage=get_media_storage(),
+            limit=10,
+        )
         ok = await background_worker.process_job(job_id)
         return 0 if ok else 1
     except JobCancelled as e:

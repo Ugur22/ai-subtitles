@@ -44,9 +44,8 @@ def _preload_models():
     # 2. CLIP model (image search)
     try:
         print("[Preloader] Loading CLIP model...")
-        from services.image_embedding_service import ImageEmbeddingService
-        svc = ImageEmbeddingService()
-        _ = svc.clip_model  # trigger lazy load
+        from services.image_embedding_service import image_embedding_service
+        _ = image_embedding_service.clip_model
         _preload_status["clip"] = "loaded"
         print("[Preloader] CLIP model ready")
     except Exception as e:

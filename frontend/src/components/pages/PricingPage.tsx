@@ -73,14 +73,14 @@ export const PricingPage = () => {
       } else {
         toast.error("Couldn't start checkout. Please try again.");
       }
-    } catch (e: any) {
-      const detail = e?.response?.data?.detail;
+    } catch (error: unknown) {
+      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
       if (typeof detail === "string" && detail.includes("not configured")) {
         toast.error("Billing isn't configured yet. Try again shortly.");
       } else {
         toast.error("Checkout failed. Please try again.");
       }
-      console.error("Checkout failed", e);
+      console.error("Checkout failed", error);
     } finally {
       setCheckoutLoading(false);
     }

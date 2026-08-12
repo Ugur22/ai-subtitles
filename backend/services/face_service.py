@@ -7,7 +7,6 @@ Uses ONNX Runtime — separate from PyTorch GPU memory
 import os
 import tempfile
 import numpy as np
-import requests
 from typing import List, Dict, Optional, Tuple
 from PIL import Image
 
@@ -35,35 +34,23 @@ class FaceService:
             print("[FaceService] InsightFace model loaded successfully")
         return self._model
 
-    def _download_image_to_temp(self, url: str) -> Optional[str]:
-        """Download an image from URL to a temporary file"""
-        if not url.startswith('http://') and not url.startswith('https://'):
-            if os.path.exists(url):
-                return url
-            if url.startswith('/static/'):
-                from pathlib import Path
-                backend_dir = Path(__file__).parent.parent.absolute()
-                abs_path = str(backend_dir / url.lstrip('/'))
-                if os.path.exists(abs_path):
-                    return abs_path
+    def _download_image_to_temp(self, source: str) -> Optional[str]:
+        """Materialize only validated GCS objects or existing local files."""
+        if source.startswith("gcs://"):
+            from config import settings
+            from services.gcs_service import gcs_service
+
+            prefix = f"gcs://{settings.GCS_BUCKET_NAME}/"
+            if not source.startswith(prefix):
+                return None
+            gcs_path = source[len(prefix):]
+            if not gcs_path or ".." in gcs_path.split("/"):
+                return None
+            return gcs_service.download_to_temp(gcs_path, suffix=os.path.splitext(gcs_path)[1])
+
+        if source.startswith(("http://", "https://")):
             return None
-
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-
-            suffix = '.jpg'
-            if '.png' in url.lower():
-                suffix = '.png'
-            elif '.webp' in url.lower():
-                suffix = '.webp'
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(response.content)
-                return tmp.name
-        except Exception as e:
-            print(f"[FaceService] Failed to download image from {url}: {e}")
-            return None
+        return source if os.path.isfile(source) else None
 
     def detect_faces(self, image_source: str) -> List[Dict]:
         """

@@ -317,7 +317,7 @@ class OpenAIProvider(BaseLLMProvider):
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
-                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
+                      f"Consider running /cleanup_screenshots to remove orphaned screenshot files.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only
@@ -458,7 +458,7 @@ class AnthropicProvider(BaseLLMProvider):
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
-                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
+                      f"Consider running /cleanup_screenshots to remove orphaned screenshot files.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only
@@ -644,7 +644,7 @@ class GrokProvider(BaseLLMProvider):
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
-                      f"Consider running /cleanup_screenshots to remove orphaned ChromaDB data.")
+                      f"Consider running /cleanup_screenshots to remove orphaned screenshot files.")
 
             if not image_data:
                 # No images could be loaded, fall back to text-only

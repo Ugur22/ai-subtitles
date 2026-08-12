@@ -16,6 +16,8 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 
 from middleware.auth import require_auth
+from services.transcription_access import authenticated_user_id
+from services.transcription_repository import transcription_repository
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +307,7 @@ async def _detect_chapters(
     return chapters
 
 
-def _load_segments_from_supabase(video_hash: str) -> List[Dict]:
+def _load_segments_from_supabase(video_hash: str, user_id: str) -> List[Dict]:
     """
     Synchronous helper that queries Supabase for the most recent completed job
     and extracts the transcription segments from result_json.
@@ -314,30 +316,11 @@ def _load_segments_from_supabase(video_hash: str) -> List[Dict]:
     This is a sync function so it can be called directly; awaiting is handled
     by the caller via asyncio.to_thread if needed.
     """
-    from services.supabase_service import supabase
-
-    client = supabase()
-    response = (
-        client.table("jobs")
-        .select("result_json")
-        .eq("video_hash", video_hash)
-        .eq("status", "completed")
-        .order("completed_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    if not response.data:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No completed transcription found for video_hash={video_hash}",
-        )
-
-    result_json = response.data[0].get("result_json")
+    result_json = transcription_repository.get_transcription(video_hash, user_id)
     if not result_json:
         raise HTTPException(
             status_code=404,
-            detail="Job found but result_json is empty.",
+            detail=f"No completed transcription found for video_hash={video_hash}",
         )
 
     segments = (
@@ -404,7 +387,11 @@ async def generate_chapters(
     # --- Load segments ---
     # Supabase client is synchronous; run in thread to avoid blocking the loop.
     try:
-        segments = await asyncio.to_thread(_load_segments_from_supabase, video_hash)
+        segments = await asyncio.to_thread(
+            _load_segments_from_supabase,
+            video_hash,
+            authenticated_user_id(request),
+        )
     except HTTPException:
         raise
     except Exception as exc:
