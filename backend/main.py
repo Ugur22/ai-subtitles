@@ -4,48 +4,14 @@ Refactored with organized structure, Pydantic models, and proper documentation
 """
 import os
 import asyncio
-import tempfile
-import shutil
-import time
-import subprocess
-import uuid
-from pathlib import Path
-from datetime import timedelta
-from typing import Dict, Callable, Any
-from concurrent.futures import ThreadPoolExecutor
-
-# Executor for CPU-bound tasks in legacy endpoints
-_legacy_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="legacy_transcribe")
-
-
-async def _run_blocking(func: Callable, *args, **kwargs) -> Any:
-    """Run blocking function in executor to avoid blocking event loop."""
-    loop = asyncio.get_event_loop()
-    if kwargs:
-        return await loop.run_in_executor(_legacy_executor, lambda: func(*args, **kwargs))
-    return await loop.run_in_executor(_legacy_executor, func, *args)
-
-from fastapi import FastAPI, UploadFile, HTTPException, Request, Form
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 from config import settings as app_settings
-from database import init_db, get_transcription, store_transcription
-from dependencies import get_whisper_model, get_speaker_diarizer
-import dependencies
-from utils.file_utils import generate_file_hash
-from utils.time_utils import format_timestamp, format_eta
-from services.audio_service import AudioService
-from services.video_service import VideoService
-from services.translation_service import TranslationService
-from services.speaker_service import SpeakerService
-
 # Import routers
 from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing
 
@@ -97,17 +63,23 @@ app = FastAPI(
 # Startup event
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and create static directories"""
-    init_db()
-    os.makedirs(app_settings.VIDEOS_DIR, exist_ok=True)
-    os.makedirs(app_settings.SCREENSHOTS_DIR, exist_ok=True)
+    """Validate runtime configuration."""
+    app_settings.validate_runtime()
     print("Application initialized successfully")
-    print(f"- Videos directory: {app_settings.VIDEOS_DIR}")
-    print(f"- Screenshots directory: {app_settings.SCREENSHOTS_DIR}")
 
     # Start background model preloading to avoid cold-start 504s
     from model_preloader import start_preloading
     start_preloading()
+
+    if app_settings.LOCAL_MODE:
+        from services.job_queue_service import JobQueueService
+        from services.media_storage import get_media_storage
+
+        app.state.media_cleanup_task = asyncio.create_task(asyncio.to_thread(
+            JobQueueService.drain_media_deletions_best_effort,
+            storage=get_media_storage(),
+            limit=10,
+        ))
 
     # Clean up old GCS uploads if enabled
     if app_settings.ENABLE_GCS_UPLOADS:
@@ -125,10 +97,6 @@ async def startup_event():
             print(f"- GCS cleanup failed (non-critical): {e}")
 
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=app_settings.STATIC_DIR), name="static")
-
-
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -140,18 +108,6 @@ app.add_middleware(
     max_age=600,
 )
 
-
-# Large upload middleware
-class LargeUploadMiddleware(BaseHTTPMiddleware):
-    """Middleware to handle large file uploads (up to 10GB)"""
-    async def dispatch(self, request: Request, call_next):
-        if request.method == 'POST' and '/transcribe' in request.url.path:
-            request._body_size_limit = app_settings.MAX_UPLOAD_SIZE
-            request.scope["max_content_size"] = app_settings.MAX_UPLOAD_SIZE
-        return await call_next(request)
-
-
-app.add_middleware(LargeUploadMiddleware)
 
 # Token refresh middleware - sets refreshed auth cookies on response
 # Must be added after CORS middleware so cookies are properly handled
@@ -193,288 +149,6 @@ async def preload_status():
     from model_preloader import get_preload_status
     return get_preload_status()
 
-
-# ====================================================================================
-# LEGACY TRANSCRIPTION ENDPOINTS
-# ====================================================================================
-# NOTE: The following three endpoints (/transcribe/, /transcribe_local/,
-# /transcribe_local_stream/) are kept inline here temporarily due to their complexity
-# (300-500 lines each with intricate logic).
-#
-# TECHNICAL DEBT: These should be refactored into a comprehensive TranscriptionService
-# class in a future iteration. For now, they remain here to ensure 100% backward
-# compatibility during the initial refactoring phase.
-# ====================================================================================
-
-# Get the local whisper model (initialized on first use)
-local_whisper_model = None
-
-
-def get_local_whisper_model():
-    """Lazy load the local whisper model"""
-    global local_whisper_model
-    if local_whisper_model is None:
-        local_whisper_model = get_whisper_model()
-    return local_whisper_model
-
-
-@app.post("/transcribe/")
-async def transcribe_video(
-    file: UploadFile,
-    request: Request,
-    file_path: str = None,
-    language: str = Form(None)
-) -> Dict:
-    """
-    Handle video upload, extract audio, and transcribe using OpenAI Whisper API
-
-    NOTE: This is a legacy endpoint with complex logic that should be refactored.
-    It handles chunked processing for large files.
-    """
-    try:
-        if not file:
-            raise HTTPException(status_code=400, detail="No file provided")
-
-        # Validate file type
-        allowed_extensions = {'.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.mp3', '.mov', '.mkv'}
-        file_extension = Path(file.filename).suffix.lower()
-        if file_extension not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file format. Supported formats: {', '.join(allowed_extensions)}"
-            )
-
-        print(f"\nProcessing video: {file.filename}")
-        if language:
-            print(f"Language specified: {language}")
-        else:
-            print("Language: Auto-detect")
-
-        start_time = time.time()
-
-        # Create a temporary directory for processing
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Save uploaded file in chunks
-            temp_input_path = os.path.join(temp_dir, file.filename)
-            screenshots_dir = app_settings.SCREENSHOTS_DIR
-            os.makedirs(screenshots_dir, exist_ok=True)
-
-            print(f"Created temp directory: {temp_dir}")
-
-            # Save file in chunks with a larger chunk size for better performance
-            CHUNK_SIZE = 1024 * 1024 * 8  # 8MB chunks
-            total_size = 0
-
-            print("\nUploading video...")
-            try:
-                with open(temp_input_path, "wb") as buffer:
-                    while chunk := await file.read(CHUNK_SIZE):
-                        total_size += len(chunk)
-                        if total_size > app_settings.MAX_UPLOAD_SIZE:
-                            raise HTTPException(
-                                status_code=413,
-                                detail="File too large. Maximum size is 10GB."
-                            )
-                        buffer.write(chunk)
-                        print(f"Uploaded: {total_size / (1024*1024):.1f} MB", end="\r")
-                print(f"\nUpload completed. Total size: {total_size / (1024*1024):.1f} MB")
-            except Exception as e:
-                print(f"Upload error: {str(e)}")
-                raise HTTPException(status_code=400, detail=f"Error uploading file: {str(e)}")
-
-            # Generate hash for the file
-            video_hash = generate_file_hash(temp_input_path)
-            print(f"Generated hash for video: {video_hash}")
-
-            # Check if we already have a transcription for this file
-            existing_transcription = get_transcription(video_hash)
-            if existing_transcription:
-                print(f"Found existing transcription for {file.filename} with hash {video_hash}")
-                dependencies._last_transcription_data = existing_transcription
-                request.app.state.last_transcription = existing_transcription
-                return existing_transcription
-
-            print("No existing transcription found. Processing video...")
-
-            # Save a permanent copy
-            permanent_file_path = os.path.join(app_settings.VIDEOS_DIR, f"{video_hash}{file_extension}")
-            if not os.path.exists(permanent_file_path):
-                shutil.copy2(temp_input_path, permanent_file_path)
-                print(f"Saved permanent copy to: {permanent_file_path}")
-
-            # Convert MKV to MP4 if needed
-            if file_extension == '.mkv':
-                mp4_path = os.path.join(app_settings.VIDEOS_DIR, f"{video_hash}.mp4")
-                if not os.path.exists(mp4_path):
-                    print("\nConverting MKV to MP4...")
-                    converted = await _run_blocking(
-                        VideoService.convert_mkv_to_mp4, permanent_file_path, mp4_path
-                    )
-                    if converted:
-                        permanent_file_path = mp4_path
-                        temp_input_path = mp4_path
-
-            # Extract and process audio in chunks
-            print("\nExtracting audio chunks...")
-            audio_chunks = await _run_blocking(
-                AudioService.extract_audio, temp_input_path, chunk_duration=300, overlap=5
-            )
-
-            if not audio_chunks:
-                raise Exception("Failed to extract audio")
-
-            print(f"Split audio into {len(audio_chunks)} chunks.")
-
-            # Get local whisper model
-            whisper_model = get_local_whisper_model()
-
-            # Transcribe each chunk
-            all_segments = []
-            audio_language = language
-            full_text = []
-            total_chunks = len(audio_chunks)
-
-            for i, chunk_path in enumerate(audio_chunks):
-                print(f"\nProcessing chunk {i+1}/{total_chunks}")
-
-                segments, info = await _run_blocking(
-                    whisper_model.transcribe,
-                    chunk_path,
-                    task="transcribe",
-                    language=language if language else None,
-                    beam_size=1
-                )
-
-                if audio_language is None:
-                    audio_language = info.language
-
-                # Process segments (with overlap handling)
-                chunk_offset = i * 300
-                segments_list = list(segments)
-
-                for seg in segments_list:
-                    all_segments.append({
-                        'start': seg.start + chunk_offset,
-                        'end': seg.end + chunk_offset,
-                        'text': seg.text
-                    })
-
-            # Create combined response
-            response_language = audio_language or "en"
-
-            # Translate if needed
-            if response_language.lower() not in ['en', 'english']:
-                print(f"\nTranslating from {response_language}...")
-                all_segments = await _run_blocking(
-                    TranslationService.translate_segments, all_segments, response_language
-                )
-
-            # Upload video to GCS for persistence across container restarts
-            if app_settings.ENABLE_GCS_UPLOADS:
-                from services.gcs_service import gcs_service
-                gcs_video_path = f"{app_settings.GCS_PROCESSED_PREFIX}{video_hash}{file_extension}"
-                await _run_blocking(gcs_service.upload_local_file, permanent_file_path, gcs_video_path)
-
-            # Extract screenshots for video files
-            if file_extension in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}:
-                print("\nExtracting screenshots...")
-                for segment in all_segments:
-                    screenshot_filename = f"{video_hash}_{segment['start']:.2f}.jpg"
-                    screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
-
-                    result = await _run_blocking(
-                        VideoService.extract_screenshot, temp_input_path, segment['start'], screenshot_path
-                    )
-                    if result:
-                        segment['screenshot_url'] = f"/static/screenshots/{screenshot_filename}"
-
-                # Upload screenshots to GCS so they survive container restarts
-                if app_settings.ENABLE_GCS_UPLOADS:
-                    from services.gcs_service import gcs_service  # already imported above if video branch ran first
-                    screenshot_map = {}
-                    for seg in all_segments:
-                        if seg.get('screenshot_url'):
-                            ts = seg['start']
-                            local_path = os.path.join(screenshots_dir, f"{video_hash}_{ts:.2f}.jpg")
-                            if os.path.exists(local_path):
-                                screenshot_map[ts] = local_path
-
-                    if screenshot_map:
-                        print(f"\nUploading {len(screenshot_map)} screenshots to GCS...")
-                        gcs_urls = await _run_blocking(
-                            gcs_service.upload_screenshots_batch, screenshot_map, video_hash
-                        )
-                        for seg in all_segments:
-                            ts = seg.get('start')
-                            if ts in gcs_urls and gcs_urls[ts]:
-                                seg['screenshot_url'] = gcs_urls[ts]
-
-            # Add speaker diarization
-            diarizer = get_speaker_diarizer()
-            if diarizer:
-                print("\nAdding speaker labels...")
-                all_segments = await _run_blocking(
-                    SpeakerService.add_speaker_labels,
-                    temp_input_path,
-                    all_segments,
-                    diarizer
-                )
-
-            # Format final segments
-            formatted_segments = []
-            for seg in all_segments:
-                formatted_segments.append({
-                    "id": str(uuid.uuid4()),
-                    "start": seg.get('start'),
-                    "end": seg.get('end'),
-                    "start_time": format_timestamp(seg.get('start')),
-                    "end_time": format_timestamp(seg.get('end')),
-                    "text": seg.get('text'),
-                    "translation": seg.get('translation'),
-                    "speaker": seg.get('speaker', 'SPEAKER_00'),
-                    "screenshot_url": seg.get('screenshot_url')
-                })
-
-            # Create result
-            processing_time = time.time() - start_time
-            result = {
-                "filename": file.filename,
-                "video_hash": video_hash,
-                "transcription": {
-                    "text": " ".join([seg.get('text', '') for seg in all_segments]),
-                    "language": response_language,
-                    "duration": format_eta(int(processing_time)),
-                    "segments": formatted_segments,
-                    "processing_time": format_eta(int(processing_time))
-                },
-                "video_url": f"/video/{video_hash}"
-            }
-
-            # Store transcription
-            store_transcription(video_hash, file.filename, result, permanent_file_path)
-            dependencies._last_transcription_data = result
-            request.app.state.last_transcription = result
-
-            return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in transcription: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# NOTE: The /transcribe_local/ and /transcribe_local_stream/ endpoints are similar
-# in structure to /transcribe/ above. Due to space constraints, they would be
-# implemented similarly. For the complete refactoring, they should be extracted
-# from the original main.py and added here, or better yet, refactored into a
-# TranscriptionService class.
-
-# For now, to keep this response manageable, I'm including a reference implementation
-# that maintains the structure. The actual implementation should copy the logic from
-# main.py lines 1920-2250 and 2251-2523.
 
 print("FastAPI application loaded successfully")
 print(f"API Title: {app_settings.API_TITLE}")

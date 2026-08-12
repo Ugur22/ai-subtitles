@@ -9,6 +9,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import torch
+from threading import RLock
 from pyannote.audio import Inference
 from scipy.spatial.distance import cosine
 
@@ -26,6 +27,7 @@ class SpeakerRecognitionSystem:
             database_path: Path to store speaker voice prints database
         """
         self.database_path = database_path
+        self._database_lock = RLock()
         self.speaker_database = self._load_database()
 
         # Initialize pyannote embedding model
@@ -40,7 +42,6 @@ class SpeakerRecognitionSystem:
                 raise ValueError("HUGGINGFACE_TOKEN not found in environment variables")
 
             print("Loading speaker embedding model...")
-            print(f"Using token: {hf_token[:10]}...")
 
             self.embedding_model = Inference(
                 "pyannote/embedding",
@@ -59,9 +60,16 @@ class SpeakerRecognitionSystem:
             try:
                 with open(self.database_path, 'r') as f:
                     data = json.load(f)
-                    # Convert lists back to numpy arrays
-                    for speaker in data.values():
-                        speaker['embedding'] = np.array(speaker['embedding'])
+                    # Old flat files are quarantined instead of being exposed
+                    # to every authenticated user.
+                    if data and all(
+                        isinstance(value, dict) and "embedding" in value
+                        for value in data.values()
+                    ):
+                        data = {"__legacy__": data}
+                    for speakers in data.values():
+                        for speaker in speakers.values():
+                            speaker['embedding'] = np.array(speaker['embedding'])
                     return data
             except Exception as e:
                 print(f"Error loading database: {e}")
@@ -73,11 +81,13 @@ class SpeakerRecognitionSystem:
         try:
             # Convert numpy arrays to lists for JSON serialization
             save_data = {}
-            for name, speaker_data in self.speaker_database.items():
-                save_data[name] = {
-                    'embedding': speaker_data['embedding'].tolist(),
-                    'samples_count': speaker_data['samples_count']
-                }
+            for user_id, speakers in self.speaker_database.items():
+                save_data[user_id] = {}
+                for name, speaker_data in speakers.items():
+                    save_data[user_id][name] = {
+                        'embedding': speaker_data['embedding'].tolist(),
+                        'samples_count': speaker_data['samples_count']
+                    }
 
             with open(self.database_path, 'w') as f:
                 json.dump(save_data, f, indent=2)
@@ -116,7 +126,7 @@ class SpeakerRecognitionSystem:
             print(f"Error extracting embedding: {e}")
             raise
 
-    def enroll_speaker(self, speaker_name: str, audio_path: str,
+    def enroll_speaker(self, user_id: str, speaker_name: str, audio_path: str,
                       start_time: float = None, end_time: float = None) -> bool:
         """
         Enroll a new speaker or add a sample to existing speaker
@@ -136,29 +146,24 @@ class SpeakerRecognitionSystem:
             # Extract embedding
             embedding = self.extract_embedding(audio_path, start_time, end_time)
 
-            if speaker_name in self.speaker_database:
-                # Update existing speaker - average with existing embedding
-                print(f"Updating existing speaker: {speaker_name}")
-                old_embedding = self.speaker_database[speaker_name]['embedding']
-                old_count = self.speaker_database[speaker_name]['samples_count']
-
-                # Weighted average of embeddings
-                new_embedding = (old_embedding * old_count + embedding) / (old_count + 1)
-
-                self.speaker_database[speaker_name] = {
-                    'embedding': new_embedding,
-                    'samples_count': old_count + 1
-                }
-            else:
-                # New speaker
-                print(f"Adding new speaker: {speaker_name}")
-                self.speaker_database[speaker_name] = {
-                    'embedding': embedding,
-                    'samples_count': 1
-                }
-
-            # Save to disk
-            self._save_database()
+            with self._database_lock:
+                speakers = self.speaker_database.setdefault(user_id, {})
+                if speaker_name in speakers:
+                    print(f"Updating existing speaker: {speaker_name}")
+                    old_embedding = speakers[speaker_name]['embedding']
+                    old_count = speakers[speaker_name]['samples_count']
+                    new_embedding = (old_embedding * old_count + embedding) / (old_count + 1)
+                    speakers[speaker_name] = {
+                        'embedding': new_embedding,
+                        'samples_count': old_count + 1
+                    }
+                else:
+                    print(f"Adding new speaker: {speaker_name}")
+                    speakers[speaker_name] = {
+                        'embedding': embedding,
+                        'samples_count': 1
+                    }
+                self._save_database()
             print(f"Successfully enrolled {speaker_name}")
             return True
 
@@ -166,7 +171,7 @@ class SpeakerRecognitionSystem:
             print(f"Error enrolling speaker {speaker_name}: {e}")
             return False
 
-    def identify_speaker(self, audio_path: str, start_time: float = None,
+    def identify_speaker(self, user_id: str, audio_path: str, start_time: float = None,
                         end_time: float = None, threshold: float = 0.7) -> Tuple[Optional[str], float]:
         """
         Identify speaker from audio segment
@@ -181,7 +186,15 @@ class SpeakerRecognitionSystem:
             Tuple of (speaker_name, confidence) or (None, 0.0) if no match
         """
         try:
-            if not self.speaker_database:
+            with self._database_lock:
+                speakers = {
+                    name: {
+                        "embedding": data["embedding"].copy(),
+                        "samples_count": data["samples_count"],
+                    }
+                    for name, data in self.speaker_database.get(user_id, {}).items()
+                }
+            if not speakers:
                 print("No speakers enrolled in database")
                 return None, 0.0
 
@@ -190,7 +203,7 @@ class SpeakerRecognitionSystem:
 
             # Compare with all enrolled speakers
             similarities = {}
-            for speaker_name, speaker_data in self.speaker_database.items():
+            for speaker_name, speaker_data in speakers.items():
                 stored_embedding = speaker_data['embedding']
 
                 # Calculate cosine similarity (1 = identical, 0 = completely different)
@@ -215,27 +228,32 @@ class SpeakerRecognitionSystem:
             print(f"Error identifying speaker: {e}")
             return None, 0.0
 
-    def remove_speaker(self, speaker_name: str) -> bool:
+    def remove_speaker(self, user_id: str, speaker_name: str) -> bool:
         """Remove a speaker from the database"""
-        if speaker_name in self.speaker_database:
-            del self.speaker_database[speaker_name]
-            self._save_database()
-            print(f"Removed speaker: {speaker_name}")
-            return True
+        with self._database_lock:
+            speakers = self.speaker_database.get(user_id, {})
+            if speaker_name in speakers:
+                del speakers[speaker_name]
+                self._save_database()
+                print(f"Removed speaker: {speaker_name}")
+                return True
         return False
 
-    def list_speakers(self) -> List[str]:
+    def list_speakers(self, user_id: str) -> List[str]:
         """Get list of all enrolled speakers"""
-        return list(self.speaker_database.keys())
+        with self._database_lock:
+            return list(self.speaker_database.get(user_id, {}).keys())
 
-    def get_speaker_info(self, speaker_name: str) -> Optional[Dict]:
+    def get_speaker_info(self, user_id: str, speaker_name: str) -> Optional[Dict]:
         """Get information about a speaker"""
-        if speaker_name in self.speaker_database:
-            return {
-                'name': speaker_name,
-                'samples_count': self.speaker_database[speaker_name]['samples_count'],
-                'embedding_shape': self.speaker_database[speaker_name]['embedding'].shape
-            }
+        with self._database_lock:
+            speakers = self.speaker_database.get(user_id, {})
+            if speaker_name in speakers:
+                return {
+                    'name': speaker_name,
+                    'samples_count': speakers[speaker_name]['samples_count'],
+                    'embedding_shape': speakers[speaker_name]['embedding'].shape
+                }
         return None
 
 
@@ -251,16 +269,3 @@ def get_speaker_recognition_system() -> SpeakerRecognitionSystem:
 
 
 # Example usage
-if __name__ == "__main__":
-    # Initialize system
-    sr_system = SpeakerRecognitionSystem()
-
-    # Example: Enroll a speaker
-    # sr_system.enroll_speaker("John", "path/to/john_voice.wav")
-
-    # Example: Identify a speaker
-    # speaker, confidence = sr_system.identify_speaker("path/to/unknown_voice.wav")
-    # print(f"Identified: {speaker} (confidence: {confidence:.2f})")
-
-    # List enrolled speakers
-    print(f"Enrolled speakers: {sr_system.list_speakers()}")

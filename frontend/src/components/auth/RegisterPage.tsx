@@ -32,7 +32,7 @@ export const RegisterPage: React.FC = () => {
       const userId = await register(email, password, inviteCode);
       sessionStorage.setItem('pendingVerificationEmail', email);
       navigate(`/verify-email?user_id=${userId}`);
-    } catch (error) {
+    } catch {
       // Error handled by useAuth (toast shown)
     }
   };

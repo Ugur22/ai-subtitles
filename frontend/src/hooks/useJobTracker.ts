@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Job } from '../types/job';
+import { Job, isActiveJobStatus } from '../types/job';
 import { useJobStorage } from './useJobStorage';
 import { useJobNotifications } from './useJobNotifications';
 import { supabase } from '../lib/supabase';
@@ -56,7 +56,11 @@ export const useJobTracker = () => {
 
       // Cache jobs for offline fallback (strip result_json to avoid quota issues)
       try {
-        const cacheableJobs = jobsWithTokens.map(({ result_json, ...rest }) => rest);
+        const cacheableJobs = jobsWithTokens.map(job => {
+          const { result_json, ...cacheableJob } = job;
+          void result_json;
+          return cacheableJob;
+        });
         localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(cacheableJobs));
       } catch (e) {
         console.warn('Failed to cache jobs:', e);
@@ -101,9 +105,9 @@ export const useJobTracker = () => {
    * Subscribe to real-time updates for active jobs
    */
   useEffect(() => {
-    // Only subscribe to jobs that are pending or processing
+    // Keep the subscription through final persistence so completion is observed.
     const activeJobIds = jobs
-      .filter(j => j.status === 'pending' || j.status === 'processing')
+      .filter(j => isActiveJobStatus(j.status))
       .map(j => j.job_id);
 
     if (activeJobIds.length === 0) {
@@ -181,7 +185,7 @@ export const useJobTracker = () => {
   }, [fetchJobs]);
 
   /**
-   * Poll jobs when there are active jobs (pending/processing)
+   * Poll jobs while work or final persistence is active.
    * Provides fallback when Supabase real-time fails
    *
    * Polling interval rationale:
@@ -193,9 +197,7 @@ export const useJobTracker = () => {
    * - 4 minutes = reduced to prevent server overload on Cloud Run
    */
   useEffect(() => {
-    const hasActiveJobs = jobs.some(
-      j => j.status === 'pending' || j.status === 'processing'
-    );
+    const hasActiveJobs = jobs.some(j => isActiveJobStatus(j.status));
 
     if (!hasActiveJobs) return;
 

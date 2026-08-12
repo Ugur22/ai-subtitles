@@ -4,14 +4,14 @@ Handles persistent storage of CLIP embeddings for video screenshots
 """
 
 import os
-import tempfile
 import time
-import requests
 import httpx
 from typing import List, Dict, Optional
 from PIL import Image
 from sentence_transformers import SentenceTransformer
 from services.supabase_service import supabase
+from services.media_storage import get_media_storage
+from config import settings
 
 
 class ImageEmbeddingService:
@@ -30,91 +30,24 @@ class ImageEmbeddingService:
             CLIP model from sentence-transformers
         """
         if self._clip_model is None:
-            print("[ImageEmbedding] Loading CLIP model (clip-ViT-B-32)...")
-            self._clip_model = SentenceTransformer('clip-ViT-B-32')
+            print(f"[ImageEmbedding] Loading CLIP model ({settings.CLIP_MODEL})...")
+            self._clip_model = SentenceTransformer(settings.CLIP_MODEL)
             print("[ImageEmbedding] CLIP model loaded successfully")
         return self._clip_model
 
-    def _download_image_to_temp(self, url: str) -> Optional[str]:
-        """
-        Download an image from URL to a temporary file
-
-        Args:
-            url: URL of the image (can be GCS signed URL or local path)
-
-        Returns:
-            Path to temporary file, or None if download failed
-        """
-        # If it's a local file path, just return it
-        if not url.startswith('http://') and not url.startswith('https://'):
-            if os.path.exists(url):
-                return url
-            # Try converting /static/ path to absolute
-            if url.startswith('/static/'):
-                from pathlib import Path
-                backend_dir = Path(__file__).parent.parent.absolute()
-                abs_path = str(backend_dir / url.lstrip('/'))
-                if os.path.exists(abs_path):
-                    return abs_path
-                # Fallback: try GCS using predictable path screenshots/{hash}/{ts}.jpg
-                if url.startswith('/static/screenshots/'):
-                    try:
-                        from config import settings as _cfg
-                        if _cfg.ENABLE_GCS_UPLOADS:
-                            filename = os.path.basename(url)       # e.g. "abc123_1001.64.jpg"
-                            stem = filename.rsplit('.', 1)[0]       # "abc123_1001.64"
-                            last_us = stem.rfind('_')
-                            if last_us > 0:
-                                video_hash = stem[:last_us]
-                                ts_str = stem[last_us + 1:]         # "1001.64"
-                                gcs_path = f"screenshots/{video_hash}/{ts_str}.jpg"
-                                from services.gcs_service import GCSService
-                                bucket = GCSService._get_bucket()
-                                blob = bucket.blob(gcs_path)
-                                if blob.exists():
-                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-                                    tmp.close()
-                                    blob.download_to_filename(tmp.name)
-                                    return tmp.name
-                    except Exception as gcs_e:
-                        print(f"[ImageEmbedding] GCS fallback failed for {url}: {gcs_e}")
-            return None
-
-        try:
-            # Download from URL
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-
-            # Create temp file with appropriate extension
-            suffix = '.jpg'
-            if '.png' in url.lower():
-                suffix = '.png'
-            elif '.webp' in url.lower():
-                suffix = '.webp'
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(response.content)
-                return tmp.name
-
-        except Exception as e:
-            print(f"[ImageEmbedding] Failed to download image from {url}: {e}")
-            return None
-
-    def _download_gcs_path_to_temp(self, gcs_path: str) -> Optional[str]:
-        """Download a GCS object directly with service-account credentials."""
-        try:
-            from services.gcs_service import GCSService
-
-            suffix = os.path.splitext(gcs_path.split("?", 1)[0])[1] or ".jpg"
-            bucket = GCSService._get_bucket()
-            blob = bucket.blob(gcs_path)
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            tmp.close()
-            blob.download_to_filename(tmp.name)
-            return tmp.name
-        except Exception as e:
-            print(f"[ImageEmbedding] Failed to download GCS object {gcs_path}: {e}")
-            return None
+    def _materialize_screenshot(
+        self,
+        reference: str,
+        user_id: str,
+        video_hash: str,
+        allow_legacy: bool,
+    ) -> str:
+        return get_media_storage().materialize_screenshot(
+            reference,
+            user_id=user_id,
+            video_hash=video_hash,
+            allow_legacy=allow_legacy,
+        )
 
     def _generate_embedding(self, image_path: str) -> Optional[List[float]]:
         """
@@ -152,7 +85,7 @@ class ImageEmbeddingService:
         for attempt in range(max_retries):
             try:
                 client.table('image_embeddings').upsert(
-                    records, on_conflict='video_hash,segment_id'
+                    records, on_conflict='user_id,video_hash,segment_id'
                 ).execute()
                 print(
                     f"[ImageEmbedding] Inserted batch {batch_num}/{total_batches} "
@@ -220,6 +153,7 @@ class ImageEmbeddingService:
     def _index_face_presence_from_segments(
         self,
         client,
+        user_id: str,
         video_hash: str,
         indexed_segments: List[Dict],
         force_reindex: bool = False,
@@ -230,8 +164,8 @@ class ImageEmbeddingService:
 
         try:
             existing = client.table('image_face_presence').select('id').eq(
-                'video_hash', video_hash
-            ).limit(1).execute()
+                'user_id', user_id
+            ).eq('video_hash', video_hash).limit(1).execute()
             if existing.data and not force_reindex:
                 print(f"[ImageEmbedding] Face presence already indexed for video {video_hash}")
                 return 0
@@ -245,7 +179,9 @@ class ImageEmbeddingService:
             try:
                 rows = client.table('image_embeddings').select(
                     'id, segment_id'
-                ).eq('video_hash', video_hash).in_('segment_id', chunk_ids).execute()
+                ).eq('user_id', user_id).eq(
+                    'video_hash', video_hash
+                ).in_('segment_id', chunk_ids).execute()
                 for row in rows.data or []:
                     id_by_segment[str(row.get('segment_id'))] = row.get('id')
             except Exception as e:
@@ -257,7 +193,9 @@ class ImageEmbeddingService:
 
         if force_reindex:
             try:
-                client.table('image_face_presence').delete().eq('video_hash', video_hash).execute()
+                client.table('image_face_presence').delete().eq(
+                    'user_id', user_id
+                ).eq('video_hash', video_hash).execute()
             except Exception as e:
                 print(f"[ImageEmbedding] Could not clear old face presence rows: {e}")
 
@@ -282,6 +220,7 @@ class ImageEmbeddingService:
                     if not embedding:
                         continue
                     face_records.append({
+                        'user_id': user_id,
                         'image_embedding_id': image_embedding_id,
                         'video_hash': video_hash,
                         'start_time': seg.get('start', 0.0),
@@ -322,6 +261,7 @@ class ImageEmbeddingService:
     def index_face_presence_for_video(
         self,
         video_hash: str,
+        user_id: str,
         force_reindex: bool = False,
     ) -> int:
         """Backfill face presence from persisted image_embeddings rows."""
@@ -329,16 +269,16 @@ class ImageEmbeddingService:
 
         try:
             existing = client.table('image_face_presence').select('id').eq(
-                'video_hash', video_hash
-            ).limit(1).execute()
+                'user_id', user_id
+            ).eq('video_hash', video_hash).limit(1).execute()
             if existing.data and not force_reindex:
                 return 0
         except Exception as e:
             print(f"[ImageEmbedding] Face presence backfill check failed: {e}")
 
         rows = client.table('image_embeddings').select(
-            'id, segment_id, start_time, end_time, speaker, screenshot_url'
-        ).eq('video_hash', video_hash).execute()
+            'id, user_id, segment_id, start_time, end_time, speaker, screenshot_url'
+        ).eq('user_id', user_id).eq('video_hash', video_hash).execute()
 
         segments = []
         temp_files = []
@@ -346,22 +286,14 @@ class ImageEmbeddingService:
             screenshot_url = row.get('screenshot_url')
             if not screenshot_url:
                 continue
-            local_path = None
             try:
-                from config import settings as _settings
-                if _settings.ENABLE_GCS_UPLOADS:
-                    from services.gcs_service import gcs_service
-                    gcs_path = gcs_service.extract_gcs_path_from_signed_url(screenshot_url)
-                    if gcs_path:
-                        local_path = self._download_gcs_path_to_temp(gcs_path)
+                local_path = self._materialize_screenshot(
+                    screenshot_url, user_id, video_hash, False
+                )
             except Exception as e:
-                print(f"[ImageEmbedding] GCS direct download setup skipped for face backfill: {e}")
-            if not local_path:
-                local_path = self._download_image_to_temp(screenshot_url)
-            if not local_path:
+                print(f"[ImageEmbedding] Rejected screenshot during face backfill: {e}")
                 continue
-            if local_path.startswith(tempfile.gettempdir()):
-                temp_files.append(local_path)
+            temp_files.append(local_path)
             segments.append({
                 'local_path': local_path,
                 'screenshot_url': screenshot_url,
@@ -374,6 +306,7 @@ class ImageEmbeddingService:
         try:
             return self._index_face_presence_from_segments(
                 client,
+                user_id,
                 video_hash,
                 segments,
                 force_reindex=force_reindex,
@@ -389,8 +322,8 @@ class ImageEmbeddingService:
         self,
         video_hash: str,
         segments: List[Dict],
+        user_id: str,
         force_reindex: bool = False,
-        user_id: Optional[str] = None
     ) -> int:
         """
         Index video screenshot images into Supabase using CLIP embeddings
@@ -399,7 +332,7 @@ class ImageEmbeddingService:
             video_hash: Unique hash of the video
             segments: List of transcription segments with screenshot_url field
             force_reindex: If True, delete existing embeddings and re-index
-            user_id: Optional user ID for RLS policy compliance
+            user_id: Owner ID for tenant isolation
 
         Returns:
             Number of images indexed
@@ -407,19 +340,21 @@ class ImageEmbeddingService:
         if not segments:
             print("[ImageEmbedding] No segments to index")
             return 0
+        if not user_id:
+            raise ValueError("user_id is required for owner-scoped image indexing")
 
         client = supabase()
 
         # Check if already indexed (unless force_reindex)
         if not force_reindex:
             existing = client.table('image_embeddings').select('id').eq(
-                'video_hash', video_hash
-            ).limit(1).execute()
+                'user_id', user_id
+            ).eq('video_hash', video_hash).limit(1).execute()
 
             if existing.data:
                 count_result = client.table('image_embeddings').select(
                     'id', count='exact'
-                ).eq('video_hash', video_hash).execute()
+                ).eq('user_id', user_id).eq('video_hash', video_hash).execute()
                 count = count_result.count if count_result.count else len(existing.data)
                 print(f"[ImageEmbedding] Video {video_hash} already has {count} indexed images")
                 print(
@@ -437,72 +372,39 @@ class ImageEmbeddingService:
         segments_to_index = []
         temp_files = []  # Track temp files for cleanup
 
-        # Pre-load available GCS screenshots in one list API call so we can
-        # recover when screenshot_url is null (common for older jobs).
-        _gcs_bucket = None
-        _gcs_ts_set: set = set()
-        _gcs_cfg = None
-        _GCSService = None
-        try:
-            from config import settings as _gcs_cfg
-            if _gcs_cfg.ENABLE_GCS_UPLOADS:
-                from services.gcs_service import GCSService as _GCSService
-                _gcs_bucket = _GCSService._get_bucket()
-                prefix = f"screenshots/{video_hash}/"
-                for b in _gcs_bucket.list_blobs(prefix=prefix):
-                    fname = b.name.rsplit('/', 1)[-1]
-                    if fname.endswith('.jpg'):
-                        _gcs_ts_set.add(fname[:-4])  # "1001.64"
-                if _gcs_ts_set:
-                    print(f"[ImageEmbedding] GCS fallback: {len(_gcs_ts_set)} screenshots found for {video_hash}")
-        except Exception as e:
-            print(f"[ImageEmbedding] Could not list GCS screenshots: {e}")
+        storage = get_media_storage()
+        available_keys = storage.list_screenshot_keys(
+            user_id, video_hash, allow_legacy=False
+        )
+        keys_by_timestamp = {
+            key.rsplit('/', 1)[-1].rsplit('.', 1)[0]: key
+            for key in available_keys
+        }
 
         for seg in segments:
             screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
 
-            # GCS fallback: screenshot_url is null but file exists in GCS
-            if not screenshot_url and _gcs_bucket and _gcs_ts_set:
+            object_key = storage.parse_screenshot_key(screenshot_url) if screenshot_url else None
+            if not object_key:
                 start = seg.get('start', 0)
                 ts_str = f"{start:.2f}"
-                # Silent segments store screenshot at midpoint (screenshot_timestamp), not start
-                if ts_str not in _gcs_ts_set:
+                if ts_str not in keys_by_timestamp:
                     ts_str = f"{seg.get('screenshot_timestamp', start):.2f}"
-                if ts_str in _gcs_ts_set:
-                    gcs_path = f"screenshots/{video_hash}/{ts_str}.jpg"
-                    try:
-                        img_data = _gcs_bucket.blob(gcs_path).download_as_bytes()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-                            tmp.write(img_data)
-                            tmp_path = tmp.name
-                        temp_files.append(tmp_path)
-                        signed_url = _GCSService.generate_download_signed_url(
-                            gcs_path,
-                            expiry_seconds=_gcs_cfg.GCS_SCREENSHOT_URL_EXPIRY
-                        )
-                        segments_to_index.append({
-                            'local_path': tmp_path,
-                            'screenshot_url': signed_url,
-                            'segment_id': seg.get('id', ''),
-                            'start': seg.get('start', 0.0),
-                            'end': seg.get('end', 0.0),
-                            'speaker': seg.get('speaker', 'SPEAKER_00')
-                        })
-                    except Exception as e:
-                        print(f"[ImageEmbedding] GCS download failed for {gcs_path}: {e}")
-                continue  # null-url segments handled above; skip normal path
-
-            if not screenshot_url:
+                object_key = keys_by_timestamp.get(ts_str)
+            if not object_key or not storage.is_owned_screenshot_key(
+                object_key, user_id, video_hash, False
+            ):
                 continue
 
-            # Download image to temp file if it's a URL
-            local_path = self._download_image_to_temp(screenshot_url)
-            if not local_path:
+            try:
+                local_path = storage.materialize_screenshot(
+                    object_key, user_id, video_hash, False
+                )
+                screenshot_url = storage.generate_download_url(object_key)
+            except (OSError, ValueError) as e:
+                print(f"[ImageEmbedding] Rejected screenshot {object_key}: {e}")
                 continue
-
-            # Track temp files for cleanup
-            if local_path.startswith(tempfile.gettempdir()):
-                temp_files.append(local_path)
+            temp_files.append(local_path)
 
             segments_to_index.append({
                 'local_path': local_path,
@@ -552,6 +454,7 @@ class ImageEmbeddingService:
 
                 for seg, emb in zip(kept, embeddings):
                     record = {
+                        'user_id': user_id,
                         'video_hash': video_hash,
                         'segment_id': str(seg['segment_id']),
                         'start_time': seg['start'],
@@ -560,8 +463,6 @@ class ImageEmbeddingService:
                         'screenshot_url': seg['screenshot_url'],
                         'embedding': emb,
                     }
-                    if user_id:
-                        record['user_id'] = user_id
                     records.append(record)
 
             # Free PIL handles immediately. Keep temp files until Phase C so
@@ -615,6 +516,7 @@ class ImageEmbeddingService:
         try:
             self._index_face_presence_from_segments(
                 client,
+                user_id,
                 video_hash,
                 segments_to_index,
                 force_reindex=force_reindex,
@@ -633,6 +535,7 @@ class ImageEmbeddingService:
         self,
         video_hash: str,
         query: str,
+        user_id: str,
         n_results: int = 5,
         speaker_filter: Optional[str] = None
     ) -> List[Dict]:
@@ -642,6 +545,7 @@ class ImageEmbeddingService:
         Args:
             video_hash: Unique hash of the video
             query: Text search query
+            user_id: Owner ID for tenant isolation
             n_results: Number of results to return
             speaker_filter: Optional speaker name/label to filter results by
 
@@ -663,6 +567,7 @@ class ImageEmbeddingService:
                 'search_images_by_embedding',
                 {
                     'query_embedding': query_embedding,
+                    'p_user_id': user_id,
                     'target_video_hash': video_hash,
                     'match_count': n_results,
                     'speaker_filter': speaker_filter
@@ -689,25 +594,30 @@ class ImageEmbeddingService:
                     'similarity': item['similarity']
                 })
 
-            # Stored screenshot URLs are IAM-signed and expire after 7 days. Refresh
-            # them in place before downstream consumers (vision LLM, face matching)
-            # try to fetch the images and 403.
-            try:
-                from services.gcs_service import gcs_service
-                from config import settings as _settings
-                if _settings.ENABLE_GCS_UPLOADS:
-                    gcs_service.refresh_screenshot_urls_in_segments(formatted_results)
-            except Exception as refresh_err:
-                print(f"[ImageEmbedding] URL refresh skipped: {refresh_err}")
+            storage = get_media_storage()
+            refreshed_results = []
+            for image_result in formatted_results:
+                object_key = storage.parse_screenshot_key(image_result['screenshot_url'])
+                if not object_key or not storage.is_owned_screenshot_key(
+                    object_key, user_id, video_hash, allow_legacy=False
+                ):
+                    print("[ImageEmbedding] Ignoring unrecognized screenshot reference")
+                    continue
+                try:
+                    image_result['screenshot_url'] = storage.generate_download_url(object_key)
+                except (OSError, ValueError) as refresh_error:
+                    print(f"[ImageEmbedding] Screenshot refresh failed closed: {refresh_error}")
+                    continue
+                refreshed_results.append(image_result)
+            formatted_results = refreshed_results
 
             print(f"[ImageEmbedding] Found {len(formatted_results)} results for query: {query}")
             return formatted_results
 
         except Exception as e:
-            print(f"[ImageEmbedding] Search error: {e}")
-            return []
+            raise RuntimeError(f"Image embedding search failed: {e}") from e
 
-    def image_collection_exists(self, video_hash: str) -> bool:
+    def image_collection_exists(self, video_hash: str, user_id: str) -> bool:
         """
         Check if images are indexed for a video
 
@@ -721,15 +631,14 @@ class ImageEmbeddingService:
             client = supabase()
             result = client.table('image_embeddings').select(
                 'id', count='exact'
-            ).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
 
             count = result.count if result.count else 0
             return count > 0
         except Exception as e:
-            print(f"[ImageEmbedding] Error checking collection: {e}")
-            return False
+            raise RuntimeError(f"Image embedding availability check failed: {e}") from e
 
-    def delete_image_embeddings(self, video_hash: str) -> bool:
+    def delete_image_embeddings(self, video_hash: str, user_id: str) -> bool:
         """
         Delete all image embeddings for a video
 
@@ -741,14 +650,15 @@ class ImageEmbeddingService:
         """
         try:
             client = supabase()
-            client.table('image_embeddings').delete().eq('video_hash', video_hash).execute()
+            client.table('image_embeddings').delete().eq(
+                'user_id', user_id
+            ).eq('video_hash', video_hash).execute()
             print(f"[ImageEmbedding] Deleted embeddings for video {video_hash}")
             return True
         except Exception as e:
-            print(f"[ImageEmbedding] Error deleting embeddings: {e}")
-            return False
+            raise RuntimeError(f"Image embedding deletion failed: {e}") from e
 
-    def get_indexed_count(self, video_hash: str) -> int:
+    def get_indexed_count(self, video_hash: str, user_id: str) -> int:
         """
         Get the count of indexed images for a video
 
@@ -762,11 +672,10 @@ class ImageEmbeddingService:
             client = supabase()
             result = client.table('image_embeddings').select(
                 'id', count='exact'
-            ).eq('video_hash', video_hash).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).execute()
             return result.count if result.count else 0
         except Exception as e:
-            print(f"[ImageEmbedding] Error getting count: {e}")
-            return 0
+            raise RuntimeError(f"Image embedding count failed: {e}") from e
 
 
 # Global instance

@@ -4,7 +4,7 @@ Configuration management using Pydantic Settings
 import os
 import json
 from typing import Optional, List
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -12,6 +12,11 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=".env",
+        extra="ignore",
+    )
     """Application settings loaded from environment variables"""
 
     # API Configuration
@@ -44,16 +49,19 @@ class Settings(BaseSettings):
     # File Upload Configuration
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024 * 1024  # 10GB
 
+    # Runtime mode is explicit: production uses GCS + Cloud Run Jobs, while
+    # local development uses filesystem media + detached worker processes.
+    LOCAL_MODE: bool = os.getenv("LOCAL_MODE", "false").lower() == "true"
+    LOCAL_STORAGE_ROOT: str = os.getenv(
+        "LOCAL_STORAGE_ROOT", os.path.join(os.path.dirname(__file__), "local_data", "media")
+    )
+    LOCAL_API_BASE_URL: str = os.getenv("LOCAL_API_BASE_URL", "http://localhost:8000")
+
     # Directory Configuration - Support Railway persistent volumes via env vars
     # Railway mounts volumes to /data, local dev uses relative paths
     VIDEOS_DIR: str = os.getenv("VIDEOS_DIR", os.path.join("static", "videos"))
     SCREENSHOTS_DIR: str = os.getenv("SCREENSHOTS_DIR", os.path.join("static", "screenshots"))
     STATIC_DIR: str = os.getenv("STATIC_DIR", "static")
-
-    # Database Configuration - Support Railway persistent volumes
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "transcriptions.db")
-    DATABASE_TYPE: str = os.getenv("DATABASE_TYPE", "sqlite")  # "sqlite" or "firestore"
-    FIRESTORE_COLLECTION: str = os.getenv("FIRESTORE_COLLECTION", "transcriptions")
 
     # Whisper Model Configuration
     FASTWHISPER_MODEL: str = os.getenv("FASTWHISPER_MODEL", "small")
@@ -163,11 +171,41 @@ class Settings(BaseSettings):
     WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
     WORKER_JOB_NAME: str = os.getenv("WORKER_JOB_NAME", "ai-subs-worker")
 
-    class Config:
-        case_sensitive = True
-        env_file = ".env"
-        extra = "ignore"  # Allow extra environment variables
-
+    def validate_runtime(self) -> None:
+        """Reject ambiguous or incomplete runtime modes before accepting work."""
+        if self.LOCAL_MODE and self.ENABLE_GCS_UPLOADS:
+            raise RuntimeError("LOCAL_MODE and ENABLE_GCS_UPLOADS cannot both be enabled")
+        missing_supabase = [
+            name
+            for name, value in (
+                ("SUPABASE_URL", self.SUPABASE_URL),
+                ("SUPABASE_SERVICE_KEY", self.SUPABASE_SERVICE_KEY),
+            )
+            if not value.strip()
+        ]
+        if missing_supabase:
+            raise RuntimeError(
+                f"Runtime requires Supabase metadata configuration: {', '.join(missing_supabase)}"
+            )
+        if self.LOCAL_MODE:
+            if not self.LOCAL_STORAGE_ROOT.strip():
+                raise RuntimeError("LOCAL_MODE requires LOCAL_STORAGE_ROOT")
+            return
+        missing_production = [
+            name
+            for name, value in (
+                ("ENABLE_GCS_UPLOADS", self.ENABLE_GCS_UPLOADS),
+                ("GCS_BUCKET_NAME", self.GCS_BUCKET_NAME),
+                ("WORKER_JOB_PROJECT", self.WORKER_JOB_PROJECT),
+                ("WORKER_JOB_REGION", self.WORKER_JOB_REGION),
+                ("WORKER_JOB_NAME", self.WORKER_JOB_NAME),
+            )
+            if value is False or (isinstance(value, str) and not value.strip())
+        ]
+        if missing_production:
+            raise RuntimeError(
+                f"Production runtime configuration is incomplete: {', '.join(missing_production)}"
+            )
 
 # Create singleton instance
 settings = Settings()

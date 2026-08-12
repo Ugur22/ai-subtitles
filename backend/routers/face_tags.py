@@ -5,6 +5,8 @@ Users tag faces with speaker names; embeddings are used to boost scene search.
 
 import asyncio
 import json
+import os
+from urllib.parse import urlparse
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, Request
@@ -12,6 +14,12 @@ from pydantic import BaseModel
 
 from middleware.auth import require_auth
 from services.supabase_service import supabase
+from services.transcription_access import (
+    authenticated_user_id,
+)
+from services.transcription_repository import transcription_repository
+from services.media_storage import get_media_storage
+from config import settings
 
 # Executor for CPU/GPU-bound face detection (InsightFace uses ONNX, separate from PyTorch)
 _face_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="face_detect")
@@ -71,6 +79,49 @@ def _bbox_iou(first: Dict, second: Dict) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def _owned_screenshot_source(request: Request, video_hash: str, requested: str) -> str:
+    """Materialize a screenshot only after owner and transcript validation."""
+    user_id = authenticated_user_id(request)
+    transcription = transcription_repository.get_transcription(video_hash, user_id)
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    segments = transcription.get("transcription", {}).get("segments", [])
+    allowed_urls = {segment.get("screenshot_url") for segment in segments if segment.get("screenshot_url")}
+    parsed_requested = urlparse(requested)
+    local_host = urlparse(settings.LOCAL_API_BASE_URL).hostname
+    if (
+        requested not in allowed_urls
+        and parsed_requested.scheme
+        and parsed_requested.hostname not in {"storage.googleapis.com", local_host}
+    ):
+        raise HTTPException(status_code=400, detail="Screenshot is not owned by this video")
+    storage = get_media_storage()
+    requested_key = storage.parse_screenshot_key(requested)
+    allowed_keys = {
+        key for url in allowed_urls if (key := storage.parse_screenshot_key(url))
+    }
+    allow_legacy = transcription_repository.hash_resources_are_owner_exclusive(video_hash, user_id)
+    if (
+        requested_key
+        and requested_key in allowed_keys
+        and storage.is_owned_screenshot_key(
+            requested_key, user_id, video_hash, allow_legacy=allow_legacy
+        )
+    ):
+        try:
+            return storage.materialize_screenshot(
+                requested_key,
+                user_id,
+                video_hash,
+                allow_legacy=allow_legacy,
+            )
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="Screenshot media not found")
+
+    raise HTTPException(status_code=400, detail="Screenshot is not owned by this video")
+
+
 @router.post(
     "/{video_hash}/detect",
     summary="Detect faces in a screenshot",
@@ -80,15 +131,23 @@ def _bbox_iou(first: Dict, second: Dict) -> float:
 async def detect_faces(request: Request, video_hash: str, body: DetectFacesRequest) -> Dict:
     """Detect faces in a screenshot, return bounding boxes with confidence scores"""
     from services.face_service import face_service
+    user_id = authenticated_user_id(request)
 
-    faces = await _run_in_executor(face_service.detect_faces, body.screenshot_url)
+    image_source = _owned_screenshot_source(request, video_hash, body.screenshot_url)
+    try:
+        faces = await _run_in_executor(face_service.detect_faces, image_source)
+    finally:
+        try:
+            os.unlink(image_source)
+        except OSError:
+            pass
     existing_tags = []
 
     try:
         client = supabase()
         result = client.table("face_tags").select(
             "id,speaker_name,screenshot_url,bbox_x,bbox_y,bbox_w,bbox_h,embedding"
-        ).eq("video_hash", video_hash).execute()
+        ).eq("user_id", user_id).eq("video_hash", video_hash).execute()
         existing_tags = result.data or []
     except Exception as e:
         print(f"[FaceTags] Warning: could not load existing tags for detection labels: {e}")
@@ -158,12 +217,20 @@ async def detect_faces(request: Request, video_hash: str, body: DetectFacesReque
 async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> Dict:
     """Tag a detected face bbox with a speaker name, storing the face embedding"""
     from services.face_service import face_service
+    user_id = authenticated_user_id(request)
 
+    image_source = _owned_screenshot_source(request, video_hash, body.screenshot_url)
     # Get face embedding for the specified bbox
     bbox = (body.bbox_x, body.bbox_y, body.bbox_w, body.bbox_h)
-    embedding = await _run_in_executor(
-        face_service.get_face_embedding, body.screenshot_url, bbox
-    )
+    try:
+        embedding = await _run_in_executor(
+            face_service.get_face_embedding, image_source, bbox
+        )
+    finally:
+        try:
+            os.unlink(image_source)
+        except OSError:
+            pass
 
     if embedding is None:
         raise HTTPException(
@@ -174,6 +241,7 @@ async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> D
     # Store in Supabase
     client = supabase()
     record = {
+        "user_id": user_id,
         "video_hash": video_hash,
         "speaker_name": body.speaker_name,
         "screenshot_url": body.screenshot_url,
@@ -187,7 +255,7 @@ async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> D
     try:
         result = client.table("face_tags").upsert(
             record,
-            on_conflict="video_hash,screenshot_url,bbox_x,bbox_y"
+            on_conflict="user_id,video_hash,screenshot_url,bbox_x,bbox_y"
         ).execute()
 
         tag_id = result.data[0]["id"] if result.data else None
@@ -211,12 +279,15 @@ async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> D
 @require_auth
 async def get_speakers(request: Request, video_hash: str) -> Dict:
     """Get face tag counts grouped by speaker name"""
+    user_id = authenticated_user_id(request)
+    if not transcription_repository.get_transcription(video_hash, user_id):
+        raise HTTPException(status_code=404, detail="Transcription not found")
     client = supabase()
 
     try:
         result = client.table("face_tags").select(
             "speaker_name"
-        ).eq("video_hash", video_hash).execute()
+        ).eq("user_id", user_id).eq("video_hash", video_hash).execute()
 
         # Count per speaker
         counts: Dict[str, int] = {}
@@ -245,12 +316,15 @@ async def get_speakers(request: Request, video_hash: str) -> Dict:
 @require_auth
 async def delete_face_tag(request: Request, video_hash: str, face_tag_id: str) -> Dict:
     """Remove a face tag"""
+    user_id = authenticated_user_id(request)
+    if not transcription_repository.get_transcription(video_hash, user_id):
+        raise HTTPException(status_code=404, detail="Transcription not found")
     client = supabase()
 
     try:
         client.table("face_tags").delete().eq(
             "id", face_tag_id
-        ).eq("video_hash", video_hash).execute()
+        ).eq("user_id", user_id).eq("video_hash", video_hash).execute()
 
         return {
             "success": True,

@@ -59,7 +59,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
       }
     }
     return 0;
-  }, [frames, activeASeconds, activeBSeconds, replaceTarget]);
+  }, [frames, activeASeconds, activeBSeconds]);
 
   useEffect(() => {
     const list = listRef.current;
