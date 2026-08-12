@@ -1,14 +1,12 @@
 /**
  * useAuth - Authentication hook with Supabase Auth + HttpOnly cookies
- * Manages user authentication state and operations
+ * Exposes authentication state and operations from AuthProvider
  */
 
-import React, { useState, useCallback, useEffect, createContext, useContext } from 'react';
-import toast from 'react-hot-toast';
+import { createContext, useContext } from 'react';
 import type { User } from '../services/auth';
-import * as authService from '../services/auth';
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -20,152 +18,7 @@ interface AuthContextType {
   refetchUser: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
-
-const clearJobsCache = () => {
-  try {
-    localStorage.removeItem(JOBS_CACHE_KEY);
-  } catch {
-    // Ignore storage errors; auth should not fail because cache cleanup failed.
-  }
-};
-
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fetch current user from cookie session
-  const fetchUser = useCallback(async (retries = 3) => {
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        const userData = await authService.getCurrentUser();
-        setUser(userData);
-        setError(null);
-        setIsLoading(false);
-        return;
-      } catch (err: unknown) {
-        // Extract status code from error
-        const status = (err as { status?: number; response?: { status?: number } })?.status
-          || (err as { response?: { status?: number } })?.response?.status;
-
-        // Only logout on actual auth failures (401/403)
-        if (status === 401 || status === 403) {
-          setUser(null);
-          setIsLoading(false);
-          return;
-        }
-
-        // For 5xx errors or network errors, retry with exponential backoff
-        if (attempt < retries - 1) {
-          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-          continue;
-        }
-        // After all retries fail with server error, keep existing user state
-        // Don't logout - the session token is still valid, server is just having issues
-      }
-    }
-    setIsLoading(false);
-  }, []);
-
-  // Check auth on mount
-  useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
-
-  const login = useCallback(
-    async (email: string, password: string) => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        clearJobsCache();
-        await authService.login(email, password);
-        // Fetch user data from /api/auth/me after successful login
-        await fetchUser();
-        toast.success('Logged in successfully!');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Login failed';
-        setError(message);
-        toast.error(message);
-        throw err;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [fetchUser]
-  );
-
-  const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-      setUser(null);
-      clearJobsCache();
-      toast.success('Logged out successfully');
-    } catch (err) {
-      toast.error('Logout failed');
-    }
-  }, []);
-
-  const register = useCallback(
-    async (email: string, password: string, inviteCode: string): Promise<string> => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await authService.register(email, password, inviteCode);
-        toast.success(response.message);
-        return response.user_id;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Registration failed';
-        setError(message);
-        toast.error(message);
-        throw err;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    []
-  );
-
-  const verifyEmail = useCallback(async (userId: string, code: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await authService.verifyEmail(userId, code);
-      setUser(response.user);
-      toast.success('Email verified successfully!');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Verification failed';
-      setError(message);
-      toast.error(message);
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const refetchUser = useCallback(async () => {
-    await fetchUser();
-  }, [fetchUser]);
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated: !!user,
-        isLoading,
-        error,
-        login,
-        logout,
-        register,
-        verifyEmail,
-        refetchUser,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
-};
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Job } from '../types/job';
+import { Job, isActiveJobStatus } from '../types/job';
 import { getJob } from '../services/api';
 
 interface UseJobRealtimeOptions {
@@ -97,6 +97,30 @@ export const useJobRealtime = ({ jobId, accessToken, enabled = true }: UseJobRea
       }
     };
   }, [jobId, accessToken, enabled]);
+
+  useEffect(() => {
+    if (
+      !jobId ||
+      !accessToken ||
+      !enabled ||
+      !job ||
+      !isActiveJobStatus(job.status)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const data = await getJob(jobId, accessToken);
+        setJob(data);
+        setError(null);
+      } catch (err) {
+        console.warn('Job status polling failed:', err);
+      }
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [job, jobId, accessToken, enabled]);
 
   return {
     job,

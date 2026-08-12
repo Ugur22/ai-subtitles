@@ -65,43 +65,4 @@ CREATE POLICY "Allow update face tags" ON face_tags
 CREATE POLICY "Allow delete face tags" ON face_tags
   FOR DELETE USING (true);
 
--- RPC function: search faces by embedding similarity
-CREATE OR REPLACE FUNCTION search_faces_by_embedding(
-    query_embedding vector(512),
-    target_video_hash TEXT,
-    match_count INT DEFAULT 5
-)
-RETURNS TABLE (
-    id UUID,
-    video_hash TEXT,
-    speaker_name TEXT,
-    screenshot_url TEXT,
-    bbox_x FLOAT,
-    bbox_y FLOAT,
-    bbox_w FLOAT,
-    bbox_h FLOAT,
-    similarity FLOAT
-)
-LANGUAGE plpgsql
-SET search_path = public
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        ft.id,
-        ft.video_hash,
-        ft.speaker_name,
-        ft.screenshot_url,
-        ft.bbox_x,
-        ft.bbox_y,
-        ft.bbox_w,
-        ft.bbox_h,
-        1 - (ft.embedding <=> query_embedding) AS similarity
-    FROM face_tags ft
-    WHERE ft.video_hash = target_video_hash
-    ORDER BY ft.embedding <=> query_embedding
-    LIMIT match_count;
-END;
-$$;
-
 COMMENT ON TABLE face_tags IS 'ArcFace embeddings for tagged faces in video screenshots, enabling face-based scene search boosting';

@@ -7,11 +7,15 @@ import { TranscriptionResponse } from '../services/api';
 
 /**
  * Job status lifecycle:
- * pending -> processing -> completed
- *                       -> failed (can be retried)
+ * pending -> processing -> finalizing -> completed
+ *                                    -> failed (can be retried)
  * cancelled (terminal, only from pending)
  */
-export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export type ActiveJobStatus = 'pending' | 'processing' | 'finalizing';
+export type JobStatus = ActiveJobStatus | 'completed' | 'failed' | 'cancelled';
+
+export const isActiveJobStatus = (status: JobStatus): status is ActiveJobStatus =>
+  status === 'pending' || status === 'processing' || status === 'finalizing';
 
 /**
  * Main job interface matching backend database schema

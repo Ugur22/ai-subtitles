@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "rea
 import { Dialog, Transition } from "@headlessui/react";
 import toast from "react-hot-toast";
 import axios from "axios";
-import { useJobs } from "../../../contexts/JobsContext";
+import { useJobs } from "../../../hooks/useJobs";
 import {
   type TranscriptionResponse,
   translateLocalText,
@@ -28,18 +28,16 @@ import {
   convertTimeToSeconds,
   timeToSeconds,
 } from "../../../utils/time";
-import { formatSpeakerLabel, getSpeakerColor } from "../../../utils/speaker";
+import { formatSpeakerLabel } from "../../../utils/speaker";
 import { DraggableImageModal } from "../../common/DraggableImageModal";
 import { JumpToTimeModal } from "./JumpToTimeModal";
-import { ProcessingOverlay } from "./ProcessingOverlay";
 import { TranscriptSegmentList } from "./TranscriptSegmentList";
 import { UploadZone } from "./UploadZone";
 import { RecentTranscriptions } from "./RecentTranscriptions";
-import { Job } from "../../../types/job";
+import { Job, isActiveJobStatus } from "../../../types/job";
 import { useFileUpload } from "../../../hooks/useFileUpload";
 import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
-import { useTranscription } from "../../../hooks/useTranscription";
 import { useSummaries } from "../../../hooks/useSummaries";
 import { useChapters } from "../../../hooks/useChapters";
 import { ChapterPanel } from "../chapters/ChapterPanel";
@@ -53,11 +51,9 @@ import { getMediaDurationSeconds } from "../../../utils/file";
 const FREE_MAX_FILE_MINUTES = 30;
 import { JobPanel } from "../jobs";
 
-// Note: ProcessingStage type moved to useTranscription hook
-
-// Add transcription method type
-type TranscriptionMethod = "local" | "background";
 type TranslationMethod = "none" | "marianmt";
+type TranscriptSegment = TranscriptionResponse["transcription"]["segments"][number];
+type EnrollableSegment = Pick<TranscriptSegment, "start_time" | "end_time" | "speaker">;
 
 type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
@@ -71,16 +67,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showSummary, setShowSummary] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
-  const [progressSimulation] = useState<NodeJS.Timeout | null>(null); // Unused but kept for future use
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const [isNewTranscription, setIsNewTranscription] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
-  const [transcriptionMethod, setTranscriptionMethod] =
-    useState<TranscriptionMethod>("background");
-  // Note: pollingIntervalRef removed - was unused after hook integration
   const [translationMethod] = useState<TranslationMethod>("none");
+  const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
   const [showScreenshots] = useState(false); // Unused but kept for future use
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
@@ -93,7 +86,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showChapters, setShowChapters] = useState(false);
 
   // Speaker enrollment modal state
-  const [enrollModalSegment, setEnrollModalSegment] = useState<any>(null);
+  const [enrollModalSegment, setEnrollModalSegment] = useState<EnrollableSegment | null>(null);
   const [enrollSpeakerName, setEnrollSpeakerName] = useState('');
   const [enrollSubmitting, setEnrollSubmitting] = useState(false);
 
@@ -128,26 +121,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     jobTracker.refetch();
   });
 
-  // Initialize custom hooks
-  const transcriptionHook = useTranscription();
-  const {
-    transcription,
-    setTranscription,
-    processingStatus,
-    setProcessingStatus,
-    elapsedTime,
-    error,
-    setError,
-    isPolling,
-    handleStartTranscription,
-    resetState: resetTranscriptionState,
-  } = transcriptionHook;
-
   const fileUploadHook = useFileUpload({
     onFileSelected: () => {
       setError(null);
       setTranscription(null);
-      setProcessingStatus(null);
     },
   });
   const {
@@ -197,8 +174,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   });
 
   // Computed values
-  const isTranscribing =
-    processingStatus !== null && processingStatus.stage !== "complete";
+  const isTranscribing = backgroundJobSubmit.isSubmitting;
 
   // Filter segments by selected speaker, optionally including visual moments
   const displayedSegments = useMemo(() => {
@@ -237,20 +213,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
   // Sync active job count to header via context
   useEffect(() => {
-    const activeCount = jobTracker.jobs.filter(
-      (j) => j.status === "processing" || j.status === "pending"
+    const activeCount = jobTracker.jobs.filter((job) =>
+      isActiveJobStatus(job.status)
     ).length;
     setActiveJobCount(activeCount);
   }, [jobTracker.jobs, setActiveJobCount]);
-
-  // Cleanup function for progress simulation
-  useEffect(() => {
-    return () => {
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-      }
-    };
-  }, [progressSimulation]);
 
   // Add time update handler to track current video position
   useEffect(() => {
@@ -325,56 +292,41 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     const languageCode =
       languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
 
-    // Handle background processing mode
-    if (transcriptionMethod === "background") {
-      // Read the media duration so the backend can enforce the per-file limit,
-      // and give instant feedback for over-limit non-admin uploads.
-      const durationSeconds = await getMediaDurationSeconds(file);
+    const durationSeconds = await getMediaDurationSeconds(file);
 
-      if (
-        durationSeconds &&
-        !user?.is_admin &&
-        durationSeconds > FREE_MAX_FILE_MINUTES * 60
-      ) {
-        toast.error(
-          `Videos are limited to ${FREE_MAX_FILE_MINUTES} minutes on your plan. ` +
-            `This file is ${Math.ceil(durationSeconds / 60)} minutes.`
-        );
-        return;
-      }
-
-      try {
-        const result = await backgroundJobSubmit.submit(file, {
-          durationSeconds: durationSeconds ?? undefined,
-          language: languageCode || undefined,
-          forceLanguage: true,
-        });
-
-        if (result) {
-          // Show success message and open job panel
-          setShowJobPanel(true);
-
-          // If cached result, load it immediately
-          if (result.cached) {
-            // The job already has results, refetch to get the full data
-            jobTracker.refetch();
-          }
-        }
-      } catch (error) {
-        const msg =
-          error instanceof Error ? error.message : "Failed to submit job";
-        console.error("Background job submission failed:", error);
-        toast.error(msg);
-      }
+    if (
+      durationSeconds &&
+      !user?.is_admin &&
+      durationSeconds > FREE_MAX_FILE_MINUTES * 60
+    ) {
+      toast.error(
+        `Videos are limited to ${FREE_MAX_FILE_MINUTES} minutes on your plan. ` +
+          `This file is ${Math.ceil(durationSeconds / 60)} minutes.`
+      );
       return;
     }
 
-    // Use the hook's handleStartTranscription for local processing
-    await handleStartTranscription(
-      file,
-      transcriptionMethod as "local",
-      selectedLanguage
-    );
+    try {
+      setError(null);
+      const result = await backgroundJobSubmit.submit(file, {
+        durationSeconds: durationSeconds ?? undefined,
+        language: languageCode || undefined,
+        forceLanguage: true,
+      });
+
+      if (result) {
+        setShowJobPanel(true);
+        if (result.cached) {
+          jobTracker.refetch();
+        }
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to submit job";
+      setError(message);
+      console.error("Background job submission failed:", error);
+      toast.error(message);
+    }
   };
 
   const handleViewTranscript = useCallback(async (job: Job) => {
@@ -401,11 +353,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   }, [setTranscription, setVideoUrl, setShowJobPanel]);
 
   const startNewTranscription = () => {
-    // Set flag to hide progress bar
-    setIsNewTranscription(true);
-
-    // Reset transcription state using the hook
-    resetTranscriptionState();
+    setTranscription(null);
+    setError(null);
+    backgroundJobSubmit.reset();
 
     // Reset video URL (file is managed by the hook)
     setVideoUrl(null);
@@ -416,7 +366,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setFilteredSpeaker(null);
 
     // Note: showSubtitles is managed by the useSubtitles hook
-    // elapsedTime and processingTimer are managed by useTranscription hook
   };
 
   // Note: cleanupPreviousScreenshots removed - was unused
@@ -467,8 +416,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   };
 
   // Speaker Recognition Handlers
-  const handleEnrollSpeaker = (segment: any) => {
-    setEnrollSpeakerName(formatSpeakerLabel(segment.speaker));
+  const handleEnrollSpeaker = (segment: EnrollableSegment) => {
+    setEnrollSpeakerName(formatSpeakerLabel(segment.speaker || "Unknown"));
     setEnrollModalSegment(segment);
   };
 
@@ -487,9 +436,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       toast.success(`${enrollSpeakerName.trim()} enrolled successfully`);
       setEnrollModalSegment(null);
       setEnrollSpeakerName('');
-    } catch (err: any) {
-      console.error("Failed to enroll speaker:", err);
-      toast.error(err.message || "Failed to enroll speaker");
+    } catch (error: unknown) {
+      console.error("Failed to enroll speaker:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to enroll speaker");
     } finally {
       setEnrollSubmitting(false);
     }
@@ -512,9 +461,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       );
       setAutoIdentifyConfirmOpen(false);
       setTimeout(() => window.location.reload(), 1500);
-    } catch (err: any) {
-      console.error("Failed to auto-identify speakers:", err);
-      toast.error(err.message || "Failed to auto-identify speakers");
+    } catch (error: unknown) {
+      console.error("Failed to auto-identify speakers:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to auto-identify speakers");
       setAutoIdentifyRunning(false);
     }
   };
@@ -526,8 +475,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         withCredentials: true,
       });
       setEnrolledSpeakers(response.data.speakers || []);
-    } catch (e) {
-      console.error("Failed to fetch enrolled speakers:", e);
+    } catch (error) {
+      console.error("Failed to fetch enrolled speakers:", error);
     } finally {
       setEnrolledLoading(false);
     }
@@ -540,7 +489,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       });
       setConfirmingDeleteEnrolled(null);
       await fetchEnrolledSpeakers();
-    } catch (e) {
+    } catch {
       toast.error("Failed to remove speaker");
     }
   };
@@ -607,16 +556,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
   // Create and add subtitles to video
   // Subtitle-related logic now handled by useSubtitles hook
-
-  // Cleanup function for timers when component unmounts
-  useEffect(() => {
-    return () => {
-      if (progressSimulation) {
-        clearInterval(progressSimulation);
-      }
-      // processingTimer is now managed by useTranscription hook
-    };
-  }, [progressSimulation]);
 
   // Note: Removed unused functions: updateUploadProgress, handleExtractingAudio,
   // handleTranscribing, fetchCurrentTranscription - all were unused
@@ -723,7 +662,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   sourceLang
                 );
                 return { ...seg, translation };
-              } catch (e) {
+              } catch {
                 return { ...seg, translation: "[Translation failed]" };
               }
             }
@@ -740,7 +679,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       };
       doTranslation();
     }
-  }, [transcription, translationMethod]);
+  }, [transcription, translationMethod, setTranscription]);
 
   // Video player logic now handled by useVideoPlayer hook
 
@@ -749,19 +688,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     if (onTranscriptionChange) {
       onTranscriptionChange(transcription);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcription]);
+  }, [transcription, onTranscriptionChange]);
 
   return (
     <div className="relative min-h-screen" style={{ backgroundColor: 'var(--bg-base)' }}>
-      {/* Processing overlay when transcribing */}
-      <ProcessingOverlay
-        isVisible={isTranscribing}
-        processingStatus={processingStatus}
-        elapsedTime={elapsedTime}
-        file={file}
-        videoRef={videoRef}
-      />
       <div className="h-full px-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
@@ -777,12 +707,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               fileUploadHandleChange={fileUploadHandleChange}
               selectedLanguage={selectedLanguage}
               handleLanguageChange={handleLanguageChange}
-              transcriptionMethod={transcriptionMethod}
-              setTranscriptionMethod={setTranscriptionMethod}
               handleStartTranscriptionClick={handleStartTranscriptionClick}
-              isNewTranscription={isNewTranscription}
-              processingStatus={processingStatus}
-              elapsedTime={elapsedTime}
               languageOptions={languageOptions}
             />
             <RecentTranscriptions
@@ -1447,7 +1372,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           setEditSpeakerName={setEditSpeakerName}
                           handleSpeakerRename={handleSpeakerRename}
                           isRenamingSpeaker={isRenamingSpeaker}
-                          getSpeakerColor={getSpeakerColor}
                           formatSpeakerLabel={formatSpeakerLabel}
                           onEnrollSpeaker={handleEnrollSpeaker}
                         />
@@ -1581,7 +1505,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--c-error)', marginBottom: '2px' }}>Transcription failed</p>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{error}</p>
               <button
-                onClick={() => resetTranscriptionState()}
+                onClick={() => setError(null)}
                 style={{ marginTop: '8px', fontSize: '12px', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}
               >
                 Try again
@@ -1600,15 +1524,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           />
         )}
 
-        {/* Spinner if isPolling is true */}
-        {isPolling && (
-          <div className="flex flex-col items-center justify-center mt-8">
-            <div className="animate-spin rounded-full h-10 w-10 mb-4" style={{ border: '2px solid var(--border-default)', borderTopColor: 'var(--accent)' }}></div>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Transcribing, please wait…
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Background Job Submission Progress Overlay */}
