@@ -70,6 +70,7 @@ backend/transcriptions.db
 
 # AI/Agent tool configs
 .claude/
+graphify-out/
 .agent/
 .agents/
 .cline/

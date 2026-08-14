@@ -632,7 +632,6 @@ backend/
 ├── dependencies.py                # ML model dependency injection
 ├── requirements.txt               # Python dependencies
 ├── Dockerfile                     # Cloud Run deployment
-├── docker-compose.yml             # Local development
 ├── .env.example                   # Environment template
 │
 ├── routers/                       # API endpoint organization
@@ -773,9 +772,6 @@ docker build -t ai-subs-backend .
 docker run -p 8000:8000 \
   -e HUGGINGFACE_TOKEN=your_token \
   ai-subs-backend
-
-# Or use docker-compose
-docker-compose up -d
 ```
 
 ## Development
