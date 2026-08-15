@@ -23,6 +23,14 @@ PENDING_STALE_SECONDS = 600
 MAX_RETRIES = 3
 
 
+class JobQueueError(Exception):
+    """Expected queue rejection that can be mapped to a stable API response."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
 class JobQueueService:
     """Service for managing transcription jobs in Supabase queue"""
 
@@ -34,6 +42,8 @@ class JobQueueService:
         video_hash: str,
         user_id: str = None,
         duration_seconds: int = None,
+        monthly_limit_seconds: int = None,
+        user_concurrent_limit: int = None,
         **params
     ) -> Dict:
         """
@@ -59,64 +69,125 @@ class JobQueueService:
         """
         client = supabase()
 
-        # Check global concurrent limit
-        response = client.table("jobs").select("id").eq("status", "processing").execute()
-        processing_count = len(response.data) if response.data else 0
-
-        if processing_count >= GLOBAL_CONCURRENT_LIMIT:
-            raise Exception(
-                f"System is currently processing {processing_count} videos. "
-                f"Please wait until one completes before submitting a new job."
-            )
-
-        # Check for duplicate by video_hash (if already completed successfully)
-        if video_hash:
-            response = client.table("jobs").select("*").eq("video_hash", video_hash).eq("status", "completed").execute()
-            if response.data and len(response.data) > 0:
-                existing_job = response.data[0]
-                print(f"[JobQueue] Found existing completed job for video_hash={video_hash}: {existing_job['id']}")
-                # Return the existing job instead of creating a new one
-                return existing_job
-
-        # Generate unique job ID and access token
         job_id = str(uuid.uuid4())
         access_token = str(uuid.uuid4())
-
-        # Estimate duration based on file size
         estimated_duration_seconds = JobQueueService.get_estimated_duration(file_size_bytes)
 
-        # Create job record
-        job_data = {
-            "id": job_id,
-            "access_token": access_token,
-            "user_id": user_id,  # Job ownership for authenticated users
-            "filename": filename,
-            "gcs_path": gcs_path,
-            "file_size_bytes": file_size_bytes,
-            "video_hash": video_hash,
-            "status": "pending",
-            "progress": 0,
-            "stage": "queued",
-            "message": "Job created and queued",
-            "estimated_duration_seconds": estimated_duration_seconds,
-            # Client-reported duration (advisory; the worker re-probes and
-            # overwrites with the real value on completion).
-            "video_duration_seconds": duration_seconds,
-            "retry_count": 0,
-            # Store job parameters as JSON
-            "params": params,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-            "last_seen": datetime.utcnow().isoformat(),
-        }
-
-        response = client.table("jobs").insert(job_data).execute()
+        try:
+            response = client.rpc("create_job_secure", {
+                "p_job_id": job_id,
+                "p_access_token": access_token,
+                "p_user_id": user_id,
+                "p_filename": filename,
+                "p_gcs_path": gcs_path,
+                "p_file_size_bytes": file_size_bytes,
+                "p_video_hash": video_hash,
+                "p_duration_seconds": duration_seconds,
+                "p_params": params,
+                "p_estimated_duration_seconds": estimated_duration_seconds,
+                "p_monthly_limit_seconds": monthly_limit_seconds,
+                "p_user_concurrent_limit": user_concurrent_limit,
+                "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
+            }).execute()
+        except Exception as exc:
+            message = str(exc)
+            for code in (
+                "invalid_or_expired_upload_intent", "upload_intent_mismatch",
+                "global_processing_limit_reached", "user_concurrent_limit_reached",
+                "monthly_quota_exceeded", "invalid job identity",
+            ):
+                if code in message:
+                    raise JobQueueError(code) from exc
+            raise
 
         if not response.data or len(response.data) == 0:
             raise Exception("Failed to create job in database")
 
+        result = response.data[0]
+        result["cached"] = result.get("id") != job_id
         print(f"[JobQueue] Created job {job_id} for {filename} ({file_size_bytes / (1024*1024):.1f} MB)")
-        return response.data[0]
+        return result
+
+    @staticmethod
+    def get_job_for_user(job_id: str, user_id: str) -> Optional[Dict]:
+        client = supabase()
+        response = client.table("jobs").select("*").eq("id", job_id).eq(
+            "user_id", user_id
+        ).limit(1).execute()
+        return response.data[0] if response.data else None
+
+    @staticmethod
+    def claim_permanent_deletion(job_id: str, user_id: str) -> Optional[Dict]:
+        """Atomically delete owned metadata and claim exclusive media cleanup."""
+        response = supabase().rpc(
+            "delete_job_permanent_secure",
+            {"p_job_id": job_id, "p_user_id": user_id},
+        ).execute()
+        rows = response.data or []
+        result = rows[0] if isinstance(rows, list) and rows else rows
+        if not isinstance(result, dict):
+            return None
+        return result
+
+    @staticmethod
+    def process_media_delete_outbox(
+        *,
+        limit: int = 10,
+        outbox_id: Optional[str] = None,
+        storage=None,
+    ) -> Dict[str, int]:
+        """Process a bounded, idempotent batch of durable media deletions."""
+        client = supabase()
+        response = client.rpc(
+            "claim_media_deletes",
+            {"p_limit": max(1, min(limit, 100)), "p_outbox_id": outbox_id},
+        ).execute()
+        rows = response.data or []
+        if storage is None:
+            from services.media_storage import get_media_storage
+
+            storage = get_media_storage()
+
+        completed = 0
+        pending = 0
+        for row in rows:
+            error = None
+            try:
+                deleted = storage.delete_file(row["media_key"])
+                if deleted is not True:
+                    error = "delete_file returned False"
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+
+            client.rpc(
+                "finish_media_delete",
+                {"p_outbox_id": row["id"], "p_error": error},
+            ).execute()
+            if error is None:
+                completed += 1
+            else:
+                pending += 1
+                print(f"[JobQueue] Media cleanup remains pending for {row['id']}: {error}")
+
+        return {"claimed": len(rows), "completed": completed, "pending": pending}
+
+    @staticmethod
+    def drain_media_deletions_best_effort(
+        *,
+        storage=None,
+        limit: int = 10,
+        outbox_id: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Drain a bounded batch without making worker or app startup fail."""
+        try:
+            return JobQueueService.process_media_delete_outbox(
+                limit=limit,
+                outbox_id=outbox_id,
+                storage=storage,
+            )
+        except Exception as exc:
+            print(f"[JobQueue] Best-effort media cleanup deferred: {exc}")
+            return {"claimed": 0, "completed": 0, "pending": 0}
 
     @staticmethod
     def get_job(job_id: str) -> Optional[Dict]:
@@ -370,25 +441,11 @@ class JobQueueService:
         """
         client = supabase()
 
-        # Verify job is pending
-        job = JobQueueService.get_job(job_id)
-        if not job:
-            raise Exception(f"Job {job_id} not found")
-
-        if job["status"] != "pending":
-            raise Exception(f"Job {job_id} is not in pending state (current: {job['status']})")
-
-        response = client.table("jobs").update({
-            "status": "processing",
-            "started_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-            "last_seen": datetime.utcnow().isoformat(),
-            "progress": 0,
-            "stage": "starting",
-            "message": "Job processing started",
-        }).eq("id", job_id).execute()
-
-        success = response.data and len(response.data) > 0
+        response = client.rpc("claim_job", {
+            "p_job_id": job_id,
+            "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
+        }).execute()
+        success = response.data is True
         if success:
             print(f"[JobQueue] Marked job {job_id} as processing")
         return success
@@ -403,6 +460,7 @@ class JobQueueService:
         video_duration_seconds: Optional[int] = None,
         gpu_seconds: Optional[float] = None,
         gcs_path: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """
         Mark a job as completed with results.
@@ -423,36 +481,56 @@ class JobQueueService:
         """
         client = supabase()
 
+        if not user_id:
+            return False
         try:
-            update_payload = {
-                "status": "completed",
-                "progress": 100,
-                "stage": "completed",
-                "message": "Transcription completed successfully",
-                "video_hash": video_hash,
-                "result_json": result_json,
-                "result_srt": result_srt,
-                "result_vtt": result_vtt,
-                "completed_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
-            }
-            if gcs_path:
-                update_payload["gcs_path"] = gcs_path
-            if video_duration_seconds is not None:
-                update_payload["video_duration_seconds"] = int(video_duration_seconds)
-            if gpu_seconds is not None:
-                update_payload["gpu_seconds"] = round(float(gpu_seconds), 2)
-
-            response = client.table("jobs").update(update_payload).eq("id", job_id).execute()
-
-            success = response.data and len(response.data) > 0
+            response = client.rpc("settle_completed_job", {
+                "p_job_id": job_id, "p_user_id": user_id,
+                "p_video_hash": video_hash, "p_result_json": result_json,
+                "p_result_srt": result_srt, "p_result_vtt": result_vtt,
+                "p_video_duration_seconds": video_duration_seconds,
+                "p_gpu_seconds": gpu_seconds, "p_gcs_path": gcs_path,
+            }).execute()
+            success = response.data is True
             if success:
                 print(f"[JobQueue] Marked job {job_id} as completed")
             return success
         except Exception as e:
             print(f"[JobQueue] Failed to mark job {job_id} as completed: {e}")
             return False
+
+    @staticmethod
+    def begin_finalization(
+        job_id: str,
+        user_id: str,
+        video_hash: str,
+        result_json: Dict,
+        result_srt: str,
+        result_vtt: str,
+        video_duration_seconds: int,
+        gpu_seconds: float,
+        final_media_key: str,
+    ) -> bool:
+        response = supabase().rpc("begin_job_finalization", {
+            "p_job_id": job_id,
+            "p_user_id": user_id,
+            "p_video_hash": video_hash,
+            "p_result_json": result_json,
+            "p_result_srt": result_srt,
+            "p_result_vtt": result_vtt,
+            "p_video_duration_seconds": video_duration_seconds,
+            "p_gpu_seconds": gpu_seconds,
+            "p_final_media_key": final_media_key,
+        }).execute()
+        return response.data is True
+
+    @staticmethod
+    def settle_finalization(job_id: str, user_id: str) -> bool:
+        response = supabase().rpc("settle_finalizing_job", {
+            "p_job_id": job_id,
+            "p_user_id": user_id,
+        }).execute()
+        return response.data is True
 
     @staticmethod
     def mark_failed(job_id: str, error_message: str, error_code: str = "processing_error") -> bool:
@@ -470,18 +548,12 @@ class JobQueueService:
         client = supabase()
 
         try:
-            response = client.table("jobs").update({
-                "status": "failed",
-                "stage": "failed",
-                "message": error_message,
-                "error_code": error_code,
-                "error_message": error_message,
-                "failed_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
-            }).eq("id", job_id).execute()
-
-            success = response.data and len(response.data) > 0
+            response = client.rpc("fail_job_secure", {
+                "p_job_id": job_id,
+                "p_error_message": error_message,
+                "p_error_code": error_code,
+            }).execute()
+            success = response.data is True
             if success:
                 print(f"[JobQueue] Marked job {job_id} as failed: {error_message}")
             return success
@@ -490,7 +562,7 @@ class JobQueueService:
             return False
 
     @staticmethod
-    def cancel_job(job_id: str) -> bool:
+    def cancel_job(job_id: str, user_id: Optional[str] = None) -> bool:
         """
         Cancel a pending or processing job.
 
@@ -506,28 +578,27 @@ class JobQueueService:
         client = supabase()
 
         # Verify job is in a cancellable state
-        job = JobQueueService.get_job(job_id)
+        job = JobQueueService.get_job_for_user(job_id, user_id) if user_id else JobQueueService.get_job(job_id)
         if not job:
             raise Exception(f"Job {job_id} not found")
 
         if job["status"] not in ("pending", "processing"):
             raise Exception(f"Can only cancel pending or processing jobs. Job {job_id} status: {job['status']}")
 
-        response = client.table("jobs").update({
-            "status": "cancelled",
-            "stage": "cancelled",
-            "message": "Job cancelled by user",
-            "cancelled_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-        }).eq("id", job_id).execute()
-
-        success = response.data and len(response.data) > 0
+        owner_id = user_id or job.get("user_id")
+        if not owner_id:
+            return False
+        response = client.rpc("cancel_job_secure", {
+            "p_job_id": job_id,
+            "p_user_id": owner_id,
+        }).execute()
+        success = response.data is True
         if success:
             print(f"[JobQueue] Cancelled job {job_id}")
         return success
 
     @staticmethod
-    def retry_job(job_id: str) -> Dict:
+    def retry_job(job_id: str, user_id: str) -> Dict:
         """
         Retry a failed job with the same settings.
 
@@ -543,37 +614,36 @@ class JobQueueService:
             Exception: If job is not in failed state or max retries reached
         """
         client = supabase()
+        profile_response = client.table("user_profiles").select(
+            "id,is_admin,subscription_plan"
+        ).eq("id", user_id).single().execute()
+        if not profile_response.data:
+            raise JobQueueError("owner_profile_unavailable")
 
-        # Get the failed job
-        job = JobQueueService.get_job(job_id)
-        if not job:
-            raise Exception(f"Job {job_id} not found")
-
-        if job["status"] != "failed":
-            raise Exception(f"Can only retry failed jobs. Job {job_id} status: {job['status']}")
-
-        if job.get("retry_count", 0) >= MAX_RETRIES:
-            raise Exception(f"Maximum retry count ({MAX_RETRIES}) reached for job {job_id}")
-
-        # Create a new job with the same parameters
-        params = job.get("params", {})
-        new_job = JobQueueService.create_job(
-            filename=job["filename"],
-            gcs_path=job["gcs_path"],
-            file_size_bytes=job["file_size_bytes"],
-            video_hash=job["video_hash"],
-            user_id=job.get("user_id"),
-            **params
-        )
-
-        # Update retry count
-        client.table("jobs").update({
-            "retry_count": job.get("retry_count", 0) + 1,
-            "updated_at": datetime.utcnow().isoformat(),
-        }).eq("id", new_job["id"]).execute()
-
-        print(f"[JobQueue] Created retry job {new_job['id']} for original job {job_id}")
-        return new_job
+        from middleware.quota import _get_plan_limits
+        limits = _get_plan_limits(profile_response.data)
+        try:
+            response = client.rpc("retry_job_secure", {
+                "p_job_id": job_id,
+                "p_user_id": user_id,
+                "p_max_retries": MAX_RETRIES,
+                "p_user_concurrent_limit": limits["max_concurrent_jobs"],
+            }).execute()
+        except Exception as exc:
+            message = str(exc)
+            for code in (
+                "job_not_found", "job_not_retryable", "max_retries_reached",
+                "user_concurrent_limit_reached", "retry_compare_and_set_failed",
+                "finalization_cleanup_pending",
+            ):
+                if code in message:
+                    raise JobQueueError(code) from exc
+            raise
+        if not response.data:
+            raise JobQueueError("retry_compare_and_set_failed")
+        retried_job = response.data[0]
+        print(f"[JobQueue] Retried job {job_id}")
+        return retried_job
 
     @staticmethod
     def check_and_recover_stale_jobs() -> Optional[str]:
@@ -599,6 +669,34 @@ class JobQueueService:
         """
         client = supabase()
         now = datetime.utcnow()
+
+        # Finalization recovery is claimed atomically so concurrent scheduler
+        # calls cannot double-dispatch or increment retries twice.
+        finalizing_threshold = now - timedelta(seconds=STALE_THRESHOLD_SECONDS)
+        finalizing_response = client.rpc("claim_stale_finalizing_job", {
+            "p_cutoff": finalizing_threshold.isoformat(),
+            "p_max_retries": MAX_RETRIES,
+        }).execute()
+        finalizing_rows = finalizing_response.data or []
+        if finalizing_rows:
+            recovery = finalizing_rows[0]
+            job_id = recovery["job_id"]
+            if recovery.get("action") == "redispatch":
+                try:
+                    JobQueueService.trigger_worker_job(job_id)
+                except Exception as dispatch_error:
+                    print(
+                        f"[JobQueue] Finalization redispatch failed for {job_id}: "
+                        f"{dispatch_error}"
+                    )
+                else:
+                    print(f"[JobQueue] Re-dispatched stale finalizing job {job_id}")
+            else:
+                print(
+                    f"[JobQueue] Finalization retries exhausted for {job_id}; "
+                    "job is available for manual retry"
+                )
+            return job_id
 
         # 1. Stale processing jobs (crashed mid-job)
         proc_threshold = now - timedelta(seconds=STALE_THRESHOLD_SECONDS)
@@ -656,10 +754,14 @@ class JobQueueService:
             "last_seen": now.isoformat(),
         }).eq("id", job_id).execute()
 
-        triggered = JobQueueService.trigger_worker_job(job_id)
-        if not triggered:
+        try:
+            JobQueueService.trigger_worker_job(job_id)
+        except Exception as dispatch_error:
             JobQueueService.mark_failed(job_id, "Failed to dispatch worker job", "dispatch_error")
-            print(f"[JobQueue] Re-dispatch failed for {reason} job {job_id}; marked failed")
+            print(
+                f"[JobQueue] Re-dispatch failed for {reason} job {job_id}; "
+                f"marked failed: {dispatch_error}"
+            )
         else:
             print(
                 f"[JobQueue] Recovered {reason} job {job_id} "
@@ -738,75 +840,11 @@ class JobQueueService:
 
     @staticmethod
     def trigger_worker_job(job_id: str) -> bool:
-        """Kick off a Cloud Run Job execution that runs `python -m worker_main <job_id>`. Returns True if the run_job request was accepted (the actual pipeline runs asynchronously). In LOCAL_MODE the worker runs as a local subprocess instead."""
-        from config import settings
+        """Dispatch via the backend selected by explicit runtime mode."""
+        from services.job_dispatcher import get_job_dispatcher
 
-        if settings.LOCAL_MODE:
-            return JobQueueService._trigger_local_worker(job_id)
-
-        try:
-            from google.cloud import run_v2
-        except ImportError:
-            print("[JobQueue] google-cloud-run not installed; cannot trigger worker job")
-            return False
-
-        job_resource = (
-            f"projects/{settings.WORKER_JOB_PROJECT}"
-            f"/locations/{settings.WORKER_JOB_REGION}"
-            f"/jobs/{settings.WORKER_JOB_NAME}"
-        )
-
-        try:
-            client = run_v2.JobsClient()
-            # ContainerOverride.args REPLACES the Job's default args. The Job's
-            # entrypoint is `python`, so we pass the full `-m worker_main <job_id>`.
-            overrides = run_v2.RunJobRequest.Overrides(
-                container_overrides=[
-                    run_v2.RunJobRequest.Overrides.ContainerOverride(
-                        args=["-m", "worker_main", job_id]
-                    )
-                ]
-            )
-            request = run_v2.RunJobRequest(name=job_resource, overrides=overrides)
-            client.run_job(request=request)
-            print(f"[JobQueue] Triggered worker job execution for {job_id} on {job_resource}")
-            return True
-        except Exception as e:
-            print(f"[JobQueue] Failed to trigger worker job for {job_id}: {e}")
-            return False
-
-    @staticmethod
-    def _trigger_local_worker(job_id: str) -> bool:
-        """LOCAL_MODE: run the same worker entrypoint as production
-        (`python -m worker_main <job_id>`) as a detached subprocess.
-
-        A subprocess (not a BackgroundTask) mirrors the Cloud Run Job execution
-        model — including SIGTERM-based cancellation — and keeps the ~8-12GB of
-        model memory out of the API process; it is freed when the job ends.
-        """
-        import subprocess
-        import sys
-        from config import settings
-
-        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        logs_dir = os.path.join(os.path.abspath(settings.LOCAL_DATA_DIR), "logs")
-        os.makedirs(logs_dir, exist_ok=True)
-        log_path = os.path.join(logs_dir, f"worker-{job_id}.log")
-
-        try:
-            log_file = open(log_path, "w")
-            subprocess.Popen(
-                [sys.executable, "-m", "worker_main", job_id],
-                cwd=backend_dir,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            print(f"[JobQueue] LOCAL_MODE worker started for {job_id}, log: {log_path}")
-            return True
-        except Exception as e:
-            print(f"[JobQueue] LOCAL_MODE failed to start worker for {job_id}: {e}")
-            return False
+        get_job_dispatcher().dispatch(job_id)
+        return True
 
     @staticmethod
     def cleanup_old_jobs() -> int:

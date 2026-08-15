@@ -25,63 +25,15 @@ async def check_upload_limit(user_id: str) -> bool:
     Raises:
         Exception: If database operation fails
     """
-    try:
-        client = SupabaseService.get_client()
-
-        # Get current rate limit record
-        response = (
-            client.table("rate_limits")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("limit_type", "upload_daily")
-            .execute()
-        )
-
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-
-        if response.data and len(response.data) > 0:
-            # Existing record
-            rate_limit = response.data[0]
-            window_start = datetime.fromisoformat(rate_limit["window_start"].replace('Z', '+00:00'))
-
-            # Check if window has expired (new day)
-            if window_start.date() < today.date():
-                # Reset counter for new day
-                client.table("rate_limits").update({
-                    "count": 1,
-                    "window_start": today.isoformat()
-                }).eq("id", rate_limit["id"]).execute()
-
-                return True
-            else:
-                # Same day - check limit
-                current_count = rate_limit["count"]
-
-                if current_count >= 50:
-                    return False
-
-                # Increment counter
-                client.table("rate_limits").update({
-                    "count": current_count + 1
-                }).eq("id", rate_limit["id"]).execute()
-
-                return True
-        else:
-            # No record yet - create one
-            client.table("rate_limits").insert({
-                "user_id": user_id,
-                "limit_type": "upload_daily",
-                "count": 1,
-                "window_start": today.isoformat()
-            }).execute()
-
-            return True
-
-    except Exception as e:
-        print(f"[RateLimit] Error checking upload limit: {e}")
-        # Fail open - allow upload but log error
-        # In production, you might want to fail closed instead
-        return True
+    client = SupabaseService.get_client()
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    response = client.rpc("consume_rate_limit", {
+        "p_user_id": user_id,
+        "p_limit_type": "upload_daily",
+        "p_limit": 50,
+        "p_window_start": today.isoformat(),
+    }).execute()
+    return response.data is True
 
 
 async def get_upload_remaining(user_id: str) -> dict:
@@ -176,43 +128,6 @@ async def increment_upload_count(user_id: str) -> None:
     Args:
         user_id: User UUID
     """
-    try:
-        client = SupabaseService.get_client()
-
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # Get existing record
-        response = (
-            client.table("rate_limits")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("limit_type", "upload_daily")
-            .execute()
-        )
-
-        if response.data and len(response.data) > 0:
-            rate_limit = response.data[0]
-            window_start = datetime.fromisoformat(rate_limit["window_start"].replace('Z', '+00:00'))
-
-            if window_start.date() < today.date():
-                # New day - reset to 1
-                client.table("rate_limits").update({
-                    "count": 1,
-                    "window_start": today.isoformat()
-                }).eq("id", rate_limit["id"]).execute()
-            else:
-                # Increment
-                client.table("rate_limits").update({
-                    "count": rate_limit["count"] + 1
-                }).eq("id", rate_limit["id"]).execute()
-        else:
-            # Create new record
-            client.table("rate_limits").insert({
-                "user_id": user_id,
-                "limit_type": "upload_daily",
-                "count": 1,
-                "window_start": today.isoformat()
-            }).execute()
-
-    except Exception as e:
-        print(f"[RateLimit] Error incrementing upload count: {e}")
+    allowed = await check_upload_limit(user_id)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Daily upload limit reached.")

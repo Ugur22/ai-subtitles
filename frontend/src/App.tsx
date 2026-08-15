@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider } from './hooks/useAuth';
-import { ThemeProvider, useTheme } from './contexts/ThemeContext';
-import { SettingsProvider } from './hooks/useSettings';
+import { AuthProvider } from './components/auth/AuthProvider';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { useTheme } from './hooks/useTheme';
+import { SettingsProvider } from './components/settings/SettingsProvider';
 import { JobsProvider } from './contexts/JobsContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LoginPage } from './components/auth/LoginPage';

@@ -37,7 +37,6 @@ RUN apt-get update && \
 # Railway will mount volumes to these paths
 RUN mkdir -p /data/static/videos \
     /data/static/screenshots \
-    /data/chroma_db \
     /data/db \
     /app/.cache/huggingface \
     /root/panns_data

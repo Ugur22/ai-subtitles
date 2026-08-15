@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from config import settings
 from middleware.auth import require_auth, require_admin, optional_auth
+from services.media_storage import get_media_storage
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +92,15 @@ class JobStatusResponse(BaseModel):
 
 def _safe_video_url(job: dict) -> Optional[str]:
     """Generate a short-lived signed video URL for a completed job, or None."""
-    if job.get('status') != 'completed' or not settings.ENABLE_GCS_UPLOADS:
+    if job.get('status') != 'completed':
         return None
     gcs_path = job.get('gcs_path') or (job.get('result_json') or {}).get('gcs_path')
     if not gcs_path:
         return None
     try:
-        from services.gcs_service import gcs_service
-        return gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY)
+        return get_media_storage().generate_download_url(
+            gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY
+        )
     except Exception as e:
         print(f"[Jobs] Skipping video_url for {job.get('id')}: {e}")
         return None
@@ -259,6 +261,15 @@ def require_job_access(job_id: str, token: Optional[str], user_id: Optional[str]
     )
 
 
+def require_job_owner(job_id: str, user_id: str) -> dict:
+    """Return an owned job; share tokens are deliberately read-only."""
+    from services.job_queue_service import JobQueueService
+    job = JobQueueService.get_job_for_user(job_id, user_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -310,13 +321,23 @@ async def submit_job(
     # Quota check (admins bypass; free/pro/studio enforced). The client-reported
     # duration gives instant feedback here; the worker re-probes the real duration
     # before transcription so this can't be bypassed by spoofing duration_seconds.
-    from middleware.quota import check_can_transcribe
+    from middleware.quota import check_can_transcribe, _get_plan_limits
     check_can_transcribe(
         getattr(request.state, "profile", None),
         file_duration_seconds=job_request.duration_seconds,
     )
 
     try:
+        media_storage = get_media_storage()
+        if not media_storage.is_user_upload_path(job_request.gcs_path, user_id):
+            raise HTTPException(status_code=403, detail="Upload path is not owned by this user.")
+        if not media_storage.file_exists(job_request.gcs_path):
+            raise HTTPException(status_code=400, detail="Uploaded object was not found.")
+        actual_size = media_storage.get_file_size(job_request.gcs_path)
+        if actual_size != job_request.file_size_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded object size does not match the upload intent.")
+
+        limits = _get_plan_limits(getattr(request.state, "profile", None))
         # Create job (checks queue limit and deduplication)
         result = JobQueueService.create_job(
             filename=job_request.filename,
@@ -325,6 +346,8 @@ async def submit_job(
             video_hash=job_request.video_hash,
             user_id=user_id,  # Associate job with authenticated user
             duration_seconds=job_request.duration_seconds,
+            monthly_limit_seconds=limits["monthly_transcription_seconds"],
+            user_concurrent_limit=limits["max_concurrent_jobs"],
             num_speakers=job_request.num_speakers,
             min_speakers=job_request.min_speakers,
             max_speakers=job_request.max_speakers,
@@ -334,8 +357,9 @@ async def submit_job(
 
         # If not cached, trigger the Cloud Run Job worker (runs to completion outside the Service).
         if not result.get('cached', False):
-            triggered = JobQueueService.trigger_worker_job(result['id'])
-            if not triggered:
+            try:
+                JobQueueService.trigger_worker_job(result['id'])
+            except Exception as dispatch_error:
                 JobQueueService.mark_failed(
                     result['id'],
                     "Failed to dispatch worker job",
@@ -344,7 +368,7 @@ async def submit_job(
                 raise HTTPException(
                     status_code=503,
                     detail="Could not dispatch background worker. Try again shortly."
-                )
+                ) from dispatch_error
 
             # Get estimated duration if available
             estimated_duration = JobQueueService.get_estimated_duration(
@@ -365,6 +389,12 @@ async def submit_job(
     except HTTPException:
         raise
     except Exception as e:
+        from services.job_queue_service import JobQueueError
+        if isinstance(e, JobQueueError):
+            status = 402 if e.code == "monthly_quota_exceeded" else 429
+            if e.code in {"invalid_or_expired_upload_intent", "upload_intent_mismatch", "invalid job identity"}:
+                status = 400
+            raise HTTPException(status_code=status, detail={"error": e.code})
         print(f"[Jobs] Error submitting job: {e}")
         import traceback
         traceback.print_exc()
@@ -566,7 +596,7 @@ async def cancel_job(
     user_id = request.state.user["id"]
 
     # Verify access via ownership OR token (also fetches job)
-    job = require_job_access(job_id, token, user_id)
+    job = require_job_owner(job_id, user_id)
 
     try:
         from services.job_queue_service import JobQueueService
@@ -579,7 +609,7 @@ async def cancel_job(
             )
 
         # Cancel the job
-        success = JobQueueService.cancel_job(job_id)
+        success = JobQueueService.cancel_job(job_id, user_id)
 
         if not success:
             raise HTTPException(
@@ -635,7 +665,7 @@ async def retry_job(
     user_id = request.state.user["id"]
 
     # Verify access via ownership OR token (also fetches job)
-    job = require_job_access(job_id, token, user_id)
+    job = require_job_owner(job_id, user_id)
 
     try:
         from services.job_queue_service import JobQueueService
@@ -647,7 +677,7 @@ async def retry_job(
             )
 
         # Retry the job (creates a new job with same params)
-        new_job = JobQueueService.retry_job(job_id)
+        new_job = JobQueueService.retry_job(job_id, user_id)
 
         if not new_job:
             raise HTTPException(status_code=500, detail="Failed to retry job")
@@ -655,8 +685,9 @@ async def retry_job(
         new_job_id = new_job['id']
 
         # Trigger the Cloud Run Job worker for the NEW job.
-        triggered = JobQueueService.trigger_worker_job(new_job_id)
-        if not triggered:
+        try:
+            JobQueueService.trigger_worker_job(new_job_id)
+        except Exception as dispatch_error:
             JobQueueService.mark_failed(
                 new_job_id,
                 "Failed to dispatch worker job",
@@ -665,7 +696,7 @@ async def retry_job(
             raise HTTPException(
                 status_code=503,
                 detail="Could not dispatch background worker. Try again shortly."
-            )
+            ) from dispatch_error
 
         return JobRetryResponse(
             job_id=new_job_id,
@@ -712,15 +743,13 @@ async def delete_job_permanent(
         403: Not owner and no valid token
         404: Job not found
     """
-    from services.gcs_service import gcs_service
     from services.job_queue_service import JobQueueService
-    from services.supabase_service import supabase
 
     # Get authenticated user ID
     user_id = request.state.user["id"]
 
     # Verify access via ownership OR token (also fetches job)
-    job = require_job_access(job_id, token, user_id)
+    job = require_job_owner(job_id, user_id)
 
     try:
         deleted_resources = {
@@ -729,57 +758,34 @@ async def delete_job_permanent(
             "database": False
         }
 
-        # Extract video path from video_url if available
-        video_path = None
-        video_url = job.get('video_url')
-        if video_url:
-            # video_url is a signed URL like:
-            # https://storage.googleapis.com/bucket/path/to/file?signature...
-            # Extract the path after the bucket name
-            try:
-                # Parse GCS path from signed URL
-                import re
-                # Pattern: bucket-name/path/to/file
-                match = re.search(r'/([^/]+/[^?]+)', video_url)
-                if match:
-                    full_path = match.group(1)
-                    # Remove bucket name (first segment)
-                    parts = full_path.split('/', 1)
-                    if len(parts) > 1:
-                        video_path = parts[1]
-                        print(f"[Jobs] Extracted video path: {video_path}")
-            except Exception as e:
-                print(f"[Jobs] Failed to extract video path from URL: {e}")
-
-        # Alternatively, try to get from result_json.gcs_path
-        if not video_path and job.get('result_json'):
-            video_path = job['result_json'].get('gcs_path')
-            if video_path:
-                print(f"[Jobs] Using video path from result_json: {video_path}")
-
-        # Delete video file from GCS if path exists (non-blocking)
-        if video_path:
-            deleted_resources["video"] = await _run_in_executor(gcs_service.delete_file, video_path)
-
-        # Delete screenshots folder from GCS if video_hash exists (non-blocking)
-        video_hash = job.get('video_hash')
-        if video_hash:
-            screenshots_prefix = f"screenshots/{video_hash}/"
-            deleted_count = await _run_in_executor(gcs_service.delete_folder, screenshots_prefix)
-            deleted_resources["screenshots"] = deleted_count
-
-        # Delete job record from Supabase (non-blocking)
-        try:
-            client = supabase()
-            await _run_in_executor(lambda: client.table("jobs").delete().eq("id", job_id).execute())
-            deleted_resources["database"] = True
-            print(f"[Jobs] Deleted job record from database: {job_id}")
-        except Exception as e:
-            print(f"[Jobs] Failed to delete job from database: {e}")
+        deletion = await _run_in_executor(
+            JobQueueService.claim_permanent_deletion,
+            job_id,
+            user_id,
+        )
+        if not deletion or deletion.get("error_code") == "job_not_found":
+            raise HTTPException(status_code=409, detail="Job could not be deleted")
+        if deletion.get("error_code") == "job_not_terminal":
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to delete job from database: {str(e)}"
+                status_code=409,
+                detail="Only completed, failed, or cancelled jobs can be permanently deleted",
             )
+        if not deletion.get("deleted"):
+            raise HTTPException(status_code=409, detail="Job could not be deleted")
+
+        deleted_resources["database"] = True
+        outbox_id = deletion.get("outbox_id")
+        cleanup_pending = False
+        if outbox_id:
+            cleanup = await _run_in_executor(
+                JobQueueService.drain_media_deletions_best_effort,
+                limit=1,
+                outbox_id=outbox_id,
+            )
+            deleted_resources["video"] = cleanup["completed"] == 1
+            cleanup_pending = not deleted_resources["video"]
+
+        # Shared, legacy, and screenshot resources are deliberately retained.
 
         # Build response message
         message_parts = ["Job deleted permanently"]
@@ -793,7 +799,8 @@ async def delete_job_permanent(
         return {
             "success": True,
             "message": message,
-            "deleted_resources": deleted_resources
+            "deleted_resources": deleted_resources,
+            "cleanup_pending": cleanup_pending,
         }
 
     except HTTPException:
@@ -843,7 +850,7 @@ async def get_share_link(
     user_id = request.state.user["id"]
 
     # Verify access via ownership OR token (also fetches job)
-    job = require_job_access(job_id, token, user_id)
+    job = require_job_owner(job_id, user_id)
 
     try:
         # Generate shareable URL using the job's access token
@@ -886,6 +893,19 @@ async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
         # Self-heal API keys stuck in 'pending' validation so the frontend stops
         # polling /api/keys every 2s for them (see PENDING_KEY_STALE_SECONDS).
         sweep_stuck_pending_keys()
+
+        try:
+            cleanup = await _run_in_executor(
+                JobQueueService.process_media_delete_outbox,
+                limit=10,
+            )
+            if cleanup["pending"]:
+                logger.warning(
+                    "[Jobs] %d media deletions remain pending",
+                    cleanup["pending"],
+                )
+        except Exception:
+            logger.exception("[Jobs] Pending media cleanup failed")
 
         recovered_job_id = JobQueueService.check_and_recover_stale_jobs()
 
@@ -960,13 +980,13 @@ async def refresh_screenshot_urls(request: Request):
     skipped = 0
     failed = 0
     stopped_early = False
-    video_hashes: set[str] = set()
+    owned_video_hashes: set[tuple[str, str]] = set()
 
     # 1. Refresh jobs.result_json segments
     try:
         resp = await _run_in_executor(
             lambda: client.table("jobs")
-            .select("id, video_hash, result_json")
+            .select("id, user_id, video_hash, result_json")
             .eq("status", "completed")
             .gte("completed_at", cutoff)
             .not_.is_("result_json", "null")
@@ -993,8 +1013,9 @@ async def refresh_screenshot_urls(request: Request):
                 )
                 refreshed_jobs += 1
                 vh = job.get("video_hash")
-                if vh:
-                    video_hashes.add(vh)
+                owner_id = job.get("user_id")
+                if vh and owner_id:
+                    owned_video_hashes.add((owner_id, vh))
             except Exception:
                 logger.exception("[Jobs] refresh-screenshot-urls failed for job %s", job.get("id"))
                 failed += 1
@@ -1002,14 +1023,15 @@ async def refresh_screenshot_urls(request: Request):
         logger.exception("[Jobs] refresh-screenshot-urls: jobs query failed")
 
     # 2. Refresh image_embeddings.screenshot_url for the same video_hashes
-    for vh in video_hashes:
+    for owner_id, vh in owned_video_hashes:
         if time.monotonic() > deadline:
             stopped_early = True
             break
         try:
             rows_resp = await _run_in_executor(
-                lambda v=vh: client.table("image_embeddings")
+                lambda uid=owner_id, v=vh: client.table("image_embeddings")
                 .select("id, screenshot_url")
+                .eq("user_id", uid)
                 .eq("video_hash", v)
                 .execute()
             )
@@ -1026,8 +1048,9 @@ async def refresh_screenshot_urls(request: Request):
                     )
                     row_id = row["id"]
                     await _run_in_executor(
-                        lambda rid=row_id, u=new_url: client.table("image_embeddings")
+                        lambda uid=owner_id, rid=row_id, u=new_url: client.table("image_embeddings")
                         .update({"screenshot_url": u})
+                        .eq("user_id", uid)
                         .eq("id", rid)
                         .execute()
                     )
@@ -1059,6 +1082,7 @@ async def backfill_face_presence(
     request: Request,
     batch_size: int = Query(10, ge=1, le=50, description="Maximum videos to backfill in one invocation"),
     video_hash: Optional[str] = Query(None, description="Backfill exactly this video instead of scanning for missing ones"),
+    user_id: Optional[str] = Query(None, description="Owner required when targeting a video hash"),
     force: bool = Query(False, description="Re-index even if the video already has face presence rows"),
 ):
     """Backfill image_face_presence rows for videos that already have image embeddings.
@@ -1076,10 +1100,11 @@ async def backfill_face_presence(
     skipped = 0
     failed = 0
 
-    candidate_hashes: list[str] = []
+    candidate_videos: list[tuple[str, str]] = []
     if video_hash:
-        # Targeted backfill: skip the discovery RPC entirely.
-        candidate_hashes = [video_hash]
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required with video_hash")
+        candidate_videos = [(user_id, video_hash)]
     else:
         try:
             rows_resp = await _run_in_executor(
@@ -1090,8 +1115,10 @@ async def backfill_face_presence(
             )
             for row in rows_resp.data or []:
                 vh = row.get("video_hash")
-                if vh and vh not in candidate_hashes:
-                    candidate_hashes.append(vh)
+                owner_id = row.get("user_id")
+                candidate = (owner_id, vh)
+                if owner_id and vh and candidate not in candidate_videos:
+                    candidate_videos.append(candidate)
         except Exception:
             logger.exception("[Jobs] backfill-face-presence: videos_missing_face_presence RPC failed")
             return BackfillFacePresenceResponse(
@@ -1102,14 +1129,15 @@ async def backfill_face_presence(
                 batch_size=batch_size,
             )
 
-    for vh in candidate_hashes:
+    for owner_id, vh in candidate_videos:
         if processed_videos >= batch_size:
             break
         try:
             if not force:
                 existing = await _run_in_executor(
-                    lambda v=vh: client.table("image_face_presence")
+                    lambda uid=owner_id, v=vh: client.table("image_face_presence")
                     .select("id")
+                    .eq("user_id", uid)
                     .eq("video_hash", v)
                     .limit(1)
                     .execute()
@@ -1121,6 +1149,7 @@ async def backfill_face_presence(
             count = await _run_in_executor(
                 image_embedding_service.index_face_presence_for_video,
                 vh,
+                owner_id,
                 force,
             )
             processed_videos += 1
@@ -1462,7 +1491,6 @@ async def stream_job_video(
         404: Job not found or video not available
     """
     from fastapi.responses import RedirectResponse
-    from services.gcs_service import gcs_service
 
     # Verify access
     require_token(job_id, token)
@@ -1492,11 +1520,12 @@ async def stream_job_video(
             raise HTTPException(status_code=404, detail="Video file path not found in job result")
 
         # Verify file exists in GCS
-        if not gcs_service.file_exists(gcs_path):
+        media_storage = get_media_storage()
+        if not media_storage.file_exists(gcs_path):
             raise HTTPException(status_code=404, detail="Video file not found in storage")
 
         # Generate signed URL (valid for 1 hour)
-        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=3600)
+        signed_url = media_storage.generate_download_url(gcs_path, expiry_seconds=3600)
 
         print(f"[Jobs] Generated video stream URL for job {job_id}")
 
@@ -1526,7 +1555,6 @@ async def get_job_video_url(
     user who owns the job. Returns JSON so the frontend can plug the signed
     URL directly into a `<video>` tag.
     """
-    from services.gcs_service import gcs_service
 
     user = getattr(request.state, "user", None)
     user_id = user["id"] if user else None
@@ -1545,10 +1573,13 @@ async def get_job_video_url(
         raise HTTPException(status_code=404, detail="Video file path not found in job result")
 
     try:
-        if not gcs_service.file_exists(gcs_path):
+        media_storage = get_media_storage()
+        if not media_storage.file_exists(gcs_path):
             raise HTTPException(status_code=404, detail="Video file not found in storage")
 
-        signed_url = gcs_service.generate_download_signed_url(gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY)
+        signed_url = media_storage.generate_download_url(
+            gcs_path, expiry_seconds=settings.GCS_DOWNLOAD_URL_EXPIRY
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1576,42 +1607,39 @@ async def get_job_screenshot_url(
     and its video_hash segment must match the job's own video_hash, preventing
     cross-job URL theft via a leaked token.
     """
-    from services.gcs_service import gcs_service
-
     user = getattr(request.state, "user", None)
     user_id = user["id"] if user else None
 
     job = require_job_access(job_id, token, user_id)
 
-    # Validate that gcs_path belongs to the screenshots prefix
-    prefix = settings.GCS_SCREENSHOTS_PREFIX
-    if not gcs_path.startswith(prefix):
-        raise HTTPException(
-            status_code=400,
-            detail=f"gcs_path must start with '{prefix}'"
-        )
-
-    # Extract video_hash: screenshots/{video_hash}/{timestamp}.jpg
-    # Strip the prefix, then the first path segment is the video_hash
-    path_after_prefix = gcs_path[len(prefix):]
-    parts = path_after_prefix.split("/")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=400,
-            detail="gcs_path has unexpected structure; expected screenshots/{video_hash}/{filename}"
-        )
-    extracted_hash = parts[0]
-
+    storage = get_media_storage()
+    object_key = storage.parse_screenshot_key(gcs_path)
     job_video_hash = job.get("video_hash")
-    if not job_video_hash or extracted_hash != job_video_hash:
+    job_user_id = job.get("user_id")
+    from services.transcription_repository import transcription_repository
+    allow_legacy = bool(
+        job_video_hash
+        and job_user_id
+        and transcription_repository.hash_resources_are_owner_exclusive(
+            job_video_hash, job_user_id
+        )
+    )
+    if (
+        not object_key
+        or not job_video_hash
+        or not job_user_id
+        or not storage.is_owned_screenshot_key(
+            object_key, job_user_id, job_video_hash, allow_legacy=allow_legacy
+        )
+    ):
         raise HTTPException(
             status_code=403,
             detail="gcs_path does not belong to this job"
         )
 
     try:
-        signed_url = gcs_service.generate_download_signed_url(
-            gcs_path, expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
+        signed_url = storage.generate_download_url(
+            object_key, expiry_seconds=settings.GCS_SCREENSHOT_URL_EXPIRY
         )
     except Exception as e:
         print(f"[Jobs] Error generating screenshot signed URL for job {job_id}: {e}")

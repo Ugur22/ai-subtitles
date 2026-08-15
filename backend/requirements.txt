@@ -27,7 +27,6 @@ scipy>=1.11.0  # For speaker recognition similarity calculations
 # asserts the cache is complete as backstops.
 sentence-transformers==3.1.1
 huggingface-hub==0.36.2
-chromadb==0.4.22
 groq==0.4.2
 
 # Audio Analysis
@@ -40,7 +39,6 @@ Pillow>=10.0.0
 
 # GCS Upload Support
 google-cloud-storage>=2.14.0
-google-cloud-firestore>=2.11.0
 google-cloud-run>=0.10.0
 
 # Supabase

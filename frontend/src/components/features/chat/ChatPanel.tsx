@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import axios from "axios";
 import ReactMarkdown, { Components } from "react-markdown";
 import { useTransition, animated } from "react-spring";
@@ -932,23 +932,12 @@ const AssistantMessageContent: React.FC<{
     [onTimestampClick],
   );
 
-  if (role === "user") {
-    return (
-      <div className="prose prose-sm prose-invert max-w-none text-white">
-        <ReactMarkdown>{content}</ReactMarkdown>
-      </div>
-    );
-  }
-
   const sections = useMemo(() => {
     const raw = splitIntoSections(content);
     const hasDirectAnswer = raw.some((s) =>
       s.heading.toLowerCase().includes("direct answer"),
     );
     if (hasDirectAnswer) return raw;
-    // LLM skipped the "## Direct Answer" heading (happens intermittently
-    // with Grok). Promote the first pre-heading prose block to a synthetic
-    // Direct Answer so the highlight card still renders.
     const firstProseIdx = raw.findIndex(
       (s) => !s.heading && s.body.trim().length > 0,
     );
@@ -957,6 +946,15 @@ const AssistantMessageContent: React.FC<{
       i === firstProseIdx ? { ...s, heading: "Direct Answer" } : s,
     );
   }, [content]);
+
+  if (role === "user") {
+    return (
+      <div className="prose prose-sm prose-invert max-w-none text-white">
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+
   const hasMultipleSections = sections.filter((s) => s.heading).length >= 2;
   const totalLength = content.length;
   const shouldCollapse = hasMultipleSections && totalLength > 1500;
@@ -1427,13 +1425,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     loadProviders();
   }, []);
 
-  // Auto-index when video hash changes
-  useEffect(() => {
-    if (videoHash) {
-      indexVideo();
-    }
-  }, [videoHash]);
-
   // Scroll to bottom when messages change
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -1475,7 +1466,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
-  const indexVideo = async () => {
+  const indexVideo = useCallback(async () => {
     if (!videoHash) return;
 
     setIndexingStatus("Indexing video for chat...");
@@ -1504,7 +1495,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       setIndexingStatus("Indexing failed (video may already be indexed)");
       setTimeout(() => setIndexingStatus(null), 3000);
     }
-  };
+  }, [videoHash]);
+
+  useEffect(() => {
+    if (videoHash) {
+      indexVideo();
+    }
+  }, [videoHash, indexVideo]);
 
   const handleReindex = async () => {
     if (!videoHash || reindexing) return;
@@ -1527,9 +1524,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
-  const getFriendlyErrorMessage = (error: any): { message: string; errorType: "timeout" | "server" | "network" | "unknown" } => {
-    const status = error.response?.status;
-    const code = error.code;
+  const getFriendlyErrorMessage = (error: unknown): { message: string; errorType: "timeout" | "server" | "network" | "unknown" } => {
+    const isAxiosError = axios.isAxiosError<{ detail?: unknown }>(error);
+    const status = isAxiosError ? error.response?.status : undefined;
+    const code = isAxiosError ? error.code : undefined;
+    const errorMessage = error instanceof Error ? error.message : "";
 
     if (status === 502 || status === 503 || status === 504) {
       return {
@@ -1537,28 +1536,30 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         errorType: "server",
       };
     }
-    if (code === "ECONNABORTED" || error.message?.includes("timeout")) {
+    if (code === "ECONNABORTED" || errorMessage.includes("timeout")) {
       return {
         message: "The request timed out. The server might be starting up — please try again in a moment.",
         errorType: "timeout",
       };
     }
-    if (!error.response && error.request) {
+    if (isAxiosError && !error.response && error.request) {
       return {
         message: "Could not reach the server. Please check your connection and try again.",
         errorType: "network",
       };
     }
-    const detail = error.response?.data?.detail;
+    const detail = isAxiosError ? error.response?.data?.detail : undefined;
     if (detail && typeof detail === "string" && detail.length < 200) {
       return { message: detail, errorType: "unknown" };
     }
     return { message: "Something went wrong. Please try again.", errorType: "unknown" };
   };
 
-  const isRetryableError = (error: any): boolean => {
-    const status = error.response?.status;
-    return status === 502 || status === 503 || status === 504 || error.code === "ECONNABORTED" || error.message?.includes("timeout");
+  const isRetryableError = (error: unknown): boolean => {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    const code = axios.isAxiosError(error) ? error.code : undefined;
+    const message = error instanceof Error ? error.message : "";
+    return status === 502 || status === 503 || status === 504 || code === "ECONNABORTED" || message.includes("timeout");
   };
 
   const PHASE_LABELS: Record<PhaseId, string> = {
@@ -1631,7 +1632,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           ];
         });
         return true;
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(`Chat error (attempt ${attempt + 1}):`, error);
         if (attempt < MAX_RETRIES && isRetryableError(error)) continue;
 
@@ -1737,8 +1738,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             : m,
         ),
       );
-    } catch (error: any) {
-      if (axios.isCancel(error) || error?.name === "CanceledError" || error?.name === "AbortError") {
+    } catch (error: unknown) {
+      if (axios.isCancel(error) || (error instanceof Error && (error.name === "CanceledError" || error.name === "AbortError"))) {
         return;
       }
       const { message } = getFriendlyErrorMessage(error);
@@ -2531,7 +2532,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             };
                             const evidenceLabel =
                               source.evidence_label ||
-                              ((source as any).likely_speakers?.length
+                              (source.likely_speakers?.length
                                 ? "Scene + identity"
                                 : "Scene match");
                             const evidenceDetail = source.visual_query_variant
@@ -3119,15 +3120,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       .start_time
                   }
                 </button>
-                {(screenshotModal.sources[screenshotModal.currentIndex] as any)
-                  .likely_speakers?.length > 0 && (
+                {(screenshotModal.sources[screenshotModal.currentIndex]
+                  ?.likely_speakers?.length ?? 0) > 0 && (
                   <p className="text-xs text-white/90 mt-1">
                     Likely:{" "}
-                    {(
-                      screenshotModal.sources[
-                        screenshotModal.currentIndex
-                      ] as any
-                    ).likely_speakers.join(", ")}
+                    {screenshotModal.sources[screenshotModal.currentIndex]?.likely_speakers?.join(", ")}
                   </p>
                 )}
               </div>

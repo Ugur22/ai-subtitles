@@ -4,6 +4,7 @@ Chat and RAG (Retrieval-Augmented Generation) endpoints
 import asyncio
 import json
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import AsyncIterator, Dict, Optional, List, Callable, Any, Awaitable
 from concurrent.futures import ThreadPoolExecutor
@@ -22,9 +23,27 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
         return await loop.run_in_executor(_chat_executor, lambda: func(*args, **kwargs))
     return await loop.run_in_executor(_chat_executor, func, *args)
 
-from database import get_transcription
-from dependencies import _last_transcription_data
 from middleware.auth import require_auth
+from services.transcription_access import (
+    authenticated_user_id,
+)
+from services.transcription_repository import transcription_repository
+
+
+_chat_user_id: ContextVar[Optional[str]] = ContextVar("chat_user_id", default=None)
+_hash_resources_allowed: ContextVar[bool] = ContextVar("hash_resources_allowed", default=False)
+
+
+def _authorize_video(request: Request, video_hash: Optional[str]) -> tuple[str, Dict]:
+    if not video_hash:
+        raise HTTPException(status_code=400, detail="video_hash is required")
+    user_id = authenticated_user_id(request)
+    transcription = transcription_repository.get_transcription(video_hash, user_id)
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+    _chat_user_id.set(user_id)
+    _hash_resources_allowed.set(True)
+    return user_id, transcription
 
 
 def _classify_provider_error(err: Optional[BaseException]) -> str:
@@ -220,66 +239,17 @@ async def _generate_visual_observations_with_fallback(
 
 def get_transcription_from_any_source(
     video_hash: str,
+    user_id: Optional[str] = None,
     refresh_screenshot_urls: bool = False,
 ) -> Optional[Dict]:
-    """
-    Get transcription from any available source:
-    1. First check legacy database (SQLite/Firestore)
-    2. If not found, check Supabase jobs table
-
-    Args:
-        video_hash: The video hash to look up
-
-    Returns:
-        Transcription data dict or None if not found
-    """
-    # Try legacy database first
-    transcription = get_transcription(video_hash)
-    if transcription:
-        return transcription
-
-    # Try Supabase jobs table
-    try:
-        from services.supabase_service import supabase
-        client = supabase()
-
-        # Look for completed job with this video_hash
-        response = (
-            client.table("jobs")
-            .select("result_json, filename, gcs_path, user_id")
-            .eq("video_hash", video_hash)
-            .eq("status", "completed")
-            .limit(1)
-            .execute()
-        )
-
-        if response.data and len(response.data) > 0:
-            job = response.data[0]
-            result_json = job.get("result_json")
-
-            if result_json:
-                # The result_json from jobs already has the right structure
-                # It contains: filename, gcs_path, video_hash, transcription (with segments)
-                # Add user_id from job record for RLS compliance
-                if job.get("user_id"):
-                    result_json["user_id"] = job["user_id"]
-                # Refresh only for callers that are about to return full
-                # transcript segments. Chat retrieval does not need every
-                # segment URL, and refreshing all of them can create hundreds
-                # of IAM SignBlob calls per chat request.
-                if refresh_screenshot_urls:
-                    try:
-                        from services.gcs_service import maybe_refresh_segment_urls
-                        maybe_refresh_segment_urls(result_json)
-                    except Exception as refresh_err:
-                        print(f"[Chat] Screenshot URL refresh skipped: {refresh_err}")
-                print(f"[Chat] Found transcription in Supabase job for video_hash={video_hash}")
-                return result_json
-
-    except Exception as e:
-        print(f"[Chat] Error checking Supabase for transcription: {e}")
-
-    return None
+    owner_id = user_id or _chat_user_id.get()
+    if not owner_id:
+        return None
+    return transcription_repository.get_transcription(
+        video_hash,
+        owner_id,
+        refresh_screenshot_urls=refresh_screenshot_urls,
+    )
 
 
 from models import (
@@ -296,22 +266,16 @@ from models import (
     ErrorResponse
 )
 
-# Import LLM and vector store modules
+# Import LLM module
 try:
     from llm_providers import llm_manager
-    from vector_store import vector_store
     LLM_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")
     LLM_AVAILABLE = False
 
-# Import Supabase image embedding service (new persistent storage)
-try:
-    from services.image_embedding_service import image_embedding_service
-    SUPABASE_IMAGES_AVAILABLE = True
-except Exception as e:
-    print(f"Warning: Supabase image embeddings not available: {e}")
-    SUPABASE_IMAGES_AVAILABLE = False
+from services.image_embedding_service import image_embedding_service
+from services.transcript_embedding_service import transcript_embedding_service
 
 router = APIRouter(prefix="/api", tags=["Chat & RAG"])
 
@@ -321,17 +285,6 @@ class ComparisonIntent:
     person_name: Optional[str]
     unmatched_name: Optional[str] = None
     secondary_person_name: Optional[str] = None
-
-
-def _use_supabase_for_images() -> bool:
-    """
-    Determine whether to use Supabase for image embeddings.
-    Uses Supabase when:
-    1. ENABLE_GCS_UPLOADS is true (production/Cloud Run)
-    2. Supabase image service is available
-    """
-    from config import settings
-    return SUPABASE_IMAGES_AVAILABLE and settings.ENABLE_GCS_UPLOADS
 
 
 def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
@@ -381,21 +334,29 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     try:
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
-        enrolled_speakers = sr_system.list_speakers()
+        user_id = _chat_user_id.get()
+        enrolled_speakers = sr_system.list_speakers(user_id) if user_id else []
 
         for speaker_name in enrolled_speakers:
             add_if_mentioned(speaker_name, "enrolled speaker")
     except Exception as e:
         print(f"Could not load speaker recognition system: {e}")
 
+    if not _hash_resources_allowed.get():
+        return found_speakers
+
     # Check manually tagged face/person names. The frontend exposes these names
     # in @mention autocomplete, so chat retrieval must recognize them too.
     try:
         from services.supabase_service import supabase as get_supabase
         client = get_supabase()
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return found_speakers
         result = (
             client.table("face_tags")
             .select("speaker_name")
+            .eq("user_id", user_id)
             .eq("video_hash", video_hash)
             .execute()
         )
@@ -407,7 +368,7 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
     # Also check for SPEAKER_XX labels in segments
     # This handles cases where segments use labels like "SPEAKER_19"
     try:
-        transcription = get_transcription_from_any_source(video_hash)
+        transcription = get_transcription_from_any_source(video_hash, user_id)
         if transcription:
             segments = transcription.get('transcription', {}).get('segments', [])
 
@@ -429,13 +390,19 @@ def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
 
 def _load_face_tag_names(video_hash: str) -> list[str]:
     """Return unique manually tagged person names for a video."""
+    if not _hash_resources_allowed.get():
+        return []
     try:
         from services.supabase_service import supabase as get_supabase
 
         client = get_supabase()
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return []
         result = (
             client.table("face_tags")
             .select("speaker_name")
+            .eq("user_id", user_id)
             .eq("video_hash", video_hash)
             .execute()
         )
@@ -977,23 +944,24 @@ def _timestamp_from_screenshot_url(url: str) -> float:
         return 0.0
 
 
-def _fresh_screenshot_url(url: str) -> str:
-    """Return a fresh signed URL when the input is a GCS signed URL."""
+def _owner_scoped_screenshot_url(reference: str, video_hash: str) -> Optional[str]:
+    """Resolve an owned screenshot through the configured media storage."""
+    user_id = _chat_user_id.get()
+    if not user_id or not reference:
+        return None
     try:
-        from services.gcs_service import gcs_service
-        from config import settings as _settings
-        if not _settings.ENABLE_GCS_UPLOADS:
-            return url
-        gcs_path = gcs_service.extract_gcs_path_from_signed_url(url)
-        if not gcs_path:
-            return url
-        return gcs_service.generate_download_signed_url(
-            gcs_path,
-            expiry_seconds=_settings.GCS_SCREENSHOT_URL_EXPIRY,
-        )
+        from services.media_storage import get_media_storage
+
+        storage = get_media_storage()
+        object_key = storage.parse_screenshot_key(reference)
+        if not object_key or not storage.is_owned_screenshot_key(
+            object_key, user_id, video_hash
+        ):
+            return None
+        return storage.generate_download_url(object_key)
     except Exception as e:
-        print(f"[Chat] Face-tag screenshot URL refresh skipped: {e}")
-        return url
+        print(f"[Chat] Owner-scoped screenshot resolution failed: {e}")
+        return None
 
 
 async def _face_tag_image_results(
@@ -1007,12 +975,16 @@ async def _face_tag_image_results(
 
     try:
         from services.supabase_service import supabase as get_supabase
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return []
         face_client = get_supabase()
         rows = []
         for speaker_name in speaker_names:
             response = (
                 face_client.table("face_tags")
                 .select("speaker_name, screenshot_url")
+                .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .eq("speaker_name", speaker_name)
                 .limit(max(limit * 2, limit))
@@ -1037,8 +1009,11 @@ async def _face_tag_image_results(
             seen_paths.add(dedupe_key)
 
             start = _timestamp_from_screenshot_url(screenshot_url)
+            owned_url = _owner_scoped_screenshot_url(screenshot_url, video_hash)
+            if not owned_url:
+                continue
             results.append({
-                "screenshot_url": _fresh_screenshot_url(screenshot_url),
+                "screenshot_url": owned_url,
                 "metadata": {
                     "video_hash": video_hash,
                     "segment_id": f"face_tag_{len(results)}",
@@ -1076,11 +1051,14 @@ def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Opt
         import numpy as np
         import json as _json
         from services.supabase_service import supabase as get_supabase
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return None
 
         face_client = get_supabase()
         face_result = face_client.table("face_tags").select(
             "embedding"
-        ).eq("video_hash", video_hash).eq(
+        ).eq("user_id", user_id).eq("video_hash", video_hash).eq(
             "speaker_name", speaker_name
         ).execute()
         if not face_result.data:
@@ -1146,11 +1124,15 @@ async def _load_face_presence(
         from services.supabase_service import supabase as get_supabase
 
         face_client = get_supabase()
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return face_presence_by_image, presence_timelines
         for speaker, embedding in speaker_face_embeddings.items():
             response = await _run_in_executor(
                 lambda emb=embedding: face_client.rpc(
                     "match_faces_by_embedding",
                     {
+                        "p_user_id": user_id,
                         "target_video_hash": video_hash,
                         "query_embedding": emb,
                         "similarity_threshold": settings.FACE_PRESENCE_SIMILARITY_THRESHOLD,
@@ -1229,7 +1211,12 @@ def _chunks(values: list[Any], size: int) -> list[list[Any]]:
     return [values[i:i + size] for i in range(0, len(values), size)]
 
 
-async def _load_comparison_presence_rows(client, video_hash: str, image_ids: list[str]) -> tuple[list[dict], list[dict]]:
+async def _load_comparison_presence_rows(
+    client,
+    user_id: str,
+    video_hash: str,
+    image_ids: list[str],
+) -> tuple[list[dict], list[dict]]:
     """
     Load face/image rows for comparison matches in small batches.
     Keep batches small: each face row carries a large embedding, and Supabase/Cloudflare
@@ -1242,6 +1229,7 @@ async def _load_comparison_presence_rows(client, video_hash: str, image_ids: lis
             image_response = await _run_in_executor(
                 lambda ids=batch: client.table("image_embeddings")
                 .select("id,start_time,end_time,speaker,screenshot_url,embedding")
+                .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .in_("id", ids)
                 .execute()
@@ -1255,6 +1243,7 @@ async def _load_comparison_presence_rows(client, video_hash: str, image_ids: lis
             face_response = await _run_in_executor(
                 lambda ids=batch: client.table("image_face_presence")
                 .select("image_embedding_id,face_embedding,bbox,start_time,end_time")
+                .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .in_("image_embedding_id", ids)
                 .execute()
@@ -1282,6 +1271,9 @@ async def _load_person_appearances(
 
     if threshold is None:
         threshold = settings.FACE_PRESENCE_COMPARISON_THRESHOLD
+    user_id = _chat_user_id.get()
+    if not user_id:
+        return []
 
     reference_embedding = _load_speaker_reference_embedding(video_hash, person_name)
     if not reference_embedding:
@@ -1292,6 +1284,7 @@ async def _load_person_appearances(
         lambda: client.rpc(
             "match_faces_by_embedding",
             {
+                "p_user_id": user_id,
                 "target_video_hash": video_hash,
                 "query_embedding": reference_embedding,
                 "similarity_threshold": threshold,
@@ -1311,6 +1304,7 @@ async def _load_person_appearances(
     try:
         face_rows, image_rows = await _load_comparison_presence_rows(
             client,
+            user_id,
             video_hash,
             image_ids,
         )
@@ -1363,6 +1357,9 @@ async def _load_person_appearances(
         screenshot_url = image.get("screenshot_url")
         if not screenshot_url:
             continue
+        owned_url = _owner_scoped_screenshot_url(screenshot_url, video_hash)
+        if not owned_url:
+            continue
         start = float(image.get("start_time") or face["start_time"])
         end = float(image.get("end_time") or face["end_time"] or start)
         similarity = max(face["similarity"], match_similarity.get(image_id, 0.0))
@@ -1371,7 +1368,7 @@ async def _load_person_appearances(
             "start_time": start,
             "end_time": end,
             "speaker": image.get("speaker") or person_name,
-            "screenshot_url": _fresh_screenshot_url(screenshot_url),
+            "screenshot_url": owned_url,
             "bbox": face.get("bbox"),
             "face_embedding": face["face_embedding"],
             "scene_embedding": scene_embedding,
@@ -1445,11 +1442,15 @@ def _load_face_tag_appearances(
     """Fallback appearances from manually tagged screenshots."""
     try:
         from services.supabase_service import supabase as get_supabase
+        user_id = _chat_user_id.get()
+        if not user_id:
+            return []
 
         client = get_supabase()
         result = (
             client.table("face_tags")
             .select("screenshot_url,bbox_x,bbox_y,bbox_w,bbox_h,embedding")
+            .eq("user_id", user_id)
             .eq("video_hash", video_hash)
             .eq("speaker_name", person_name)
             .execute()
@@ -1458,6 +1459,9 @@ def _load_face_tag_appearances(
         for idx, row in enumerate(result.data or []):
             screenshot_url = row.get("screenshot_url")
             if not screenshot_url:
+                continue
+            owned_url = _owner_scoped_screenshot_url(screenshot_url, video_hash)
+            if not owned_url:
                 continue
             face_embedding = _parse_vector(row.get("embedding"))
             start = _timestamp_from_screenshot_url(screenshot_url)
@@ -1474,7 +1478,7 @@ def _load_face_tag_appearances(
                 "start_time": start,
                 "end_time": start + 1.0,
                 "speaker": person_name,
-                "screenshot_url": _fresh_screenshot_url(screenshot_url),
+                "screenshot_url": owned_url,
                 "bbox": bbox,
                 "face_embedding": face_embedding,
                 "scene_embedding": None,
@@ -2309,26 +2313,34 @@ async def _retrieve_text_context(
 
     Returns:
         (search_results, context_text, sources)
-        search_results is the raw list from vector_store.search; empty list if none found.
+        search_results is the raw list from transcript_embedding_service.search_transcript_chunks;
+        empty list if none found.
     """
     query = _clean_query_for_retrieval(question)
     print(f"Searching for relevant context for question: {query}")
-    search_results = await _run_in_executor(vector_store.search, video_hash, query, n_results=n_results)
+    user_id = _chat_user_id.get()
+    if not user_id:
+        return [], "", []
+    search_results = await _run_in_executor(
+        transcript_embedding_service.search_transcript_chunks, video_hash, query, user_id, n_results=n_results
+    )
 
     transcription = get_transcription_from_any_source(video_hash)
     segments = (transcription or {}).get("transcription", {}).get("segments", [])
 
     if not search_results:
-        # Existing empty Chroma collections can make collection_exists() true
-        # while search() returns nothing. Rebuild from the persisted transcript
-        # once, then retry.
+        # Rows can be missing on first access; index once from the persisted
+        # transcript, then retry.
         if segments:
             try:
-                await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+                await _run_in_executor(
+                    transcript_embedding_service.index_transcript_chunks, video_hash, segments, user_id
+                )
                 search_results = await _run_in_executor(
-                    vector_store.search,
+                    transcript_embedding_service.search_transcript_chunks,
                     video_hash,
                     query,
+                    user_id,
                     n_results=n_results,
                 )
             except Exception as e:
@@ -2411,11 +2423,12 @@ async def _retrieve_visual_context(
         image_paths, visual_context, visual_sources, visual_query_used,
         image_results, face_tags_available, speaker_names
     """
-    use_supabase = _use_supabase_for_images()
-    if use_supabase:
-        images_indexed = image_embedding_service.image_collection_exists(video_hash)
-    else:
-        images_indexed = vector_store.image_collection_exists(video_hash)
+    if not _hash_resources_allowed.get():
+        return {"images_indexed": False}
+    user_id = _chat_user_id.get()
+    if not user_id:
+        return {"images_indexed": False}
+    images_indexed = image_embedding_service.image_collection_exists(video_hash, user_id)
 
     try:
         # Extract ALL speaker names from the query
@@ -2465,22 +2478,14 @@ async def _retrieve_visual_context(
             )[:6]
             per_variant_results = max(n_images, 4)
             for query_variant in query_variants:
-                if use_supabase:
-                    variant_results = await _run_in_executor(
-                        image_embedding_service.search_images,
-                        video_hash,
-                        query_variant,
-                        n_results=per_variant_results,
-                        speaker_filter=None
-                    )
-                else:
-                    variant_results = await _run_in_executor(
-                        vector_store.search_images,
-                        video_hash,
-                        query_variant,
-                        n_results=per_variant_results,
-                        speaker_filter=None
-                    )
+                variant_results = await _run_in_executor(
+                    image_embedding_service.search_images,
+                    video_hash,
+                    query_variant,
+                    user_id,
+                    n_results=per_variant_results,
+                    speaker_filter=None,
+                )
 
                 for result in variant_results:
                     key = _image_result_key(result)
@@ -2673,7 +2678,10 @@ async def _retrieve_visual_context(
                             for result in image_results:
                                 if result.get("source") == "face_tag":
                                     continue
-                                screenshot_url = result.get('screenshot_url') or result.get('screenshot_path', '')
+                                screenshot_reference = result.get('screenshot_url') or result.get('screenshot_path', '')
+                                screenshot_url = _owner_scoped_screenshot_url(
+                                    screenshot_reference, video_hash
+                                )
                                 if not screenshot_url:
                                     continue
 
@@ -2745,21 +2753,28 @@ async def _retrieve_visual_context(
             if not any("hybrid_score" in result for result in image_results):
                 image_results.sort(key=_scene_score, reverse=True)
             image_results = image_results[:n_images]
+            owned_image_results = []
+            for result in image_results:
+                screenshot_reference = (
+                    result.get('screenshot_url') or result.get('screenshot_path', '')
+                )
+                screenshot_url = _owner_scoped_screenshot_url(
+                    screenshot_reference, video_hash
+                )
+                if not screenshot_url:
+                    continue
+                result = dict(result)
+                result['screenshot_url'] = screenshot_url
+                result.pop('screenshot_path', None)
+                owned_image_results.append(result)
+            image_results = owned_image_results
             print(f"Found {len(image_results)} relevant images")
-            image_paths = [result.get('screenshot_url') or result.get('screenshot_path') for result in image_results]
+            image_paths = [result['screenshot_url'] for result in image_results]
 
             visual_parts = []
             for i, img_result in enumerate(image_results):
                 metadata = img_result['metadata']
-                screenshot_path = img_result.get('screenshot_url') or img_result.get('screenshot_path', '')
-
-                if screenshot_path.startswith('https://'):
-                    screenshot_url = screenshot_path
-                elif 'static/screenshots/' in screenshot_path:
-                    filename = screenshot_path.split('static/screenshots/')[-1]
-                    screenshot_url = f"/static/screenshots/{filename}"
-                else:
-                    screenshot_url = screenshot_path.replace('./static/', '/static/')
+                screenshot_url = img_result['screenshot_url']
 
                 # Dense frames carry no speaker; don't render "None"
                 speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata.get('speaker') or "unknown"
@@ -2843,7 +2858,8 @@ async def _retrieve_audio_context(
     Returns:
         (audio_context, audio_sources, audio_indexed)
     """
-    if not vector_store.audio_collection_exists(video_hash):
+    user_id = _chat_user_id.get()
+    if not user_id or not transcript_embedding_service.audio_events_exist(video_hash, user_id):
         return "", [], False
 
     audio_context = ""
@@ -2851,9 +2867,10 @@ async def _retrieve_audio_context(
 
     try:
         audio_results = await _run_in_executor(
-            vector_store.search_audio_events,
+            transcript_embedding_service.search_audio_events,
             video_hash,
             question,
+            user_id,
             n_results=20
         )
 
@@ -3180,18 +3197,7 @@ async def index_video_for_chat(request: Request, video_hash: str = None) -> Inde
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
 
     try:
-        # Get transcription data from any available source (legacy DB or Supabase jobs)
-        if video_hash:
-            transcription = get_transcription_from_any_source(video_hash)
-            if not transcription:
-                raise HTTPException(status_code=404, detail="Transcription not found")
-        else:
-            # Use last transcription
-            global _last_transcription_data
-            if not _last_transcription_data:
-                raise HTTPException(status_code=404, detail="No transcription available")
-            transcription = _last_transcription_data
-            video_hash = transcription.get('video_hash')
+        user_id, transcription = _authorize_video(request, video_hash)
 
         # Get segments
         segments = transcription.get('transcription', {}).get('segments', [])
@@ -3200,12 +3206,16 @@ async def index_video_for_chat(request: Request, video_hash: str = None) -> Inde
 
         # Index in vector database (run in executor to avoid blocking)
         print(f"Indexing video {video_hash} with {len(segments)} segments...")
-        num_chunks = await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+        num_chunks = await _run_in_executor(
+            transcript_embedding_service.index_transcript_chunks, video_hash, segments, user_id
+        )
 
         # Also index audio events if segments contain audio analysis data
         audio_indexed = 0
         try:
-            audio_indexed = await _run_in_executor(vector_store.index_audio_events, video_hash, segments)
+            audio_indexed = await _run_in_executor(
+                transcript_embedding_service.index_audio_events, video_hash, segments, user_id
+            )
             if audio_indexed > 0:
                 print(f"Audio events indexed: {audio_indexed}")
         except Exception as e:
@@ -3280,6 +3290,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
 
+        user_id, owned_transcription = _authorize_video(request, video_hash)
+
         retrieval_question = _resolve_contextual_visual_question(
             question,
             chat_request.conversation_history,
@@ -3288,21 +3300,16 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
             video_hash,
         )
 
-        # Get video_hash from last transcription if not provided
-        if not video_hash:
-            global _last_transcription_data
-            if not _last_transcription_data:
-                raise HTTPException(status_code=404, detail="No video available for chat")
-            video_hash = _last_transcription_data.get('video_hash')
-
         # Check if video is indexed
-        if not vector_store.collection_exists(video_hash):
+        if not transcript_embedding_service.transcript_chunks_exist(video_hash, user_id):
             # Auto-index if not already indexed
-            transcription = get_transcription_from_any_source(video_hash)
+            transcription = owned_transcription
             if transcription:
                 segments = transcription.get('transcription', {}).get('segments', [])
                 print(f"Auto-indexing video {video_hash}...")
-                await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+                await _run_in_executor(
+                    transcript_embedding_service.index_transcript_chunks, video_hash, segments, user_id
+                )
             else:
                 raise HTTPException(
                     status_code=404,
@@ -3497,6 +3504,7 @@ async def swap_comparison_frame(
         raise HTTPException(status_code=400, detail="person is required")
 
     video_hash = swap_request.video_hash
+    _authorize_video(request, video_hash)
 
     try:
         appearances = await _load_person_appearances_with_fallback(video_hash, swap_request.person)
@@ -3656,6 +3664,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
     from services.usage_meter import record_chat_message
     check_can_chat(getattr(request.state, "profile", None))
     _stream_user_id = (request.state.profile or {}).get("id") if hasattr(request.state, "profile") else None
+    _authorize_video(request, chat_request.video_hash)
 
     from model_preloader import models_ready, wait_for_models
 
@@ -3696,21 +3705,19 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 video_hash,
             )
 
-            # Resolve video_hash
-            if not video_hash:
-                global _last_transcription_data
-                if not _last_transcription_data:
-                    yield _sse({"type": "error", "message": "No video available for chat"})
-                    return
-                video_hash = _last_transcription_data.get('video_hash')
-
             # Auto-index check
-            if not vector_store.collection_exists(video_hash):
+            stream_user_id = _chat_user_id.get()
+            if not transcript_embedding_service.transcript_chunks_exist(video_hash, stream_user_id):
                 transcription = get_transcription_from_any_source(video_hash)
                 if transcription:
                     segments = transcription.get('transcription', {}).get('segments', [])
                     print(f"Auto-indexing video {video_hash}...")
-                    await _run_in_executor(vector_store.index_transcription, video_hash, segments)
+                    await _run_in_executor(
+                        transcript_embedding_service.index_transcript_chunks,
+                        video_hash,
+                        segments,
+                        stream_user_id,
+                    )
                 else:
                     yield _sse({"type": "error", "message": "Video not indexed. Please index it first using /api/index_video/"})
                     return
@@ -3789,7 +3796,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                     image_results = vis["image_results"]
 
             # Audio context
-            audio_indexed = vector_store.audio_collection_exists(video_hash)
+            audio_indexed = transcript_embedding_service.audio_events_exist(video_hash, stream_user_id)
             if audio_indexed:
                 yield _sse({"type": "phase", "phase": "analyzing_audio", "label": "Scanning audio events"})
 
@@ -4107,15 +4114,21 @@ async def test_llm_provider(request: Request, test_request: TestLLMRequest) -> T
         )
 
 
-def _run_index_images_background(video_hash: str, segments: list, force_reindex: bool, user_id, use_supabase: bool):
+def _run_index_images_background(
+    video_hash: str,
+    segments: list,
+    force_reindex: bool,
+    user_id: str,
+):
     """Background worker: run CLIP indexing synchronously (called from BackgroundTasks)."""
     try:
-        storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
-        print(f"[BG] Indexing images for video {video_hash} from {len(segments)} segments using {storage_type}...")
-        if use_supabase:
-            num = image_embedding_service.index_video_images(video_hash, segments, force_reindex=force_reindex, user_id=user_id)
-        else:
-            num = vector_store.index_video_images(video_hash, segments, force_reindex=force_reindex)
+        print(f"[BG] Indexing images for video {video_hash} from {len(segments)} segments using Supabase pgvector...")
+        num = image_embedding_service.index_video_images(
+            video_hash,
+            segments,
+            force_reindex=force_reindex,
+            user_id=user_id,
+        )
         print(f"[BG] Indexing complete: {num} images indexed for video {video_hash}")
     except Exception as e:
         import traceback
@@ -4147,38 +4160,25 @@ async def index_video_images(request: Request, background_tasks: BackgroundTasks
         raise HTTPException(status_code=503, detail="LLM features not available. Install required dependencies.")
 
     try:
-        # Get transcription data from any available source (legacy DB or Supabase jobs)
-        if video_hash:
-            transcription = get_transcription_from_any_source(video_hash)
-            if not transcription:
-                raise HTTPException(status_code=404, detail="Transcription not found")
-        else:
-            # Use last transcription
-            global _last_transcription_data
-            if not _last_transcription_data:
-                raise HTTPException(status_code=404, detail="No transcription available")
-            transcription = _last_transcription_data
-            video_hash = transcription.get('video_hash')
+        user_id, transcription = _authorize_video(request, video_hash)
+        if not _hash_resources_allowed.get():
+            raise HTTPException(status_code=409, detail="Visual index is not owner-isolated for this video")
 
         # Get segments
         segments = transcription.get('transcription', {}).get('segments', [])
         if not segments:
             raise HTTPException(status_code=400, detail="No segments found in transcription")
 
-        use_supabase = _use_supabase_for_images()
-        storage_type = "Supabase pgvector" if use_supabase else "ChromaDB"
-        user_id = transcription.get('user_id')
-
         # Schedule CLIP indexing as a background task so the request returns immediately
         background_tasks.add_task(
-            _run_index_images_background, video_hash, segments, force_reindex, user_id, use_supabase
+            _run_index_images_background, video_hash, segments, force_reindex, user_id
         )
 
         return IndexImagesResponse(
             success=True,
             video_hash=video_hash,
             images_indexed=0,
-            message=f"Re-indexing started in background ({len(segments)} segments, storage: {storage_type}). Visual search will update shortly."
+            message=f"Re-indexing started in background ({len(segments)} segments, storage: Supabase pgvector). Visual search will update shortly."
         )
     except HTTPException:
         raise
@@ -4217,22 +4217,11 @@ async def search_video_images(request: Request, search_request: SearchImagesRequ
 
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
+        user_id, _ = _authorize_video(request, video_hash)
+        if not _hash_resources_allowed.get():
+            raise HTTPException(status_code=409, detail="Visual search is not owner-isolated for this video")
 
-        # Get video_hash from last transcription if not provided
-        if not video_hash:
-            global _last_transcription_data
-            if not _last_transcription_data:
-                raise HTTPException(status_code=404, detail="No video available for image search")
-            video_hash = _last_transcription_data.get('video_hash')
-
-        # Determine which service to use
-        use_supabase = _use_supabase_for_images()
-
-        # Check if images are indexed in the appropriate store
-        if use_supabase:
-            images_exist = image_embedding_service.image_collection_exists(video_hash)
-        else:
-            images_exist = vector_store.image_collection_exists(video_hash)
+        images_exist = image_embedding_service.image_collection_exists(video_hash, user_id)
 
         if not images_exist:
             raise HTTPException(
@@ -4243,36 +4232,25 @@ async def search_video_images(request: Request, search_request: SearchImagesRequ
         # Check if the query mentions a specific speaker
         speaker_filter = _extract_speaker_from_query(query, video_hash)
 
-        # Search for images using appropriate service
-        # Run in executor - CLIP encoding is CPU/GPU intensive
-        storage_type = "Supabase" if use_supabase else "ChromaDB"
-        print(f"Searching images for query: {query} (using {storage_type})")
+        print(f"Searching images for query: {query} (using Supabase pgvector)")
+        search_results = await _run_in_executor(
+            image_embedding_service.search_images,
+            video_hash,
+            query,
+            user_id,
+            n_results=n_results,
+            speaker_filter=speaker_filter,
+        )
 
-        if use_supabase:
-            search_results = await _run_in_executor(
-                image_embedding_service.search_images,
-                video_hash,
-                query,
-                n_results=n_results,
-                speaker_filter=speaker_filter
-            )
-        else:
-            search_results = await _run_in_executor(
-                vector_store.search_images,
-                video_hash,
-                query,
-                n_results=n_results,
-                speaker_filter=speaker_filter
-            )
-
-        # Format results (handle both Supabase and ChromaDB response formats)
         formatted_results = []
         for result in search_results:
             metadata = result['metadata']
-            # Supabase uses 'screenshot_url', ChromaDB uses 'screenshot_path'
-            screenshot = result.get('screenshot_url') or result.get('screenshot_path')
-            # Supabase uses 'similarity' (0-1), ChromaDB uses 'distance' (lower = better)
-            score = result.get('similarity') or result.get('distance')
+            screenshot = _owner_scoped_screenshot_url(
+                result.get('screenshot_url'),
+                video_hash,
+            )
+            if not screenshot:
+                continue
             formatted_results.append(
                 ImageSearchResult(
                     screenshot_path=screenshot,
@@ -4280,7 +4258,7 @@ async def search_video_images(request: Request, search_request: SearchImagesRequ
                     start=metadata['start'],
                     end=metadata['end'],
                     speaker=metadata['speaker'],
-                    distance=score
+                    similarity=result['similarity'],
                 )
             )
 

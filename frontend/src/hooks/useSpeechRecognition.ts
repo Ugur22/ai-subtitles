@@ -16,24 +16,63 @@ interface Options {
   onFinalTranscript?: (text: string) => void;
 }
 
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  [index: number]: { transcript: string };
+}
+
+interface SpeechRecognitionEventLike extends Event {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionErrorEventLike extends Event {
+  error: string;
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onaudiostart: (() => void) | null;
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+const SpeechRecognitionApi = typeof window !== 'undefined'
+  ? (window as Window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    }).SpeechRecognition
+    || (window as Window & { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition
+  : undefined;
+
 export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
-  const SR =
-    typeof window !== 'undefined'
-      ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      : undefined;
-  const isSupported = !!SR;
+  const isSupported = !!SpeechRecognitionApi;
 
   const [status, setStatus] = useState<Status>('idle');
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const recRef = useRef<any>(null);
+  const recRef = useRef<SpeechRecognitionLike | null>(null);
   const userStoppedRef = useRef(false);
   const onFinalRef = useRef(opts.onFinalTranscript);
   onFinalRef.current = opts.onFinalTranscript;
 
   useEffect(() => {
     if (!isSupported) return;
-    const rec = new SR();
+    if (!SpeechRecognitionApi) return;
+    const rec = new SpeechRecognitionApi();
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = opts.lang ?? 'en-US';
@@ -47,7 +86,7 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
     rec.onspeechstart = () => console.log('[speech] speechstart');
     rec.onspeechend = () => console.log('[speech] speechend');
 
-    rec.onresult = (e: any) => {
+    rec.onresult = (e: SpeechRecognitionEventLike) => {
       console.log('[speech] result event, results.length =', e.results.length);
       let interimText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -63,7 +102,7 @@ export function useSpeechRecognition(opts: Options = {}): UseSpeechRecognition {
       setInterim(interimText);
     };
 
-    rec.onerror = (e: any) => {
+    rec.onerror = (e: SpeechRecognitionErrorEventLike) => {
       console.warn('[speech] error:', e.error);
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         userStoppedRef.current = true;

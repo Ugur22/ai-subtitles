@@ -36,7 +36,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
     try {
       await onSave(inputValue);
       setInputValue('');
-    } catch (error) {
+    } catch {
       // Error handled by parent
     } finally {
       setIsSaving(false);
@@ -49,7 +49,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
     setIsDeleting(true);
     try {
       await onDelete();
-    } catch (error) {
+    } catch {
       // Error handled by parent
     } finally {
       setIsDeleting(false);
