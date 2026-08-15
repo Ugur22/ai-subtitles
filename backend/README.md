@@ -222,11 +222,6 @@ GCS_URL_EXPIRY=3600
 # ============================================
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_key
-
-# ============================================
-# VECTOR DATABASE
-# ============================================
-CHROMA_DB_PATH=./chroma_db
 ```
 
 ### 5. Get HuggingFace Token (Required for Speaker Diarization)
@@ -667,7 +662,6 @@ backend/
 │   └── time_utils.py              # Timestamp formatting
 │
 ├── llm_providers.py               # LLM abstraction (5 providers)
-├── vector_store.py                # ChromaDB wrapper for RAG
 ├── audio_analyzer.py              # PANNs integration
 ├── speaker_diarization.py         # Pyannote integration
 ├── speaker_recognition.py         # Voice biometrics
@@ -677,8 +671,6 @@ backend/
 │   ├── videos/                    # Uploaded videos
 │   ├── screenshots/               # Video screenshots
 │   └── subtitles/                 # Generated subtitles
-│
-└── chroma_db/                     # ChromaDB vector storage
 ```
 
 ## Model Information
