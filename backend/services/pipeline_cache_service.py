@@ -13,7 +13,7 @@ class PipelineCacheService:
     """Service for caching intermediate pipeline results in Supabase."""
 
     @staticmethod
-    def get_cached(video_hash: str, stage: str) -> Optional[Dict]:
+    def get_cached(user_id: str, video_hash: str, stage: str) -> Optional[Dict]:
         """
         Retrieve cached data for a pipeline stage.
 
@@ -29,6 +29,7 @@ class PipelineCacheService:
             response = (
                 client.table("pipeline_cache")
                 .select("data")
+                .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .eq("stage", stage)
                 .execute()
@@ -42,7 +43,7 @@ class PipelineCacheService:
             return None
 
     @staticmethod
-    def save_cache(video_hash: str, stage: str, data: Dict) -> bool:
+    def save_cache(user_id: str, video_hash: str, stage: str, data: Dict) -> bool:
         """
         Save intermediate result to cache. Uses upsert to handle re-runs.
 
@@ -58,11 +59,12 @@ class PipelineCacheService:
             client = supabase()
             client.table("pipeline_cache").upsert(
                 {
+                    "user_id": user_id,
                     "video_hash": video_hash,
                     "stage": stage,
                     "data": data,
                 },
-                on_conflict="video_hash,stage",
+                on_conflict="user_id,video_hash,stage",
             ).execute()
             print(f"[PipelineCache] Cached {stage} for video_hash={video_hash[:8]}...")
             return True
@@ -71,7 +73,7 @@ class PipelineCacheService:
             return False
 
     @staticmethod
-    def clear_cache(video_hash: str) -> int:
+    def clear_cache(user_id: str, video_hash: str) -> int:
         """
         Clear all cached stages for a video.
 
@@ -86,6 +88,7 @@ class PipelineCacheService:
             response = (
                 client.table("pipeline_cache")
                 .delete()
+                .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .execute()
             )

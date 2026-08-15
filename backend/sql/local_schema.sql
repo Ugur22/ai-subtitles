@@ -191,3 +191,18 @@ CREATE TABLE IF NOT EXISTS pipeline_cache (
     updated_at TEXT,
     UNIQUE(video_hash, stage)
 );
+
+-- Column names must match backend/sql/migrations/011_speaker_voiceprints.sql
+-- exactly: speaker_recognition.py issues the same .table() calls regardless
+-- of whether it's talking to Supabase or this local fake.
+CREATE TABLE IF NOT EXISTS speaker_voiceprints (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    speaker_name TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    samples_count INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT,
+    updated_at TEXT,
+    UNIQUE(user_id, speaker_name)
+);
+CREATE INDEX IF NOT EXISTS idx_speaker_voiceprints_user ON speaker_voiceprints(user_id);

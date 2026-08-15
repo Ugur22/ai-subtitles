@@ -7,7 +7,7 @@ import { useCallback } from "react";
 import { useJobTracker } from "../../../hooks/useJobTracker";
 import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
-import { Job } from "../../../types/job";
+import { Job, isActiveJobStatus } from "../../../types/job";
 import { deleteJobPermanent } from "../../../services/api";
 import toast from "react-hot-toast";
 
@@ -43,7 +43,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
     }
   }, [removeJob, refetch]);
 
-  const activeJobs = jobs.filter(j => j.status === "pending" || j.status === "processing");
+  const activeJobs = jobs.filter(j => isActiveJobStatus(j.status));
   const completedJobs = jobs.filter(j => j.status === "completed");
   const failedJobs = jobs.filter(j => j.status === "failed");
   const cancelledJobs = jobs.filter(j => j.status === "cancelled");
@@ -98,7 +98,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
             </h2>
             {!isLoading && jobs.length > 0 && (
               <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px', margin: 0 }}>
-                {jobs.length} {jobs.length === 1 ? 'transcript' : 'transcripts'}{activeJobs.length > 0 ? ` · ${activeJobs.length} processing` : ''}
+                {jobs.length} {jobs.length === 1 ? 'transcript' : 'transcripts'}{activeJobs.length > 0 ? ` · ${activeJobs.length} active` : ''}
               </p>
             )}
           </div>

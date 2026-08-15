@@ -36,6 +36,7 @@ _JSON_COLUMNS = {
     "image_face_presence": {"face_embedding", "bbox"},
     "face_tags": {"embedding"},
     "pipeline_cache": {"data"},
+    "speaker_voiceprints": {"embedding"},
 }
 
 # Columns that postgrest returns as true/false/null — SQLite stores 0/1
@@ -51,6 +52,7 @@ _UUID_DEFAULTS = {
     "invite_codes": ("id", "code"),
     "image_caption_sentences": ("id",),
     "user_usage_monthly": (),
+    "speaker_voiceprints": ("id",),
 }
 
 
@@ -465,6 +467,26 @@ class _RpcQuery:
                 scored.append(row)
         scored.sort(key=lambda r: r["similarity"], reverse=True)
         return scored[:match_limit]
+
+    def _rpc_search_speaker_voiceprints_by_embedding(self) -> List[Dict]:
+        p = self._params
+        query = p["query_embedding"]
+        user_id = p["p_user_id"]
+        match_count = int(p.get("match_count") or 1)
+
+        scored = []
+        rows = self._db.conn.execute(
+            "SELECT speaker_name, samples_count, embedding FROM speaker_voiceprints "
+            "WHERE user_id = ?",
+            [user_id],
+        ).fetchall()
+        for row in rows:
+            row = dict(row)
+            embedding = json.loads(row.pop("embedding"))
+            row["similarity"] = _cosine(query, embedding)
+            scored.append(row)
+        scored.sort(key=lambda r: r["similarity"], reverse=True)
+        return scored[:match_count]
 
     def _rpc_search_images_by_caption_embedding(self) -> List[Dict]:
         p = self._params

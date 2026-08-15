@@ -29,10 +29,6 @@ _whisper_model: Optional[WhisperModel] = None
 _speaker_diarizer: Optional['SpeakerDiarizer'] = None
 _audio_analyzer: Optional['AudioAnalyzer'] = None
 
-# Global variable to store the last transcription
-_last_transcription_data = None
-
-
 def get_whisper_model() -> WhisperModel:
     """Get or initialize the faster-whisper model (singleton)"""
     global _whisper_model

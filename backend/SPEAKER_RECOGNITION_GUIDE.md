@@ -111,7 +111,7 @@ Response:
 
 #### 4. Auto-Identify All Speakers in a Video
 ```bash
-curl -X POST "http://localhost:8000/api/transcription/abc123/auto_identify_speakers?threshold=0.7"
+curl -X POST "http://localhost:8000/api/speaker/transcription/abc123/auto_identify_speakers?threshold=0.7"
 ```
 
 Response:
@@ -188,7 +188,7 @@ curl -X POST "http://localhost:8000/api/speaker/enroll" \
 # Upload Episode 2
 # After transcription completes, auto-identify
 
-curl -X POST "http://localhost:8000/api/transcription/episode2_hash/auto_identify_speakers?threshold=0.7"
+curl -X POST "http://localhost:8000/api/speaker/transcription/episode2_hash/auto_identify_speakers?threshold=0.7"
 ```
 
 Result: All segments automatically labeled as "John" or "Anna"!
@@ -366,7 +366,7 @@ You can build a UI for this! Example features:
    - Calls `/api/speaker/enroll`
 
 2. **Auto-Identify Button** - "Auto-identify speakers"
-   - Calls `/api/transcription/{hash}/auto_identify_speakers`
+   - Calls `/api/speaker/transcription/{hash}/auto_identify_speakers`
    - Shows progress/results
 
 3. **Speaker Management** - View/delete enrolled speakers
