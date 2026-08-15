@@ -2,6 +2,8 @@
 Time and timestamp formatting utilities
 """
 
+from typing import Dict, List
+
 
 def format_timestamp(seconds: float) -> str:
     """Convert seconds to HH:MM:SS.mmm format with millisecond precision"""
@@ -15,6 +17,39 @@ def format_timestamp(seconds: float) -> str:
 
     # Return format with milliseconds for better subtitle sync
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
+
+
+def fix_segment_durations(
+    segments: List[Dict],
+    max_duration_per_word: float = 2.0,
+    min_duration: float = 0.5,
+    max_segment_duration: float = 30.0,
+) -> List[Dict]:
+    """Clamp implausibly long speech segments while preserving silent gaps."""
+    fixed_count = 0
+    for segment in segments:
+        if segment.get("is_silent", False):
+            continue
+
+        text = segment.get("text", "").strip()
+        word_count = len(text.split()) if text else 1
+        start = segment.get("start", 0)
+        end = segment.get("end", 0)
+        duration = end - start
+        expected_max = min(
+            max(min_duration, word_count * max_duration_per_word),
+            max_segment_duration,
+        )
+
+        if duration > expected_max * 3:
+            new_end = start + expected_max
+            segment["end"] = new_end
+            segment["end_time"] = format_timestamp(new_end)
+            fixed_count += 1
+
+    if fixed_count:
+        print(f"Fixed {fixed_count} segments with unreasonably long durations")
+    return segments
 
 
 def format_srt_timestamp(seconds: float) -> str:

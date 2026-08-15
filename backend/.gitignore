@@ -16,7 +16,6 @@ build/
 *.db
 *.db-shm
 *.db-wal
-chroma_db/
 
 # LOCAL_MODE state: SQLite DB, uploads, worker logs, BYOK encryption key
 local_data/

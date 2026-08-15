@@ -9,14 +9,10 @@ import shutil
 import time
 import traceback
 import threading
-import hashlib
 import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import HTTPException
-
-from .usage_meter import record_transcription
 
 # Single worker executor for CPU/GPU-bound tasks
 # This prevents blocking the event loop while allowing other requests (auth, status) to be served
@@ -61,8 +57,7 @@ def _compute_dense_timestamps(
 from config import settings
 from services.job_queue_service import JobQueueService
 from services.supabase_service import supabase
-from middleware.quota import check_can_transcribe
-from services.gcs_service import gcs_service
+from services.media_storage import get_media_storage
 from services.audio_service import AudioService
 from services.speaker_service import SpeakerService
 from services.subtitle_service import SubtitleService
@@ -72,7 +67,7 @@ from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
-from routers.transcription import create_silent_segments_for_gaps, extract_silent_segment_screenshots
+from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer
 from services.audio_analysis_service import AudioAnalysisService
 from services.pipeline_cache_service import PipelineCacheService
@@ -89,8 +84,12 @@ class JobCancelled(Exception):
 def _check_cancelled(job_id: str) -> None:
     """Re-fetch the job and raise JobCancelled if the user/admin cancelled it. Cheap (single Supabase row read) — call between pipeline stages, not inside hot loops."""
     job = JobQueueService.get_job(job_id)
-    if job and job.get("status") == "cancelled":
-        raise JobCancelled(f"Job {job_id} was cancelled")
+    if not job:
+        raise JobCancelled(f"Job {job_id} no longer exists")
+    if job.get("status") != "processing":
+        raise JobCancelled(
+            f"Job {job_id} is no longer processing (status: {job.get('status')})"
+        )
 
 
 class HeartbeatThread(threading.Thread):
@@ -252,11 +251,23 @@ class BackgroundWorker:
         probed_duration_seconds = None  # real duration from ffprobe (quota + usage)
 
         try:
+            media_storage = get_media_storage()
+            await _run_in_executor(
+                JobQueueService.drain_media_deletions_best_effort,
+                storage=media_storage,
+                limit=10,
+            )
             # Get job
             job = JobQueueService.get_job(job_id)
             if not job:
                 print(f"[Worker] Job {job_id} not found")
                 return False
+
+            if job.get("status") == "finalizing":
+                heartbeat_thread = HeartbeatThread(job_id)
+                heartbeat_thread.start()
+                self._heartbeat_threads[job_id] = heartbeat_thread
+                return await self._resume_finalization(job, media_storage)
 
             # Verify pending status
             if job["status"] != "pending":
@@ -264,7 +275,9 @@ class BackgroundWorker:
                 return False
 
             # Mark as processing
-            JobQueueService.mark_processing(job_id)
+            if not JobQueueService.mark_processing(job_id):
+                print(f"[Worker] Job {job_id} could not be claimed")
+                return False
 
             # Start heartbeat thread (runs independently of asyncio event loop)
             # This ensures heartbeats continue even when event loop is blocked by heavy processing
@@ -277,6 +290,8 @@ class BackgroundWorker:
             gcs_path = job["gcs_path"]
             file_size_bytes = job["file_size_bytes"]
             user_id = job.get("user_id")  # For RLS policy compliance
+            if not user_id:
+                raise RuntimeError("Job has no owner; refusing unscoped processing")
             params = job.get("params", {})
 
             num_speakers = params.get("num_speakers")
@@ -288,11 +303,11 @@ class BackgroundWorker:
             print(f"[Worker] Processing job {job_id}: {filename} ({file_size_bytes / (1024*1024):.1f} MB)")
 
             # Calculate video hash early — used for caching, screenshots, and final result
-            video_hash = hashlib.md5(gcs_path.encode()).hexdigest()
+            video_hash = job["video_hash"]
 
             # Check what's already cached to decide what we need to download/process
-            cached_transcription = PipelineCacheService.get_cached(video_hash, "transcription")
-            cached_diarization = PipelineCacheService.get_cached(video_hash, "diarization")
+            cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, "transcription")
+            cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
 
             # Build a diarization param hash so cache is invalidated when speaker settings change
             diarization_param_key = f"{num_speakers}_{min_speakers}_{max_speakers}"
@@ -302,7 +317,7 @@ class BackgroundWorker:
 
             suffix = os.path.splitext(filename)[1].lower()
             is_video_format = suffix in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}
-            cached_screenshots = PipelineCacheService.get_cached(video_hash, "screenshots") if is_video_format else None
+            cached_screenshots = PipelineCacheService.get_cached(user_id, video_hash, "screenshots") if is_video_format else None
 
             # Determine if we need audio files at all
             need_audio = not cached_transcription or (not cached_diarization and settings.ENABLE_SPEAKER_DIARIZATION)
@@ -311,60 +326,61 @@ class BackgroundWorker:
             full_audio_path = None
             read_url = None
 
+            # Always materialize, hash, probe, and reserve against the actual
+            # media before consulting cached stages. Client metadata is advisory.
+            _check_cancelled(job_id)
+            if not media_storage.file_exists(gcs_path):
+                raise Exception("Video file not found in media storage")
+            temp_video_path = await _run_in_executor(media_storage.download_to_temp, gcs_path)
+            temp_files.append(temp_video_path)
+            actual_hash = generate_file_hash(temp_video_path)
+            if actual_hash != video_hash:
+                raise ValueError("Uploaded content hash does not match job identity")
+            try:
+                probed = AudioService.get_audio_duration(temp_video_path)
+                probed_duration_seconds = int(round(probed)) if probed else None
+            except Exception as e:
+                raise RuntimeError("Could not determine media duration for quota enforcement") from e
+            if probed_duration_seconds is None or probed_duration_seconds <= 0:
+                raise RuntimeError("Could not determine media duration for quota enforcement")
+            try:
+                profile = (
+                    supabase().table("user_profiles")
+                    .select("id, is_admin, subscription_plan")
+                    .eq("id", user_id).single().execute()
+                ).data
+            except Exception as e:
+                raise RuntimeError("Could not load owner profile for quota enforcement") from e
+            if not profile:
+                raise RuntimeError("Could not load owner profile for quota enforcement")
+            from middleware.quota import _get_plan_limits
+            limits = _get_plan_limits(profile)
+            file_cap = limits["max_file_duration_seconds"]
+            if file_cap is not None and probed_duration_seconds > file_cap:
+                JobQueueService.mark_failed(
+                    job_id, "This file exceeds your plan's per-file duration limit.", "quota_exceeded"
+                )
+                return False
+            reserved = supabase().rpc("adjust_job_quota_reservation", {
+                "p_job_id": job_id,
+                "p_user_id": user_id,
+                "p_actual_seconds": probed_duration_seconds,
+                "p_monthly_limit_seconds": limits["monthly_transcription_seconds"],
+            }).execute()
+            if reserved.data is not True:
+                JobQueueService.mark_failed(
+                    job_id, "This transcription would exceed your monthly quota.", "quota_exceeded"
+                )
+                return False
+
             if need_audio or is_video_format:
-                # Step 1: Download from GCS (0-10%)
+                # Step 1: Materialize media locally (0-10%)
                 _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 5, "downloading", "Downloading video from cloud storage...")
 
-                if not gcs_service.file_exists(gcs_path):
-                    raise Exception("Video file not found in cloud storage")
-
-                # Generate signed URL for screenshot extraction later
-                read_url = gcs_service.generate_download_signed_url(gcs_path)
-                print(f"[Worker] Generated read URL for streaming: {gcs_path}")
+                read_url = temp_video_path
 
                 if need_audio:
-                    # Download video to local temp file for reliable FFmpeg extraction
-                    temp_video_path = await _run_in_executor(
-                        gcs_service.download_to_temp, gcs_path
-                    )
-                    temp_files.append(temp_video_path)
-                    print(f"[Worker] Downloaded video to {temp_video_path}")
-
-                    # Authoritative quota enforcement: probe the real duration and
-                    # reject over-limit jobs BEFORE the expensive transcription.
-                    # (The submit-time check uses a client-reported duration, which
-                    # could be spoofed; this re-check can't be.)
-                    try:
-                        probed = AudioService.get_audio_duration(temp_video_path)
-                        probed_duration_seconds = int(round(probed)) if probed else None
-                    except Exception as e:
-                        probed_duration_seconds = None
-                        print(f"[Worker] Could not probe duration for {job_id}: {e}")
-
-                    if probed_duration_seconds and user_id:
-                        try:
-                            profile = (
-                                supabase()
-                                .table("user_profiles")
-                                .select("id, is_admin, subscription_plan")
-                                .eq("id", user_id)
-                                .single()
-                                .execute()
-                            ).data
-                        except Exception as e:
-                            profile = None
-                            print(f"[Worker] Could not load profile for quota check ({user_id}): {e}")
-
-                        try:
-                            check_can_transcribe(profile, file_duration_seconds=probed_duration_seconds)
-                        except HTTPException as quota_error:
-                            detail = quota_error.detail
-                            msg = detail.get("message") if isinstance(detail, dict) else str(detail)
-                            print(f"[Worker] Job {job_id} blocked by quota: {msg}")
-                            JobQueueService.mark_failed(job_id, msg, "quota_exceeded")
-                            return False
-
                     JobQueueService.update_progress(job_id, 10, "downloading", "Download complete")
 
                     # Step 2: Extract audio from local file (10-30%)
@@ -385,8 +401,8 @@ class BackgroundWorker:
                         temp_files.extend(audio_chunks)
                         print(f"[Worker] Extracted {len(audio_chunks)} audio chunks")
 
-                        # Delete video immediately to free disk space
-                        if os.path.exists(temp_video_path):
+                        # Audio-only inputs no longer need the materialized source.
+                        if not is_video_format and os.path.exists(temp_video_path):
                             os.unlink(temp_video_path)
                             temp_files.remove(temp_video_path)
                             print(f"[Worker] Deleted temp video to free disk space")
@@ -526,7 +542,7 @@ class BackgroundWorker:
                 normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
                 # Cache transcription results
-                PipelineCacheService.save_cache(video_hash, "transcription", {
+                PipelineCacheService.save_cache(user_id, video_hash, "transcription", {
                     "formatted_segments": formatted_segments,
                     "detected_language": detected_language,
                     "normalized_lang": normalized_lang,
@@ -610,7 +626,7 @@ class BackgroundWorker:
 
                     # Cache diarization results
                     if speaker_segments is not None:
-                        PipelineCacheService.save_cache(video_hash, "diarization", {
+                        PipelineCacheService.save_cache(user_id, video_hash, "diarization", {
                             "speaker_segments": speaker_segments,
                             "param_key": diarization_param_key,
                         })
@@ -667,8 +683,8 @@ class BackgroundWorker:
                     try:
                         JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
 
-                        screenshots_dir = os.path.join("static", "screenshots")
-                        os.makedirs(screenshots_dir, exist_ok=True)
+                        screenshots_dir = tempfile.mkdtemp(prefix="ai-subs-screenshots-")
+                        temp_dirs.append(screenshots_dir)
 
                         timestamps = [seg['start'] for seg in formatted_segments]
 
@@ -697,52 +713,33 @@ class BackgroundWorker:
                         log_all_memory("Worker:AfterScreenshotExtraction")
                         JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
 
-                        if settings.ENABLE_GCS_UPLOADS:
-                            print(f"[Worker] Uploading {len(screenshot_results)} screenshots to GCS...")
-                            log_all_memory("Worker:BeforeGCSUpload")
+                        log_all_memory("Worker:BeforeMediaUpload")
+                        screenshot_urls = media_storage.upload_screenshots_batch(
+                            screenshot_paths=screenshot_results,
+                            video_hash=video_hash,
+                            user_id=user_id,
+                        )
+                        screenshot_count = 0
+                        screenshot_url_map = {}
+                        for seg in formatted_segments:
+                            ts = seg['start']
+                            screenshot_url = screenshot_urls.get(ts)
+                            if screenshot_url:
+                                seg['screenshot_url'] = screenshot_url
+                                screenshot_url_map[str(ts)] = screenshot_url
+                                screenshot_count += 1
+                            else:
+                                seg['screenshot_url'] = None
 
-                            gcs_urls = gcs_service.upload_screenshots_batch(
-                                screenshot_paths=screenshot_results,
-                                video_hash=video_hash
-                            )
+                        print(f"[Worker] Stored {screenshot_count}/{len(formatted_segments)} screenshots")
+                        log_all_memory("Worker:AfterMediaUpload")
 
-                            screenshot_count = 0
-                            screenshot_url_map = {}
-                            for seg in formatted_segments:
-                                ts = seg['start']
-                                gcs_url = gcs_urls.get(ts)
-                                if gcs_url:
-                                    seg['screenshot_url'] = gcs_url
-                                    screenshot_url_map[str(ts)] = gcs_url
-                                    screenshot_count += 1
-                                else:
-                                    seg['screenshot_url'] = None
-
-                            print(f"[Worker] Uploaded {screenshot_count}/{len(formatted_segments)} screenshots to GCS")
-                            log_all_memory("Worker:AfterGCSUpload")
-
-                            for local_path in screenshot_results.values():
-                                if local_path and os.path.exists(local_path):
-                                    try:
-                                        os.unlink(local_path)
-                                    except Exception:
-                                        pass
-                        else:
-                            screenshot_count = 0
-                            screenshot_url_map = {}
-                            for seg in formatted_segments:
-                                ts = seg['start']
-                                screenshot_path = screenshot_results.get(ts)
-                                if screenshot_path and os.path.exists(screenshot_path):
-                                    screenshot_filename = os.path.basename(screenshot_path)
-                                    url = f"/static/screenshots/{screenshot_filename}"
-                                    seg['screenshot_url'] = url
-                                    screenshot_url_map[str(ts)] = url
-                                    screenshot_count += 1
-                                else:
-                                    seg['screenshot_url'] = None
-
-                            print(f"[Worker] Extracted {screenshot_count}/{len(formatted_segments)} screenshots (local)")
+                        for local_path in screenshot_results.values():
+                            if local_path and os.path.exists(local_path):
+                                try:
+                                    os.unlink(local_path)
+                                except Exception:
+                                    pass
 
                         JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
 
@@ -795,37 +792,26 @@ class BackgroundWorker:
                             )
 
                             silent_screenshot_count = 0
-                            if settings.ENABLE_GCS_UPLOADS:
-                                print(f"[Worker] Uploading {len(silent_screenshot_results)} silent screenshots to GCS...")
+                            screenshot_urls = media_storage.upload_screenshots_batch(
+                                screenshot_paths=silent_screenshot_results,
+                                video_hash=video_hash,
+                                user_id=user_id,
+                            )
 
-                                gcs_urls = gcs_service.upload_screenshots_batch(
-                                    screenshot_paths=silent_screenshot_results,
-                                    video_hash=video_hash
-                                )
+                            for seg in silent_segs:
+                                ts = seg['screenshot_timestamp']
+                                screenshot_url = screenshot_urls.get(ts)
+                                if screenshot_url:
+                                    seg['screenshot_url'] = screenshot_url
+                                    screenshot_url_map[str(ts)] = screenshot_url
+                                    silent_screenshot_count += 1
 
-                                for seg in silent_segs:
-                                    ts = seg['screenshot_timestamp']
-                                    gcs_url = gcs_urls.get(ts)
-                                    if gcs_url:
-                                        seg['screenshot_url'] = gcs_url
-                                        screenshot_url_map[str(ts)] = gcs_url
-                                        silent_screenshot_count += 1
-
-                                for local_path in silent_screenshot_results.values():
-                                    if local_path and os.path.exists(local_path):
-                                        try:
-                                            os.unlink(local_path)
-                                        except Exception:
-                                            pass
-                            else:
-                                for seg in silent_segs:
-                                    ts = seg['screenshot_timestamp']
-                                    path = silent_screenshot_results.get(ts)
-                                    if path and os.path.exists(path):
-                                        url = f"/static/screenshots/{os.path.basename(path)}"
-                                        seg['screenshot_url'] = url
-                                        screenshot_url_map[str(ts)] = url
-                                        silent_screenshot_count += 1
+                            for local_path in silent_screenshot_results.values():
+                                if local_path and os.path.exists(local_path):
+                                    try:
+                                        os.unlink(local_path)
+                                    except Exception:
+                                        pass
 
                             print(f"[Worker] Extracted {silent_screenshot_count}/{len(silent_segs)} silent screenshots")
                             log_all_memory("Worker:AfterSilentGCSUpload")
@@ -833,7 +819,7 @@ class BackgroundWorker:
 
                         # Cache screenshot URLs
                         if screenshot_url_map:
-                            PipelineCacheService.save_cache(video_hash, "screenshots", {
+                            PipelineCacheService.save_cache(user_id, video_hash, "screenshots", {
                                 "segment_screenshot_urls": screenshot_url_map,
                             })
 
@@ -841,7 +827,7 @@ class BackgroundWorker:
                         # low-dialogue scenes are searchable. Kept in a separate list —
                         # dense segments are index-only and must never reach result_json.
                         dense_segments = []
-                        if settings.ENABLE_GCS_UPLOADS and settings.DENSE_FRAME_INTERVAL_SECONDS > 0 and read_url:
+                        if settings.DENSE_FRAME_INTERVAL_SECONDS > 0 and read_url:
                             try:
                                 duration = probed_duration_seconds or (
                                     formatted_segments[-1]['end'] if formatted_segments else 0
@@ -871,9 +857,10 @@ class BackgroundWorker:
                                         video_hash=video_hash,
                                         max_workers=4
                                     )
-                                    dense_urls = gcs_service.upload_screenshots_batch(
+                                    dense_urls = media_storage.upload_screenshots_batch(
                                         screenshot_paths=dense_results,
-                                        video_hash=video_hash
+                                        video_hash=video_hash,
+                                        user_id=user_id,
                                     )
                                     for ts in dense_ts:
                                         url = dense_urls.get(ts)
@@ -895,8 +882,8 @@ class BackgroundWorker:
                             except Exception as e:
                                 print(f"[Worker] Dense frame sampling failed (non-critical): {e}")
 
-                        # Auto-index images into Supabase pgvector if GCS uploads are enabled
-                        if settings.ENABLE_GCS_UPLOADS and screenshot_count > 0:
+                        # Auto-index images into Supabase pgvector in either explicit storage mode.
+                        if screenshot_count > 0:
                             caption_segments = []
                             try:
                                 from services.image_embedding_service import image_embedding_service
@@ -1031,17 +1018,11 @@ class BackgroundWorker:
             # Step 6: Finalize results (90-95%)
             JobQueueService.update_progress(job_id, 95, "processing", "Finalizing results...")
 
-            # Move the source video from uploads/ to processed/ so it lives under the
-            # 30-day processed retention instead of being treated as an unprocessed
-            # orphan. Best-effort: if the move fails the original path still works
-            # (the upload sweep is also 30 days now), so we never block completion.
-            final_gcs_path = gcs_path
-            if settings.ENABLE_GCS_UPLOADS and gcs_path and gcs_path.startswith(settings.GCS_UPLOAD_PREFIX):
-                try:
-                    final_gcs_path = gcs_service.move_to_processed(gcs_path)
-                except Exception as move_err:
-                    print(f"[Worker] Failed to move video to processed/ (keeping {gcs_path}): {move_err}")
-                    final_gcs_path = gcs_path
+            # Persist the finalization payload before touching media. The source
+            # remains readable until settlement atomically switches metadata and
+            # enqueues source cleanup.
+            _check_cancelled(job_id)
+            final_gcs_path = media_storage.processed_key(gcs_path)
 
             # Build result JSON
             result_json = {
@@ -1069,21 +1050,32 @@ class BackgroundWorker:
 
             gpu_seconds = round(time.monotonic() - gpu_start_ts, 2)
 
-            # Step 7: Mark completed (95-100%)
-            JobQueueService.mark_completed(
+            if not JobQueueService.begin_finalization(
                 job_id=job_id,
+                user_id=user_id,
                 video_hash=video_hash,
                 result_json=result_json,
                 result_srt=srt_content,
                 result_vtt=vtt_content,
                 video_duration_seconds=video_duration_seconds,
                 gpu_seconds=gpu_seconds,
-                gcs_path=final_gcs_path,
-            )
+                final_media_key=final_gcs_path,
+            ):
+                _check_cancelled(job_id)
+                raise RuntimeError("Failed to begin durable job finalization")
 
-            # Roll into the user's monthly usage (best-effort; never blocks)
-            if video_duration_seconds:
-                record_transcription(user_id, video_duration_seconds)
+            copied_key = await _run_in_executor(
+                media_storage.copy_to_processed, gcs_path
+            )
+            if copied_key != final_gcs_path:
+                raise RuntimeError("Media finalization produced an unexpected key")
+            if not JobQueueService.settle_finalization(job_id, user_id):
+                raise RuntimeError("Failed to atomically settle finalizing job")
+            await _run_in_executor(
+                JobQueueService.drain_media_deletions_best_effort,
+                storage=media_storage,
+                limit=10,
+            )
 
             print(f"[Worker] Job {job_id} completed: {video_duration_seconds}s video, {gpu_seconds}s GPU")
             return True
@@ -1146,6 +1138,32 @@ class BackgroundWorker:
                         print(f"[Worker] Cleaned up temp directory: {temp_dir}")
                 except Exception as e:
                     print(f"[Worker] Failed to cleanup temp directory {temp_dir}: {e}")
+
+    async def _resume_finalization(self, job: Dict, media_storage) -> bool:
+        """Resume the copy-and-settle tail without rerunning transcription."""
+        job_id = job["id"]
+        user_id = job.get("user_id")
+        source_key = job.get("gcs_path")
+        final_key = job.get("final_media_key")
+        if not user_id or not source_key or not final_key:
+            raise RuntimeError("Finalizing job is missing persisted media identity")
+        copied_key = await _run_in_executor(
+            media_storage.copy_to_processed, source_key
+        )
+        if copied_key != final_key:
+            raise RuntimeError("Recovered media copy produced an unexpected key")
+        if JobQueueService.settle_finalization(job_id, user_id):
+            await _run_in_executor(
+                JobQueueService.drain_media_deletions_best_effort,
+                storage=media_storage,
+                limit=10,
+            )
+            print(f"[Worker] Recovered finalization for job {job_id}")
+            return True
+        latest = JobQueueService.get_job(job_id)
+        if latest and latest.get("status") == "completed":
+            return True
+        raise RuntimeError("Failed to settle recovered finalization")
 
     def _generate_vtt(self, segments: list, use_translation: bool = False) -> str:
         """

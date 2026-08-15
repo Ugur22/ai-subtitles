@@ -6,10 +6,11 @@ import tempfile
 from typing import Dict
 from fastapi import APIRouter, HTTPException, UploadFile, Form, Request
 
-from database import store_transcription
-from routers.transcription import get_transcription_from_any_source
-from dependencies import _last_transcription_data
 from middleware.auth import require_auth
+from services.transcription_access import (
+    authenticated_user_id,
+)
+from services.transcription_repository import transcription_repository
 from models import (
     EnrollSpeakerResponse,
     ListSpeakersResponse,
@@ -48,6 +49,7 @@ async def enroll_speaker_endpoint(
     - video_hash + start/end time: Use segment from existing video
     """
     try:
+        user_id = authenticated_user_id(request)
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
 
@@ -60,7 +62,7 @@ async def enroll_speaker_endpoint(
                 audio_path = tmp.name
         elif video_hash:
             # Get video from existing transcription
-            transcription = get_transcription_from_any_source(video_hash)
+            transcription = transcription_repository.get_transcription(video_hash, user_id)
             if not transcription or 'file_path' not in transcription:
                 raise HTTPException(status_code=404, detail="Video not found")
             audio_path = transcription['file_path']
@@ -72,6 +74,7 @@ async def enroll_speaker_endpoint(
 
         # Enroll the speaker
         success = sr_system.enroll_speaker(
+            user_id,
             speaker_name,
             audio_path,
             start_time,
@@ -86,7 +89,7 @@ async def enroll_speaker_endpoint(
             return EnrollSpeakerResponse(
                 success=True,
                 message=f"Successfully enrolled speaker: {speaker_name}",
-                speaker_info=sr_system.get_speaker_info(speaker_name)
+                speaker_info=sr_system.get_speaker_info(user_id, speaker_name)
             )
         else:
             raise HTTPException(status_code=500, detail="Enrollment failed")
@@ -113,11 +116,12 @@ async def enroll_speaker_endpoint(
 async def list_speakers(request: Request) -> ListSpeakersResponse:
     """Get list of all enrolled speakers"""
     try:
+        user_id = authenticated_user_id(request)
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
 
-        speakers = sr_system.list_speakers()
-        speaker_info = [sr_system.get_speaker_info(name) for name in speakers]
+        speakers = sr_system.list_speakers(user_id)
+        speaker_info = [sr_system.get_speaker_info(user_id, name) for name in speakers]
 
         return ListSpeakersResponse(
             speakers=speaker_info,
@@ -151,6 +155,7 @@ async def identify_speaker_endpoint(
     Identify a speaker from audio segment
     """
     try:
+        user_id = authenticated_user_id(request)
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
 
@@ -161,7 +166,7 @@ async def identify_speaker_endpoint(
                 tmp.write(content)
                 audio_path = tmp.name
         elif video_hash:
-            transcription = get_transcription_from_any_source(video_hash)
+            transcription = transcription_repository.get_transcription(video_hash, user_id)
             if not transcription or 'file_path' not in transcription:
                 raise HTTPException(status_code=404, detail="Video not found")
             audio_path = transcription['file_path']
@@ -173,6 +178,7 @@ async def identify_speaker_endpoint(
 
         # Identify speaker
         speaker_name, confidence = sr_system.identify_speaker(
+            user_id,
             audio_path,
             start_time,
             end_time,
@@ -209,10 +215,11 @@ async def identify_speaker_endpoint(
 async def delete_speaker(request: Request, speaker_name: str) -> SuccessResponse:
     """Remove a speaker from the database"""
     try:
+        user_id = authenticated_user_id(request)
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
 
-        success = sr_system.remove_speaker(speaker_name)
+        success = sr_system.remove_speaker(user_id, speaker_name)
 
         if success:
             return SuccessResponse(
@@ -245,15 +252,16 @@ async def auto_identify_speakers(request: Request, video_hash: str, threshold: f
     Automatically identify speakers in a transcription using enrolled voice prints
     """
     try:
+        user_id = authenticated_user_id(request)
         from speaker_recognition import get_speaker_recognition_system
         sr_system = get_speaker_recognition_system()
 
         # Get transcription
-        transcription = get_transcription_from_any_source(video_hash)
+        transcription = transcription_repository.get_transcription(video_hash, user_id)
         if not transcription:
             raise HTTPException(status_code=404, detail="Transcription not found")
 
-        if not sr_system.list_speakers():
+        if not sr_system.list_speakers(user_id):
             raise HTTPException(
                 status_code=400,
                 detail="No speakers enrolled. Please enroll speakers first."
@@ -275,6 +283,7 @@ async def auto_identify_speakers(request: Request, video_hash: str, threshold: f
 
             # Identify speaker for this segment
             speaker_name, confidence = sr_system.identify_speaker(
+                user_id,
                 video_path,
                 start,
                 end,
@@ -296,12 +305,8 @@ async def auto_identify_speakers(request: Request, video_hash: str, threshold: f
         transcription['transcription']['segments'] = updated_segments
 
         # Save to database
-        store_transcription(
-            video_hash,
-            transcription.get('filename', 'unknown'),
-            transcription,
-            video_path
-        )
+        if not transcription_repository.update_transcription(video_hash, user_id, transcription):
+            raise HTTPException(status_code=404, detail="Transcription not found")
 
         return {
             "success": True,
@@ -334,6 +339,7 @@ async def auto_identify_speakers(request: Request, video_hash: str, threshold: f
 async def update_speaker_name(request: Request, video_hash: str) -> Dict:
     """Update a speaker's name in a transcription"""
     try:
+        user_id = authenticated_user_id(request)
         body = await request.json()
         original_speaker = body.get("original_speaker")
         new_speaker_name = body.get("new_speaker_name")
@@ -342,7 +348,7 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             raise HTTPException(status_code=400, detail="Missing original_speaker or new_speaker_name")
 
         # Get existing transcription
-        transcription_data = get_transcription_from_any_source(video_hash)
+        transcription_data = transcription_repository.get_transcription(video_hash, user_id)
         if not transcription_data:
             raise HTTPException(status_code=404, detail="Transcription not found")
 
@@ -365,23 +371,21 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             }
 
         # Save back to database
-        filename = transcription_data.get("filename", "unknown")
-        file_path = transcription_data.get("file_path")
-
-        success = store_transcription(video_hash, filename, transcription_data, file_path)
+        success = transcription_repository.update_transcription(video_hash, user_id, transcription_data)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to save updates to database")
 
         # Update vector store metadata for RAG/chat
-        vector_store_updates = {"text_updated": 0, "images_updated": 0}
+        vector_store_updates = {"text_updated": 0, "audio_updated": 0}
         try:
-            from vector_store import vector_store
+            from services.transcript_embedding_service import transcript_embedding_service
 
-            # Only update if the collection exists (video has been indexed)
-            if vector_store.collection_exists(video_hash):
+            # Only update if transcript chunks exist (video has been indexed)
+            if transcript_embedding_service.transcript_chunks_exist(video_hash, user_id):
                 print(f"Updating vector store speaker metadata from '{original_speaker}' to '{new_speaker_name}'...")
-                vector_store_updates = vector_store.update_speaker_name(
+                vector_store_updates = transcript_embedding_service.update_speaker_name(
                     video_hash,
+                    user_id,
                     original_speaker,
                     new_speaker_name
                 )
@@ -397,24 +401,17 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             from services.supabase_service import supabase
             client = supabase()
 
-            # Find the job for this video_hash
-            job_response = (
-                client.table("jobs")
-                .select("id")
-                .eq("video_hash", video_hash)
-                .eq("status", "completed")
-                .limit(1)
-                .execute()
-            )
+            job = transcription_repository.get_job(video_hash, user_id)
 
-            if job_response.data and len(job_response.data) > 0:
-                job_id = job_response.data[0]["id"]
+            if job:
+                job_id = job["id"]
 
                 # Update result_json with new speaker names
                 update_response = (
                     client.table("jobs")
                     .update({"result_json": transcription_data})
                     .eq("id", job_id)
+                    .eq("user_id", user_id)
                     .execute()
                 )
                 print(f"[Speaker] Updated job {job_id} in Supabase with new speaker name")
@@ -422,13 +419,12 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             # Don't fail the whole operation if Supabase update fails
             print(f"[Speaker] Warning: Could not update Supabase jobs table: {e}")
 
-        # Also update face_tags speaker names
         try:
             from services.supabase_service import supabase
             face_client = supabase()
             face_update = face_client.table("face_tags").update(
                 {"speaker_name": new_speaker_name}
-            ).eq("video_hash", video_hash).eq(
+            ).eq("user_id", user_id).eq("video_hash", video_hash).eq(
                 "speaker_name", original_speaker
             ).execute()
             face_count = len(face_update.data) if face_update.data else 0
@@ -445,7 +441,7 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
             image_client = supabase()
             image_update = image_client.table("image_embeddings").update(
                 {"speaker": new_speaker_name}
-            ).eq("video_hash", video_hash).eq(
+            ).eq("user_id", user_id).eq("video_hash", video_hash).eq(
                 "speaker", original_speaker
             ).execute()
             image_count = len(image_update.data) if image_update.data else 0
@@ -456,13 +452,6 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
                 )
         except Exception as e:
             print(f"[Speaker] Warning: Could not update image_embeddings: {e}")
-
-        # Update global cache if it matches
-        global _last_transcription_data
-        if _last_transcription_data and _last_transcription_data.get("video_hash") == video_hash:
-            import dependencies
-            dependencies._last_transcription_data = transcription_data
-            request.app.state.last_transcription = transcription_data
 
         return {
             "success": True,

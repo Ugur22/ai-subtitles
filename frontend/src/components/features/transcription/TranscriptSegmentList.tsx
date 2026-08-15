@@ -26,20 +26,22 @@ interface TranscriptSegmentListProps {
   setEditSpeakerName: (name: string) => void;
   handleSpeakerRename: (speaker: string) => void;
   isRenamingSpeaker: boolean;
-  getSpeakerColor: (speaker: string) => { bg: string; text: string; border: string };
   formatSpeakerLabel: (speaker: string) => string;
   onEnrollSpeaker?: (segment: Segment) => void;
+}
+
+interface AnimatedSegmentProps {
+  segment: Segment;
+  isActive: boolean;
+  onClick?: () => void;
+  children?: React.ReactNode;
 }
 
 const AnimatedSegment = ({
   segment,
   isActive,
   ...props
-}: {
-  segment: Segment;
-  isActive: boolean;
-  [key: string]: any;
-}) => {
+}: AnimatedSegmentProps) => {
   const isSilent = segment.is_silent;
 
   // Only animate transform — colors handled via CSS vars
@@ -111,7 +113,6 @@ export const TranscriptSegmentList: React.FC<TranscriptSegmentListProps> =
       setEditSpeakerName,
       handleSpeakerRename,
       isRenamingSpeaker,
-      getSpeakerColor: _getSpeakerColor,
       formatSpeakerLabel,
       onEnrollSpeaker,
     }) => {

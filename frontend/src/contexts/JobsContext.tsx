@@ -1,18 +1,5 @@
-import { createContext, useContext, useState } from 'react';
-
-interface JobsContextValue {
-  activeJobCount: number;
-  setActiveJobCount: (count: number) => void;
-  showJobPanel: boolean;
-  setShowJobPanel: (show: boolean) => void;
-}
-
-const JobsContext = createContext<JobsContextValue>({
-  activeJobCount: 0,
-  setActiveJobCount: () => {},
-  showJobPanel: false,
-  setShowJobPanel: () => {},
-});
+import { useState } from 'react';
+import { JobsContext } from './jobContextValue';
 
 export function JobsProvider({ children }: { children: React.ReactNode }) {
   const [activeJobCount, setActiveJobCount] = useState(0);
@@ -23,8 +10,4 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       {children}
     </JobsContext.Provider>
   );
-}
-
-export function useJobs() {
-  return useContext(JobsContext);
 }

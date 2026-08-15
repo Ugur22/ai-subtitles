@@ -38,10 +38,14 @@ export const formatScreenshotUrl = (
     // Remove zero-width joiner
     .replace(/\u200D/g, "")
     // Remove null characters
-    .replace(/\u0000/g, "")
-    // Remove any other control characters at the start
-    .replace(/^[\x00-\x1F\x7F]+/, "")
+    .split("\0").join("")
     .trim();
+
+  while (cleanUrl) {
+    const firstCodePoint = cleanUrl.charCodeAt(0);
+    if (firstCodePoint > 0x1f && firstCodePoint !== 0x7f) break;
+    cleanUrl = cleanUrl.slice(1);
+  }
 
   // If empty after cleaning, return undefined
   if (!cleanUrl) return undefined;

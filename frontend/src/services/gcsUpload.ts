@@ -1,50 +1,46 @@
 /**
- * GCS Upload Service
+ * Media upload service
  *
- * Handles direct-to-GCS uploads for large files that exceed Cloud Run's 32MB limit.
- * Uses signed URLs to upload directly to Google Cloud Storage, bypassing the backend.
+ * Uses a backend-issued upload intent. Production intents target GCS, while
+ * LOCAL_MODE intents target the authenticated local media endpoint.
  */
 
 import { API_BASE_URL } from '../config';
 
-// 32MB - Cloud Run's hard limit for HTTP/1.1 requests
-export const DIRECT_UPLOAD_LIMIT = 32 * 1024 * 1024;
-
-export interface SignedUrlResponse {
+interface UploadIntentResponse {
   upload_url: string;
   gcs_path: string;
   method: string;
   expires_in: number;
 }
 
-export interface UploadConfig {
-  gcs_enabled: boolean;
-  direct_upload_limit: number;
-  gcs_bucket: string | null;
-  max_file_size: number;
-}
-
-/**
- * Get upload configuration from the server
- */
-export async function getUploadConfig(): Promise<UploadConfig> {
-  const response = await fetch(`${API_BASE_URL}/api/upload/config`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error('Failed to get upload config');
+export function shouldSendUploadCredentials(
+  uploadUrl: string,
+  apiBaseUrl: string = API_BASE_URL,
+  pageOrigin: string = window.location.origin
+): boolean {
+  try {
+    const upload = new URL(uploadUrl, pageOrigin);
+    const apiOrigin = apiBaseUrl
+      ? new URL(apiBaseUrl, pageOrigin).origin
+      : pageOrigin;
+    return (
+      upload.origin === apiOrigin &&
+      upload.pathname.startsWith('/api/upload/local/')
+    );
+  } catch {
+    return false;
   }
-  return response.json();
 }
 
 /**
- * Get a signed URL for uploading to GCS
+ * Create an owner-scoped upload intent for the active media storage adapter.
  */
-export async function getSignedUploadUrl(
+async function getUploadIntent(
   filename: string,
   contentType: string,
   fileSize: number
-): Promise<SignedUrlResponse> {
+): Promise<UploadIntentResponse> {
   const response = await fetch(`${API_BASE_URL}/api/upload/signed-url`, {
     method: 'POST',
     credentials: 'include',
@@ -78,12 +74,11 @@ export async function getSignedUploadUrl(
  *
  * For files < 100MB, uses simple PUT upload.
  */
-export async function uploadToGCS(
+export async function uploadMedia(
   file: File,
   onProgress?: (loaded: number, total: number, percentage: number) => void
 ): Promise<string> {
-  // Get signed URL from backend
-  const { upload_url, gcs_path, method } = await getSignedUploadUrl(
+  const { upload_url, gcs_path, method } = await getUploadIntent(
     file.name,
     file.type || 'video/mp4',
     file.size
@@ -145,6 +140,7 @@ async function uploadSimple(
     });
 
     xhr.open('PUT', uploadUrl);
+    xhr.withCredentials = shouldSendUploadCredentials(uploadUrl);
     xhr.setRequestHeader('Content-Type', contentType);
     xhr.send(file);
   });
@@ -232,13 +228,6 @@ async function uploadResumable(
     xhr.setRequestHeader('Content-Type', contentType);
     xhr.send(file);
   });
-}
-
-/**
- * Check if a file requires GCS upload (larger than Cloud Run limit)
- */
-export function requiresGCSUpload(fileSize: number): boolean {
-  return fileSize > DIRECT_UPLOAD_LIMIT;
 }
 
 /**

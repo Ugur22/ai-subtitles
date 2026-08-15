@@ -21,6 +21,8 @@ interface UseSummariesOptions {
   transcription: TranscriptionResponse | null;
 }
 
+type TranscriptionSegment = TranscriptionResponse["transcription"]["segments"][number];
+
 export const useSummaries = (options: UseSummariesOptions) => {
   const { transcription } = options;
 
@@ -43,7 +45,7 @@ export const useSummaries = (options: UseSummariesOptions) => {
       const enhancedSummaries = summaryData.map((summary: SummarySection) => {
         // Strategy 1: Find a segment close to the start time (within 5 seconds)
         let matchingSegment = segments.find(
-          (segment: any) =>
+          (segment: TranscriptionSegment) =>
             Math.abs(
               timeToSeconds(segment.start_time) - timeToSeconds(summary.start)
             ) < 5
@@ -54,7 +56,7 @@ export const useSummaries = (options: UseSummariesOptions) => {
           const summaryStartTime = timeToSeconds(summary.start);
           const summaryEndTime = timeToSeconds(summary.end);
 
-          matchingSegment = segments.find((segment: any) => {
+          matchingSegment = segments.find((segment: TranscriptionSegment) => {
             const segmentTime = timeToSeconds(segment.start_time);
             return (
               segmentTime >= summaryStartTime && segmentTime <= summaryEndTime

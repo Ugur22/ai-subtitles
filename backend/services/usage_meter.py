@@ -10,7 +10,7 @@ All writes use the service role (bypasses RLS) and are best-effort —
 metering should never block or fail a user-facing operation.
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 from services.supabase_service import supabase
@@ -41,33 +41,12 @@ def _upsert_monthly(
         return
 
     client = supabase()
-    period_start = _current_period_start()
-
-    try:
-        # Read-modify-write — fine for our scale; serializable per row.
-        existing = client.table("user_usage_monthly").select("*").eq(
-            "user_id", user_id
-        ).eq("period_start", period_start).execute()
-
-        if existing.data and len(existing.data) > 0:
-            row = existing.data[0]
-            client.table("user_usage_monthly").update({
-                "transcription_seconds": int(row["transcription_seconds"]) + add_transcription_seconds,
-                "llm_tokens":            int(row["llm_tokens"])            + add_llm_tokens,
-                "chat_messages":         int(row["chat_messages"])         + add_chat_messages,
-                "updated_at":            datetime.utcnow().isoformat(),
-            }).eq("user_id", user_id).eq("period_start", period_start).execute()
-        else:
-            client.table("user_usage_monthly").insert({
-                "user_id": user_id,
-                "period_start": period_start,
-                "transcription_seconds": add_transcription_seconds,
-                "llm_tokens": add_llm_tokens,
-                "chat_messages": add_chat_messages,
-            }).execute()
-    except Exception as e:
-        # Metering failures must never break the user flow
-        print(f"[UsageMeter] Failed to record usage for {user_id}: {e}")
+    client.rpc("increment_monthly_usage", {
+        "p_user_id": user_id,
+        "p_transcription_seconds": max(0, int(add_transcription_seconds)),
+        "p_llm_tokens": max(0, int(add_llm_tokens)),
+        "p_chat_messages": max(0, int(add_chat_messages)),
+    }).execute()
 
 
 def record_transcription(user_id: Optional[str], video_duration_seconds: int) -> None:
@@ -94,12 +73,9 @@ def get_current_month_usage(user_id: str) -> dict:
 
     client = supabase()
     period_start = _current_period_start()
-    try:
-        res = client.table("user_usage_monthly").select(
-            "transcription_seconds,llm_tokens,chat_messages"
-        ).eq("user_id", user_id).eq("period_start", period_start).execute()
-        if res.data and len(res.data) > 0:
-            return res.data[0]
-    except Exception as e:
-        print(f"[UsageMeter] Failed to read usage for {user_id}: {e}")
+    res = client.table("user_usage_monthly").select(
+        "transcription_seconds,llm_tokens,chat_messages,reserved_transcription_seconds"
+    ).eq("user_id", user_id).eq("period_start", period_start).execute()
+    if res.data and len(res.data) > 0:
+        return res.data[0]
     return {"transcription_seconds": 0, "llm_tokens": 0, "chat_messages": 0}

@@ -6,12 +6,14 @@ This service enables direct-to-GCS uploads which bypass Cloud Run's 32MB request
 import concurrent.futures
 import logging
 import os
+import re
 import tempfile
 import time
 from datetime import timedelta
 from typing import Optional, Tuple, Dict
 from google.cloud import storage
 from google.cloud.storage import Blob
+from google.api_core.exceptions import NotFound
 from google.auth import default
 from google.auth.transport import requests as auth_requests
 
@@ -27,6 +29,22 @@ class GCSService:
     _bucket: Optional[storage.Bucket] = None
     _credentials = None
     _service_account_email: Optional[str] = None
+
+    @staticmethod
+    def _upload_path(user_id: str, upload_intent_id: str, filename: str) -> str:
+        """Build an object path that is bound to both its owner and upload intent."""
+        if not user_id or not upload_intent_id:
+            raise ValueError("user_id and upload_intent_id are required")
+        safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(filename)).strip("._")
+        if not safe_filename:
+            safe_filename = "upload.bin"
+        return f"{settings.GCS_UPLOAD_PREFIX}{user_id}/{upload_intent_id}/{safe_filename}"
+
+    @staticmethod
+    def is_user_upload_path(gcs_path: str, user_id: str) -> bool:
+        return bool(gcs_path and user_id and gcs_path.startswith(
+            f"{settings.GCS_UPLOAD_PREFIX}{user_id}/"
+        ))
 
     @classmethod
     def _get_credentials(cls):
@@ -89,6 +107,8 @@ class GCSService:
     def generate_upload_signed_url(
         cls,
         filename: str,
+        user_id: str,
+        upload_intent_id: str,
         content_type: str = "video/mp4",
         expiry_seconds: Optional[int] = None
     ) -> Tuple[str, str]:
@@ -106,16 +126,12 @@ class GCSService:
         Returns:
             Tuple of (signed_url, gcs_path)
         """
-        import uuid
-
         # Get credentials for IAM signing
         credentials = cls._get_credentials()
         bucket = cls._get_bucket()
         expiry = expiry_seconds or settings.GCS_SIGNED_URL_EXPIRY
 
-        # Generate unique path: uploads/{uuid}_{filename}
-        safe_filename = filename.replace(" ", "_").replace("/", "_")
-        gcs_path = f"{settings.GCS_UPLOAD_PREFIX}{uuid.uuid4()}_{safe_filename}"
+        gcs_path = cls._upload_path(user_id, upload_intent_id, filename)
 
         blob = bucket.blob(gcs_path)
 
@@ -136,6 +152,8 @@ class GCSService:
     def generate_resumable_upload_url(
         cls,
         filename: str,
+        user_id: str,
+        upload_intent_id: str,
         content_type: str = "video/mp4",
         expiry_seconds: Optional[int] = None
     ) -> Tuple[str, str]:
@@ -156,16 +174,12 @@ class GCSService:
         Returns:
             Tuple of (resumable_upload_url, gcs_path)
         """
-        import uuid
-
         # Get credentials for IAM signing
         credentials = cls._get_credentials()
         bucket = cls._get_bucket()
         expiry = expiry_seconds or settings.GCS_SIGNED_URL_EXPIRY
 
-        # Generate unique path
-        safe_filename = filename.replace(" ", "_").replace("/", "_")
-        gcs_path = f"{settings.GCS_UPLOAD_PREFIX}{uuid.uuid4()}_{safe_filename}"
+        gcs_path = cls._upload_path(user_id, upload_intent_id, filename)
 
         blob = bucket.blob(gcs_path)
 
@@ -229,6 +243,42 @@ class GCSService:
         return temp_path
 
     @classmethod
+    def processed_key(cls, gcs_path: str) -> str:
+        if gcs_path.startswith(settings.GCS_PROCESSED_PREFIX):
+            return gcs_path
+        if not gcs_path.startswith(settings.GCS_UPLOAD_PREFIX):
+            raise ValueError("only uploaded media can be copied to processed storage")
+        relative_path = gcs_path[len(settings.GCS_UPLOAD_PREFIX):]
+        if not relative_path or relative_path.startswith("/") or ".." in relative_path.split("/"):
+            raise ValueError("invalid upload path")
+        return f"{settings.GCS_PROCESSED_PREFIX}{relative_path}"
+
+    @classmethod
+    def copy_to_processed(cls, gcs_path: str) -> str:
+        """Copy media without deleting its source; safe to retry after a crash."""
+        destination = cls.processed_key(gcs_path)
+        if destination == gcs_path:
+            return destination
+        bucket = cls._get_bucket()
+        source = bucket.blob(gcs_path)
+        destination_blob = bucket.blob(destination)
+        try:
+            source.reload()
+        except NotFound:
+            if destination_blob.exists():
+                return destination
+            raise
+        if destination_blob.exists():
+            destination_blob.reload()
+            if destination_blob.size == source.size:
+                return destination
+        bucket.copy_blob(source, bucket, destination)
+        destination_blob.reload()
+        if destination_blob.size != source.size:
+            raise RuntimeError("processed media copy size mismatch")
+        return destination
+
+    @classmethod
     def move_to_processed(cls, gcs_path: str) -> str:
         """
         Move a file from uploads/ to processed/ folder.
@@ -244,10 +294,9 @@ class GCSService:
             New path in processed/ folder
         """
         bucket = cls._get_bucket()
-
-        # Calculate new path
-        filename = gcs_path.rsplit("/", 1)[-1]
-        new_path = f"{settings.GCS_PROCESSED_PREFIX}{filename}"
+        new_path = cls.processed_key(gcs_path)
+        if new_path == gcs_path:
+            raise ValueError("media is already in processed storage")
 
         # Copy to new location
         source_blob = bucket.blob(gcs_path)
@@ -546,7 +595,7 @@ class GCSService:
             gcs_path: Path to the file in GCS (e.g., "uploads/uuid_filename.mp4")
 
         Returns:
-            True if deleted successfully, False if not found or error occurred
+            True if deleted successfully or the object is already absent.
         """
         try:
             bucket = cls._get_bucket()
@@ -554,9 +603,12 @@ class GCSService:
             blob.delete()
             print(f"[GCS] Deleted {gcs_path}")
             return True
-        except Exception as e:
-            print(f"[GCS] Failed to delete {gcs_path}: {e}")
-            return False
+        except NotFound:
+            print(f"[GCS] {gcs_path} was already deleted")
+            return True
+        except Exception:
+            logger.exception("[GCS] Failed to delete %s", gcs_path)
+            raise
 
     @classmethod
     def delete_folder(cls, prefix: str) -> int:

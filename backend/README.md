@@ -36,9 +36,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 ### Infrastructure
 
 - **Google Cloud Storage** - Video file storage (production)
-- **Google Cloud Firestore** - Production database
-- **Supabase** - Background job queue and real-time updates
-- **SQLite3** - Local development database
+- **Supabase** - Users, jobs, transcription results, and persistent metadata
 
 ## Prerequisites
 
@@ -58,7 +56,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 
 ### For Production Features
 
-- **Google Cloud Project** - For Cloud Run, GCS, Firestore
+- **Google Cloud Project** - For Cloud Run and GCS
 - **Supabase Account** - For background job processing
 
 ## Installation
@@ -125,13 +123,10 @@ CORS_ORIGINS=["http://localhost:5173","https://REDACTED_FRONTEND_URL"]
 MAX_UPLOAD_SIZE=10737418240  # 10GB
 
 # ============================================
-# DATABASE CONFIGURATION
+# SUPABASE CONFIGURATION
 # ============================================
-# Local development: sqlite
-# Production: firestore
-DATABASE_TYPE=sqlite
-DATABASE_PATH=transcriptions.db
-FIRESTORE_COLLECTION=transcriptions
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-role-key
 
 # ============================================
 # HUGGINGFACE AUTHENTICATION (REQUIRED)
@@ -227,11 +222,6 @@ GCS_URL_EXPIRY=3600
 # ============================================
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_key
-
-# ============================================
-# VECTOR DATABASE
-# ============================================
-CHROMA_DB_PATH=./chroma_db
 ```
 
 ### 5. Get HuggingFace Token (Required for Speaker Diarization)
@@ -612,25 +602,9 @@ Clean up temporary screenshot files and orphaned ChromaDB collections.
 
 ## Database Architecture
 
-The backend supports multiple database backends with automatic fallback:
+Supabase is the metadata store in production and local mode.
 
-### SQLite (Local Development)
-
-- **Path**: `transcriptions.db`
-- **Table**: `transcriptions` with columns:
-  - `video_hash` (PRIMARY KEY)
-  - `filename`
-  - `file_path`
-  - `transcription_data` (JSON)
-  - `created_at`
-
-### Firestore (Production)
-
-- **Configured via**: `DATABASE_TYPE=firestore`
-- **Collection**: `transcriptions`
-- Same document structure as SQLite
-
-### Supabase (Job Queue)
+### Supabase
 
 - **Table**: `jobs` with columns:
   - `id` (UUID, PRIMARY KEY)
@@ -642,7 +616,7 @@ The backend supports multiple database backends with automatic fallback:
   - `created_at`, `started_at`, `completed_at`
   - `error_message`, `retry_count`
 
-**Fallback Strategy**: Chat router automatically checks Supabase jobs table if transcription not found in SQLite/Firestore.
+Transcript reads are owner-scoped through the jobs table. There is no fallback to a process-local database.
 
 ## Project Structure
 
@@ -650,11 +624,9 @@ The backend supports multiple database backends with automatic fallback:
 backend/
 ├── main.py                        # FastAPI app entry point
 ├── config.py                      # Pydantic settings
-├── database.py                    # SQLite/Firestore abstraction
 ├── dependencies.py                # ML model dependency injection
 ├── requirements.txt               # Python dependencies
 ├── Dockerfile                     # Cloud Run deployment
-├── docker-compose.yml             # Local development
 ├── .env.example                   # Environment template
 │
 ├── routers/                       # API endpoint organization
@@ -690,7 +662,6 @@ backend/
 │   └── time_utils.py              # Timestamp formatting
 │
 ├── llm_providers.py               # LLM abstraction (5 providers)
-├── vector_store.py                # ChromaDB wrapper for RAG
 ├── audio_analyzer.py              # PANNs integration
 ├── speaker_diarization.py         # Pyannote integration
 ├── speaker_recognition.py         # Voice biometrics
@@ -700,9 +671,6 @@ backend/
 │   ├── videos/                    # Uploaded videos
 │   ├── screenshots/               # Video screenshots
 │   └── subtitles/                 # Generated subtitles
-│
-├── chroma_db/                     # ChromaDB vector storage
-└── transcriptions.db              # SQLite database (local)
 ```
 
 ## Model Information
@@ -769,8 +737,7 @@ FASTWHISPER_MODEL=medium
 The backend is deployed to Cloud Run with:
 
 - Pre-downloaded translation models
-- Persistent volumes for data
-- Firestore for database
+- Supabase for persistent metadata
 - GCS for file storage
 - Supabase for job queue
 
@@ -795,12 +762,8 @@ docker build -t ai-subs-backend .
 
 # Run container
 docker run -p 8000:8000 \
-  -v $(pwd)/transcriptions.db:/app/transcriptions.db \
   -e HUGGINGFACE_TOKEN=your_token \
   ai-subs-backend
-
-# Or use docker-compose
-docker-compose up -d
 ```
 
 ## Development

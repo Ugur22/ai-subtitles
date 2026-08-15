@@ -17,7 +17,7 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       navigate('/');
-    } catch (error) {
+    } catch {
       // Error handled by useAuth (toast shown)
     }
   };
