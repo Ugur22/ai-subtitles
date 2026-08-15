@@ -2507,38 +2507,37 @@ async def _retrieve_visual_context(
                 image_results = image_results[:clip_candidate_limit]
 
             # Third candidate source: vision-caption semantic search. Captions
-            # capture actions CLIP can't encode (Supabase/local-db path only).
-            if use_supabase:
-                from config import settings
-                caption_results = await _run_in_executor(
-                    image_embedding_service.search_images_by_caption,
-                    video_hash,
-                    visual_query,
-                    max(n_images, 6),
+            # capture actions CLIP can't encode.
+            from config import settings
+            caption_results = await _run_in_executor(
+                image_embedding_service.search_images_by_caption,
+                video_hash,
+                visual_query,
+                max(n_images, 6),
+            )
+            caption_added = 0
+            for result in caption_results:
+                if (result.get('similarity') or 0) < settings.CAPTION_MIN_SIMILARITY:
+                    continue
+                key = _image_result_key(result)
+                if key in seen_image_paths:
+                    # Frame already found by CLIP: annotate it so the
+                    # caption signal still boosts its score.
+                    for existing in image_results:
+                        if _image_result_key(existing) == key:
+                            existing['caption'] = result.get('caption')
+                            existing['caption_similarity'] = result['similarity']
+                            break
+                    continue
+                seen_image_paths.add(key)
+                result['caption_similarity'] = result['similarity']
+                image_results.append(result)
+                caption_added += 1
+            if caption_results:
+                print(
+                    f"Caption search: {len(caption_results)} matches, "
+                    f"{caption_added} new candidates added"
                 )
-                caption_added = 0
-                for result in caption_results:
-                    if (result.get('similarity') or 0) < settings.CAPTION_MIN_SIMILARITY:
-                        continue
-                    key = _image_result_key(result)
-                    if key in seen_image_paths:
-                        # Frame already found by CLIP: annotate it so the
-                        # caption signal still boosts its score.
-                        for existing in image_results:
-                            if _image_result_key(existing) == key:
-                                existing['caption'] = result.get('caption')
-                                existing['caption_similarity'] = result['similarity']
-                                break
-                        continue
-                    seen_image_paths.add(key)
-                    result['caption_similarity'] = result['similarity']
-                    image_results.append(result)
-                    caption_added += 1
-                if caption_results:
-                    print(
-                        f"Caption search: {len(caption_results)} matches, "
-                        f"{caption_added} new candidates added"
-                    )
         else:
             print(
                 f"Images not indexed for video {video_hash}. "

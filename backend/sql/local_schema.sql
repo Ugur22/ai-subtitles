@@ -31,7 +31,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_seen TEXT,
     user_id TEXT,
     video_duration_seconds INTEGER,
-    gpu_seconds REAL
+    gpu_seconds REAL,
+    quota_reserved_seconds INTEGER NOT NULL DEFAULT 0,
+    quota_reservation_period TEXT,
+    upload_intent_id TEXT,
+    final_media_key TEXT,
+    finalization_started_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_video_hash ON jobs(video_hash);
@@ -122,6 +127,7 @@ CREATE TABLE IF NOT EXISTS user_usage_monthly (
     transcription_seconds INTEGER NOT NULL DEFAULT 0,
     llm_tokens INTEGER NOT NULL DEFAULT 0,
     chat_messages INTEGER NOT NULL DEFAULT 0,
+    reserved_transcription_seconds INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT,
     PRIMARY KEY (user_id, period_start)
 );
@@ -140,7 +146,7 @@ CREATE TABLE IF NOT EXISTS image_embeddings (
     user_id TEXT,
     created_at TEXT,
     updated_at TEXT,
-    UNIQUE(video_hash, segment_id)
+    UNIQUE(user_id, video_hash, segment_id)
 );
 CREATE INDEX IF NOT EXISTS idx_image_embeddings_video_hash ON image_embeddings(video_hash);
 
@@ -206,3 +212,76 @@ CREATE TABLE IF NOT EXISTS speaker_voiceprints (
     UNIQUE(user_id, speaker_name)
 );
 CREATE INDEX IF NOT EXISTS idx_speaker_voiceprints_user ON speaker_voiceprints(user_id);
+
+-- Mirrors backend/sql/migrations/005_job_upload_quota_security.sql's upload_intents.
+CREATE TABLE IF NOT EXISTS upload_intents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    gcs_path TEXT NOT NULL UNIQUE,
+    original_filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    expected_size_bytes INTEGER NOT NULL,
+    content_sha256 TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    job_id TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_upload_intents_owner_status ON upload_intents(user_id, status, expires_at);
+
+-- Mirrors backend/sql/migrations/006_media_deletion_outbox.sql + 008's available_at addition.
+CREATE TABLE IF NOT EXISTS media_delete_outbox (
+    id TEXT PRIMARY KEY,
+    source_job_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    media_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    claimed_at TEXT,
+    completed_at TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    available_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_media_delete_outbox_status ON media_delete_outbox(status, created_at);
+
+-- Mirrors backend/sql/migrations/010_owner_scoped_transcript_audio_embeddings.sql.
+CREATE TABLE IF NOT EXISTS transcript_embeddings (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    video_hash TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    start_time REAL NOT NULL,
+    end_time REAL NOT NULL,
+    start_timestamp TEXT NOT NULL,
+    end_timestamp TEXT NOT NULL,
+    speaker TEXT,
+    segment_count INTEGER NOT NULL DEFAULT 1,
+    chunk_text TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    created_at TEXT,
+    updated_at TEXT,
+    UNIQUE(user_id, video_hash, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_transcript_embeddings_owner_video ON transcript_embeddings(user_id, video_hash);
+
+CREATE TABLE IF NOT EXISTS audio_event_embeddings (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    video_hash TEXT NOT NULL,
+    segment_id TEXT NOT NULL,
+    start_time REAL NOT NULL,
+    end_time REAL NOT NULL,
+    speaker TEXT,
+    has_speech INTEGER NOT NULL DEFAULT 0,
+    primary_event TEXT,
+    speech_emotion TEXT,
+    description TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    created_at TEXT,
+    updated_at TEXT,
+    UNIQUE(user_id, video_hash, segment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_audio_event_embeddings_owner_video ON audio_event_embeddings(user_id, video_hash);

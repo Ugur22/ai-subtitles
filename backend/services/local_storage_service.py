@@ -328,6 +328,14 @@ class LocalStorageService:
     ) -> Dict[float, Optional[str]]:
         uploaded: Dict[float, Optional[str]] = {}
         for timestamp, source_name in screenshot_paths.items():
+            # A per-timestamp extraction failure upstream (e.g. an FFmpeg
+            # encoder error on one frame) reports as None here - skip it
+            # rather than letting os.open(None, ...) raise TypeError and
+            # abort the whole batch, losing every other already-extracted
+            # screenshot for this video.
+            if not source_name:
+                uploaded[timestamp] = None
+                continue
             try:
                 object_key = self.screenshot_key(user_id, video_hash, timestamp)
                 source_fd = os.open(source_name, os.O_RDONLY | self._nofollow)
@@ -341,7 +349,7 @@ class LocalStorageService:
                     if source_fd >= 0:
                         os.close(source_fd)
                 uploaded[timestamp] = self.generate_download_url(object_key)
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError):
                 uploaded[timestamp] = None
         return uploaded
 
