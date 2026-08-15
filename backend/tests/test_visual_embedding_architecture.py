@@ -76,27 +76,6 @@ def test_visual_score_is_similarity_and_sorted_higher_first():
     assert "distance" not in image_api
 
 
-def test_chroma_has_no_visual_embedding_surface():
-    methods = _methods("vector_store.py", "VectorStore")
-    forbidden = {
-        "get_or_create_image_collection",
-        "embed_images",
-        "index_video_images",
-        "search_images",
-        "delete_image_collection",
-        "image_collection_exists",
-        "clip_model",
-    }
-    assert methods.isdisjoint(forbidden)
-
-    vector_source = _read("vector_store.py")
-    chat_source = _read("routers/chat.py")
-    assert "_images" not in vector_source
-    assert "_use_supabase_for_images" not in chat_source
-    assert "vector_store.search_images" not in chat_source
-    assert "vector_store.index_video_images" not in chat_source
-
-
 def test_clip_preloader_warms_the_shared_service_singleton():
     preloader = _read("model_preloader.py")
     assert "from services.image_embedding_service import image_embedding_service" in preloader

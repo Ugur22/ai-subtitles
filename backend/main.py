@@ -15,10 +15,9 @@ from config import settings as app_settings
 # Import routers
 from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing
 
-# Import LLM and vector store modules (optional)
+# Import LLM module (optional)
 try:
     from llm_providers import llm_manager
-    from vector_store import vector_store
     LLM_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")

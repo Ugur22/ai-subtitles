@@ -60,22 +60,6 @@ def test_transcript_and_audio_score_is_similarity_and_sorted_higher_first():
     assert "'distance':" not in service
 
 
-def test_no_call_site_still_uses_chroma_for_transcript_or_audio():
-    # vector_store.py's Chroma implementation is deliberately left in place until
-    # it's verified working end-to-end against real Supabase data (see the Phase 6
-    # plan's cleanup step) -- this test only locks down that nothing calls into it
-    # anymore, not that the file itself has been stripped or deleted yet.
-    chat_source = _read("routers/chat.py")
-    transcription_source = _read("routers/transcription.py")
-    speaker_source = _read("routers/speaker.py")
-    assert "vector_store.search" not in chat_source
-    assert "vector_store.index_transcription" not in chat_source
-    assert "vector_store.audio_collection_exists" not in chat_source
-    assert "vector_store.index_audio_events" not in chat_source
-    assert "vector_store." not in transcription_source
-    assert "vector_store." not in speaker_source
-
-
 def test_transcript_audio_migration_drops_old_overloads_and_locks_grants():
     sql = _read("sql/migrations/010_owner_scoped_transcript_audio_embeddings.sql")
 

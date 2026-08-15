@@ -40,7 +40,6 @@ docs/
 # Local data (will use Railway volumes instead)
 *.db
 transcriptions.db
-chroma_db/
 static/videos/*
 static/screenshots/*
 
