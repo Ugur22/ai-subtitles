@@ -1,17 +1,23 @@
 """
 Speaker Recognition Module
 Handles voice enrollment and speaker identification using pyannote.audio
+
+Voiceprints are persisted in Supabase (speaker_voiceprints table) rather than
+local disk - the backend runs on Cloud Run with min-instances=0, so anything
+written to local disk is destroyed every time the container scales to zero.
 """
 
 import os
-import json
+import threading
 import numpy as np
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import torch
-from threading import RLock
 from pyannote.audio import Inference
-from scipy.spatial.distance import cosine
+
+from services.supabase_service import SupabaseService
+
+EMBEDDING_DIM = 512  # pyannote/embedding output size
+
 
 class SpeakerRecognitionSystem:
     """
@@ -19,17 +25,8 @@ class SpeakerRecognitionSystem:
     Uses pyannote.audio's embedding model for voice prints
     """
 
-    def __init__(self, database_path: str = "speaker_database.json"):
-        """
-        Initialize the speaker recognition system
-
-        Args:
-            database_path: Path to store speaker voice prints database
-        """
-        self.database_path = database_path
-        self._database_lock = RLock()
-        self.speaker_database = self._load_database()
-
+    def __init__(self):
+        """Initialize the speaker recognition system"""
         # Initialize pyannote embedding model
         # This extracts voice embeddings (voice prints)
         try:
@@ -53,47 +50,6 @@ class SpeakerRecognitionSystem:
             print("You may need to accept pyannote.audio model conditions at:")
             print("https://huggingface.co/pyannote/embedding")
             raise
-
-    def _load_database(self) -> Dict:
-        """Load speaker database from file"""
-        if os.path.exists(self.database_path):
-            try:
-                with open(self.database_path, 'r') as f:
-                    data = json.load(f)
-                    # Old flat files are quarantined instead of being exposed
-                    # to every authenticated user.
-                    if data and all(
-                        isinstance(value, dict) and "embedding" in value
-                        for value in data.values()
-                    ):
-                        data = {"__legacy__": data}
-                    for speakers in data.values():
-                        for speaker in speakers.values():
-                            speaker['embedding'] = np.array(speaker['embedding'])
-                    return data
-            except Exception as e:
-                print(f"Error loading database: {e}")
-                return {}
-        return {}
-
-    def _save_database(self):
-        """Save speaker database to file"""
-        try:
-            # Convert numpy arrays to lists for JSON serialization
-            save_data = {}
-            for user_id, speakers in self.speaker_database.items():
-                save_data[user_id] = {}
-                for name, speaker_data in speakers.items():
-                    save_data[user_id][name] = {
-                        'embedding': speaker_data['embedding'].tolist(),
-                        'samples_count': speaker_data['samples_count']
-                    }
-
-            with open(self.database_path, 'w') as f:
-                json.dump(save_data, f, indent=2)
-            print(f"Speaker database saved to {self.database_path}")
-        except Exception as e:
-            print(f"Error saving database: {e}")
 
     def extract_embedding(self, audio_path: str, start_time: float = None,
                          end_time: float = None) -> np.ndarray:
@@ -146,24 +102,34 @@ class SpeakerRecognitionSystem:
             # Extract embedding
             embedding = self.extract_embedding(audio_path, start_time, end_time)
 
-            with self._database_lock:
-                speakers = self.speaker_database.setdefault(user_id, {})
-                if speaker_name in speakers:
-                    print(f"Updating existing speaker: {speaker_name}")
-                    old_embedding = speakers[speaker_name]['embedding']
-                    old_count = speakers[speaker_name]['samples_count']
-                    new_embedding = (old_embedding * old_count + embedding) / (old_count + 1)
-                    speakers[speaker_name] = {
-                        'embedding': new_embedding,
-                        'samples_count': old_count + 1
-                    }
-                else:
-                    print(f"Adding new speaker: {speaker_name}")
-                    speakers[speaker_name] = {
-                        'embedding': embedding,
-                        'samples_count': 1
-                    }
-                self._save_database()
+            client = SupabaseService.get_client()
+            existing = (
+                client.table("speaker_voiceprints")
+                .select("embedding, samples_count")
+                .eq("user_id", user_id)
+                .eq("speaker_name", speaker_name)
+                .execute()
+            )
+
+            if existing.data:
+                print(f"Updating existing speaker: {speaker_name}")
+                row = existing.data[0]
+                old_embedding = _parse_embedding(row["embedding"])
+                old_count = row["samples_count"]
+                new_embedding = (old_embedding * old_count + embedding) / (old_count + 1)
+                client.table("speaker_voiceprints").update({
+                    "embedding": new_embedding.tolist(),
+                    "samples_count": old_count + 1,
+                }).eq("user_id", user_id).eq("speaker_name", speaker_name).execute()
+            else:
+                print(f"Adding new speaker: {speaker_name}")
+                client.table("speaker_voiceprints").insert({
+                    "user_id": user_id,
+                    "speaker_name": speaker_name,
+                    "embedding": embedding.tolist(),
+                    "samples_count": 1,
+                }).execute()
+
             print(f"Successfully enrolled {speaker_name}")
             return True
 
@@ -186,35 +152,35 @@ class SpeakerRecognitionSystem:
             Tuple of (speaker_name, confidence) or (None, 0.0) if no match
         """
         try:
-            with self._database_lock:
-                speakers = {
-                    name: {
-                        "embedding": data["embedding"].copy(),
-                        "samples_count": data["samples_count"],
-                    }
-                    for name, data in self.speaker_database.get(user_id, {}).items()
-                }
-            if not speakers:
+            client = SupabaseService.get_client()
+            has_speakers = (
+                client.table("speaker_voiceprints")
+                .select("id")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not has_speakers.data:
                 print("No speakers enrolled in database")
                 return None, 0.0
 
             # Extract embedding from audio
             embedding = self.extract_embedding(audio_path, start_time, end_time)
 
-            # Compare with all enrolled speakers
-            similarities = {}
-            for speaker_name, speaker_data in speakers.items():
-                stored_embedding = speaker_data['embedding']
+            result = client.rpc("search_speaker_voiceprints_by_embedding", {
+                "p_user_id": user_id,
+                "query_embedding": embedding.tolist(),
+                "match_count": 1,
+            }).execute()
 
-                # Calculate cosine similarity (1 = identical, 0 = completely different)
-                similarity = 1 - cosine(embedding, stored_embedding)
-                similarities[speaker_name] = similarity
+            if not result.data:
+                print("No speakers enrolled in database")
+                return None, 0.0
 
-            # Find best match
-            best_speaker = max(similarities, key=similarities.get)
-            best_similarity = similarities[best_speaker]
+            best = result.data[0]
+            best_speaker = best["speaker_name"]
+            best_similarity = best["similarity"]
 
-            print(f"Similarities: {similarities}")
             print(f"Best match: {best_speaker} ({best_similarity:.3f})")
 
             # Check if similarity meets threshold
@@ -230,41 +196,67 @@ class SpeakerRecognitionSystem:
 
     def remove_speaker(self, user_id: str, speaker_name: str) -> bool:
         """Remove a speaker from the database"""
-        with self._database_lock:
-            speakers = self.speaker_database.get(user_id, {})
-            if speaker_name in speakers:
-                del speakers[speaker_name]
-                self._save_database()
-                print(f"Removed speaker: {speaker_name}")
-                return True
-        return False
+        client = SupabaseService.get_client()
+        result = (
+            client.table("speaker_voiceprints")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("speaker_name", speaker_name)
+            .execute()
+        )
+        removed = bool(result.data)
+        if removed:
+            print(f"Removed speaker: {speaker_name}")
+        return removed
 
     def list_speakers(self, user_id: str) -> List[str]:
         """Get list of all enrolled speakers"""
-        with self._database_lock:
-            return list(self.speaker_database.get(user_id, {}).keys())
+        client = SupabaseService.get_client()
+        result = (
+            client.table("speaker_voiceprints")
+            .select("speaker_name")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return [row["speaker_name"] for row in result.data]
 
     def get_speaker_info(self, user_id: str, speaker_name: str) -> Optional[Dict]:
         """Get information about a speaker"""
-        with self._database_lock:
-            speakers = self.speaker_database.get(user_id, {})
-            if speaker_name in speakers:
-                return {
-                    'name': speaker_name,
-                    'samples_count': speakers[speaker_name]['samples_count'],
-                    'embedding_shape': speakers[speaker_name]['embedding'].shape
-                }
+        client = SupabaseService.get_client()
+        result = (
+            client.table("speaker_voiceprints")
+            .select("samples_count")
+            .eq("user_id", user_id)
+            .eq("speaker_name", speaker_name)
+            .execute()
+        )
+        if result.data:
+            return {
+                'name': speaker_name,
+                'samples_count': result.data[0]['samples_count'],
+                'embedding_shape': (EMBEDDING_DIM,)
+            }
         return None
+
+
+def _parse_embedding(value) -> np.ndarray:
+    """Parse a pgvector column value (list or Postgres text form) into an ndarray."""
+    if isinstance(value, str):
+        value = [float(x) for x in value.strip("[]").split(",")]
+    return np.array(value, dtype=np.float64)
 
 
 # Global instance
 _speaker_recognition_system = None
+_speaker_recognition_system_lock = threading.Lock()
 
 def get_speaker_recognition_system() -> SpeakerRecognitionSystem:
     """Get or create the global speaker recognition system instance"""
     global _speaker_recognition_system
     if _speaker_recognition_system is None:
-        _speaker_recognition_system = SpeakerRecognitionSystem()
+        with _speaker_recognition_system_lock:
+            if _speaker_recognition_system is None:
+                _speaker_recognition_system = SpeakerRecognitionSystem()
     return _speaker_recognition_system
 
 
