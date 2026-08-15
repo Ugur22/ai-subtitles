@@ -40,6 +40,31 @@ def _compress_image(image_bytes: bytes, max_dimension: int = 1024, quality: int 
     return buf.getvalue()
 
 
+def _load_local_mode_screenshot(img_path: str) -> Optional[bytes]:
+    """LOCAL_MODE screenshot URLs point back at this same server
+    (http://<LOCAL_API_BASE_URL>/api/upload/object/<key>). Fetching them
+    over HTTP from inside a request handler can deadlock the single-threaded
+    event loop against itself - the server can never get around to handling
+    the very request it's synchronously blocked waiting on. Read the file
+    directly off local disk instead when the URL matches our own route."""
+    from config import settings
+    if not settings.LOCAL_MODE:
+        return None
+    from urllib.parse import urlparse, unquote
+    marker = "/api/upload/object/"
+    path = urlparse(img_path).path
+    if marker not in path:
+        return None
+    object_key = unquote(path.split(marker, 1)[1])
+    try:
+        from services.media_storage import get_media_storage
+        with get_media_storage().open_reader(object_key) as f:
+            return f.read()
+    except Exception as e:
+        print(f"Warning: Failed to read local screenshot {object_key}: {e}")
+        return None
+
+
 def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
     """
     Load an image from a URL or local path, compress it, and return as base64.
@@ -53,12 +78,14 @@ def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
     try:
         # Check if it's a URL
         if img_path.startswith('http://') or img_path.startswith('https://'):
-            # Download from URL
-            import httpx
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                response = client.get(img_path)
-                response.raise_for_status()
-                image_bytes = response.content
+            image_bytes = _load_local_mode_screenshot(img_path)
+            if image_bytes is None:
+                # Download from URL
+                import httpx
+                with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                    response = client.get(img_path)
+                    response.raise_for_status()
+                    image_bytes = response.content
         else:
             # Local file path
             if img_path.startswith('./') or img_path.startswith('static/'):

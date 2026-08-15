@@ -23,8 +23,8 @@ green() { printf '\033[32m%s\033[0m\n' "$*"; }
 
 export_local_mode_env() {
   # Overrides for this process only — real env files stay untouched.
-  export LOCAL_MODE=true
-  export ENABLE_GCS_UPLOADS=true          # storage behind this flag is local disk in LOCAL_MODE
+  export LOCAL_MODE=true                  # media storage routes through LOCAL_STORAGE_ROOT on its own;
+                                           # mutually exclusive with ENABLE_GCS_UPLOADS (config.validate_runtime)
   export FASTWHISPER_DEVICE=cpu           # ctranslate2 has no MPS; cpu/int8 is the Mac path
   export FASTWHISPER_COMPUTE_TYPE=int8
   export CORS_ORIGINS='["http://localhost:5173"]'
