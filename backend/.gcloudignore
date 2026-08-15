@@ -44,7 +44,6 @@ build/
 # ===== Database files =====
 *.db
 transcriptions.db
-chroma_db/
 
 # ===== IDE and local files =====
 .idea/

@@ -67,7 +67,6 @@ Errors encountered:        0
 
 **Requirements:**
 - All dependencies from requirements.txt must be installed
-- ChromaDB directory must be accessible (configured in .env as CHROMA_DB_PATH)
 - Screenshot files must exist in the paths specified in the database
 
 ## Adding New Scripts

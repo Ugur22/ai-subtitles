@@ -266,10 +266,9 @@ from models import (
     ErrorResponse
 )
 
-# Import LLM and vector store modules
+# Import LLM module
 try:
     from llm_providers import llm_manager
-    from vector_store import vector_store
     LLM_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")
