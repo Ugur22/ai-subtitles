@@ -23,8 +23,8 @@ Local-first AI video transcription with speaker diarization, semantic search, an
 | Layer | Technologies |
 |-------|-------------|
 | **Frontend** | React 19, TypeScript, Vite, TailwindCSS, React Query |
-| **Backend** | FastAPI, Faster Whisper, PyTorch, Pyannote, ChromaDB |
-| **Infrastructure** | Supabase, Google Cloud (Run, Storage, Firestore), Netlify |
+| **Backend** | FastAPI, Faster Whisper, PyTorch, Pyannote, pgvector |
+| **Infrastructure** | Supabase, Google Cloud (Run, Storage), Netlify |
 
 ## Quick Start
 
@@ -64,21 +64,25 @@ flowchart TB
 
     subgraph Cloud["Cloud Services"]
         GCS[(GCS)]
-        SB[(Supabase)]
-        FS[(Firestore)]
+        SB[(Supabase + pgvector)]
+    end
+
+    subgraph Local["LOCAL_MODE"]
+        SQLITE[(SQLite)]
     end
 
     subgraph Backend["Backend (FastAPI)"]
         TR[Transcription] --> WH[Whisper]
         SR[Speaker] --> PY[Pyannote]
-        CR[Chat] --> VDB[(ChromaDB)]
+        CR[Chat] --> SB
         CR --> LLM[LLM Providers]
     end
 
     API --> TR & SR & CR
     RT <--> SB
-    TR --> FS
+    TR --> SB
     TR --> GCS
+    Backend -.LOCAL_MODE=true swaps.-> SQLITE
 ```
 
 ## Troubleshooting
@@ -126,7 +130,6 @@ Contributions welcome! Please open issues or submit pull requests.
 
 [Faster Whisper](https://github.com/guillaumekln/faster-whisper) |
 [Pyannote](https://github.com/pyannote/pyannote-audio) |
-[ChromaDB](https://www.trychroma.com/) |
 [Ollama](https://ollama.ai/) |
 [CLIP](https://github.com/openai/CLIP) |
 [PANNs](https://github.com/qiuqiangkong/audioset_tagging_cnn)

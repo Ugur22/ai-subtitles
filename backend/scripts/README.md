@@ -6,11 +6,11 @@ This directory contains utility scripts for maintenance and batch operations.
 
 ### index_existing_images.py
 
-Batch indexes all existing video screenshots in the database into the ChromaDB vector store using CLIP embeddings for visual search.
+Batch indexes all existing video screenshots into Supabase pgvector using CLIP embeddings for visual search.
 
 **Purpose:**
 - Index screenshots from videos that were transcribed before visual search was implemented
-- Re-index videos after clearing the ChromaDB database
+- Re-index videos after clearing image embeddings
 - Ensure all videos have their screenshots indexed for visual search
 
 **Usage:**

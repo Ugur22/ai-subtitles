@@ -24,7 +24,7 @@ FastAPI-based backend server for AI-powered video transcription, subtitle genera
 
 ### LLM & RAG
 
-- **ChromaDB** 0.4.22 - Vector database for semantic search
+- **Supabase pgvector** - Vector database for semantic search
 - **Multi-provider LLM support**: Ollama, Groq, OpenAI, Anthropic, Grok (xAI)
 
 ### Media Processing
@@ -598,7 +598,7 @@ Update path to original file if moved.
 
 #### `POST /cleanup_screenshots/`
 
-Clean up temporary screenshot files and orphaned ChromaDB collections.
+Clean up temporary screenshot files and orphaned pgvector embeddings.
 
 ## Database Architecture
 
