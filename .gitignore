@@ -105,9 +105,6 @@ skills/
 # Claude project files
 CLAUDE.md
 
-# Vector database (ChromaDB)
-chroma_db/
-backend/chroma_db/
 
 # Video and audio files
 static/videos/

@@ -96,64 +96,9 @@ VITE_API_URL=http://localhost:8000
 
 ---
 
-## 3. Firestore Database Setup
+## 3. Supabase Database Setup
 
-The backend supports both SQLite (local) and Firestore (production). For Cloud Run deployments, Firestore is recommended.
-
-### Step 1: Enable Firestore API
-
-```bash
-# Set the project
-gcloud config set project ai-subs-backend
-
-# Enable Firestore API
-gcloud services enable firestore.googleapis.com
-```
-
-### Step 2: Create Firestore Database
-
-```bash
-# Create a Firestore database in Native mode
-# Location should match your Cloud Run region for lowest latency
-gcloud firestore databases create \
-  --location=us-central1 \
-  --type=firestore-native
-```
-
-**Note**: If the database already exists, you'll receive an error. You can check existing databases with:
-
-```bash
-gcloud firestore databases list
-```
-
-### Step 3: Configure Cloud Run for Firestore
-
-```bash
-# Update Cloud Run service to use Firestore
-gcloud run services update ai-subs-backend \
-  --region=us-central1 \
-  --update-env-vars='DATABASE_TYPE=firestore,FIRESTORE_COLLECTION=transcriptions'
-```
-
-### Step 4: Verify Service Account Permissions
-
-The Cloud Run service account needs Firestore access. By default, Cloud Run uses the Compute Engine default service account.
-
-```bash
-# Get the service account email
-gcloud run services describe ai-subs-backend \
-  --region=us-central1 \
-  --format='value(spec.template.spec.serviceAccountName)'
-
-# If it returns empty, it uses the default compute service account:
-# PROJECT_NUMBER-compute@developer.gserviceaccount.com
-# For this project: 1052285886390-compute@developer.gserviceaccount.com
-
-# Grant Firestore access (if not already granted)
-gcloud projects add-iam-policy-binding ai-subs-backend \
-  --member="serviceAccount:1052285886390-compute@developer.gserviceaccount.com" \
-  --role="roles/datastore.user"
-```
+The backend uses Supabase (Postgres + pgvector) as the metadata and vector store in production. See [Configuration Guide](CONFIGURATION.md) for `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` setup and the project's `CLAUDE.md` for secret management via Secret Manager.
 
 ---
 
@@ -200,8 +145,6 @@ gcloud run deploy ai-subs-backend \
   --cpu=2 \
   --timeout=3600 \
   --set-env-vars='CORS_ORIGINS=["https://REDACTED_FRONTEND_URL","http://localhost:5173"]' \
-  --set-env-vars='DATABASE_TYPE=firestore' \
-  --set-env-vars='FIRESTORE_COLLECTION=transcriptions' \
   --set-env-vars='ENABLE_GCS_UPLOADS=true' \
   --set-env-vars='GCS_BUCKET_NAME=ai-subs-uploads'
 ```
@@ -249,8 +192,8 @@ gcloud run revisions list \
 | Variable               | Value                                                     | Description                      |
 | ---------------------- | --------------------------------------------------------- | -------------------------------- |
 | `CORS_ORIGINS`         | `["","http://localhost:5173"]` | Allowed origins for CORS         |
-| `DATABASE_TYPE`        | `firestore`                                               | Use Firestore for Cloud Run      |
-| `FIRESTORE_COLLECTION` | `transcriptions`                                          | Firestore collection name        |
+| `SUPABASE_URL`         | `https://your-project.supabase.co`                        | Supabase instance URL            |
+| `SUPABASE_SERVICE_KEY` | `service-role-key`                                         | Supabase service role key        |
 | `HUGGINGFACE_TOKEN`    | `hf_xxx...`                                               | Required for speaker diarization |
 
 ### Optional Configuration
@@ -272,8 +215,6 @@ gcloud run services update ai-subs-backend \
   --region=us-central1 \
   --set-env-vars='
 CORS_ORIGINS=["https://REDACTED_FRONTEND_URL","http://localhost:5173"],
-DATABASE_TYPE=firestore,
-FIRESTORE_COLLECTION=transcriptions,
 ENABLE_GCS_UPLOADS=true,
 GCS_BUCKET_NAME=ai-subs-uploads,
 FASTWHISPER_MODEL=small,
@@ -303,21 +244,17 @@ DEFAULT_LLM_PROVIDER=groq
    gcloud run services logs read ai-subs-backend --region=us-central1 --limit=50
    ```
 
-### Firestore Connection Issues
+### Supabase Connection Issues
 
 **Symptom**: Database errors in logs
 
 **Solutions**:
 
-1. Verify Firestore API is enabled:
+1. Verify `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are set correctly:
    ```bash
-   gcloud services list --enabled | grep firestore
+   gcloud run services describe ai-subs-backend --region=us-central1 --format='yaml(spec.template.spec.containers[0].env)'
    ```
-2. Check service account permissions:
-   ```bash
-   gcloud projects get-iam-policy ai-subs-backend --flatten="bindings[].members" --format="table(bindings.role)" --filter="bindings.members:1052285886390-compute@developer.gserviceaccount.com"
-   ```
-3. Ensure `DATABASE_TYPE=firestore` is set in environment
+2. Check the Supabase project dashboard for outages or RLS policy issues
 
 ### Deployment Failures
 
