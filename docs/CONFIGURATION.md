@@ -16,13 +16,7 @@ CORS_ORIGINS=["http://localhost:5173","https://your-frontend.netlify.app"]
 
 ### Database Configuration
 
-```bash
-# Local development: sqlite
-# Production: firestore
-DATABASE_TYPE=sqlite
-DATABASE_PATH=transcriptions.db
-FIRESTORE_COLLECTION=transcriptions
-```
+Supabase (Postgres + pgvector) is the metadata and vector store in all environments. See the Supabase section below for `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`.
 
 ### Whisper Model Settings
 
@@ -103,12 +97,6 @@ GCS_URL_EXPIRY=3600
 ```bash
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_key
-```
-
-### Vector Database
-
-```bash
-CHROMA_DB_PATH=./chroma_db
 ```
 
 ## Frontend Environment Variables

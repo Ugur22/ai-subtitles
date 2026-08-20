@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-# Executor for CPU/GPU-bound operations (CLIP, embeddings, ChromaDB)
+# Executor for CPU/GPU-bound operations (CLIP, embeddings)
 # This prevents blocking the event loop during visual search and chat operations
 _chat_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chat_embed")
 
