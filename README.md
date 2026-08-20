@@ -1,6 +1,7 @@
 # AI Subtitles
 
 Local-first AI video transcription with speaker diarization, semantic search, and RAG-powered chat.
+<img width="1244" height="778" alt="image" src="https://github.com/user-attachments/assets/d88087ab-de24-4e6f-a6e9-9845eba3154b" />
 
 ## Features
 
