@@ -34,7 +34,7 @@ identity + speaker context), follow-up resolution, cross-provider vision fallbac
 - Per-segment + silent-gap screenshots (ffmpeg → GCS signed URLs)
 - JSON segments (text, translation, speaker, timings, screenshot_url, audio/emotion fields)
 - Summaries and chapters
-- Persisted embeddings: ChromaDB (text), pgvector (CLIP images, ArcFace faces)
+- Persisted embeddings: Supabase pgvector (text, CLIP images, ArcFace faces)
 
 ## Frontend (user-facing)
 - Upload & transcribe (drag-drop, language select, background/local) — `features/transcription/`
