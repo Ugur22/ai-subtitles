@@ -15,8 +15,11 @@ flowchart TB
 
     subgraph Cloud["Cloud Services"]
         GCS[(GCS Bucket)]
-        SB[(Supabase)]
-        FS[(Firestore)]
+        SB[(Supabase + pgvector)]
+    end
+
+    subgraph Local["LOCAL_MODE"]
+        SQLITE[(SQLite)]
     end
 
     subgraph Backend["Backend (FastAPI on Cloud Run)"]
@@ -37,8 +40,6 @@ flowchart TB
             JS[Job Queue]
             AAS[Audio Analysis]
         end
-
-        VDB[(ChromaDB)]
     end
 
     subgraph ML["ML Models"]
@@ -66,13 +67,15 @@ flowchart TB
     JR --> JS --> SB
     TR --> AS --> WH
     SR --> SS --> PY
-    CR --> VDB --> EMB & CL
+    CR --> SB
+    CR --> EMB & CL
     CR --> LLM
     VR --> VS
     AAS --> PN
 
-    TR --> FS
+    TR --> SB
     JR --> SB
+    Backend -.LOCAL_MODE=true swaps.-> SQLITE
 ```
 
 ## Background Job Flow
@@ -122,21 +125,21 @@ sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as FastAPI
-    participant VDB as ChromaDB
+    participant SB as Supabase (pgvector)
     participant LLM as LLM Provider
 
     U->>FE: "What did the person in blue say about the project?"
     FE->>API: POST /api/chat/
 
     par Parallel Search
-        API->>VDB: Text Semantic Search
-        VDB-->>API: Relevant Transcript Segments
+        API->>SB: Text Semantic Search
+        SB-->>API: Relevant Transcript Segments
     and
-        API->>VDB: Visual Search (CLIP)
-        VDB-->>API: Matching Screenshots
+        API->>SB: Visual Search (CLIP)
+        SB-->>API: Matching Screenshots
     and
-        API->>VDB: Audio Event Search
-        VDB-->>API: Sound Events
+        API->>SB: Audio Event Search
+        SB-->>API: Sound Events
     end
 
     API->>API: Merge & Rank Results
@@ -176,10 +179,18 @@ flowchart LR
 |-----------|---------|---------|
 | Frontend | Netlify | Automatic deploys from main branch |
 | Backend | Google Cloud Run | Containerized FastAPI with GPU |
-| Database | Firestore | Transcription metadata storage |
+| Database | Supabase Postgres | Transcription metadata + pgvector embeddings |
 | Job Queue | Supabase | Background processing & real-time |
 | Storage | Google Cloud Storage | Video and screenshot files |
-| Vector DB | ChromaDB | Semantic search embeddings |
+| Local dev | SQLite (LOCAL_MODE) | Drop-in Supabase replacement for offline/local runs |
+
+## LOCAL_MODE
+
+For fully offline/local development, `backend/services/local_db.py` implements a SQLite-backed drop-in for the Supabase client: it mirrors the same fluent postgrest-style query API, and vector similarity search is done in-process over JSON-stored embeddings instead of pgvector RPCs.
+
+- Toggled via the `LOCAL_MODE` config flag — when enabled, this SQLite backend replaces Supabase for all storage/query calls.
+- Mutually exclusive with `ENABLE_GCS_UPLOADS`: local mode stores uploaded media under `LOCAL_STORAGE_ROOT` on disk instead of GCS.
+- Everything else (Whisper, Pyannote, LLM providers) runs unchanged — only the persistence layer swaps.
 
 ## Data Flow
 
@@ -189,13 +200,13 @@ flowchart LR
 2. **Job Creation**: Supabase record created with `pending` status
 3. **Processing**: Backend streams audio from GCS, runs Whisper
 4. **Diarization**: Pyannote identifies speakers (if enabled)
-5. **Storage**: Results saved to Firestore, job updated in Supabase
+5. **Storage**: Results and job status saved to Supabase
 6. **Notification**: Real-time update sent to frontend via Supabase
 
 ### Search Indexing Flow
 
-1. **Text**: Transcript segments embedded with Sentence Transformers → ChromaDB
-2. **Visual**: Screenshots extracted with MoviePy → CLIP embeddings → ChromaDB
+1. **Text**: Transcript segments embedded with Sentence Transformers → Supabase pgvector
+2. **Visual**: Screenshots extracted with MoviePy → CLIP embeddings → Supabase pgvector
 3. **Audio**: PANNs analyzes audio events → Stored with timestamps
 
 ### Chat Query Flow

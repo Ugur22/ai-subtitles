@@ -17,11 +17,10 @@ CORS_ORIGINS=["http://localhost:5173","https://your-frontend.netlify.app"]
 ### Database Configuration
 
 ```bash
-# Local development: sqlite
-# Production: firestore
-DATABASE_TYPE=sqlite
-DATABASE_PATH=transcriptions.db
-FIRESTORE_COLLECTION=transcriptions
+# Local development (LOCAL_MODE=true): SQLite drop-in for Supabase
+# Production: Supabase (see Supabase section below)
+LOCAL_MODE=false
+LOCAL_STORAGE_ROOT=./local_storage
 ```
 
 ### Whisper Model Settings
@@ -103,12 +102,6 @@ GCS_URL_EXPIRY=3600
 ```bash
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_key
-```
-
-### Vector Database
-
-```bash
-CHROMA_DB_PATH=./chroma_db
 ```
 
 ## Frontend Environment Variables
