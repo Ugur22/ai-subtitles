@@ -1,0 +1,10 @@
+[
+  {
+    "name": "replace-with-real-case",
+    "video_hash": "REPLACE_ME",
+    "user_id": "REPLACE_ME",
+    "question": "Why did the guest change jobs?",
+    "expected_start_seconds": 760,
+    "acceptable_window_seconds": 30
+  }
+]
