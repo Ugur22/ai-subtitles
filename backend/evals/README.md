@@ -20,6 +20,11 @@ whether any downstream chat/summary text is correct.
 3. Any case still containing the placeholder value `REPLACE_ME` will fail
    validation immediately, before any retrieval is attempted.
 
+If your case comes from a video indexed via local mode (`./scripts/run-local.sh`),
+`video_hash`/`user_id` can be read straight out of `local_data/local.db`
+(`transcript_embeddings` table); the fixed local user id is
+`00000000-0000-4000-8000-000000000001`.
+
 ## Running
 
 From `backend/`:
@@ -32,6 +37,13 @@ To check a different number of top results:
 
 ```bash
 python evals/evaluate_retrieval.py --top-k 10
+```
+
+If your case's data was indexed in local mode, run with `LOCAL_MODE=true` so
+retrieval hits the same local SQLite store instead of a remote Supabase project:
+
+```bash
+LOCAL_MODE=true python evals/evaluate_retrieval.py
 ```
 
 Exit code is `0` only if every case passes; `1` if any case fails, is invalid,
