@@ -1,13 +1,5 @@
 [
   {
-    "name": "man-on-phone-with-wife-in-cabin",
-    "video_hash": "b13ec7d12711b2a18f7412ba0bad93a4c606237fadcfe35f3dc222588de7bb63",
-    "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "Where is the man when he's talking to his wife on the phone?",
-    "expected_start_seconds": 73,
-    "acceptable_window_seconds": 30
-  },
-  {
     "name": "generated-chunk-4",
     "video_hash": "b13ec7d12711b2a18f7412ba0bad93a4c606237fadcfe35f3dc222588de7bb63",
     "user_id": "00000000-0000-4000-8000-000000000001",
