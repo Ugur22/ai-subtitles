@@ -60,6 +60,20 @@ def test_transcript_and_audio_score_is_similarity_and_sorted_higher_first():
     assert "'distance':" not in service
 
 
+def test_transcript_and_audio_search_use_the_bge_query_prefix_not_indexing():
+    service = _read("services/transcript_embedding_service.py")
+
+    index_transcript = service[service.index("def index_transcript_chunks("):service.index("def search_transcript_chunks(")]
+    search_transcript = service[service.index("def search_transcript_chunks("):service.index("def audio_events_exist(")]
+    index_audio = service[service.index("def index_audio_events("):service.index("def search_audio_events(")]
+    search_audio = service[service.index("def search_audio_events("):service.index("def update_speaker_name(")]
+
+    assert "_BGE_QUERY_PREFIX" not in index_transcript
+    assert "_BGE_QUERY_PREFIX" in search_transcript
+    assert "_BGE_QUERY_PREFIX" not in index_audio
+    assert "_BGE_QUERY_PREFIX" in search_audio
+
+
 def test_transcript_audio_migration_drops_old_overloads_and_locks_grants():
     sql = _read("sql/migrations/010_owner_scoped_transcript_audio_embeddings.sql")
 
