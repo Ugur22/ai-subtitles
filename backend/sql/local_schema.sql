@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS transcript_embeddings (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     video_hash TEXT NOT NULL,
+    index_config TEXT NOT NULL DEFAULT 'chunk_size_3',
     chunk_index INTEGER NOT NULL,
     start_time REAL NOT NULL,
     end_time REAL NOT NULL,
@@ -263,7 +264,7 @@ CREATE TABLE IF NOT EXISTS transcript_embeddings (
     embedding TEXT NOT NULL,
     created_at TEXT,
     updated_at TEXT,
-    UNIQUE(user_id, video_hash, chunk_index)
+    UNIQUE(user_id, video_hash, index_config, chunk_index)
 );
 CREATE INDEX IF NOT EXISTS idx_transcript_embeddings_owner_video ON transcript_embeddings(user_id, video_hash);
 

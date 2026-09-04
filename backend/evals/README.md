@@ -49,6 +49,27 @@ LOCAL_MODE=true python evals/evaluate_retrieval.py
 Exit code is `0` only if every case passes; `1` if any case fails, is invalid,
 or errors during retrieval.
 
+## Comparing chunk-size configurations
+
+By default the harness evaluates the `chunk_size_3` baseline (the production
+chunk size). To compare other transcript-chunking configurations, first
+build the config you want with `scripts/build_retrieval_index.py` (see
+`scripts/README.md`), then pass `--index-config`:
+
+```bash
+LOCAL_MODE=true python scripts/build_retrieval_index.py --video-hash <hash> --index-config chunk_size_2
+LOCAL_MODE=true python scripts/build_retrieval_index.py --video-hash <hash> --index-config chunk_size_5
+
+LOCAL_MODE=true python evals/evaluate_retrieval.py --top-k 5 --index-config chunk_size_2
+LOCAL_MODE=true python evals/evaluate_retrieval.py --top-k 5 --index-config chunk_size_3
+LOCAL_MODE=true python evals/evaluate_retrieval.py --top-k 5 --index-config chunk_size_5
+```
+
+Each config is stored and searched in isolation -- a run against one config
+never returns chunks indexed under another config, and rebuilding one config
+never touches the baseline (`chunk_size_3`) or any other config's rows for
+the same video.
+
 ## What Hit@k means
 
 Hit@k is the percentage of questions where the correct transcript moment
