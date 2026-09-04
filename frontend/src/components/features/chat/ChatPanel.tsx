@@ -27,9 +27,13 @@ const formatScreenshotUrl = formatScreenshotUrlSafe;
 const imagePlaceholderSrc =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='12'%3ENo Image%3C/text%3E%3C/svg%3E";
 
-// Timestamp pattern: [HH:MM:SS] or [HH:MM:SS - HH:MM:SS]
+// Timestamp pattern: [HH:MM:SS] or [HH:MM:SS - HH:MM:SS], optionally with
+// fractional seconds ([HH:MM:SS.mmm]) since the LLM sometimes echoes the
+// millisecond-precision timestamps it sees in its own context verbatim.
 const TIMESTAMP_REGEX =
-  /\[(\d{1,2}:\d{2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}:\d{2}))?\]/g;
+  /\[(\d{1,2}:\d{2}:\d{2}(?:\.\d{1,3})?)(?:\s*-\s*(\d{1,2}:\d{2}:\d{2}(?:\.\d{1,3})?))?\]/g;
+
+const displayTimestamp = (ts: string): string => ts.split(".")[0];
 
 const formatSecondsToTimestamp = (seconds: number): string => {
   const safeSeconds = Math.max(0, Math.floor(seconds || 0));
@@ -216,7 +220,9 @@ function renderWithTimestamps(
     }
     const startTs = match[1];
     const endTs = match[2];
-    const label = endTs ? `${startTs} - ${endTs}` : startTs;
+    const label = endTs
+      ? `${displayTimestamp(startTs)} - ${displayTimestamp(endTs)}`
+      : displayTimestamp(startTs);
     parts.push(
       <button
         key={`ts-${match.index}`}
