@@ -55,4 +55,37 @@ Hit@k is the percentage of questions where the correct transcript moment
 appeared in the first k results.
 
 Until real cases are added, don't treat this harness's output as a quality
-measurement -- the placeholder case is not a real result.
+measurement -- the placeholder case is not a real result. A single case
+also isn't enough for a meaningful reading -- see below for generating more.
+
+## Generating more cases
+
+Writing cases by hand doesn't scale. `generate_cases.py` samples chunks from
+an already-indexed video and asks the existing LLM chat service (the same
+one behind the app's chat feature) to draft one question per sampled chunk:
+
+```bash
+python evals/generate_cases.py --video-hash <hash> --user-id <id> --count 15
+```
+
+As with the evaluator, prefix with `LOCAL_MODE=true` if the video was indexed
+locally. Useful flags: `--provider` (default: whatever `DEFAULT_LLM_PROVIDER`
+is set to), `--window` (default `30`), `--min-chunk-chars` (default `90`),
+`--out` (default `evals/generated_cases.json`).
+
+`--min-chunk-chars` defaults to `90`, not something lower, because chunks
+under it tend to be short dialogue fragments (e.g. "Thank you. You're
+welcome.") with no real content -- the LLM invents a plausible-sounding
+question anyway, and the case then fails retrieval not because search is
+wrong but because the label is ungrounded. On the indexed test movie, every
+generated case built from a chunk >= 61 characters passed; both cases built
+from chunks under 45 characters failed for exactly this reason.
+
+This makes real LLM API calls (uses `GROQ_API_KEY` / `XAI_API_KEY` from
+`.env`) and has a real, if small, cost -- don't run it excessively.
+
+Output goes to `generated_cases.json`, **not** `retrieval_cases.json` --
+LLM-authored questions are not verified ground truth (occasionally a
+question is answerable from a neighboring chunk too). Review the generated
+questions and timestamps yourself, then copy the good ones into
+`retrieval_cases.json`.
