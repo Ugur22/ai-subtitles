@@ -5,7 +5,70 @@ app's chat feature. These are outside the scope of `evaluate_retrieval.py`
 (which only tests `search_transcript_chunks`, not the chat answer-synthesis
 pipeline on top of it) -- logged here to revisit separately.
 
-## Chat "Direct Answer" ignored a correct retrieval hit (2026-09-04)
+## RESOLVED: chat context assembly lost retrieval rank/tier (2026-09-04)
+
+Root cause for the three findings below (marked RESOLVED / PARTIALLY RESOLVED
+inline): `backend/routers/chat.py`'s `_retrieve_text_context()` pipeline
+called `search_transcript_chunks()` (which returns hits in similarity-rank
+order) but then `_expand_text_hits_with_neighbors()` rebuilt the list sorted
+by chronological video position, discarding the rank entirely. Neighbor
+segments and `_lexical_segment_matches()` keyword-overlap segments were then
+merged in with no marker distinguishing them from real semantic hits.
+`_format_text_context()` rendered all of this identically -- so by the time
+the prompt reached the LLM, a chunk `search_transcript_chunks` confidently
+ranked #1 looked structurally identical to 20+ other chunks, including
+keyword-overlap distractors.
+
+**Fix:** every context segment now carries `tier` (`semantic_hit` / `neighbor`
+/ `lexical` / `speaker_match`), `rank`, and `similarity`, threaded through
+`_expand_text_hits_with_neighbors`, `_lexical_segment_matches`,
+`_merge_text_results`, and `_speaker_segment_context`. `_format_text_context`
+renders an `[Evidence: ...]` label per segment (e.g. `Semantic Match, Rank 1,
+similarity 0.82` vs `Keyword Match (literal word overlap only, not semantic
+ranking)`), and `_build_chat_messages`'s system prompt now explicitly
+instructs the model to trust the lowest-numbered Rank Semantic Match over
+Surrounding Context or Keyword Match segments when they conflict. Scope:
+`backend/routers/chat.py` only -- `search_transcript_chunks`,
+`evaluate_retrieval.py`, and the visual/audio retrieval paths are untouched.
+
+**Retest results** (same repro questions as originally logged, re-run against
+the live `/api/chat/` endpoint after the fix):
+
+- **"Why didn't you say hello when we saw each other?"** (rank 1/5) --
+  **RESOLVED**. Direct Answer now cites `[01:15:30-01:15:48]` (the correct
+  `start_time=4534.0` chunk) with the actual quotes ("When we were
+  introduced, you acted like you didn't see me... I thought you didn't see
+  me... Trust me. I saw you."), explicitly labeled "Rank 1 Semantic Match" in
+  the model's own Key Analysis. Previously cited an unrelated
+  girlfriend/cafeteria scene ~4406s built on a "when we met" lexical
+  distractor.
+- **"Why does Alex avoid mentioning his wife straight away?"** (rank 5/5,
+  the weakest-ranked case) -- **RESOLVED**. Direct Answer now quotes Alex's
+  actual stated reason verbatim -- "Because people feel sorry for me and
+  treat me differently" -- at the exact right timestamp (`00:37:05`, matching
+  `start_time=2225.0`). Previously gave a generic "recent widower, grief is
+  hard to discuss" inference instead of the character's specific stated
+  reason. Notable as the best result of the three despite starting from the
+  weakest retrieval rank.
+- **"How do you feel about the people who made it?"** (rank 3/5) --
+  **PARTIALLY RESOLVED**. The correct segment (`start_time=955.56`) now
+  surfaces in Key Analysis with the exact right quote ("I'm sorry, I was
+  wrong, I'm happy for them, why not?... I didn't make it.") and is correctly
+  labeled "Rank 3". But the Direct Answer headline still picks the rank-1
+  chunk instead (an unrelated "how many more, like 50" production-quantity
+  line) and declares the question "not directly answered." Cause: ranks 1-3
+  for this query are all within a tight 0.60-0.62 similarity band with no
+  clear winner, so the "trust the lowest-numbered rank" prompt instruction
+  doesn't reliably help when the numeric top rank isn't actually the
+  semantically correct one. Different in kind from the other two fixes -- a
+  close three-way similarity tie, not a case of the signal being buried
+  entirely. Left as a known residual limitation rather than chased further;
+  fixing it would mean prompting for content relevance in addition to rank,
+  a separate, smaller design problem than what this fix targeted.
+
+---
+
+## Chat "Direct Answer" ignored a correct retrieval hit (2026-09-04) — PARTIALLY RESOLVED, see top of file
 
 **Question:** "How do you feel about the people who made it?"
 **Video:** local test video, `video_hash=5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4`
@@ -36,7 +99,8 @@ actually mattered. Needs its own investigation into `routers/chat.py`'s
 context-assembly and answer-generation logic -- not a retrieval bug, not
 something `evaluate_retrieval.py`/`generate_cases.py` can catch by design.
 
-**Second example (2026-09-04), with a caveat:** similar pattern, different
+**Second example (2026-09-04), with a caveat -- not retested after the fix above:**
+similar pattern, different
 question -- "How are you feeling now that the anticipation is almost gone?"
 (`generated-chunk-426`, `start_time=3839.0`). The retrieval eval also passes
 this case. The chunk itself has a direct, quotable line ("...you know that
@@ -126,7 +190,7 @@ overlay, whether it does progressive/incremental text reveal by design, and if
 so whether that's the intended UX or should just show the full cue text
 immediately.
 
-## Chat confidently cited the wrong scene despite retrieval ranking the right one #1 (2026-09-04)
+## Chat confidently cited the wrong scene despite retrieval ranking the right one #1 (2026-09-04) — RESOLVED, see top of file
 
 **Question:** "Why didn't you say hello when we saw each other?"
 (`generated-chunk-499`, `start_time=4534.0`).
@@ -161,7 +225,7 @@ answer doesn't propagate to what the user actually sees.
   language in the UI instead of only in the collapsed "Key Analysis" section,
   so a wrong-but-confident-sounding headline answer is less likely.
 
-## Chat gave a plausible-but-wrong reason instead of the character's actual stated one (2026-09-04)
+## Chat gave a plausible-but-wrong reason instead of the character's actual stated one (2026-09-04) — RESOLVED, see top of file
 
 **Question:** "Why does Alex avoid mentioning his wife straight away?"
 (`alex-avoids-mentioning-wife`, `start_time=2225.0`).
