@@ -17,6 +17,10 @@ from services.supabase_service import supabase
 from services.media_storage import get_media_storage
 from config import settings
 
+# bge-small-en-v1.5 is retrieval-tuned and expects this instruction prefix on
+# the query side only -- captions being indexed are encoded as-is.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
 _REFUSAL_PATTERN = re.compile(
     r"(?i)\b(i can'?t|i cannot|i'?m sorry|i am sorry|i won'?t|"
     r"unable to (assist|help|describe|provide)|"
@@ -64,10 +68,10 @@ class ImageEmbeddingService:
 
     @property
     def caption_embedding_model(self) -> SentenceTransformer:
-        """Lazy load all-MiniLM model for caption text embeddings."""
+        """Lazy load text embedding model for caption text embeddings."""
         if self._caption_embedding_model is None:
-            print("[ImageEmbedding] Loading caption embedding model (all-MiniLM-L6-v2)...")
-            self._caption_embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print(f"[ImageEmbedding] Loading caption embedding model ({settings.TEXT_EMBEDDING_MODEL})...")
+            self._caption_embedding_model = SentenceTransformer(settings.TEXT_EMBEDDING_MODEL)
             print("[ImageEmbedding] Caption embedding model loaded successfully")
         return self._caption_embedding_model
 
@@ -998,14 +1002,14 @@ class ImageEmbeddingService:
         n_results: int = 6,
     ) -> List[Dict]:
         """
-        Search indexed frames by vision-caption similarity (all-MiniLM text
+        Search indexed frames by vision-caption similarity (shared text
         embeddings, scored per caption sentence). Complements CLIP search for
         action/explicit queries where CLIP's zero-shot signal is too weak.
         """
         try:
             client = supabase()
             query_embedding = self.caption_embedding_model.encode(
-                [query], convert_to_numpy=True
+                [_BGE_QUERY_PREFIX + query], convert_to_numpy=True
             ).tolist()[0]
 
             try:

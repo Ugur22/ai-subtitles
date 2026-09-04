@@ -104,9 +104,14 @@ class Settings(BaseSettings):
     ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
     CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
 
+    # Text Embedding Configuration (transcript chunks, audio events, caption search)
+    # bge-small-en-v1.5 is retrieval-tuned and stays 384-dim, matching the
+    # vector(384) columns already in use -- no schema/RPC changes needed.
+    TEXT_EMBEDDING_MODEL: str = os.getenv("TEXT_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+
     # Vision Caption Index Configuration
     # Captions are generated with the xAI vision API at index time and searched
-    # via all-MiniLM text embeddings; CLIP alone cannot recognize many actions.
+    # via the shared text embedding model above; CLIP alone cannot recognize many actions.
     ENABLE_VISION_CAPTIONS: bool = os.getenv("ENABLE_VISION_CAPTIONS", "true").lower() == "true"
     XAI_CAPTION_MODEL: str = os.getenv("XAI_CAPTION_MODEL", "grok-4.3")
     XAI_CAPTION_CONCURRENCY: int = int(os.getenv("XAI_CAPTION_CONCURRENCY", "4"))

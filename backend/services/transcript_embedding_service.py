@@ -1,13 +1,18 @@
 """
 Transcript & Audio-Event Embedding Service using Supabase pgvector
-Handles persistent storage of MiniLM embeddings for transcript chunks and audio events
+Handles persistent storage of text embeddings for transcript chunks and audio events
 """
 
 import time
 import httpx
 from typing import List, Dict, Optional
 from sentence_transformers import SentenceTransformer
+from config import settings
 from services.supabase_service import supabase
+
+# bge-small-en-v1.5 is retrieval-tuned and expects this instruction prefix on
+# the query side only -- passages/chunks being indexed are encoded as-is.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 
 class TranscriptEmbeddingService:
@@ -23,11 +28,11 @@ class TranscriptEmbeddingService:
         Lazy load text embedding model shared by transcript chunks and audio events
 
         Returns:
-            sentence-transformers all-MiniLM-L6-v2 model
+            sentence-transformers model configured via settings.TEXT_EMBEDDING_MODEL
         """
         if self._embedding_model is None:
-            print("[TranscriptEmbedding] Loading text embedding model (all-MiniLM-L6-v2)...")
-            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print(f"[TranscriptEmbedding] Loading text embedding model ({settings.TEXT_EMBEDDING_MODEL})...")
+            self._embedding_model = SentenceTransformer(settings.TEXT_EMBEDDING_MODEL)
             print("[TranscriptEmbedding] Text embedding model loaded successfully")
         return self._embedding_model
 
@@ -227,7 +232,7 @@ class TranscriptEmbeddingService:
 
         client = supabase()
         query_embedding = self.embedding_model.encode(
-            [query],
+            [_BGE_QUERY_PREFIX + query],
             convert_to_numpy=True,
         ).tolist()[0]
 
@@ -458,7 +463,7 @@ class TranscriptEmbeddingService:
 
         client = supabase()
         query_embedding = self.embedding_model.encode(
-            [query],
+            [_BGE_QUERY_PREFIX + query],
             convert_to_numpy=True,
         ).tolist()[0]
 

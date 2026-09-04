@@ -15,6 +15,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 
+from config import settings
 from middleware.auth import require_auth
 from services.transcription_access import authenticated_user_id
 from services.transcription_repository import transcription_repository
@@ -45,11 +46,11 @@ async def _get_sentence_model():
         if _sentence_model is not None:
             return _sentence_model
 
-        logger.info("[Chapters] Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
+        logger.info(f"[Chapters] Loading SentenceTransformer model ({settings.TEXT_EMBEDDING_MODEL})...")
         from sentence_transformers import SentenceTransformer
 
         def _load():
-            return SentenceTransformer('all-MiniLM-L6-v2')
+            return SentenceTransformer(settings.TEXT_EMBEDDING_MODEL)
 
         _sentence_model = await asyncio.to_thread(_load)
         logger.info("[Chapters] SentenceTransformer model loaded.")

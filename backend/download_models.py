@@ -139,7 +139,10 @@ def download_sentence_transformers_model():
     print("Downloading Sentence-Transformers model...")
     print("="*50)
 
-    model_name = "all-MiniLM-L6-v2"
+    # BAAI/bge-small-en-v1.5 is its own full HF repo id (not under the
+    # sentence-transformers org, unlike the old all-MiniLM-L6-v2), so it's
+    # passed to snapshot_download as-is rather than prefixed.
+    model_name = "BAAI/bge-small-en-v1.5"
 
     try:
         from sentence_transformers import SentenceTransformer
@@ -149,11 +152,11 @@ def download_sentence_transformers_model():
         # the image cache. SentenceTransformer(name) alone has, on some
         # huggingface_hub/sentence-transformers versions, left these subfolder
         # files out of the cache, crashing the model load at runtime.
-        print(f"Snapshot-downloading sentence-transformers/{model_name} (all files)...")
-        snapshot_download(f"sentence-transformers/{model_name}")
+        print(f"Snapshot-downloading {model_name} (all files)...")
+        snapshot_download(model_name)
         print(f"  OK: Full snapshot cached")
 
-        print(f"Downloading sentence-transformers/{model_name}...")
+        print(f"Downloading {model_name}...")
         model = SentenceTransformer(model_name)
         print(f"  OK: Sentence-transformers model downloaded successfully")
 

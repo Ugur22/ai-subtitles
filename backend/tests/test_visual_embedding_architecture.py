@@ -21,6 +21,16 @@ def _methods(relative: str, class_name: str) -> set[str]:
     }
 
 
+def test_caption_search_uses_the_bge_query_prefix_not_indexing():
+    service = _read("services/image_embedding_service.py")
+
+    caption_indexing = service[service.index("async def caption_video_images("):service.index("def _update_caption_with_retry(")]
+    caption_search = service[service.index("def search_images_by_caption("):service.index("def image_collection_exists(")]
+
+    assert "_BGE_QUERY_PREFIX" not in caption_indexing
+    assert "_BGE_QUERY_PREFIX" in caption_search
+
+
 def test_visual_rows_are_safely_backfilled_and_owner_scoped():
     sql = _read("sql/migrations/009_owner_scoped_visual_embeddings.sql")
 
