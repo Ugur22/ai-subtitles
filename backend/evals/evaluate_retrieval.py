@@ -8,6 +8,7 @@ tool only -- it does not change production retrieval behavior.
 Usage (run from backend/):
     python evals/evaluate_retrieval.py
     python evals/evaluate_retrieval.py --top-k 10
+    python evals/evaluate_retrieval.py --top-k 5 --index-config chunk_size_5
 """
 
 import argparse
@@ -20,7 +21,11 @@ from typing import Any, Dict, List
 # parent of this file) needs to be on sys.path for `services.*` to import.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services.transcript_embedding_service import transcript_embedding_service  # noqa: E402
+from services.transcript_embedding_service import (  # noqa: E402
+    DEFAULT_INDEX_CONFIG,
+    INDEX_CONFIGS,
+    transcript_embedding_service,
+)
 
 REQUIRED_FIELDS = (
     "name",
@@ -72,7 +77,7 @@ def validate_case(case: Dict[str, Any]) -> List[str]:
     return problems
 
 
-def run_case(case: Dict[str, Any], top_k: int) -> Dict[str, Any]:
+def run_case(case: Dict[str, Any], top_k: int, index_config: str) -> Dict[str, Any]:
     name = case["name"]
     expected = case["expected_start_seconds"]
     window = case["acceptable_window_seconds"]
@@ -83,6 +88,7 @@ def run_case(case: Dict[str, Any], top_k: int) -> Dict[str, Any]:
             query=case["question"],
             user_id=case["user_id"],
             n_results=top_k,
+            index_config=index_config,
         )
     except Exception as e:
         return {
@@ -118,6 +124,12 @@ def main() -> int:
         default=5,
         help="Number of retrieval results to check per case (default: 5)",
     )
+    parser.add_argument(
+        "--index-config",
+        choices=sorted(INDEX_CONFIGS),
+        default=DEFAULT_INDEX_CONFIG,
+        help=f"Named indexing configuration to evaluate (default: {DEFAULT_INDEX_CONFIG})",
+    )
     args = parser.parse_args()
 
     cases_path = Path(args.cases)
@@ -143,7 +155,7 @@ def main() -> int:
             print(f"  - {problem}")
         return 1
 
-    results = [run_case(case, args.top_k) for case in cases]
+    results = [run_case(case, args.top_k, args.index_config) for case in cases]
 
     for result in results:
         status = "PASS" if result["passed"] else "FAIL"
@@ -161,6 +173,7 @@ def main() -> int:
     hit_rate = (passed / total * 100) if total else 0.0
 
     print()
+    print(f"Index config: {args.index_config} (chunk_size={INDEX_CONFIGS[args.index_config]})")
     print(f"Total cases: {total}")
     print(f"Passed:      {passed}")
     print(f"Failed:      {failed}")

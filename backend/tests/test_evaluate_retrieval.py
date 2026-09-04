@@ -1,6 +1,13 @@
 from unittest.mock import Mock
 
-from evals.evaluate_retrieval import main, run_case, transcript_embedding_service, validate_case
+from evals.evaluate_retrieval import (
+    DEFAULT_INDEX_CONFIG,
+    INDEX_CONFIGS,
+    main,
+    run_case,
+    transcript_embedding_service,
+    validate_case,
+)
 
 
 def _case(**overrides):
@@ -24,7 +31,9 @@ def test_result_inside_window_passes(monkeypatch):
     monkeypatch.setattr(
         transcript_embedding_service, "search_transcript_chunks", Mock(return_value=[_result(105)])
     )
-    result = run_case(_case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5)
+    result = run_case(
+        _case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5, index_config=DEFAULT_INDEX_CONFIG
+    )
     assert result["passed"] is True
     assert result["error"] is None
 
@@ -33,7 +42,9 @@ def test_result_outside_window_fails(monkeypatch):
     monkeypatch.setattr(
         transcript_embedding_service, "search_transcript_chunks", Mock(return_value=[_result(200)])
     )
-    result = run_case(_case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5)
+    result = run_case(
+        _case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5, index_config=DEFAULT_INDEX_CONFIG
+    )
     assert result["passed"] is False
 
 
@@ -43,8 +54,21 @@ def test_one_valid_hit_among_multiple_results_passes(monkeypatch):
         "search_transcript_chunks",
         Mock(return_value=[_result(500), _result(999), _result(101)]),
     )
-    result = run_case(_case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5)
+    result = run_case(
+        _case(expected_start_seconds=100, acceptable_window_seconds=10), top_k=5, index_config=DEFAULT_INDEX_CONFIG
+    )
     assert result["passed"] is True
+
+
+def test_run_case_passes_index_config_through_to_search(monkeypatch):
+    search_mock = Mock(return_value=[_result(100)])
+    monkeypatch.setattr(transcript_embedding_service, "search_transcript_chunks", search_mock)
+
+    run_case(_case(), top_k=5, index_config="chunk_size_5")
+
+    _, kwargs = search_mock.call_args
+    assert kwargs["index_config"] == "chunk_size_5"
+    assert kwargs["n_results"] == 5
 
 
 def test_placeholder_field_fails_validation():
@@ -64,7 +88,7 @@ def test_valid_case_has_no_validation_problems():
 
 
 def test_retrieval_exception_does_not_prevent_later_cases(monkeypatch, tmp_path, capsys):
-    def fake_search(video_hash, query, user_id, n_results=5):
+    def fake_search(video_hash, query, user_id, n_results=5, index_config=DEFAULT_INDEX_CONFIG):
         if video_hash == "broken":
             raise RuntimeError("Transcript chunk search failed")
         return [_result(100)]
@@ -74,8 +98,8 @@ def test_retrieval_exception_does_not_prevent_later_cases(monkeypatch, tmp_path,
     broken = _case(name="broken-case", video_hash="broken")
     ok = _case(name="ok-case")
 
-    broken_result = run_case(broken, top_k=5)
-    ok_result = run_case(ok, top_k=5)
+    broken_result = run_case(broken, top_k=5, index_config=DEFAULT_INDEX_CONFIG)
+    ok_result = run_case(ok, top_k=5, index_config=DEFAULT_INDEX_CONFIG)
 
     assert broken_result["passed"] is False
     assert "Transcript chunk search failed" in broken_result["error"]
@@ -123,3 +147,42 @@ def test_main_fails_fast_on_invalid_case_without_calling_retrieval(monkeypatch, 
 
     assert main() == 1
     search_mock.assert_not_called()
+
+
+def test_main_defaults_index_config_to_baseline(monkeypatch, tmp_path):
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        '[{"name": "passes", "video_hash": "hash-1", "user_id": "user-1", '
+        '"question": "why?", "expected_start_seconds": 100, "acceptable_window_seconds": 10}]'
+    )
+    search_mock = Mock(return_value=[_result(100)])
+    monkeypatch.setattr(transcript_embedding_service, "search_transcript_chunks", search_mock)
+    monkeypatch.setattr("sys.argv", ["evaluate_retrieval.py", "--cases", str(cases_path)])
+
+    assert main() == 0
+    _, kwargs = search_mock.call_args
+    assert kwargs["index_config"] == DEFAULT_INDEX_CONFIG == "chunk_size_3"
+
+
+def test_main_threads_index_config_flag_through_and_prints_summary(monkeypatch, tmp_path, capsys):
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        '[{"name": "passes", "video_hash": "hash-1", "user_id": "user-1", '
+        '"question": "why?", "expected_start_seconds": 100, "acceptable_window_seconds": 10}]'
+    )
+    search_mock = Mock(return_value=[_result(100)])
+    monkeypatch.setattr(transcript_embedding_service, "search_transcript_chunks", search_mock)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["evaluate_retrieval.py", "--cases", str(cases_path), "--top-k", "5", "--index-config", "chunk_size_5"],
+    )
+
+    assert main() == 0
+
+    _, kwargs = search_mock.call_args
+    assert kwargs["index_config"] == "chunk_size_5"
+
+    out = capsys.readouterr().out
+    assert f"Index config: chunk_size_5 (chunk_size={INDEX_CONFIGS['chunk_size_5']})" in out
+    assert "Total cases: 1" in out
+    assert "Hit@5:" in out

@@ -69,6 +69,35 @@ Errors encountered:        0
 - All dependencies from requirements.txt must be installed
 - Screenshot files must exist in the paths specified in the database
 
+### build_retrieval_index.py
+
+Builds or rebuilds a single named transcript-chunking index configuration
+(`chunk_size_2`, `chunk_size_3`, `chunk_size_5`) for one already-transcribed
+video, for retrieval-index experiments (see `evals/README.md`).
+
+**Purpose:**
+- Compare transcript chunk sizes against the `chunk_size_3` baseline using
+  `evals/evaluate_retrieval.py --index-config`
+- Rebuild one config in place with `--force` without touching any other
+  config's rows for the same video (including the baseline)
+
+**Usage:**
+```bash
+# From the backend directory
+LOCAL_MODE=true python scripts/build_retrieval_index.py --video-hash <hash> --index-config chunk_size_5
+LOCAL_MODE=true python scripts/build_retrieval_index.py --video-hash <hash> --index-config chunk_size_2 --force
+```
+
+**Output:**
+```
+Indexing video <hash> under index_config=chunk_size_5 (chunk_size=5) from 214 segments...
+Indexed 43 chunks for index_config=chunk_size_5 (chunk_size=5), video <hash>
+```
+
+**Error Handling:**
+- Exits 1 if the video has no completed transcription or no segments
+- Exits 0 on success
+
 ## Adding New Scripts
 
 When creating new maintenance scripts:

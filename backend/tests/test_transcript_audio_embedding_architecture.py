@@ -39,7 +39,10 @@ def test_transcript_and_audio_search_require_the_owner():
     assert "ae.video_hash = target_video_hash" in audio_search
 
     service = _read("services/transcript_embedding_service.py")
-    assert "on_conflict='user_id,video_hash,chunk_index'" in service or "'user_id,video_hash,chunk_index'" in service
+    assert (
+        "on_conflict='user_id,video_hash,index_config,chunk_index'" in service
+        or "'user_id,video_hash,index_config,chunk_index'" in service
+    )
     assert "on_conflict='user_id,video_hash,segment_id'" in service or "'user_id,video_hash,segment_id'" in service
     assert "'p_user_id': user_id" in service
     assert ".eq('user_id', user_id).eq('video_hash', video_hash)" in service
