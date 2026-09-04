@@ -110,5 +110,13 @@
     "question": "Who does Sadie return home with to lead Anedors as his new business partner?",
     "expected_start_seconds": 4900.2,
     "acceptable_window_seconds": 30
+  },
+  {
+    "name": "manual-who-died-in-movie",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "who died in this movie?",
+    "expected_start_seconds": 2217.0,
+    "acceptable_window_seconds": 30
   }
 ]
