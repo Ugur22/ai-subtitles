@@ -80,11 +80,11 @@
     "acceptable_window_seconds": 30
   },
   {
-    "name": "peanut-candy-seasonal-only",
+    "name": "peanuts-year-round",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "Why isn't ordering peanut candy a bad idea even if you only do it at parties?",
-    "expected_start_seconds": 1235.0,
+    "question": "Why does someone suggest offering peanuts all year round?",
+    "expected_start_seconds": 1235,
     "acceptable_window_seconds": 30
   },
   {
