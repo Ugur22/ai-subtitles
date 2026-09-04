@@ -680,6 +680,14 @@ def _segment_as_search_result(video_hash: str, segment: dict) -> dict:
     }
 
 
+_TIER_LABELS = {
+    "semantic_hit": "Semantic Match",
+    "neighbor": "Surrounding Context",
+    "lexical": "Keyword Match",
+    "speaker_match": "Speaker Match",
+}
+
+
 def _format_text_context(video_hash: str, search_results: list) -> tuple[str, list]:
     context_parts = []
     sources = []
@@ -687,7 +695,24 @@ def _format_text_context(video_hash: str, search_results: list) -> tuple[str, li
     for result in search_results:
         metadata = result["metadata"]
         text = result["text"]
+        tier = result.get("tier", "semantic_hit")
+        rank = result.get("rank")
+        similarity = result.get("similarity")
+        label = _TIER_LABELS.get(tier, "Semantic Match")
+
+        if tier == "semantic_hit":
+            evidence = f"{label}, Rank {rank}" if rank else label
+            if similarity is not None:
+                evidence += f", similarity {similarity:.2f}"
+        elif tier == "neighbor":
+            evidence = f"{label} (near Rank {rank} Semantic Match)" if rank else label
+        elif tier == "speaker_match":
+            evidence = f"{label} (named-speaker lookup, not semantic ranking)"
+        else:
+            evidence = f"{label} (literal word overlap only, not semantic ranking)"
+
         context_parts.append(
+            f"[Evidence: {evidence}] "
             f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
             f"[Speaker: {metadata['speaker']}]\n{text}"
         )
@@ -698,9 +723,26 @@ def _format_text_context(video_hash: str, search_results: list) -> tuple[str, li
             "end": metadata["end"],
             "speaker": metadata["speaker"],
             "text": text[:200] + "..." if len(text) > 200 else text,
+            "tier": tier,
+            "rank": rank,
+            "similarity": similarity,
         })
 
     return "\n\n".join(context_parts), sources
+
+
+def _tag_semantic_rank(search_results: list) -> list:
+    """Tag raw search_transcript_chunks results with tier/rank so downstream
+    formatting can distinguish real semantic hits from neighbor/lexical
+    evidence. Shallow-copies each dict so the caller's original list (which
+    may be cached/reused elsewhere) is never mutated."""
+    tagged = []
+    for rank, result in enumerate(search_results, start=1):
+        item = dict(result)
+        item["tier"] = "semantic_hit"
+        item["rank"] = rank
+        tagged.append(item)
+    return tagged
 
 
 def _expand_text_hits_with_neighbors(
@@ -711,18 +753,31 @@ def _expand_text_hits_with_neighbors(
     max_results: int = 24,
 ) -> list:
     """
-    Add nearby transcript segments around vector hits.
+    Add nearby transcript segments around vector hits, tagging every segment
+    with the tier/rank/similarity of the semantic hit that produced it.
 
     Vector hits are indexed as small chunks. For movie/chat questions the
     surrounding line or two often carries the setup, referent, or resolution,
-    so we include adjacent transcript segments before prompting the LLM.
+    so we include adjacent transcript segments before prompting the LLM --
+    but grouped by originating rank (best first) rather than chronological
+    position, so the LLM (and any max_results truncation) can tell a real
+    semantic hit apart from filler pulled in only for continuity.
+
+    Two rank-ascending passes over search_results: pass 1 claims each hit's
+    own overlapping segment(s) as tier="semantic_hit"; pass 2 claims the
+    ±neighbor_count window as tier="neighbor", never overwriting an index
+    pass 1 already claimed. This makes precedence deterministic -- a segment
+    that is simultaneously rank 1's exact hit and rank 3's neighbor always
+    keeps "semantic_hit", and ties within a tier keep the better (lower) rank.
     """
-    if not search_results or not segments:
-        return search_results
+    tagged_results = _tag_semantic_rank(search_results)
+    if not tagged_results or not segments:
+        return tagged_results
 
-    selected_indexes: set[int] = set()
+    index_info: dict[int, dict] = {}
+    per_hit_overlap: list[list[int]] = []
 
-    for result in search_results:
+    for result in tagged_results:
         metadata = result.get("metadata") or {}
         hit_start = float(metadata.get("start", 0) or 0)
         hit_end = float(metadata.get("end", hit_start) or hit_start)
@@ -735,17 +790,36 @@ def _expand_text_hits_with_neighbors(
             seg_start, seg_end, _, _ = _segment_bounds(segment)
             if seg_start <= hit_end and seg_end >= hit_start:
                 overlapping.append(idx)
+        per_hit_overlap.append(overlapping)
 
+        for idx in overlapping:
+            if idx not in index_info:
+                index_info[idx] = {
+                    "tier": "semantic_hit",
+                    "rank": result["rank"],
+                    "similarity": result.get("similarity"),
+                }
+
+    for result, overlapping in zip(tagged_results, per_hit_overlap):
         if not overlapping:
             continue
-
         start_idx = max(0, min(overlapping) - neighbor_count)
         end_idx = min(len(segments) - 1, max(overlapping) + neighbor_count)
-        selected_indexes.update(range(start_idx, end_idx + 1))
+        for idx in range(start_idx, end_idx + 1):
+            if idx in index_info:
+                continue
+            index_info[idx] = {
+                "tier": "neighbor",
+                "rank": result["rank"],
+                "similarity": result.get("similarity"),
+            }
+
+    if not index_info:
+        return tagged_results
 
     expanded = []
     seen = set()
-    for idx in sorted(selected_indexes):
+    for idx, info in sorted(index_info.items(), key=lambda kv: (kv[1]["rank"], kv[0])):
         segment = segments[idx]
         text = _segment_text(segment)
         if not text:
@@ -754,11 +828,15 @@ def _expand_text_hits_with_neighbors(
         if key in seen:
             continue
         seen.add(key)
-        expanded.append(_segment_as_search_result(video_hash, segment))
+        result = _segment_as_search_result(video_hash, segment)
+        result["tier"] = info["tier"]
+        result["rank"] = info["rank"]
+        result["similarity"] = info["similarity"]
+        expanded.append(result)
         if len(expanded) >= max_results:
             break
 
-    return expanded or search_results
+    return expanded or tagged_results
 
 
 def _lexical_segment_matches(
@@ -832,7 +910,11 @@ def _lexical_segment_matches(
         if key in seen:
             continue
         seen.add(key)
-        results.append(_segment_as_search_result(video_hash, segment))
+        tagged = _segment_as_search_result(video_hash, segment)
+        tagged["tier"] = "lexical"
+        tagged["rank"] = None
+        tagged["similarity"] = None
+        results.append(tagged)
         if len(results) >= max(limit * 3, limit):
             break
 
@@ -841,6 +923,10 @@ def _lexical_segment_matches(
 
 
 def _merge_text_results(primary: list, supplemental: list, max_results: int) -> list:
+    """Concat + dedupe by (start, end, text prefix). `primary` must be the
+    higher-tier list (semantic hits/neighbors) and `supplemental` the
+    lower-tier one (lexical) -- dedup keeps the first occurrence, so this
+    order is what makes an overlapping segment keep its higher-tier tag."""
     merged = []
     seen = set()
 
@@ -887,49 +973,27 @@ def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tupl
         return [], "", []
 
     selected = matching_segments[:max(1, limit)]
-    context_parts = []
-    sources = []
     search_results = []
 
     for seg in selected:
         text = (seg.get("translation") or seg.get("text") or "").strip()
         if not text:
             continue
-        start = float(seg.get("start", 0) or 0)
-        end = float(seg.get("end", start) or start)
-        start_time = seg.get("start_time") or _format_segment_time(start)
-        end_time = seg.get("end_time") or _format_segment_time(end)
-        speaker = seg.get("speaker") or speaker_names[0]
-        metadata = {
-            "video_hash": video_hash,
-            "start": start,
-            "end": end,
-            "start_time": start_time,
-            "end_time": end_time,
-            "speaker": speaker,
-        }
-        search_results.append({"text": text, "metadata": metadata, "distance": None})
-        context_parts.append(
-            f"[Timestamp: {start_time} - {end_time}] "
-            f"[Speaker: {speaker}]\n{text}"
-        )
-        sources.append({
-            "start_time": start_time,
-            "end_time": end_time,
-            "start": start,
-            "end": end,
-            "speaker": speaker,
-            "text": text[:200] + "..." if len(text) > 200 else text,
-        })
+        result = _segment_as_search_result(video_hash, seg)
+        result["tier"] = "speaker_match"
+        result["rank"] = None
+        result["similarity"] = None
+        search_results.append(result)
 
     if not search_results:
         return [], "", []
 
+    context, sources = _format_text_context(video_hash, search_results)
     print(
         f"Speaker fallback context: {len(search_results)} segments for "
         f"{', '.join(speaker_names)}"
     )
-    return search_results, "\n\n".join(context_parts), sources
+    return search_results, context, sources
 
 
 def _timestamp_from_screenshot_url(url: str) -> float:
@@ -2382,9 +2446,13 @@ async def _retrieve_text_context(
     )
 
     if len(combined_results) != len(search_results):
+        tier_counts: dict[str, int] = {}
+        for r in combined_results:
+            t = r.get("tier", "semantic_hit")
+            tier_counts[t] = tier_counts.get(t, 0) + 1
         print(
             f"Text retrieval context expanded: semantic={len(search_results)}, "
-            f"context_segments={len(combined_results)}"
+            f"context_segments={len(combined_results)} ({tier_counts})"
         )
 
     context, sources = _format_text_context(video_hash, combined_results)
@@ -3015,6 +3083,8 @@ Guidelines:
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
+- Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:
@@ -3092,6 +3162,8 @@ Guidelines:
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
+- Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:

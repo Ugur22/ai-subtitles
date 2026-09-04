@@ -8,14 +8,6 @@
     "acceptable_window_seconds": 30
   },
   {
-    "name": "generated-chunk-30",
-    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
-    "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "Why did you decide to stop using the brand's products after the contest?",
-    "expected_start_seconds": 309.08,
-    "acceptable_window_seconds": 30
-  },
-  {
     "name": "generated-chunk-47",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
@@ -88,11 +80,11 @@
     "acceptable_window_seconds": 30
   },
   {
-    "name": "generated-chunk-464",
+    "name": "peanut-candy-seasonal-only",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
     "question": "Why isn't ordering peanut candy a bad idea even if you only do it at parties?",
-    "expected_start_seconds": 4179.64,
+    "expected_start_seconds": 1235.0,
     "acceptable_window_seconds": 30
   },
   {
