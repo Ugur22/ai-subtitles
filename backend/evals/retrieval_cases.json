@@ -104,11 +104,11 @@
     "acceptable_window_seconds": 30
   },
   {
-    "name": "generated-chunk-541",
+    "name": "alex-avoids-mentioning-wife",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "Who does Sadie return home with to lead Anedors as his new business partner?",
-    "expected_start_seconds": 4900.2,
+    "question": "Why does Alex avoid mentioning his wife straight away?",
+    "expected_start_seconds": 2225.0,
     "acceptable_window_seconds": 30
   },
   {
