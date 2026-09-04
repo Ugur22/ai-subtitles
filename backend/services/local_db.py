@@ -1252,13 +1252,14 @@ class _RpcQuery:
         user_id = p["p_user_id"]
         video_hash = p["target_video_hash"]
         match_count = int(p.get("match_count") or 5)
+        index_config = p.get("target_index_config") or "chunk_size_3"
 
         scored = []
         rows = self._db.conn.execute(
             "SELECT id, video_hash, chunk_index, start_time, end_time, start_timestamp, "
             "end_timestamp, speaker, segment_count, chunk_text, embedding "
-            "FROM transcript_embeddings WHERE user_id = ? AND video_hash = ?",
-            [user_id, video_hash],
+            "FROM transcript_embeddings WHERE user_id = ? AND video_hash = ? AND index_config = ?",
+            [user_id, video_hash, index_config],
         ).fetchall()
         for row in rows:
             row = dict(row)
@@ -1408,6 +1409,7 @@ class LocalSupabaseClient:
         ("jobs", "final_media_key", "TEXT"),
         ("jobs", "finalization_started_at", "TEXT"),
         ("user_usage_monthly", "reserved_transcription_seconds", "INTEGER NOT NULL DEFAULT 0"),
+        ("transcript_embeddings", "index_config", "TEXT NOT NULL DEFAULT 'chunk_size_3'"),
     ]
 
     def _init_schema(self):
@@ -1430,6 +1432,7 @@ class LocalSupabaseClient:
                         )
                         print(f"[LocalDB] migrated: {table}.{col}")
                 self._migrate_image_embeddings_unique_constraint()
+                self._migrate_transcript_embeddings_unique_constraint()
                 self.conn.commit()
 
     def _migrate_image_embeddings_unique_constraint(self):
@@ -1472,6 +1475,56 @@ class LocalSupabaseClient:
             """
         )
         print("[LocalDB] migrated: image_embeddings UNIQUE(user_id, video_hash, segment_id)")
+
+    def _migrate_transcript_embeddings_unique_constraint(self):
+        """transcript_embeddings originally had UNIQUE(user_id, video_hash,
+        chunk_index); retrieval-index experiments widened the app's on_conflict
+        key to (user_id, video_hash, index_config, chunk_index) so multiple
+        chunk-size configs can coexist per video. SQLite can't ALTER a UNIQUE
+        constraint, so rebuild the table when an old-shape DB is detected
+        (upsert fails with 'ON CONFLICT clause does not match any PRIMARY KEY
+        or UNIQUE constraint' otherwise)."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='transcript_embeddings'"
+        ).fetchone()
+        if row is None or "UNIQUE(user_id, video_hash, index_config, chunk_index)" in (row["sql"] or ""):
+            return
+        self.conn.executescript(
+            """
+            ALTER TABLE transcript_embeddings RENAME TO transcript_embeddings_old;
+            CREATE TABLE transcript_embeddings (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                video_hash TEXT NOT NULL,
+                index_config TEXT NOT NULL DEFAULT 'chunk_size_3',
+                chunk_index INTEGER NOT NULL,
+                start_time REAL NOT NULL,
+                end_time REAL NOT NULL,
+                start_timestamp TEXT NOT NULL,
+                end_timestamp TEXT NOT NULL,
+                speaker TEXT,
+                segment_count INTEGER NOT NULL DEFAULT 1,
+                chunk_text TEXT NOT NULL,
+                embedding TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(user_id, video_hash, index_config, chunk_index)
+            );
+            INSERT OR IGNORE INTO transcript_embeddings
+                SELECT id, user_id, video_hash,
+                       COALESCE(index_config, 'chunk_size_3'), chunk_index,
+                       start_time, end_time, start_timestamp, end_timestamp,
+                       speaker, segment_count, chunk_text, embedding,
+                       created_at, updated_at
+                FROM transcript_embeddings_old;
+            DROP TABLE transcript_embeddings_old;
+            CREATE INDEX IF NOT EXISTS idx_transcript_embeddings_owner_video ON transcript_embeddings(user_id, video_hash);
+            """
+        )
+        print(
+            "[LocalDB] migrated: transcript_embeddings "
+            "UNIQUE(user_id, video_hash, index_config, chunk_index)"
+        )
 
     def _seed(self):
         with self.lock:

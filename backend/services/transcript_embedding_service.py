@@ -14,6 +14,19 @@ from services.supabase_service import supabase
 # the query side only -- passages/chunks being indexed are encoded as-is.
 _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
+# Named transcript-chunking configurations for retrieval-index experiments.
+# "chunk_size_3" is the production baseline (matches the historical hardcoded
+# default) -- every existing caller that omits index_config/chunk_size keeps
+# indexing/searching under this config, so production chat behavior is
+# unchanged. Other configs are isolated, coexisting indexes for the same
+# video, never mixed at query time (see index_config filtering below).
+DEFAULT_INDEX_CONFIG = "chunk_size_3"
+INDEX_CONFIGS: Dict[str, int] = {
+    "chunk_size_2": 2,
+    "chunk_size_3": 3,
+    "chunk_size_5": 5,
+}
+
 
 class TranscriptEmbeddingService:
     """Service for storing and searching transcript-chunk and audio-event embeddings in Supabase"""
@@ -95,6 +108,7 @@ class TranscriptEmbeddingService:
         segments: List[Dict],
         user_id: str,
         chunk_size: int = 3,
+        index_config: str = DEFAULT_INDEX_CONFIG,
         force_reindex: bool = False,
     ) -> int:
         """
@@ -105,6 +119,9 @@ class TranscriptEmbeddingService:
             segments: List of transcription segments
             user_id: Owner ID for tenant isolation
             chunk_size: Number of segments to combine into one chunk (default: 3)
+            index_config: Named indexing configuration this index belongs to
+                (default: "chunk_size_3", the production baseline). Distinct
+                configs are stored side by side and never overwrite each other.
             force_reindex: If True, bypass the already-indexed skip and re-upsert
 
         Returns:
@@ -121,10 +138,15 @@ class TranscriptEmbeddingService:
         if not force_reindex:
             existing = client.table('transcript_embeddings').select(
                 'id', count='exact'
-            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).eq(
+                'index_config', index_config
+            ).limit(1).execute()
             if existing.data:
                 count = existing.count or len(existing.data)
-                print(f"[TranscriptEmbedding] Video {video_hash} already has {count} indexed chunks")
+                print(
+                    f"[TranscriptEmbedding] Video {video_hash} already has {count} indexed chunks "
+                    f"for index_config={index_config}"
+                )
                 return count
 
         # Upsert on (user_id, video_hash, chunk_index) overwrites rows in place, so we
@@ -155,6 +177,7 @@ class TranscriptEmbeddingService:
             chunk_records.append({
                 'user_id': user_id,
                 'video_hash': video_hash,
+                'index_config': index_config,
                 'chunk_index': chunk_index,
                 'start_time': first_segment.get('start', 0.0),
                 'end_time': last_segment.get('end', 0.0),
@@ -190,7 +213,7 @@ class TranscriptEmbeddingService:
                 self._upsert_with_retry(
                     client,
                     'transcript_embeddings',
-                    'user_id,video_hash,chunk_index',
+                    'user_id,video_hash,index_config,chunk_index',
                     batch,
                     batch_num,
                     total_batches,
@@ -214,6 +237,7 @@ class TranscriptEmbeddingService:
         query: str,
         user_id: str,
         n_results: int = 5,
+        index_config: str = DEFAULT_INDEX_CONFIG,
     ) -> List[Dict]:
         """
         Search for relevant transcript chunks using semantic similarity
@@ -223,6 +247,9 @@ class TranscriptEmbeddingService:
             query: Search query
             user_id: Owner ID for tenant isolation
             n_results: Number of results to return
+            index_config: Named indexing configuration to search within
+                (default: "chunk_size_3", the production baseline). Chunks
+                from other configs are never returned.
 
         Returns:
             List of relevant chunks shaped like {"text", "metadata", "similarity"}
@@ -244,6 +271,7 @@ class TranscriptEmbeddingService:
                     'query_embedding': query_embedding,
                     'target_video_hash': video_hash,
                     'match_count': n_results,
+                    'target_index_config': index_config,
                 }
             ).execute()
         except Exception as e:
