@@ -40,3 +40,6 @@ logs/
 # Large media files (handled by .gcloudignore for Cloud Build)
 static/videos/
 static/screenshots/
+
+# Per-run eval output artifact (see evals/README.md)
+evals/chat_eval_results.json
