@@ -269,3 +269,147 @@ for the source's specific wording), not as a clear-cut error.
   would fix this on its own, or whether the answer-synthesis step would still
   favor the inferred explanation over the explicit one even with better
   retrieval.
+
+## RESOLVED: chat ignored a correctly-ranked hit even with tier/rank labels present (2026-09-06)
+
+**Root cause:** the 2026-09-04 fix above added per-segment `[Evidence: tier,
+rank, similarity]` labels and told the model to trust the lowest-numbered
+rank "when segments conflict" -- but gave no instruction for what to do when
+the model doesn't perceive a conflict and simply overlooks a correct segment
+buried in a flat, ~30-item context block. Reproduced fresh via two tightened
+`retrieval_cases.json` questions: "Who does Sadie say she invited to her
+parents' retirement party that night?" (`generated-chunk-122`, chunk
+`1323.0`, retrieved rank 2/8) and "What does Alex say he feels the night
+before Christmas..." (`generated-chunk-426`, chunk `3839.0`, retrieved rank
+1/8) both got flat denials ("the transcript segments provided do not
+contain...") despite the correct, labeled chunk being verifiably present in
+the final LLM prompt -- confirmed by tracing `_expand_text_hits_with_neighbors`
+-> `_merge_text_results` -> `_format_text_context` -> `_build_chat_messages`
+directly in a Python shell: the chunk survives every step, correctly tagged,
+un-truncated, at 4,601 characters total (nowhere near a token-budget
+concern).
+
+**Fix:** `backend/routers/chat.py` -- `_format_text_context()` now accepts
+the raw, un-fragmented `search_transcript_chunks()` hits and prepends a
+compact "TOP RANKED SEMANTIC MATCHES" block above the existing flat segment
+list, one line per hit, each annotated with its literal question-keyword
+overlap (e.g. "3/5 question keywords: invited, party, retirement") via a new
+shared `_extract_keywords()` helper (extracted from
+`_lexical_segment_matches`'s existing stop-word tokenization, no behavior
+change there). `_build_chat_messages()`'s system prompt now explicitly tells
+the model to check every entry in that block, and treat a keyword-overlap
+annotation as a strong signal, before concluding the transcript doesn't
+address the question.
+
+**Retest results** (same two repro questions, re-run against the live
+`/api/chat/` endpoint after the fix):
+- Both now surface the correct chunk, correctly ranked, and quote it
+  **verbatim** in Key Analysis (e.g. "Rank 2 is the strongest match for
+  keywords related to 'invited,' 'night,' 'party,' and 'retirement'"). The
+  evidence-blindness failure mode is fixed.
+- Neither produces a fully clean Direct Answer, but for a *different*
+  reason than before -- see the speaker-diarization finding below. That gap
+  is independent of this fix; this entry closes only the evidence-blindness
+  half.
+- Regression-checked against `alex-avoids-mentioning-wife` (a previously
+  RESOLVED case) and a new `truffle-discovered-by-accident` case -- both
+  still produce clean, fully correct Direct Answers, so the new block
+  doesn't crowd out or distract from already-working cases.
+- `evals/evaluate_retrieval.py` re-run post-fix: unaffected (14/14 passing),
+  as expected since it never calls into `chat.py`.
+
+## Speaker-diarization clustering merges multiple characters under one label (2026-09-06)
+
+**Not a `chat.py` bug -- a data-quality limitation of this test video's
+diarization run.** Discovered while investigating why the two cases above
+still don't produce a clean Direct Answer even after the evidence-surfacing
+fix: the model won't commit that `SPEAKER_02` = Sadie or `SPEAKER_05` = Alex,
+even while holding the correct quote in hand.
+
+**Root cause:** neither `face_tags` nor `speaker_voiceprints` has any rows
+for this video/user, so no name-resolution has ever been applied -- every
+segment carries its raw pyannote diarization label. The app already has a
+feature for exactly this (`POST /api/transcription/{video_hash}/speaker`,
+`update_speaker_name` in `routers/speaker.py`, which bulk-renames a label
+across the transcript and re-syncs `transcript_embeddings`); it has simply
+never been run for this video.
+
+**Why a blanket rename isn't a safe fix:** sampling `SPEAKER_05`'s full
+99-segment span shows it isn't one character -- it mixes at least four: the
+mother in the prologue ("My sweet Christmas," 0s), Taylor ("Well, just
+because of the smell...", 709s), Francie the child ("Don't eat them,
+Daddy.", 2480s), and Alex (the "anticipation" line above, 3839s, and again
+at 4417s). `SPEAKER_01` (which did resolve correctly to "Alex" in the
+already-passing `alex-avoids-mentioning-wife` case) is cleaner but not
+perfectly clean either -- mostly Alex, with a few early stray lines.
+Renaming `SPEAKER_05` to "Alex" wholesale would confidently misattribute the
+mother's, Taylor's, and Francie's lines to him -- a worse failure than the
+model's current honest refusal to guess.
+
+**Conclusion:** the model's hedging in these two cases is the correct
+response to genuinely ambiguous underlying diarization, not something to
+prompt-engineer away. No action taken.
+
+**Addendum (2026-09-06):** re-running the `generated-chunk-426` question
+("What does Alex say he feels the night before Christmas...") in the live UI
+produced a *worse* variant of the same symptom on a later turn: instead of
+neutrally declining to confirm the speaker ("this speaker is not identified
+as Alex"), the model asserted outright that the segment is "between
+SPEAKER_05 and SPEAKER_01, **not involving Alex**" -- a confident negative
+claim the transcript doesn't actually support (the diarization label simply
+carries no identity information either way; it's not evidence of exclusion).
+Same prompt, same root cause, but LLM sampling variance means the failure
+mode ranges from an honest hedge to a confidently wrong exclusion depending
+on the run. Reinforces that this is a data-completeness problem (no
+`face_tags`/`speaker_voiceprints` for this video) rather than something a
+prompt tweak can reliably bound.
+
+**Not investigated yet:**
+- Whether re-running diarization with different clustering parameters would
+  produce cleaner speaker separation for this specific video.
+- Whether `auto_identify_speakers` (voiceprint-based auto-matching,
+  `routers/speaker.py`) would perform better than a manual bulk rename,
+  since it works from voice embeddings rather than a single blanket label
+  swap.
+- If this recurs on other test videos: first check `face_tags`/
+  `speaker_voiceprints` row counts and spot-check a few of the larger
+  `SPEAKER_XX` clusters for internal consistency before assuming a rename
+  is safe.
+
+## IDEA (not investigated): share speaker/face identity labels across users for the same video_hash (2026-09-06)
+
+**Problem this would address:** the speaker-diarization finding above is
+expensive to fix per-user -- nobody can reasonably ask every uploader to
+manually tag speakers on every video, especially for popular
+already-existing content (movies, shows) that many different users upload
+independently. Right now each user's tagging effort (if they ever do it) is
+siloed to their own account, even when `video_hash` proves the underlying
+file is byte-identical to one another user already tagged.
+
+**Proposed direction:** key identity labels by `video_hash` instead of
+`user_id`, so the first person to tag "this is Sadie" benefits every later
+uploader of the same file -- the same dedup pattern this codebase already
+uses for job processing (`create_job` already dedupes work by `video_hash`).
+
+**Why it's not a simple schema change:**
+- `face_tags` is already keyed by `video_hash` (schema has no `user_id`
+  column) -- plausibly shareable across users today with little/no change,
+  but this hasn't been verified against how Supabase RLS actually scopes
+  reads/writes to it in production (the local-mode schema alone doesn't
+  prove cross-user access is possible or intended).
+- `speaker_voiceprints` is keyed by `user_id` only, by design -- it's built
+  for "enroll a recurring colleague once, reuse across your own meeting
+  recordings," a personal-recurring-speaker use case, not a per-video cast
+  list. Repurposing it into a shared per-video registry is a different
+  feature, not a tweak.
+- Conflict arbitration: what happens when two users tag the same cluster
+  with different names (typo, disagreement, or two different people
+  genuinely being merged into one cluster, per the finding above)?
+- Turns "your private speaker enrollment" into a shared, semi-public
+  who's-who database for what is often copyrighted media (movies/shows) --
+  a product/moderation question, not purely an engineering one.
+
+**Next step (deferred):** check whether `face_tags` can already be read
+cross-user for a matching `video_hash` today (schema suggests maybe; RLS
+policy needs checking), before scoping what a `speaker_voiceprints` redesign
+would require.
