@@ -688,9 +688,39 @@ _TIER_LABELS = {
 }
 
 
-def _format_text_context(video_hash: str, search_results: list) -> tuple[str, list]:
+def _format_text_context(
+    video_hash: str,
+    search_results: list,
+    top_ranked_hits: Optional[list] = None,
+    question: Optional[str] = None,
+) -> tuple[str, list]:
     context_parts = []
     sources = []
+
+    if top_ranked_hits:
+        question_keywords = _extract_keywords(question) if question else set()
+        top_lines = [
+            "TOP RANKED SEMANTIC MATCHES (check every one of these before "
+            "concluding the transcript doesn't address the question):"
+        ]
+        for rank, hit in enumerate(top_ranked_hits, start=1):
+            metadata = hit["metadata"]
+            similarity = hit.get("similarity")
+            sim_part = f"similarity {similarity:.2f}" if similarity is not None else "similarity n/a"
+            keyword_part = ""
+            if question_keywords:
+                overlap = question_keywords & _extract_keywords(hit["text"])
+                if overlap:
+                    keyword_part = (
+                        f", {len(overlap)}/{len(question_keywords)} question "
+                        f"keywords: {', '.join(sorted(overlap))}"
+                    )
+            top_lines.append(
+                f"Rank {rank} ({sim_part}{keyword_part}) "
+                f"[{metadata['start_time']} - {metadata['end_time']}] "
+                f"{metadata['speaker']}: {hit['text']}"
+            )
+        context_parts.append("\n".join(top_lines))
 
     for result in search_results:
         metadata = result["metadata"]
@@ -839,6 +869,26 @@ def _expand_text_hits_with_neighbors(
     return expanded or tagged_results
 
 
+def _extract_keywords(text: str) -> set[str]:
+    """Stop-word-filtered lowercase token set, shared by lexical matching
+    and top-ranked-hit keyword annotation."""
+    import re
+
+    stop_words = {
+        "a", "an", "and", "are", "about", "at", "can", "could", "did", "do",
+        "does", "for", "from", "happen", "happened", "how", "i", "in", "is",
+        "it", "me", "movie", "of", "on", "or", "scene", "show", "tell",
+        "the", "this", "to", "video", "was", "what", "when", "where", "who",
+        "why", "with", "would",
+    }
+    cleaned = _clean_query_for_retrieval(text).lower()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_'-]+", cleaned)
+        if len(token) > 2 and token not in stop_words
+    }
+
+
 def _lexical_segment_matches(
     video_hash: str,
     question: str,
@@ -857,18 +907,7 @@ def _lexical_segment_matches(
         phrase = (double_quoted or single_quoted).strip().lower()
         if phrase:
             quoted_phrases.append(phrase)
-    stop_words = {
-        "a", "an", "and", "are", "about", "at", "can", "could", "did", "do",
-        "does", "for", "from", "happen", "happened", "how", "i", "in", "is",
-        "it", "me", "movie", "of", "on", "or", "scene", "show", "tell",
-        "the", "this", "to", "video", "was", "what", "when", "where", "who",
-        "why", "with", "would",
-    }
-    tokens = [
-        token
-        for token in re.findall(r"[a-z0-9_'-]+", query)
-        if len(token) > 2 and token not in stop_words
-    ]
+    tokens = _extract_keywords(question)
     if not tokens and not quoted_phrases:
         return []
 
@@ -885,7 +924,7 @@ def _lexical_segment_matches(
             if phrase in haystack:
                 score += 8 + len(phrase.split())
 
-        token_hits = len(set(tokens) & haystack_tokens)
+        token_hits = len(tokens & haystack_tokens)
         score += token_hits
 
         if score > 0:
@@ -2425,6 +2464,7 @@ async def _retrieve_text_context(
             return lexical_results, context, sources
         return [], "", []
 
+    raw_semantic_hits = search_results
     max_context_results = max(n_results * 4, 16)
     expanded_results = _expand_text_hits_with_neighbors(
         video_hash,
@@ -2455,7 +2495,9 @@ async def _retrieve_text_context(
             f"context_segments={len(combined_results)} ({tier_counts})"
         )
 
-    context, sources = _format_text_context(video_hash, combined_results)
+    context, sources = _format_text_context(
+        video_hash, combined_results, top_ranked_hits=raw_semantic_hits, question=question
+    )
     search_results = combined_results
     return search_results, context, sources
 
@@ -3085,6 +3127,7 @@ Guidelines:
 - Reference multiple sources/timestamps to support your answers
 - Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
 - When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
+- Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:
@@ -3164,6 +3207,7 @@ Guidelines:
 - Reference multiple sources/timestamps to support your answers
 - Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
 - When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
+- Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:

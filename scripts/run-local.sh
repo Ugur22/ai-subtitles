@@ -76,7 +76,7 @@ setup_frontend() {
 start_backend() {
   cd "$BACKEND"
   green "Starting backend on http://localhost:8000 (LOCAL_MODE)"
-  exec ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+  exec ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 }
 
 start_frontend() {
@@ -104,7 +104,7 @@ case "$MODE" in
     setup_frontend
     cd "$BACKEND"
     green "Starting backend on http://localhost:8000 (LOCAL_MODE)"
-    ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 &
+    ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload &
     BACKEND_PID=$!
     trap 'kill $BACKEND_PID 2>/dev/null || true' EXIT
     sleep 2

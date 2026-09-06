@@ -16,11 +16,11 @@
     "acceptable_window_seconds": 30
   },
   {
-    "name": "generated-chunk-86",
+    "name": "truffle-discovered-by-accident",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "How do you feel about the people who made it?",
-    "expected_start_seconds": 955.56,
+    "question": "How was the chocolate truffle discovered, according to Alex's story?",
+    "expected_start_seconds": 885.0,
     "acceptable_window_seconds": 30
   },
   {
@@ -35,7 +35,7 @@
     "name": "generated-chunk-122",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "What are you having a party for?",
+    "question": "Who does Sadie say she invited to her parents' retirement party that night?",
     "expected_start_seconds": 1323.0,
     "acceptable_window_seconds": 30
   },
@@ -75,7 +75,7 @@
     "name": "generated-chunk-426",
     "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
     "user_id": "00000000-0000-4000-8000-000000000001",
-    "question": "How are you feeling now that the anticipation is almost gone?",
+    "question": "What does Alex say he feels the night before Christmas, now that the anticipation is almost over?",
     "expected_start_seconds": 3839.0,
     "acceptable_window_seconds": 30
   },
