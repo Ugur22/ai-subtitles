@@ -28,7 +28,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -46,24 +45,10 @@ REQUIRED_FIELDS = (
     "question",
     "expected_answer",
     "expected_time_range",
+    "required_terms",
 )
 STRING_FIELDS = ("id", "video_hash", "user_id", "question", "expected_answer")
 PLACEHOLDER = "REPLACE_ME"
-
-# Small, dependency-free stopword set for answer_terms_ok's keyword
-# extraction. Deliberately not importing chat.py's `_extract_keywords` --
-# that would pull the whole chat.py import chain (and its LLM/DB
-# dependencies) into what should stay a decoupled, easily unit-testable
-# scoring function.
-_STOPWORDS = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "to", "of", "in", "on", "at", "for", "and", "or", "but", "that", "this",
-    "it", "he", "she", "they", "his", "her", "their", "you", "your", "i",
-    "we", "us", "with", "as", "by", "from", "because", "so", "not", "do",
-    "does", "did", "have", "has", "had", "will", "would", "can", "could",
-    "should", "about", "if", "just", "now", "how", "what", "why", "who",
-    "when", "where", "which", "him", "them", "my", "me",
-}
 
 
 def load_cases(path: Path) -> List[Dict[str, Any]]:
@@ -115,6 +100,18 @@ def validate_case(case: Dict[str, Any]) -> List[str]:
         if not isinstance(forbidden, list) or not all(isinstance(x, str) for x in forbidden):
             problems.append("field 'what_must_not_be_claimed' must be a list of strings")
 
+    if "required_terms" in case:
+        required_terms = case["required_terms"]
+        if (
+            not isinstance(required_terms, list)
+            or not required_terms
+            or not all(isinstance(x, str) and x.strip() for x in required_terms)
+        ):
+            problems.append(
+                "field 'required_terms' must be a non-empty list of non-empty strings -- "
+                "pick 2-3 distinctive facts by hand, don't derive them from expected_answer"
+            )
+
     return problems
 
 
@@ -132,19 +129,18 @@ def citation_overlap(sources: List[Dict[str, Any]], expected_time_range: Dict[st
     return False
 
 
-def _extract_terms(text: str) -> List[str]:
-    words = re.findall(r"[a-z0-9']+", (text or "").lower())
-    return [w for w in words if w not in _STOPWORDS and len(w) > 2]
+def answer_terms_ok(answer: str, required_terms: List[str]) -> bool:
+    """True iff every hand-picked required term appears in answer.
 
-
-def answer_terms_ok(answer: str, expected_answer: str) -> bool:
-    """True if a majority of expected_answer's key terms appear in answer."""
-    terms = _extract_terms(expected_answer)
-    if not terms:
+    required_terms are curated per-case (2-3 distinctive facts a correct
+    answer must state), not derived from expected_answer's full wording --
+    deriving from prose let a good paraphrase fail on wrong-word matches and
+    let a vague answer pass on unimportant-word matches.
+    """
+    if not required_terms:
         return True
     answer_lower = (answer or "").lower()
-    hits = sum(1 for term in terms if term in answer_lower)
-    return hits > len(terms) * 0.5
+    return all(term.lower() in answer_lower for term in required_terms)
 
 
 def forbidden_claims_ok(answer: str, what_must_not_be_claimed: List[str]) -> bool:
@@ -225,7 +221,7 @@ def run_case(case: Dict[str, Any], client, provider: Optional[str]) -> Dict[str,
     sources = body.get("sources") or []
 
     citation_ok = citation_overlap(sources, case["expected_time_range"])
-    terms_ok = answer_terms_ok(answer, case["expected_answer"])
+    terms_ok = answer_terms_ok(answer, case["required_terms"])
     forbidden_ok = forbidden_claims_ok(answer, case.get("what_must_not_be_claimed", []))
 
     return {
@@ -349,6 +345,7 @@ def main() -> int:
             print(f"\n--- {result['id']} ---")
             print(f"Question:            {result['question']}")
             print(f"Expected answer:     {case.get('expected_answer')}")
+            print(f"Required terms:      {case.get('required_terms')}")
             print(f"Expected time range: {case.get('expected_time_range')}")
             if result["error"]:
                 print(f"Error:               {result['error']}")

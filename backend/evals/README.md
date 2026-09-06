@@ -138,20 +138,36 @@ repeatable, scriptable check instead of only by hand.
   "user_id": "...",
   "question": "a natural-language question a user might ask",
   "expected_answer": "short human-verified factual answer",
+  "required_terms": ["laura", "wife"],
   "expected_time_range": {"start": 100.0, "end": 130.0},
   "what_must_not_be_claimed": []
 }
 ```
 
 - `expected_answer`: a short, human-verified summary of what the correct
-  answer actually says -- not the exact LLM wording, just the key facts a
-  correct answer must contain.
+  answer actually says, for a human reading a failure report. It is **not**
+  used by the automated check.
+- `required_terms`: 2-3 hand-picked, distinctive facts (words or short
+  phrases) that a correct answer must state -- this *is* what the automated
+  check tests: `terms_ok` passes only if every one of these appears
+  (case-insensitive substring) in the real answer. Pick these yourself;
+  don't derive them from `expected_answer`'s full wording -- an earlier
+  version of this harness did that (stopword-stripping the whole sentence
+  and requiring a majority of what was left), and it let a good paraphrase
+  fail on incidental wrong-word mismatches while letting a vague answer pass
+  on unimportant matched words. Two or three terms is enough; you don't need
+  many.
 - `expected_time_range`: a window generous enough to cover the relevant
   chunk plus reasonable neighbor context. This is intentionally a loose
   sanity check on citation location, not a tight one.
 - `what_must_not_be_claimed` (optional, default `[]`): substrings that must
-  **not** appear anywhere in the answer -- typically the identifying words of
-  a previously-wrong answer, to catch regressions back to a fixed bug.
+  **not** appear anywhere in the answer -- store the full incorrect claim or
+  a distinctive phrase from a *known, specific* prior false answer, not a
+  generic context word. E.g. don't forbid "cafeteria" on its own -- a
+  correct answer can legitimately mention it in passing; forbid the
+  actual wrong claim's distinctive wording instead (see
+  `generated-chunk-499` in `chat_cases.json` for an example: it forbids
+  the specific wrongly-cited line, not the word "cafeteria").
 
 **Ground truth must come from the transcript, not from a chat answer.**
 Write `expected_answer`/`expected_time_range`/`what_must_not_be_claimed` by
