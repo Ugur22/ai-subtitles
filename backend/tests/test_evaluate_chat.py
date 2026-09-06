@@ -26,6 +26,7 @@ def _case(**overrides):
         "user_id": "user-1",
         "question": "why?",
         "expected_answer": "because reasons",
+        "required_terms": ["reasons"],
         "expected_time_range": {"start": 100.0, "end": 110.0},
     }
     base.update(overrides)
@@ -72,27 +73,28 @@ def test_citation_overlap_ignores_sources_missing_start_or_end():
 # --- answer_terms_ok ------------------------------------------------------
 
 
-def test_answer_terms_ok_true_when_answer_contains_expected_terms():
-    answer = "Trust me. I saw you standing right there."
-    expected = "Trust me. I saw you."
-    assert answer_terms_ok(answer, expected) is True
+def test_answer_terms_ok_true_when_all_required_terms_present():
+    answer = "Trust me, I saw you. I didn't see you at first."
+    assert answer_terms_ok(answer, ["saw you", "trust me"]) is True
+
+
+def test_answer_terms_ok_false_when_one_required_term_missing():
+    answer = "Because people feel sorry for me."
+    assert answer_terms_ok(answer, ["sorry", "differently"]) is False
 
 
 def test_answer_terms_ok_false_when_answer_is_unrelated():
     answer = "The weather in the scene looks cold and snowy."
-    expected = "Because people feel sorry for me and treat me differently."
-    assert answer_terms_ok(answer, expected) is False
+    assert answer_terms_ok(answer, ["sorry", "differently"]) is False
 
 
-def test_answer_terms_ok_true_when_expected_answer_has_no_meaningful_terms():
-    # Entirely stopwords/short tokens -- nothing to check, so trivially ok.
-    assert answer_terms_ok("anything at all", "the a an is") is True
+def test_answer_terms_ok_true_when_required_terms_is_empty():
+    assert answer_terms_ok("anything at all", []) is True
 
 
 def test_answer_terms_ok_case_insensitive():
     answer = "TRUFFLE was discovered by ACCIDENT, apparently."
-    expected = "It was discovered by accident."
-    assert answer_terms_ok(answer, expected) is True
+    assert answer_terms_ok(answer, ["accident", "truffle"]) is True
 
 
 # --- forbidden_claims_ok ---------------------------------------------------
@@ -160,3 +162,25 @@ def test_expected_time_range_non_numeric_value_fails_validation():
 def test_what_must_not_be_claimed_wrong_type_fails_validation():
     problems = validate_case(_case(what_must_not_be_claimed="not a list"))
     assert any("what_must_not_be_claimed" in p for p in problems)
+
+
+def test_missing_required_terms_fails_validation():
+    case = _case()
+    del case["required_terms"]
+    problems = validate_case(case)
+    assert any("required_terms" in p for p in problems)
+
+
+def test_empty_required_terms_fails_validation():
+    problems = validate_case(_case(required_terms=[]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_wrong_type_fails_validation():
+    problems = validate_case(_case(required_terms="not a list"))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_blank_string_fails_validation():
+    problems = validate_case(_case(required_terms=["ok", "  "]))
+    assert any("required_terms" in p for p in problems)
