@@ -43,3 +43,4 @@ static/screenshots/
 
 # Per-run eval output artifact (see evals/README.md)
 evals/chat_eval_results.json
+evals/chat_eval_results_*.json
