@@ -113,7 +113,7 @@
     "user_id": "00000000-0000-4000-8000-000000000001",
     "question": "Near the end of the film, right after the colonel dies, what does the wind spirit visiting him say the colonel was too ashamed to admit?",
     "expected_answer": "The wind spirit (referred to as \"Matthew\" in this scene) tells the colonel to confess that for a while his heart had also felt a need for warmth, and that he never wanted to say so because he was ashamed of being a man like all the others.",
-    "required_terms": ["Matthew", "ashamed"],
+    "required_terms": [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"],
     "expected_time_range": {"start": 6794.0, "end": 6991.0},
     "what_must_not_be_claimed": [
       "the colonel dies without ever speaking to the wind spirit again"

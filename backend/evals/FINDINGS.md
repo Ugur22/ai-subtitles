@@ -1,3 +1,31 @@
+## Accepted residual limitation: `mine-frees-wind-matteo` causal-mechanism miss (2026-09-07)
+
+**Not investigated further -- see the Movie 2 robustness fix that closed the other 3 failing
+cases in this same eval run.** `why-forest-creatures-free-matteo`, `estate-inheritance-to-
+benvenuto`, and `colonel-death-matteo-reconciliation` were all fixed (lexical-budget starvation
+bug + forward-biased causal-question expansion + eval-rubric synonym groups). This case was
+deliberately left unfixed.
+
+**Evidence:** the required chunk ("The mine is ready! ... Careful, if you mix it, go in half a
+minute.", ~2346-2353s) scores only **0.38 cosine similarity** against the question (recomputed
+locally with the production embedding model, `BAAI/bge-small-en-v1.5`) -- well below the ~0.58+
+band the actual top-5 semantic hits occupy for this question. It also sits **6 embedding chunks**
+past the nearest retrieved anchor (the "they're going to free the Matteo wind!" announcement,
+chunk ~158), with 5 chunks of unrelated filler dialogue in between ("who is this scarlet?",
+"Colonel Procolo", "old morro's redheads", "something should be done", "Old Fox is right",
+shouting about a "congiglione").
+
+**Why not fixed:** reaching it would require a forward-neighbor window roughly twice as wide as
+the one added for `why-forest-creatures-free-matteo` (which only needed ~1 chunk forward from a
+lexical anchor, not 6 from a semantic one). Applying a 6-chunk-forward window to every causal
+question globally would pull that same volume of low-relevance filler into every "why"/"because"
+question's context, including ones that already work correctly today (see the Movie 1 RESOLVED
+entries above) -- a real risk of trading one eval case for regressions elsewhere. Decision:
+documented as an accepted limitation, same category as the "party" ambiguity finding below, rather
+than force-fixed.
+
+---
+
 # Findings for later investigation
 
 Issues discovered while manually verifying retrieval eval cases against the

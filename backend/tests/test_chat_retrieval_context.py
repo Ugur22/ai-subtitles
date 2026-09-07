@@ -38,7 +38,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("LOCAL_MODE", "true")
 
-from routers.chat import _expand_text_hits_with_neighbors  # noqa: E402
+from routers.chat import (  # noqa: E402
+    _expand_text_hits_with_neighbors,
+    _is_causal_question,
+    _lexical_segment_matches,
+    _merge_text_results,
+)
 
 CHUNK_SIZE = 3
 
@@ -154,3 +159,131 @@ def test_tight_hit_budget_does_not_shrink_neighbor_reach():
     included = _included_segment_indices(expanded)
     assert included == {0, 1, 2, 6, 7, 8}  # full neighbor chunks 0 and 2
     assert not included & {3, 4, 5}  # hit's own segment excluded by hit_budget=0
+
+
+# --- neighbor_chunks_after (causal-question forward-biased expansion) ------
+
+
+def test_neighbor_chunks_after_none_matches_symmetric_default():
+    """Omitting neighbor_chunks_after (all pre-existing call sites and every
+    test above) must be byte-identical to today's symmetric behavior."""
+    segments = _gapped_segments(15)
+    hit = _hit(30.0, 59.0)  # chunk 1 (indices 3,4,5)
+    default = _expand_text_hits_with_neighbors(
+        "h", [hit], segments, neighbor_chunks=1, chunk_size=CHUNK_SIZE, hit_budget=24, neighbor_budget=24
+    )
+    explicit_none = _expand_text_hits_with_neighbors(
+        "h", [hit], segments, neighbor_chunks=1, neighbor_chunks_after=None,
+        chunk_size=CHUNK_SIZE, hit_budget=24, neighbor_budget=24,
+    )
+    assert _included_segment_indices(default) == _included_segment_indices(explicit_none)
+
+
+def test_neighbor_chunks_after_widens_forward_reach_only():
+    """A wider neighbor_chunks_after reaches further chunks forward while
+    backward reach stays governed by neighbor_chunks -- the asymmetric
+    window causal questions use (see _retrieve_text_context)."""
+    segments = _gapped_segments(21)  # 7 chunks of 3
+    hit = _hit(30.0, 59.0)  # chunk 1 (indices 3,4,5)
+    expanded = _expand_text_hits_with_neighbors(
+        "h", [hit], segments, neighbor_chunks=1, neighbor_chunks_after=3,
+        chunk_size=CHUNK_SIZE, hit_budget=24, neighbor_budget=48,
+    )
+    included = _included_segment_indices(expanded)
+    assert {0, 1, 2}.issubset(included)  # backward: still just 1 chunk (chunk 0)
+    assert {6, 7, 8, 9, 10, 11, 12, 13, 14}.issubset(included)  # forward: chunks 2,3,4
+    assert not included & {15, 16, 17}  # chunk 5 not reached
+
+
+# --- _lexical_segment_matches before/after window ---------------------------
+
+
+def _text_segments(pairs):
+    return [
+        {"start": start, "end": start + 4.0, "text": text, "speaker": "SPEAKER_00"}
+        for start, text in pairs
+    ]
+
+
+_LEXICAL_FIXTURE = _text_segments([
+    (0.0, "unrelated filler one"),
+    (10.0, "unrelated filler two"),
+    (20.0, "the disasters caused by matteo wind were terrible"),
+    (30.0, "unrelated filler three"),
+    (40.0, "unrelated filler four"),
+    (50.0, "unrelated filler five"),
+    (60.0, "this is the only weapon to deal with the colonel"),
+])
+
+
+def test_lexical_segment_matches_default_window_does_not_reach_distant_line():
+    """Default before=1/after=1 reproduces the original hardcoded ±1 window --
+    too narrow to reach a follow-up line 4 segments past the matched anchor."""
+    results = _lexical_segment_matches("h", "why free matteo wind disasters", _LEXICAL_FIXTURE, limit=1)
+    texts = {r["text"] for r in results}
+    assert "the disasters caused by matteo wind were terrible" in texts
+    assert "this is the only weapon to deal with the colonel" not in texts
+
+
+def test_lexical_segment_matches_wider_after_reaches_follow_up_line():
+    """Widening `after` (as _retrieve_text_context does for causal questions)
+    reaches the follow-up line, and the internal result cap scales with the
+    window so it isn't silently truncated back down."""
+    results = _lexical_segment_matches(
+        "h", "why free matteo wind disasters", _LEXICAL_FIXTURE, limit=1, after=4
+    )
+    texts = {r["text"] for r in results}
+    assert "the disasters caused by matteo wind were terrible" in texts
+    assert "this is the only weapon to deal with the colonel" in texts
+
+
+# --- _merge_text_results lexical-budget reservation (regression) ------------
+
+
+def test_merge_text_results_drops_lexical_when_primary_saturates_shared_budget():
+    """Reproduces the real bug: when primary (semantic hit + neighbor tiers)
+    alone fills max_results, lexical results are silently dropped entirely --
+    this is the OLD behavior (max_results = hit_budget + neighbor_budget,
+    with no separate lexical allowance)."""
+    primary = [
+        {"metadata": {"start": float(i), "end": float(i) + 1.0}, "text": f"primary {i}"}
+        for i in range(10)
+    ]
+    lexical = [
+        {"metadata": {"start": float(100 + i), "end": float(100 + i) + 1.0}, "text": f"lexical {i}"}
+        for i in range(4)
+    ]
+    merged = _merge_text_results(primary, lexical, max_results=10)
+    assert not any(r["text"].startswith("lexical") for r in merged)
+
+
+def test_merge_text_results_reserves_room_for_lexical_with_extra_budget():
+    """Fix: reserving a dedicated lexical_budget on top of hit_budget +
+    neighbor_budget (see _retrieve_text_context) guarantees lexical results
+    survive even when primary is fully saturated."""
+    primary = [
+        {"metadata": {"start": float(i), "end": float(i) + 1.0}, "text": f"primary {i}"}
+        for i in range(10)
+    ]
+    lexical = [
+        {"metadata": {"start": float(100 + i), "end": float(100 + i) + 1.0}, "text": f"lexical {i}"}
+        for i in range(4)
+    ]
+    merged = _merge_text_results(primary, lexical, max_results=10 + 4)
+    lexical_survivors = [r for r in merged if r["text"].startswith("lexical")]
+    assert len(lexical_survivors) == 4
+
+
+# --- _is_causal_question ------------------------------------------------------
+
+
+def test_is_causal_question_detects_why_because_reason():
+    assert _is_causal_question("Why do they free him?") is True
+    assert _is_causal_question("What is the reason they free him?") is True
+    assert _is_causal_question("Because of what happened, what changed?") is True
+
+
+def test_is_causal_question_false_for_non_causal_wording():
+    assert _is_causal_question("What do they do to free him?") is False
+    assert _is_causal_question("Who frees him?") is False
+    assert _is_causal_question("") is False

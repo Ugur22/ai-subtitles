@@ -98,6 +98,26 @@ def test_answer_terms_ok_case_insensitive():
     assert answer_terms_ok(answer, ["accident", "truffle"]) is True
 
 
+def test_answer_terms_ok_synonym_group_passes_on_any_match():
+    answer = "The visiting spirit says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is True
+
+
+def test_answer_terms_ok_synonym_group_passes_on_literal_term():
+    answer = "Matthew says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is True
+
+
+def test_answer_terms_ok_synonym_group_fails_when_none_present():
+    answer = "SPEAKER_03 says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is False
+
+
+def test_answer_terms_ok_synonym_group_still_requires_other_strict_terms():
+    answer = "The visiting spirit says the colonel was proud."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit"], "ashamed"]) is False
+
+
 # --- forbidden_claims_ok ---------------------------------------------------
 
 
@@ -184,6 +204,21 @@ def test_required_terms_wrong_type_fails_validation():
 
 def test_required_terms_with_blank_string_fails_validation():
     problems = validate_case(_case(required_terms=["ok", "  "]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_synonym_group_passes_validation():
+    problems = validate_case(_case(required_terms=[["Matthew", "the visiting spirit"], "ashamed"]))
+    assert problems == []
+
+
+def test_required_terms_with_empty_synonym_group_fails_validation():
+    problems = validate_case(_case(required_terms=[[], "ashamed"]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_blank_string_in_synonym_group_fails_validation():
+    problems = validate_case(_case(required_terms=[["Matthew", "  "], "ashamed"]))
     assert any("required_terms" in p for p in problems)
 
 

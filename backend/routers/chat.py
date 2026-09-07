@@ -787,6 +787,7 @@ def _expand_text_hits_with_neighbors(
     chunk_size: int = 1,
     hit_budget: int = 24,
     neighbor_budget: int = 24,
+    neighbor_chunks_after: Optional[int] = None,
 ) -> list:
     """
     Add nearby transcript segments around vector hits, tagging every segment
@@ -798,6 +799,14 @@ def _expand_text_hits_with_neighbors(
     but grouped by originating rank (best first) rather than chronological
     position, so the LLM (and any max_results truncation) can tell a real
     semantic hit apart from filler pulled in only for continuity.
+
+    neighbor_chunks_after: forward-only override for how many chunks past a
+    hit's own span to include, independent of the backward `neighbor_chunks`
+    reach. Defaults to None, which keeps expansion symmetric (uses
+    `neighbor_chunks` on both sides, byte-identical to passing no override) --
+    for causal ("why"/"because"/"reason") questions, the explanation more
+    often follows the retrieved event than precedes it, so callers can widen
+    only the forward reach without also pulling in more backward filler.
 
     Expansion is done in chunk-index space, not raw-segment count: a hit's
     own overlapping raw-segment span is rounded out to whole embedding-chunk
@@ -855,13 +864,14 @@ def _expand_text_hits_with_neighbors(
                     "similarity": result.get("similarity"),
                 }
 
+    chunks_after = neighbor_chunks if neighbor_chunks_after is None else neighbor_chunks_after
     for result, overlapping in zip(tagged_results, per_hit_overlap):
         if not overlapping:
             continue
         chunk_start = min(overlapping) // chunk_size
         chunk_end = max(overlapping) // chunk_size
         start_idx = max(0, (chunk_start - neighbor_chunks) * chunk_size)
-        end_idx = min(len(segments) - 1, (chunk_end + neighbor_chunks + 1) * chunk_size - 1)
+        end_idx = min(len(segments) - 1, (chunk_end + chunks_after + 1) * chunk_size - 1)
         for idx in range(start_idx, end_idx + 1):
             if idx in index_info:
                 continue
@@ -912,6 +922,22 @@ def _expand_text_hits_with_neighbors(
     return expanded or tagged_results
 
 
+_CAUSAL_MARKERS = {"why", "because", "reason", "reasons"}
+
+
+def _is_causal_question(question: str) -> bool:
+    """True if the question is asking for a cause/explanation ("why"/"because"
+    /"reason"). Movie dialogue tends to state the reason for an event shortly
+    *after* the event itself, so causal questions get a forward-biased
+    context window in `_retrieve_text_context` -- see `_expand_text_hits_with_
+    neighbors`'s `neighbor_chunks_after` and `_lexical_segment_matches`'s
+    `after` param."""
+    import re
+
+    tokens = re.findall(r"[a-z']+", (question or "").lower())
+    return any(token in _CAUSAL_MARKERS for token in tokens)
+
+
 def _extract_keywords(text: str) -> set[str]:
     """Stop-word-filtered lowercase token set, shared by lexical matching
     and top-ranked-hit keyword annotation."""
@@ -937,8 +963,17 @@ def _lexical_segment_matches(
     question: str,
     segments: list,
     limit: int,
+    before: int = 1,
+    after: int = 1,
 ) -> list:
-    """Find transcript segments with exact query term/phrase overlap."""
+    """Find transcript segments with exact query term/phrase overlap.
+
+    before/after: raw-segment window expanded around each of the top `limit`
+    scored anchors (default ±1, matching prior hardcoded behavior). Callers
+    widen `after` for causal questions, where the explanation tends to follow
+    shortly after a lexically-matched setup line rather than surround it
+    symmetrically -- the internal result cap below scales with the window so
+    a wider `after` isn't silently truncated back down to the old size."""
     import re
 
     query = _clean_query_for_retrieval(question).lower()
@@ -979,10 +1014,11 @@ def _lexical_segment_matches(
     scored.sort(key=lambda item: (-item[0], item[1]))
     selected_indexes: set[int] = set()
     for _, idx, _ in scored[:limit]:
-        selected_indexes.update(range(max(0, idx - 1), min(len(segments), idx + 2)))
+        selected_indexes.update(range(max(0, idx - before), min(len(segments), idx + after + 1)))
 
     results = []
     seen = set()
+    max_results = max(limit * (before + after + 1), limit)
     for idx in sorted(selected_indexes):
         segment = segments[idx]
         text = _segment_text(segment)
@@ -997,7 +1033,7 @@ def _lexical_segment_matches(
         tagged["rank"] = None
         tagged["similarity"] = None
         results.append(tagged)
-        if len(results) >= max(limit * 3, limit):
+        if len(results) >= max_results:
             break
 
     print(f"Lexical transcript matches: {len(results)} context segments")
@@ -2516,13 +2552,23 @@ async def _retrieve_text_context(
     # (chunk_size each, +2 slack for the boundary-touch overlap quirk).
     # neighbor_budget is the "read a bit more around it" allowance for
     # causal/"why" questions, independent of how much of hit_budget got used.
+    # lexical_budget is a third, equally independent pool: without it,
+    # expanded_results alone can saturate hit_budget+neighbor_budget (both
+    # tiers full, zero dedup collisions), and _merge_text_results' shared
+    # max_results cap then drops lexical_results entirely before the merge
+    # loop ever reaches it -- silently defeating the lexical fallback exactly
+    # when semantic search alone missed the answer, which is the one case it
+    # exists to catch.
+    causal = _is_causal_question(question)
     hit_budget = n_results * (chunk_size_val + 2)
-    neighbor_budget = max(n_results * 4, 16)
+    neighbor_budget = max(n_results * 6, 24) if causal else max(n_results * 4, 16)
+    lexical_budget = 24 if causal else max(n_results * 2, 10)
     expanded_results = _expand_text_hits_with_neighbors(
         video_hash,
         search_results,
         segments,
         neighbor_chunks=1,
+        neighbor_chunks_after=3 if causal else None,
         chunk_size=chunk_size_val,
         hit_budget=hit_budget,
         neighbor_budget=neighbor_budget,
@@ -2532,11 +2578,12 @@ async def _retrieve_text_context(
         question,
         segments,
         limit=max(3, n_results // 2),
+        after=8 if causal else 1,
     )
     combined_results = _merge_text_results(
         expanded_results,
         lexical_results,
-        max_results=hit_budget + neighbor_budget,
+        max_results=hit_budget + neighbor_budget + lexical_budget,
     )
 
     if len(combined_results) != len(search_results):
