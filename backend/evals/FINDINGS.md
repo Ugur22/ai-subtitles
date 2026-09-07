@@ -1,10 +1,68 @@
+## Answer-synthesis fix: anchor-score propagation for Keyword Match segments (2026-09-07)
+
+**Follow-up to the entry below.** The retrieval-side causal-widening fix (lexical `after=8` window)
+made the "weapon" evidence for `why-forest-creatures-free-matteo` reachable, but the case still
+failed `terms_ok` -- not a retrieval miss, an answer-synthesis prioritization problem. Traced by
+capturing the exact assembled context (not just `sources`) via `_retrieve_text_context` +
+`_format_text_context` directly.
+
+**Root cause:** the assembled context contained *two* competing Keyword Match clusters -- the
+correct one ("...this is the only weapon to deal with that colonel," 00:34:07-00:34:11) and an
+unrelated nostalgic reminiscence scene ("...also had good qualities... a wonderful melody...",
+00:42:42-00:43:47, chronologically *after* the release announcement) -- both tagged with the
+identical generic label `[Evidence: Keyword Match (literal word overlap only, not semantic
+ranking)]`, with nothing distinguishing a direct causal statement from an off-target aside. Also
+confirmed: (a) not a visual-context issue -- 0 images were retrieved for this question, both
+competing explanations are transcript text; (b) the reminiscence scene was already reachable
+before the causal-widening fix (as a 1-line stub) -- that fix's `after=8` window, applied
+uniformly to every lexical anchor and not just the correct one, is what fleshed the wrong scene
+out into a fuller, more narratively persuasive mini-scene.
+
+**Rejected approach:** annotating segments with question-keyword-overlap counts computed
+*per-segment* (reusing the existing "TOP RANKED SEMANTIC MATCHES" header mechanism as-is) --
+tested and found to point the wrong way: the actual "weapon" line shares **zero** words with the
+question (a real causal answer, by nature, introduces new vocabulary the question doesn't use),
+while the wrong reminiscence cluster repeats "wind"/"Matteo" and would score *higher* per-segment.
+
+**Fix:** `_lexical_segment_matches` now tracks which scored *anchor* segment triggered each
+expanded window and propagates that anchor's own keyword-overlap score/keywords to every segment
+in its window (on a window collision between two anchors, the higher-scoring anchor wins -- same
+precedence pattern as `_expand_text_hits_with_neighbors`). The "weapon" line's cluster now
+annotates as overlapping 5/14 question keywords (`disasters, matteo, wind, caused, has`, from its
+"we know all too well the disasters..." anchor) vs. the reminiscence cluster's 4/14 (`matteo, wind,
+has, his`) -- correctly directioned, though a modest gap. `_format_text_context` renders this as
+`"its match cluster overlaps N/M question keywords: ..."` on Keyword Match segments; the system
+prompt (both branches of `_build_chat_messages`) gained one new guideline bullet explaining the
+annotation and telling the model to prefer the higher-N cluster when two Keyword Match segments
+conflict, without touching the existing (and still necessary) "trust Semantic Match over Keyword
+Match" instruction that resolved the earlier girlfriend/cafeteria lexical-distractor bug.
+
+**Verified impact (matched pre-fix/post-fix comparison, same case, `git stash` to isolate):**
+pre-fix, 4 isolated reruns: 1/4 pass (25%), 3/4 confidently cite the wrong reminiscence scene as
+the reason. Post-fix, 6 total observations (2 full-suite runs + 4 isolated reruns): 4/6 pass
+(67%), and the wrong reminiscence narrative never appears as the *primary* stated reason again --
+the 2 remaining post-fix failures are a different, safer failure mode (citing a different real
+semantic-hit explanation, or honestly abstaining with "the transcript does not explicitly state
+why") rather than confidently asserting the wrong scene. A real, measurable improvement, **not** a
+deterministic fix -- this specific case sits close enough to a decision boundary that LLM sampling
+variance still matters, consistent with the sampling-variance pattern already documented multiple
+times above for this case family. Movie 1: reran full 10-case suite twice post-fix, stayed 10/10
+both times.
+
+**Not chased further:** making this fully deterministic would mean constraining LLM sampling
+(temperature/seed) or adding a verifier/judge pass -- both explicitly out of scope (no LLM judge,
+no making the model guess when evidence is absent already holds -- the failure modes observed are
+"cite a different true fact" or "honestly abstain," never a hallucination).
+
+---
+
 ## Accepted residual limitation: `mine-frees-wind-matteo` causal-mechanism miss (2026-09-07)
 
-**Not investigated further -- see the Movie 2 robustness fix that closed the other 3 failing
-cases in this same eval run.** `why-forest-creatures-free-matteo`, `estate-inheritance-to-
-benvenuto`, and `colonel-death-matteo-reconciliation` were all fixed (lexical-budget starvation
-bug + forward-biased causal-question expansion + eval-rubric synonym groups). This case was
-deliberately left unfixed.
+**Not investigated further -- see the Movie 2 robustness fix above.** `estate-inheritance-to-
+benvenuto` and `colonel-death-matteo-reconciliation` were fixed outright (lexical-budget starvation
+bug + eval-rubric synonym groups); `why-forest-creatures-free-matteo` was substantially improved
+but not made fully deterministic (see the answer-synthesis entry above). This case was deliberately
+left unfixed.
 
 **Evidence:** the required chunk ("The mine is ready! ... Careful, if you mix it, go in half a
 minute.", ~2346-2353s) scores only **0.38 cosine similarity** against the question (recomputed

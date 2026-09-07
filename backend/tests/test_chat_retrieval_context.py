@@ -40,6 +40,7 @@ os.environ.setdefault("LOCAL_MODE", "true")
 
 from routers.chat import (  # noqa: E402
     _expand_text_hits_with_neighbors,
+    _format_text_context,
     _is_causal_question,
     _lexical_segment_matches,
     _merge_text_results,
@@ -275,6 +276,63 @@ def test_merge_text_results_reserves_room_for_lexical_with_extra_budget():
 
 
 # --- _is_causal_question ------------------------------------------------------
+
+
+# --- anchor-score propagation (Keyword Match relevance labeling) -----------
+
+
+def test_lexical_segment_matches_propagates_anchor_keywords_to_zero_overlap_followup():
+    """A real causal answer often shares zero words with the question (a
+    'why free X' question answered by a line using "weapon" shares nothing).
+    The follow-up must inherit its *anchor's* overlap count, not show 0 --
+    otherwise the model has no signal this segment belongs to a relevant
+    cluster at all."""
+    results = _lexical_segment_matches(
+        "h", "why free matteo wind disasters", _LEXICAL_FIXTURE, limit=1, after=4
+    )
+    by_text = {r["text"]: r for r in results}
+    weapon = by_text["this is the only weapon to deal with the colonel"]
+    anchor = by_text["the disasters caused by matteo wind were terrible"]
+    assert weapon["lexical_anchor_keyword_count"] == anchor["lexical_anchor_keyword_count"]
+    assert weapon["lexical_anchor_keyword_count"] > 0
+    assert set(weapon["lexical_anchor_keywords"]) == set(anchor["lexical_anchor_keywords"])
+
+
+def test_lexical_segment_matches_window_collision_keeps_higher_scoring_anchor():
+    """When two anchors' windows overlap on the same index, the higher-scoring
+    anchor's keywords win -- same 'better source wins on tie' precedence as
+    _expand_text_hits_with_neighbors."""
+    segments = _text_segments([
+        (0.0, "alpha strong overlap keyword value"),
+        (10.0, "middle shared segment text"),
+        (20.0, "beta weak keyword"),
+    ])
+    question = "alpha strong overlap value keyword"
+    results = _lexical_segment_matches("h", question, segments, limit=2, before=1, after=1)
+    by_text = {r["text"]: r for r in results}
+    middle = by_text["middle shared segment text"]
+    assert middle["lexical_anchor_keyword_count"] == 5
+    assert set(middle["lexical_anchor_keywords"]) == {"alpha", "strong", "overlap", "keyword", "value"}
+
+
+def test_format_text_context_renders_lexical_anchor_annotation():
+    results = _lexical_segment_matches(
+        "h", "why free matteo wind disasters", _LEXICAL_FIXTURE, limit=1, after=4
+    )
+    context, _ = _format_text_context("h", results, question="why free matteo wind disasters")
+    assert "its match cluster overlaps" in context
+    assert "this is the only weapon to deal with the colonel" in context
+
+
+def test_format_text_context_falls_back_to_plain_label_without_question():
+    """The one existing no-question call site (empty-search-results fallback
+    in _retrieve_text_context) must keep working unchanged."""
+    results = _lexical_segment_matches(
+        "h", "why free matteo wind disasters", _LEXICAL_FIXTURE, limit=1, after=4
+    )
+    context, _ = _format_text_context("h", results)
+    assert "its match cluster overlaps" not in context
+    assert "(literal word overlap only, not semantic ranking)" in context
 
 
 def test_is_causal_question_detects_why_because_reason():
