@@ -700,9 +700,9 @@ def _format_text_context(
 ) -> tuple[str, list]:
     context_parts = []
     sources = []
+    question_keywords = _extract_keywords(question) if question else set()
 
     if top_ranked_hits:
-        question_keywords = _extract_keywords(question) if question else set()
         top_lines = [
             "TOP RANKED SEMANTIC MATCHES (check every one of these before "
             "concluding the transcript doesn't address the question):"
@@ -743,7 +743,15 @@ def _format_text_context(
         elif tier == "speaker_match":
             evidence = f"{label} (named-speaker lookup, not semantic ranking)"
         else:
-            evidence = f"{label} (literal word overlap only, not semantic ranking)"
+            anchor_keywords = result.get("lexical_anchor_keywords")
+            if anchor_keywords and question_keywords:
+                evidence = (
+                    f"{label}, its match cluster overlaps {len(anchor_keywords)}/"
+                    f"{len(question_keywords)} question keywords: {', '.join(anchor_keywords)} "
+                    f"(literal word overlap only, not semantic ranking)"
+                )
+            else:
+                evidence = f"{label} (literal word overlap only, not semantic ranking)"
 
         context_parts.append(
             f"[Evidence: {evidence}] "
@@ -973,7 +981,22 @@ def _lexical_segment_matches(
     widen `after` for causal questions, where the explanation tends to follow
     shortly after a lexically-matched setup line rather than surround it
     symmetrically -- the internal result cap below scales with the window so
-    a wider `after` isn't silently truncated back down to the old size."""
+    a wider `after` isn't silently truncated back down to the old size.
+
+    Every returned segment also carries `lexical_anchor_keywords`/
+    `lexical_anchor_keyword_count`, propagated from the *anchor* segment that
+    earned it a window (not the segment's own text). This matters because a
+    real causal explanation often shares zero words with the question -- e.g.
+    "this is the only weapon to deal with that colonel" doesn't repeat any
+    word from a "why do they free him" question -- so scoring/annotating a
+    segment on its own overlap would rank the actual explanation *below* a
+    same-topic but off-target segment that happens to repeat the subject's
+    name. The anchor's overlap (computed from the setup line that pulled the
+    explanation into range, e.g. "...the disasters that the Matteo wind has
+    caused") is a much better relevance proxy for the whole matched cluster.
+    On a window collision between two anchors, the higher-scoring anchor's
+    keywords win -- same "better source wins on tie" precedence already used
+    in `_expand_text_hits_with_neighbors`."""
     import re
 
     query = _clean_query_for_retrieval(question).lower()
@@ -989,37 +1012,41 @@ def _lexical_segment_matches(
     if not tokens and not quoted_phrases:
         return []
 
-    scored: list[tuple[int, int, dict]] = []
+    scored: list[tuple[int, int, dict, set]] = []
     for idx, segment in enumerate(segments):
         text = _segment_text(segment)
         if not text:
             continue
         haystack = f"{segment.get('speaker', '')} {text}".lower()
         haystack_tokens = set(re.findall(r"[a-z0-9_'-]+", haystack))
-        score = 0
+        overlap = tokens & haystack_tokens
+        score = len(overlap)
 
         for phrase in quoted_phrases:
             if phrase in haystack:
                 score += 8 + len(phrase.split())
 
-        token_hits = len(tokens & haystack_tokens)
-        score += token_hits
-
         if score > 0:
-            scored.append((score, idx, segment))
+            scored.append((score, idx, segment, overlap))
 
     if not scored:
         return []
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    selected_indexes: set[int] = set()
-    for _, idx, _ in scored[:limit]:
-        selected_indexes.update(range(max(0, idx - before), min(len(segments), idx + after + 1)))
+    anchors = scored[:limit]
+
+    index_info: dict[int, tuple[int, set]] = {}
+    for score, anchor_idx, _, overlap in anchors:
+        window = range(max(0, anchor_idx - before), min(len(segments), anchor_idx + after + 1))
+        for idx in window:
+            existing = index_info.get(idx)
+            if existing is None or score > existing[0]:
+                index_info[idx] = (score, overlap)
 
     results = []
     seen = set()
     max_results = max(limit * (before + after + 1), limit)
-    for idx in sorted(selected_indexes):
+    for idx in sorted(index_info):
         segment = segments[idx]
         text = _segment_text(segment)
         if not text:
@@ -1028,10 +1055,13 @@ def _lexical_segment_matches(
         if key in seen:
             continue
         seen.add(key)
+        _, anchor_overlap = index_info[idx]
         tagged = _segment_as_search_result(video_hash, segment)
         tagged["tier"] = "lexical"
         tagged["rank"] = None
         tagged["similarity"] = None
+        tagged["lexical_anchor_keywords"] = sorted(anchor_overlap)
+        tagged["lexical_anchor_keyword_count"] = len(anchor_overlap)
         results.append(tagged)
         if len(results) >= max_results:
             break
@@ -3227,6 +3257,7 @@ Guidelines:
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
 - Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- Some Keyword Match segments carry an extra annotation, "its match cluster overlaps N/M question keywords: ...": this counts words shared with the question by the nearby line that pulled this segment into context, not necessarily by the segment quoted here -- a real answer to a "why"/"because" question often uses words the question itself never used (e.g. a question about freeing someone from prison may be answered by a line using the word "weapon", which shares no words with the question at all), so a Keyword Match segment sharing zero words with the question can still be the right one if its cluster annotation is high. When two Keyword Match segments suggest conflicting answers, prefer the one from the higher-N cluster over one from a lower-N or unannotated cluster
 - When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
 - Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
@@ -3307,6 +3338,7 @@ Guidelines:
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
 - Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- Some Keyword Match segments carry an extra annotation, "its match cluster overlaps N/M question keywords: ...": this counts words shared with the question by the nearby line that pulled this segment into context, not necessarily by the segment quoted here -- a real answer to a "why"/"because" question often uses words the question itself never used (e.g. a question about freeing someone from prison may be answered by a line using the word "weapon", which shares no words with the question at all), so a Keyword Match segment sharing zero words with the question can still be the right one if its cluster annotation is high. When two Keyword Match segments suggest conflicting answers, prefer the one from the higher-N cluster over one from a lower-N or unannotated cluster
 - When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
 - Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
