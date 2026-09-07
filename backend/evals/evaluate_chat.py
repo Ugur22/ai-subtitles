@@ -103,13 +103,24 @@ def validate_case(case: Dict[str, Any]) -> List[str]:
 
     if "required_terms" in case:
         required_terms = case["required_terms"]
+
+        def _entry_ok(entry: Any) -> bool:
+            if isinstance(entry, str):
+                return bool(entry.strip())
+            if isinstance(entry, list):
+                # "any of these" synonym group -- at least one non-empty string.
+                return bool(entry) and all(isinstance(x, str) and x.strip() for x in entry)
+            return False
+
         if (
             not isinstance(required_terms, list)
             or not required_terms
-            or not all(isinstance(x, str) and x.strip() for x in required_terms)
+            or not all(_entry_ok(x) for x in required_terms)
         ):
             problems.append(
-                "field 'required_terms' must be a non-empty list of non-empty strings -- "
+                "field 'required_terms' must be a non-empty list where each entry is either a "
+                "non-empty string (strict, must appear) or a non-empty list of non-empty strings "
+                "(an 'any of these' synonym group, at least one must appear) -- "
                 "pick 2-3 distinctive facts by hand, don't derive them from expected_answer"
             )
 
@@ -130,18 +141,32 @@ def citation_overlap(sources: List[Dict[str, Any]], expected_time_range: Dict[st
     return False
 
 
-def answer_terms_ok(answer: str, required_terms: List[str]) -> bool:
+def answer_terms_ok(answer: str, required_terms: List[Any]) -> bool:
     """True iff every hand-picked required term appears in answer.
 
     required_terms are curated per-case (2-3 distinctive facts a correct
     answer must state), not derived from expected_answer's full wording --
     deriving from prose let a good paraphrase fail on wrong-word matches and
     let a vague answer pass on unimportant-word matches.
+
+    Each entry is either a plain string (strict -- must appear verbatim) or
+    a list of strings (an "any of these" synonym group -- at least one must
+    appear). Groups exist for facts the model may correctly phrase multiple
+    defensible ways -- e.g. a character named only via ambiguous diarization
+    might correctly be called "the visiting spirit" instead of asserting an
+    unconfirmed name -- without loosening genuinely load-bearing single facts
+    (a plain string still requires an exact match).
     """
     if not required_terms:
         return True
     answer_lower = (answer or "").lower()
-    return all(term.lower() in answer_lower for term in required_terms)
+    for term in required_terms:
+        if isinstance(term, list):
+            if not any(t.lower() in answer_lower for t in term):
+                return False
+        elif term.lower() not in answer_lower:
+            return False
+    return True
 
 
 def forbidden_claims_ok(answer: str, what_must_not_be_claimed: List[str]) -> bool:
