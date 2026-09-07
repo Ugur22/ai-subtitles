@@ -44,3 +44,8 @@ static/screenshots/
 # Per-run eval output artifact (see evals/README.md)
 evals/chat_eval_results.json
 evals/chat_eval_results_*.json
+
+# Local evaluation-history database (see evals/eval_history_db.py)
+evals/eval_history.db
+evals/eval_history.db-shm
+evals/eval_history.db-wal

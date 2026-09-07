@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,8 +37,50 @@ from typing import Any, Dict, List, Optional
 
 # Run as `python evals/evaluate_chat.py` from backend/, so backend/ (the
 # parent of this file) needs to be on sys.path for `main`/`services.*` to
-# import once we actually load the app inside main() below.
+# import once we actually load the app inside main() below. Also add this
+# file's own directory explicitly: when this module is imported as
+# `evals.evaluate_chat` (e.g. from tests/test_evaluate_chat.py), Python does
+# not put `evals/` itself on sys.path, so the bare `import eval_history_db`
+# below would otherwise fail outside of direct-script-run mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import eval_history_db
+
+# Best-effort model-name lookup per provider, read only from env vars that
+# already control which model each provider in llm_providers.py uses. Never
+# reads/stores API keys or any other secret -- just the model name string.
+_PROVIDER_MODEL_ENV = {
+    "groq": "GROQ_MODEL",
+    "grok": "XAI_MODEL",
+    "openai": "OPENAI_MODEL",
+    "anthropic": "ANTHROPIC_MODEL",
+    "deepseek": "DEEPSEEK_MODEL",
+    "ollama": "OLLAMA_MODEL",
+}
+
+
+def _get_git_commit() -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _get_effective_provider(results: List[Dict[str, Any]], requested_provider: Optional[str]) -> Optional[str]:
+    for result in results:
+        if result.get("provider_used"):
+            return result["provider_used"]
+    return requested_provider or "default"
 
 REQUIRED_FIELDS = (
     "id",
@@ -224,6 +267,7 @@ def run_case(
                 "question": question,
                 "answer": None,
                 "sources": None,
+                "provider_used": None,
                 "duration_seconds": duration_seconds,
                 "citation_ok": False,
                 "terms_ok": False,
@@ -239,6 +283,7 @@ def run_case(
             "question": question,
             "answer": None,
             "sources": None,
+            "provider_used": None,
             "duration_seconds": duration_seconds,
             "citation_ok": False,
             "terms_ok": False,
@@ -259,6 +304,7 @@ def run_case(
         "question": question,
         "answer": answer,
         "sources": sources,
+        "provider_used": body.get("provider_used"),
         "duration_seconds": duration_seconds,
         "citation_ok": citation_ok,
         "terms_ok": terms_ok,
@@ -301,6 +347,29 @@ def main() -> int:
         default=None,
         help="Retrieval top_k to pass as n_results on each chat request "
         "(default: None, so /api/chat/ falls back to its own default of 8)",
+    )
+    parser.add_argument(
+        "--history-db",
+        default="evals/eval_history.db",
+        help="Path to the local SQLite evaluation-history database "
+        "(default: evals/eval_history.db)",
+    )
+    parser.add_argument(
+        "--run-label",
+        default=None,
+        help="Optional free-form label to attach to this run in the history db "
+        "(e.g. 'movie-2-after-context-fix')",
+    )
+    parser.add_argument(
+        "--no-save-history",
+        action="store_true",
+        help="Skip saving this run to the history db",
+    )
+    parser.add_argument(
+        "--index-config",
+        default=None,
+        help="Optional free-form tag identifying the retrieval/index configuration "
+        "in use, recorded on the history db run row for later comparison",
     )
     args = parser.parse_args()
 
@@ -346,6 +415,26 @@ def main() -> int:
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(results, handle, indent=2)
 
+    run_id = None
+    if not args.no_save_history:
+        try:
+            effective_provider = _get_effective_provider(results, args.provider)
+            model = os.environ.get(_PROVIDER_MODEL_ENV.get(effective_provider, ""))
+            run_record = eval_history_db.build_run_record(
+                results,
+                label=args.run_label,
+                git_commit=_get_git_commit(),
+                case_file=args.cases,
+                cases=cases,
+                provider=effective_provider,
+                model=model,
+                index_config=args.index_config,
+                top_k=args.top_k,
+            )
+            run_id = eval_history_db.save_run(args.history_db, run_record, results)
+        except Exception as e:
+            print(f"[WARN] Failed to save eval history: {e}")
+
     for result in results:
         status = "PASS" if result["passed"] else "FAIL"
         line = (
@@ -370,6 +459,8 @@ def main() -> int:
     print(f"Answer-correctness rate:   {terms_rate:.1f}% (terms_ok)")
     print(f"Citation-correctness rate: {citation_rate:.1f}% (citation_ok)")
     print(f"Full results written to:   {out_path}")
+    if run_id is not None:
+        print(f"Eval run saved to history db: id={run_id} ({args.history_db})")
 
     if failed:
         print()
