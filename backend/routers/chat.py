@@ -275,7 +275,11 @@ except ImportError as e:
     LLM_AVAILABLE = False
 
 from services.image_embedding_service import image_embedding_service
-from services.transcript_embedding_service import transcript_embedding_service
+from services.transcript_embedding_service import (
+    DEFAULT_INDEX_CONFIG,
+    INDEX_CONFIGS,
+    transcript_embedding_service,
+)
 
 router = APIRouter(prefix="/api", tags=["Chat & RAG"])
 
@@ -779,8 +783,10 @@ def _expand_text_hits_with_neighbors(
     video_hash: str,
     search_results: list,
     segments: list,
-    neighbor_count: int = 1,
-    max_results: int = 24,
+    neighbor_chunks: int = 1,
+    chunk_size: int = 1,
+    hit_budget: int = 24,
+    neighbor_budget: int = 24,
 ) -> list:
     """
     Add nearby transcript segments around vector hits, tagging every segment
@@ -793,12 +799,31 @@ def _expand_text_hits_with_neighbors(
     position, so the LLM (and any max_results truncation) can tell a real
     semantic hit apart from filler pulled in only for continuity.
 
+    Expansion is done in chunk-index space, not raw-segment count: a hit's
+    own overlapping raw-segment span is rounded out to whole embedding-chunk
+    boundaries (`chunk_size` raw segments per chunk) before stepping
+    `neighbor_chunks` whole chunks further on each side. This keeps "one
+    chunk of new context on each side" true regardless of how many raw
+    segments the hit's own span happens to claim -- a raw-segment-count
+    window would silently shrink whenever the overlap check (which is
+    boundary-inclusive) swept extra segments into the hit's own span.
+
     Two rank-ascending passes over search_results: pass 1 claims each hit's
     own overlapping segment(s) as tier="semantic_hit"; pass 2 claims the
-    ±neighbor_count window as tier="neighbor", never overwriting an index
+    chunk-expanded window as tier="neighbor", never overwriting an index
     pass 1 already claimed. This makes precedence deterministic -- a segment
     that is simultaneously rank 1's exact hit and rank 3's neighbor always
     keeps "semantic_hit", and ties within a tier keep the better (lower) rank.
+
+    "semantic_hit" and "neighbor" tiers are truncated against **separate**
+    budgets (`hit_budget`, `neighbor_budget`), not one shared pool. They
+    used to share a single cap, which meant guaranteeing every hit's own
+    segment survives truncation (so `sources` never omits a hit that
+    actually grounded the answer -- see `_format_text_context`'s untruncated
+    "TOP RANKED SEMANTIC MATCHES" header, which always includes it) came at
+    the direct expense of neighbor padding for "why"/causal questions,
+    whichever ate the shared budget first. Separate budgets mean growing
+    one can never starve the other.
     """
     tagged_results = _tag_semantic_rank(search_results)
     if not tagged_results or not segments:
@@ -833,8 +858,10 @@ def _expand_text_hits_with_neighbors(
     for result, overlapping in zip(tagged_results, per_hit_overlap):
         if not overlapping:
             continue
-        start_idx = max(0, min(overlapping) - neighbor_count)
-        end_idx = min(len(segments) - 1, max(overlapping) + neighbor_count)
+        chunk_start = min(overlapping) // chunk_size
+        chunk_end = max(overlapping) // chunk_size
+        start_idx = max(0, (chunk_start - neighbor_chunks) * chunk_size)
+        end_idx = min(len(segments) - 1, (chunk_end + neighbor_chunks + 1) * chunk_size - 1)
         for idx in range(start_idx, end_idx + 1):
             if idx in index_info:
                 continue
@@ -847,24 +874,40 @@ def _expand_text_hits_with_neighbors(
     if not index_info:
         return tagged_results
 
+    hit_items = sorted(
+        ((idx, info) for idx, info in index_info.items() if info["tier"] == "semantic_hit"),
+        key=lambda kv: (kv[1]["rank"], kv[0]),
+    )
+    neighbor_items = sorted(
+        ((idx, info) for idx, info in index_info.items() if info["tier"] != "semantic_hit"),
+        key=lambda kv: (kv[1]["rank"], kv[0]),
+    )
+
     expanded = []
     seen = set()
-    for idx, info in sorted(index_info.items(), key=lambda kv: (kv[1]["rank"], kv[0])):
-        segment = segments[idx]
-        text = _segment_text(segment)
-        if not text:
-            continue
-        key = _segment_key(segment)
-        if key in seen:
-            continue
-        seen.add(key)
-        result = _segment_as_search_result(video_hash, segment)
-        result["tier"] = info["tier"]
-        result["rank"] = info["rank"]
-        result["similarity"] = info["similarity"]
-        expanded.append(result)
-        if len(expanded) >= max_results:
-            break
+
+    def _add_up_to_budget(items: list, budget: int) -> None:
+        added = 0
+        for idx, info in items:
+            if added >= budget:
+                break
+            segment = segments[idx]
+            text = _segment_text(segment)
+            if not text:
+                continue
+            key = _segment_key(segment)
+            if key in seen:
+                continue
+            seen.add(key)
+            result = _segment_as_search_result(video_hash, segment)
+            result["tier"] = info["tier"]
+            result["rank"] = info["rank"]
+            result["similarity"] = info["similarity"]
+            expanded.append(result)
+            added += 1
+
+    _add_up_to_budget(hit_items, hit_budget)
+    _add_up_to_budget(neighbor_items, neighbor_budget)
 
     return expanded or tagged_results
 
@@ -2465,13 +2508,24 @@ async def _retrieve_text_context(
         return [], "", []
 
     raw_semantic_hits = search_results
-    max_context_results = max(n_results * 4, 16)
+    chunk_size_val = INDEX_CONFIGS.get(DEFAULT_INDEX_CONFIG, 1)
+    # Separate, non-competing budgets: hit_budget guarantees every top-k
+    # hit's own segment survives (so `sources` never omits a hit that
+    # actually grounded the answer -- see _expand_text_hits_with_neighbors'
+    # docstring), sized tightly around what top-k hits actually claim
+    # (chunk_size each, +2 slack for the boundary-touch overlap quirk).
+    # neighbor_budget is the "read a bit more around it" allowance for
+    # causal/"why" questions, independent of how much of hit_budget got used.
+    hit_budget = n_results * (chunk_size_val + 2)
+    neighbor_budget = max(n_results * 4, 16)
     expanded_results = _expand_text_hits_with_neighbors(
         video_hash,
         search_results,
         segments,
-        neighbor_count=1,
-        max_results=max_context_results,
+        neighbor_chunks=1,
+        chunk_size=chunk_size_val,
+        hit_budget=hit_budget,
+        neighbor_budget=neighbor_budget,
     )
     lexical_results = _lexical_segment_matches(
         video_hash,
@@ -2482,7 +2536,7 @@ async def _retrieve_text_context(
     combined_results = _merge_text_results(
         expanded_results,
         lexical_results,
-        max_results=max_context_results,
+        max_results=hit_budget + neighbor_budget,
     )
 
     if len(combined_results) != len(search_results):

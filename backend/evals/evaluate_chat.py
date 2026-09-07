@@ -22,6 +22,7 @@ Supabase project):
     LOCAL_MODE=true python evals/evaluate_chat.py
     LOCAL_MODE=true python evals/evaluate_chat.py --provider grok
     LOCAL_MODE=true python evals/evaluate_chat.py --cases evals/chat_cases.json --out evals/chat_eval_results.json
+    LOCAL_MODE=true python evals/evaluate_chat.py --cases evals/chat_cases_bosco_vecchio.json --out evals/chat_eval_results_bosco_vecchio.json --top-k 5
 """
 
 import argparse
@@ -175,7 +176,9 @@ class _SyncASGIClient:
         return asyncio.run(_post())
 
 
-def run_case(case: Dict[str, Any], client, provider: Optional[str]) -> Dict[str, Any]:
+def run_case(
+    case: Dict[str, Any], client, provider: Optional[str], top_k: Optional[int] = None
+) -> Dict[str, Any]:
     case_id = case["id"]
     question = case["question"]
     payload: Dict[str, Any] = {
@@ -183,6 +186,8 @@ def run_case(case: Dict[str, Any], client, provider: Optional[str]) -> Dict[str,
         "video_hash": case["video_hash"],
         "provider": provider,
     }
+    if top_k is not None:
+        payload["n_results"] = top_k
 
     start_time = time.monotonic()
     try:
@@ -265,6 +270,13 @@ def main() -> int:
         default="evals/chat_eval_results.json",
         help="Path to write full per-case results JSON (default: evals/chat_eval_results.json)",
     )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="Retrieval top_k to pass as n_results on each chat request "
+        "(default: None, so /api/chat/ falls back to its own default of 8)",
+    )
     args = parser.parse_args()
 
     cases_path = Path(args.cases)
@@ -302,7 +314,7 @@ def main() -> int:
 
     client = _SyncASGIClient(app)
 
-    results = [run_case(case, client, args.provider) for case in cases]
+    results = [run_case(case, client, args.provider, args.top_k) for case in cases]
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

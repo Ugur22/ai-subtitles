@@ -1,0 +1,122 @@
+[
+  {
+    "id": "bosco-vecchio-inheritance-to-procolo",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "According to the will read at the start of the film, who does Cavalier Antonio Morro leave the Bosco Vecchio (the old wood) to, and what must the beneficiary promise to do?",
+    "expected_answer": "He leaves the house and the wooded land called Bosco Vecchio to his nephew, Colonel Sebastiano Procolo, on condition that Procolo spares no care, diligence, or expense to preserve the precious natural monument.",
+    "required_terms": ["Sebastiano Procolo", "Bosco Vecchio"],
+    "expected_time_range": {"start": 130.0, "end": 218.0},
+    "what_must_not_be_claimed": [
+      "Benvenuto Procolo inherits the Bosco Vecchio wood"
+    ]
+  },
+  {
+    "id": "estate-inheritance-to-benvenuto",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Besides the old wood itself, who inherits the rest of Antonio Morro's property, and what do we learn about that heir's parents?",
+    "expected_answer": "The rest of the property goes to his great-grandson, Benvenuto Procolo (the machine transcript renders the name as \"welcome Procolo\"), who is an orphan -- his father and mother are both dead, and Morro had been his guardian.",
+    "required_terms": ["great-grandson", "orphan"],
+    "expected_time_range": {"start": 189.0, "end": 218.0},
+    "what_must_not_be_claimed": [
+      "Sebastiano Procolo inherits the rest of the property"
+    ]
+  },
+  {
+    "id": "procolo-must-retire-before-inheriting",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What condition must Colonel Sebastiano Procolo meet before he can take possession of the property left to him?",
+    "expected_answer": "He can only take possession of the goods on the day he finally retires from military life.",
+    "required_terms": ["military", "possession"],
+    "expected_time_range": {"start": 217.0, "end": 249.0},
+    "what_must_not_be_claimed": [
+      "Colonel Procolo takes possession of the property immediately after Antonio Morro's death"
+    ]
+  },
+  {
+    "id": "why-new-passage-cut-through-woods",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why does Colonel Procolo order a new passage to be cut through the old wood, even though it splits the forest in two?",
+    "expected_answer": "He wants the cut to reach the valley bottom and a part of the property that has until now been inaccessible and never exploited.",
+    "required_terms": ["inaccessible", "valley"],
+    "expected_time_range": {"start": 1632.0, "end": 1693.0},
+    "what_must_not_be_claimed": [
+      "the passage already existed before Colonel Procolo's arrival"
+    ]
+  },
+  {
+    "id": "jaco-bandit-plants-forest-for-refuge",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "According to the old woodsman's story, why did the bandit Jaco originally plant the forest?",
+    "expected_answer": "Jaco was a bandit/brigand who returned defeated, with no soldiers left and covered in wounds; fearing he would be chased again with nowhere to go, he planted the forest as a place to take refuge.",
+    "required_terms": ["Jaco", "refuge"],
+    "expected_time_range": {"start": 824.0, "end": 885.0},
+    "what_must_not_be_claimed": [
+      "Jaco planted the forest to hide buried treasure"
+    ]
+  },
+  {
+    "id": "why-forest-creatures-free-matteo",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why do the forest creatures decide to free the wind Matteo from his prison, even knowing the disasters he has caused before?",
+    "expected_answer": "They see freeing Matteo, and binding him to their terms under oath, as their only remaining weapon to negotiate peace with Colonel Procolo and stop him from cutting the old wood.",
+    "required_terms": ["Matteo", "weapon"],
+    "expected_time_range": {"start": 2012.0, "end": 2054.0},
+    "what_must_not_be_claimed": [
+      "the forest creatures confront Colonel Procolo directly instead of freeing Matteo"
+    ]
+  },
+  {
+    "id": "mine-frees-wind-matteo",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What do the forest creatures do to physically free the wind Matteo from his prison, and what happens right after?",
+    "expected_answer": "They set a mine/explosive charge to blow open the place where he is imprisoned; once it goes off, word spreads through the forest that Matteo has been freed.",
+    "required_terms": ["mine", "Matteo"],
+    "expected_time_range": {"start": 2222.0, "end": 2353.0},
+    "what_must_not_be_claimed": [
+      "the explosion kills the wind Matteo"
+    ]
+  },
+  {
+    "id": "procolo-declares-identity-to-matteo",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "When Wind Matteo, newly freed, confronts a man in the forest and accuses him of having locked him up, how does the man identify himself?",
+    "expected_answer": "He declares that he is Colonel Sebastiano Procolo, and that he is now the master/patron of all the woods.",
+    "required_terms": ["Sebastiano Procolo", "Colonel"],
+    "expected_time_range": {"start": 2132.0, "end": 2214.0},
+    "what_must_not_be_claimed": [
+      "the man identifies himself as Antonio Morro"
+    ]
+  },
+  {
+    "id": "magpie-sentinel-five-signals",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What job did the household's old guardian magpie do, and what did it mean when she gave five signals?",
+    "expected_answer": "She acted as a watchman to warn the household when someone was approaching; five signals meant five people were arriving, and she was never wrong.",
+    "required_terms": ["watchman", "five"],
+    "expected_time_range": {"start": 453.0, "end": 621.0},
+    "what_must_not_be_claimed": [
+      "a dog serves as the household's sentinel"
+    ]
+  },
+  {
+    "id": "colonel-death-matteo-reconciliation",
+    "video_hash": "3bae06bec871f008dee8538b38dee2a4d62f5dee7901f1b26db74622e99d7575",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Near the end of the film, right after the colonel dies, what does the wind spirit visiting him say the colonel was too ashamed to admit?",
+    "expected_answer": "The wind spirit (referred to as \"Matthew\" in this scene) tells the colonel to confess that for a while his heart had also felt a need for warmth, and that he never wanted to say so because he was ashamed of being a man like all the others.",
+    "required_terms": ["Matthew", "ashamed"],
+    "expected_time_range": {"start": 6794.0, "end": 6991.0},
+    "what_must_not_be_claimed": [
+      "the colonel dies without ever speaking to the wind spirit again"
+    ]
+  }
+]

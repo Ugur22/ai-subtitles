@@ -15,6 +15,7 @@ from evals.evaluate_chat import (  # noqa: E402
     answer_terms_ok,
     citation_overlap,
     forbidden_claims_ok,
+    run_case,
     validate_case,
 )
 
@@ -184,3 +185,34 @@ def test_required_terms_wrong_type_fails_validation():
 def test_required_terms_with_blank_string_fails_validation():
     problems = validate_case(_case(required_terms=["ok", "  "]))
     assert any("required_terms" in p for p in problems)
+
+
+# --- run_case top_k passthrough -----------------------------------------
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {"answer": "because reasons", "sources": []}
+
+
+class _FakeClient:
+    def __init__(self):
+        self.last_payload = None
+
+    def post(self, url, json):
+        self.last_payload = json
+        return _FakeResponse()
+
+
+def test_run_case_includes_n_results_when_top_k_given():
+    client = _FakeClient()
+    run_case(_case(), client, provider=None, top_k=5)
+    assert client.last_payload["n_results"] == 5
+
+
+def test_run_case_omits_n_results_when_top_k_not_given():
+    client = _FakeClient()
+    run_case(_case(), client, provider=None)
+    assert "n_results" not in client.last_payload
