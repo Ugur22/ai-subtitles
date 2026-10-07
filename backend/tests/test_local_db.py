@@ -319,3 +319,101 @@ def test_gte_string_date_comparison(client):
         .execute()
     )
     assert resp.count == 1
+
+
+def _face_tag(**overrides):
+    row = {
+        "user_id": "u1",
+        "video_hash": "hash1",
+        "speaker_name": "Alice",
+        "screenshot_url": "/s/1.jpg",
+        "bbox_x": 1.0,
+        "bbox_y": 2.0,
+        "bbox_w": 3.0,
+        "bbox_h": 4.0,
+        "embedding": [0.1] * 512,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_face_tags_owner_scoped_upsert(client):
+    on_conflict = "user_id,video_hash,screenshot_url,bbox_x,bbox_y"
+    client.table("face_tags").upsert(_face_tag(), on_conflict=on_conflict).execute()
+    client.table("face_tags").upsert(
+        _face_tag(speaker_name="Bob"), on_conflict=on_conflict
+    ).execute()
+    client.table("face_tags").upsert(_face_tag(user_id="u2"), on_conflict=on_conflict).execute()
+
+    mine = client.table("face_tags").select("speaker_name").eq("user_id", "u1").execute()
+    assert [r["speaker_name"] for r in mine.data] == ["Bob"]
+
+
+def test_face_tags_old_shape_db_is_migrated():
+    import sqlite3
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "old.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE face_tags (
+                id TEXT PRIMARY KEY, video_hash TEXT NOT NULL, speaker_name TEXT NOT NULL,
+                screenshot_url TEXT NOT NULL, bbox_x REAL NOT NULL, bbox_y REAL NOT NULL,
+                bbox_w REAL NOT NULL, bbox_h REAL NOT NULL, embedding TEXT NOT NULL,
+                created_at TEXT, UNIQUE(video_hash, screenshot_url, bbox_x, bbox_y)
+            );
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        migrated = LocalSupabaseClient(db_path=path)
+        migrated.table("face_tags").upsert(
+            _face_tag(), on_conflict="user_id,video_hash,screenshot_url,bbox_x,bbox_y"
+        ).execute()
+        rows = migrated.table("face_tags").select("id").eq("user_id", "u1").execute()
+        assert len(rows.data) == 1
+
+
+def test_search_images_within_ranks_only_given_ids(client, monkeypatch):
+    import numpy as np
+    from services import image_embedding_service as ies
+
+    ids = {}
+    for seg, vec in [("a", [1.0, 0.0]), ("b", [0.0, 1.0]), ("c", [0.8, 0.6])]:
+        row = client.table("image_embeddings").insert(
+            {
+                "user_id": "u1",
+                "video_hash": "hash1",
+                "segment_id": seg,
+                "start_time": 0.0,
+                "end_time": 1.0,
+                "speaker": None,
+                "screenshot_url": f"/s/{seg}.jpg",
+                "embedding": vec + [0.0] * 510,
+            }
+        ).execute()
+        ids[seg] = row.data[0]["id"]
+
+    class _Clip:
+        def encode(self, texts, convert_to_numpy=True):
+            return np.array([[1.0, 0.0] + [0.0] * 510])
+
+    class _Storage:
+        def parse_screenshot_key(self, url):
+            return url
+
+        def is_owned_screenshot_key(self, *a, **k):
+            return True
+
+        def generate_download_url(self, key):
+            return key
+
+    monkeypatch.setattr(ies, "supabase", lambda: client)
+    monkeypatch.setattr(ies, "get_media_storage", lambda: _Storage())
+    svc = object.__new__(ies.ImageEmbeddingService)
+    monkeypatch.setattr(ies.ImageEmbeddingService, "clip_model", _Clip(), raising=False)
+
+    out = svc.search_images_within("hash1", "q", "u1", [ids["b"], ids["c"]], n_results=5)
+    assert [r["metadata"]["segment_id"] for r in out] == ["c", "b"]
