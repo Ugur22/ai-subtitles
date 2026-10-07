@@ -44,6 +44,7 @@ from routers.chat import (  # noqa: E402
     _is_causal_question,
     _lexical_segment_matches,
     _merge_text_results,
+    _resolve_contextual_visual_question,
 )
 
 CHUNK_SIZE = 3
@@ -345,3 +346,32 @@ def test_is_causal_question_false_for_non_causal_wording():
     assert _is_causal_question("What do they do to free him?") is False
     assert _is_causal_question("Who frees him?") is False
     assert _is_causal_question("") is False
+
+
+def _resolve(question, history, tags=("vila", "anna")):
+    import routers.chat as chat
+    orig = chat._load_face_tag_names
+    chat._load_face_tag_names = lambda _h: list(tags)
+    try:
+        return _resolve_contextual_visual_question(question, history, set(), [], "vh")
+    finally:
+        chat._load_face_tag_names = orig
+
+
+def test_pronoun_followup_anchors_to_previously_named_person():
+    history = [{"role": "user", "content": "any scene where vila is swimming?"}]
+    assert "involving vila" in _resolve("her boobs look amazing", history)
+
+
+def test_pronoun_followup_prefers_most_recent_person():
+    history = [
+        {"role": "user", "content": "show vila"},
+        {"role": "user", "content": "now anna"},
+    ]
+    assert "involving anna" in _resolve("what is she wearing", history)
+
+
+def test_followup_unchanged_when_name_given_or_no_history():
+    history = [{"role": "user", "content": "vila swimming"}]
+    assert _resolve("her friend vila", history) == "her friend vila"
+    assert _resolve("her boobs", None) == "her boobs"
