@@ -169,7 +169,8 @@ CREATE TABLE IF NOT EXISTS image_face_presence (
     face_embedding TEXT NOT NULL,
     bbox TEXT,
     det_score REAL,
-    created_at TEXT
+    created_at TEXT,
+    user_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ifp_video_hash ON image_face_presence(video_hash);
 
@@ -184,7 +185,8 @@ CREATE TABLE IF NOT EXISTS face_tags (
     bbox_h REAL NOT NULL,
     embedding TEXT NOT NULL,
     created_at TEXT,
-    UNIQUE(video_hash, screenshot_url, bbox_x, bbox_y)
+    user_id TEXT,
+    UNIQUE(user_id, video_hash, screenshot_url, bbox_x, bbox_y)
 );
 CREATE INDEX IF NOT EXISTS idx_face_tags_video_hash ON face_tags(video_hash);
 

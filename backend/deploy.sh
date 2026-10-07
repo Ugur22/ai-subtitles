@@ -123,6 +123,7 @@ build_and_push() {
     fi
 }
 
+
 # Deploy the FastAPI Service (HTTP API only — no GPU, no background pipeline).
 deploy_to_cloud_run() {
     print_step "Deploying Cloud Run Service (HTTP, no GPU)..."

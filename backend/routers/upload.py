@@ -245,7 +245,7 @@ async def get_upload_config(request: Request):
         "gcs_enabled": settings.ENABLE_GCS_UPLOADS or settings.LOCAL_MODE,
         "direct_upload_limit": 32 * 1024 * 1024,  # 32MB Cloud Run limit
         "gcs_bucket": settings.GCS_BUCKET_NAME if not settings.LOCAL_MODE else None,
-        "max_file_size": 4 * 1024 * 1024 * 1024,
+        "max_file_size": settings.MAX_UPLOAD_SIZE,
     }
 
 

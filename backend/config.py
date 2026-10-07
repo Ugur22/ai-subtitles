@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         return ["http://localhost:5173"]
 
     # File Upload Configuration
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024 * 1024  # 10GB
+    MAX_UPLOAD_SIZE: int = 20 * 1024 * 1024 * 1024  # 20GB
 
     # Runtime mode is explicit: production uses GCS + Cloud Run Jobs, while
     # local development uses filesystem media + detached worker processes.
@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    LMSTUDIO_BASE_URL: str = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+    LMSTUDIO_MODEL: str = os.getenv("LMSTUDIO_MODEL", "huihui-qwen3-vl-30b-a3b-instruct-abliterated")
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
@@ -114,6 +116,9 @@ class Settings(BaseSettings):
     # via the shared text embedding model above; CLIP alone cannot recognize many actions.
     ENABLE_VISION_CAPTIONS: bool = os.getenv("ENABLE_VISION_CAPTIONS", "true").lower() == "true"
     XAI_CAPTION_MODEL: str = os.getenv("XAI_CAPTION_MODEL", "grok-4.3")
+    # "grok" (paid) or "lmstudio" (local vision model) for index-time frame captions
+    CAPTION_PROVIDER: str = os.getenv("CAPTION_PROVIDER", "grok")
+    LMSTUDIO_CAPTION_CONCURRENCY: int = int(os.getenv("LMSTUDIO_CAPTION_CONCURRENCY", "1"))
     XAI_CAPTION_CONCURRENCY: int = int(os.getenv("XAI_CAPTION_CONCURRENCY", "4"))
     # Dense frames fill the gaps between transcript-anchored screenshots so
     # low-dialogue scenes are searchable. 0 disables dense sampling.
@@ -126,6 +131,10 @@ class Settings(BaseSettings):
     # Cosine similarity threshold for matching a detected face against a
     # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
     FACE_PRESENCE_SIMILARITY_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_SIMILARITY_THRESHOLD", "0.5"))
+
+    # Manual face tags whose cosine to the tag centroid falls below this are
+    # treated as mis-tags and left out of the person's reference embedding.
+    FACE_TAG_OUTLIER_MIN_SIMILARITY: float = float(os.getenv("FACE_TAG_OUTLIER_MIN_SIMILARITY", "0.5"))
 
     # Relaxed cosine threshold used ONLY for the A/B person-comparison candidate
     # pool, so faint faces (low light, profile, distance - e.g. dim/intimate

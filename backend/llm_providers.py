@@ -1,6 +1,6 @@
 """
 LLM Provider Abstraction Layer
-Supports multiple LLM providers: Ollama (local), Groq, OpenAI, Anthropic, Grok (xAI), DeepSeek
+Supports multiple LLM providers: Ollama (local), LM Studio (local), Groq, OpenAI, Anthropic, Grok (xAI), DeepSeek
 """
 
 import os
@@ -841,6 +841,199 @@ CAPTION_SYSTEM_PROMPT = (
 )
 
 
+class LMStudioProvider(BaseLLMProvider):
+    """Local LM Studio provider (OpenAI-compatible server, no API key)."""
+
+    def __init__(self):
+        self.base_url = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
+        self.model = os.getenv("LMSTUDIO_MODEL", "huihui-qwen3-vl-30b-a3b-instruct-abliterated")
+        # Reasoning at ~7 tok/s blows past the chat UI's 180s timeout; "none" skips it.
+        self.reasoning_effort = os.getenv("LMSTUDIO_REASONING_EFFORT", "none")
+
+    def _payload(self, messages, temperature, max_tokens, stream=False) -> Dict[str, Any]:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
+        if stream:
+            payload["stream"] = True
+        return payload
+
+    @staticmethod
+    def _strip_think(text: str) -> str:
+        # Qwen3-style models can inline their reasoning; the chat UI should only show the answer.
+        import re
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        return re.sub(r"^.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """Generate response using LM Studio"""
+        try:
+            # Local 27B inference is slow, especially on the first (cold) request
+            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=5.0)) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=self._payload(messages, temperature, max_tokens),
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"].get("content") or ""
+                return self._strip_think(content)
+        except httpx.HTTPStatusError as e:
+            raise Exception(f"LM Studio generation failed: {str(e)}\nResponse: {e.response.text}")
+        except Exception as e:
+            raise Exception(f"LM Studio generation failed: {str(e)}")
+
+    async def generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> AsyncIterator[str]:
+        """Stream tokens from LM Studio via SSE, dropping inline <think> blocks."""
+        import json as _json
+
+        in_think = False
+        buffer = ""
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=5.0)) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                json=self._payload(messages, temperature, max_tokens, stream=True),
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = _json.loads(data)
+                    except Exception:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    # reasoning_content (separate field) is intentionally ignored
+                    content = (choices[0].get("delta") or {}).get("content")
+                    if not content:
+                        continue
+
+                    buffer += content
+                    out = ""
+                    while buffer:
+                        if in_think:
+                            end = buffer.find("</think>")
+                            if end == -1:
+                                buffer = buffer[-len("</think>") + 1:]
+                                break
+                            buffer = buffer[end + len("</think>"):]
+                            in_think = False
+                        else:
+                            start = buffer.find("<think>")
+                            if start == -1:
+                                # hold back a possible partial "<think>" tag
+                                keep = 0
+                                for n in range(min(len("<think>") - 1, len(buffer)), 0, -1):
+                                    if "<think>".startswith(buffer[-n:]):
+                                        keep = n
+                                        break
+                                out += buffer[:len(buffer) - keep]
+                                buffer = buffer[len(buffer) - keep:]
+                                break
+                            out += buffer[:start]
+                            buffer = buffer[start + len("<think>"):]
+                            in_think = True
+                    if out:
+                        yield out
+
+                if buffer and not in_think:
+                    yield buffer
+
+    def supports_vision(self) -> bool:
+        # Depends on the loaded model; text-only models should set LMSTUDIO_VISION=false
+        return os.getenv("LMSTUDIO_VISION", "true").lower() != "false"
+
+    async def generate_with_images(
+        self,
+        messages: List[Dict[str, Any]],
+        image_paths: List[str],
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> str:
+        """Generate a response with screenshots attached to the last user message."""
+        image_data = []
+        for img_path in image_paths:
+            result = _load_image_as_base64(img_path)
+            if result:
+                image_data.append(result[0])
+
+        max_images = int(os.getenv("LMSTUDIO_VISION_MAX_IMAGES", "6"))
+        image_data = image_data[:max_images]
+        if not image_data:
+            return await self.generate(messages, temperature, max_tokens)
+
+        formatted = [dict(m) for m in messages]
+        for msg in reversed(formatted):
+            if msg["role"] == "user":
+                content = [{"type": "text", "text": msg["content"]}]
+                content += [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    for b64 in image_data
+                ]
+                msg["content"] = content
+                break
+
+        return await self.generate(formatted, temperature, max_tokens)
+
+    async def caption_image(
+        self,
+        image_path: str,
+        prompt: str = "Caption this frame.",
+        temperature: float = 0.2,
+        max_tokens: int = 250,
+    ) -> Optional[str]:
+        """Caption a single frame for the search index. Never raises: returns
+        None on any failure so bulk captioning is failure-tolerant."""
+        result = _load_image_as_base64(image_path)
+        if not result:
+            return None
+
+        messages = [
+            {"role": "system", "content": CAPTION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{result[0]}"}},
+                ],
+            },
+        ]
+        try:
+            caption = await self.generate(messages, temperature, max_tokens)
+            return caption or None
+        except Exception as e:
+            print(f"Caption request failed: {e}")
+            return None
+
+    def is_available(self) -> bool:
+        """Check if the LM Studio server is running"""
+        try:
+            return httpx.get(f"{self.base_url}/models", timeout=2.0).status_code == 200
+        except Exception:
+            return False
+
+
 class DeepSeekProvider(BaseLLMProvider):
     """DeepSeek cloud LLM provider using its OpenAI-compatible API."""
 
@@ -1039,6 +1232,7 @@ class LLMManager:
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
             "grok": GrokProvider(),
+            "lmstudio": LMStudioProvider(),
             "deepseek": DeepSeekProvider()
         }
         self.default_provider = os.getenv("DEFAULT_LLM_PROVIDER", "grok")

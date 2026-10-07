@@ -252,6 +252,26 @@ async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> D
         "embedding": embedding,
     }
 
+    similarity_to_existing = None
+    try:
+        import numpy as np
+        existing = client.table("face_tags").select("embedding").eq(
+            "user_id", user_id
+        ).eq("video_hash", video_hash).eq("speaker_name", body.speaker_name).execute()
+        vectors = [
+            np.asarray(v, dtype=np.float32)
+            for v in (_parse_embedding(r.get("embedding")) for r in existing.data or [])
+            if v
+        ]
+        if vectors:
+            ref = np.mean([v / np.linalg.norm(v) for v in vectors], axis=0)
+            new_vec = np.asarray(embedding, dtype=np.float32)
+            similarity_to_existing = float(
+                new_vec @ ref / (np.linalg.norm(new_vec) * np.linalg.norm(ref))
+            )
+    except Exception as e:
+        print(f"[FaceTags] Warning: could not compare against existing tags: {e}")
+
     try:
         result = client.table("face_tags").upsert(
             record,
@@ -260,12 +280,20 @@ async def tag_face(request: Request, video_hash: str, body: TagFaceRequest) -> D
 
         tag_id = result.data[0]["id"] if result.data else None
 
-        return {
+        response = {
             "success": True,
             "face_tag_id": tag_id,
             "speaker_name": body.speaker_name,
             "video_hash": video_hash,
         }
+        if similarity_to_existing is not None:
+            response["similarity_to_existing"] = round(similarity_to_existing, 3)
+            if similarity_to_existing < 0.4:
+                response["warning"] = (
+                    f"This face looks unlike your other '{body.speaker_name}' tags "
+                    f"(similarity {similarity_to_existing:.2f}); it may be a different person."
+                )
+        return response
     except Exception as e:
         print(f"[FaceTags] Error storing face tag: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to store face tag: {e}")
