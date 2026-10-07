@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   default_llm_provider TEXT DEFAULT 'groq' CHECK (default_llm_provider IN ('groq', 'xai', 'openai', 'anthropic', 'deepseek')),
   visual_search_terms TEXT DEFAULT '',
   visual_search_phrases TEXT DEFAULT '',
+  custom_instructions TEXT DEFAULT '',
   email_verified BOOLEAN DEFAULT FALSE,
   is_admin BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

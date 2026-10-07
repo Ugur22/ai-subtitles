@@ -35,6 +35,7 @@ export const SettingsProvider = ({ children }: { children: React.ReactNode }) =>
     default_llm_provider?: string;
     visual_search_terms?: string;
     visual_search_phrases?: string;
+    custom_instructions?: string;
   }) => {
     await updateMutation.mutateAsync(settings);
   }, [updateMutation]);

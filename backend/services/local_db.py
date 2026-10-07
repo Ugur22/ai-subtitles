@@ -1400,6 +1400,7 @@ class LocalSupabaseClient:
     # Columns added to local_schema.sql after the first release. CREATE TABLE
     # IF NOT EXISTS won't alter existing DBs, so patch them explicitly here.
     _COLUMN_MIGRATIONS = [
+        ("user_profiles", "custom_instructions", "TEXT DEFAULT ''"),
         ("image_embeddings", "user_id", "TEXT"),
         ("image_embeddings", "caption", "TEXT"),
         ("image_embeddings", "caption_embedding", "TEXT"),

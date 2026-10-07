@@ -12,6 +12,7 @@ export interface User {
   default_llm_provider: string;
   visual_search_terms?: string;
   visual_search_phrases?: string;
+  custom_instructions?: string;
   is_admin: boolean;
   email_verified: boolean;
 }

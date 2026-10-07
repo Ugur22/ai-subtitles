@@ -17,6 +17,7 @@ export interface SettingsContextType {
     default_llm_provider?: string;
     visual_search_terms?: string;
     visual_search_phrases?: string;
+    custom_instructions?: string;
   }) => Promise<void>;
   isUpdating: boolean;
 }
