@@ -77,7 +77,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             or <span className="link">browse your computer</span>
           </p>
           <p className="dz-formats">
-            MP4 · MP3 · WAV · WebM · MOV · MKV — up to 4 GB
+            MP4 · MP3 · WAV · WebM · MOV · MKV — up to 20 GB
           </p>
 
           <input

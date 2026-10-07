@@ -1336,7 +1336,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
-  const VISION_SUPPORTED_PROVIDERS = ["grok", "openai", "anthropic", "deepseek"];
+  const VISION_SUPPORTED_PROVIDERS = ["grok", "openai", "anthropic", "deepseek", "lmstudio"];
   const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{
     screenshots: string[];
@@ -1561,6 +1561,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return { message: "Something went wrong. Please try again.", errorType: "unknown" };
   };
 
+  // Local models (LM Studio) read a long transcript prompt and write at a few tokens/s,
+  // which can legitimately take several minutes.
+  const getRequestTimeoutMs = (provider: string): number =>
+    provider === "lmstudio" ? 900000 : 180000;
+
   const isRetryableError = (error: unknown): boolean => {
     const status = axios.isAxiosError(error) ? error.response?.status : undefined;
     const code = axios.isAxiosError(error) ? error.code : undefined;
@@ -1605,7 +1610,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             conversation_history: history.length > 0 ? history : undefined,
           },
           {
-            timeout: 180000,
+            timeout: getRequestTimeoutMs(selectedProvider),
             withCredentials: true,
           }
         );
@@ -1723,7 +1728,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         },
         {
           signal: controller.signal,
-          timeout: 180000,
+          timeout: getRequestTimeoutMs(selectedProvider),
           withCredentials: true,
         },
       );

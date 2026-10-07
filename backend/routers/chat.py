@@ -183,7 +183,7 @@ async def _generate_visual_observations_with_fallback(
     if not image_paths:
         return ""
 
-    for candidate in ("grok", "openai", "anthropic"):
+    for candidate in ("lmstudio", "grok", "openai", "anthropic"):
         if candidate == final_provider_name:
             continue
         try:
@@ -1195,7 +1195,7 @@ async def _face_tag_image_results(
         for speaker_name in speaker_names:
             response = (
                 face_client.table("face_tags")
-                .select("speaker_name, screenshot_url")
+                .select("speaker_name, screenshot_url, embedding")
                 .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .eq("speaker_name", speaker_name)
@@ -1205,12 +1205,26 @@ async def _face_tag_image_results(
             for row in response.data or []:
                 rows.append(row)
 
+        from config import settings
+        references = {
+            name: _load_speaker_reference_embedding(video_hash, name)
+            for name in speaker_names
+        }
         results = []
         seen_paths = set()
         for row in rows:
             screenshot_url = row.get("screenshot_url")
             if not screenshot_url:
                 continue
+            # A tag far from the person's reference is a mis-tag; don't let it
+            # surface as identity evidence.
+            reference = references.get(row.get("speaker_name"))
+            tag_embedding = _parse_vector(row.get("embedding"))
+            face_score = 1.0
+            if reference and tag_embedding:
+                face_score = max(0.0, _cosine_similarity(reference, tag_embedding))
+                if face_score < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD:
+                    continue
             try:
                 from services.gcs_service import gcs_service
                 dedupe_key = gcs_service.extract_gcs_path_from_signed_url(screenshot_url) or screenshot_url.split("?", 1)[0]
@@ -1238,7 +1252,7 @@ async def _face_tag_image_results(
                 # object. Keep it below CLIP scene matches so named-person
                 # action queries do not get flooded by face-only examples.
                 "similarity": 0.25,
-                "face_score": 1.0,
+                "face_score": face_score,
                 "overlap_score": 0,
                 "likely_speakers": [row.get("speaker_name") or speaker_names[0]],
                 "source": "face_tag",
@@ -1255,6 +1269,42 @@ async def _face_tag_image_results(
     except Exception as e:
         print(f"Face-tag visual candidate lookup failed (non-critical): {e}")
         return []
+
+
+def _robust_mean_embedding(embeddings: list, min_sim: float) -> tuple[Any, int]:
+    """Normalized mean of tag embeddings, ignoring tags far from the centroid.
+
+    One wrong-person tag skews a plain average enough to make every later face
+    match drift, so tags below `min_sim` cosine to the centroid are dropped.
+    Needs >=4 tags to judge outliers and never drops more than half of them.
+    Returns (mean, ignored_count).
+    """
+    import numpy as np
+
+    unit = []
+    for e in embeddings:
+        e = np.asarray(e, dtype=np.float32)
+        n = np.linalg.norm(e)
+        if n > 0:
+            unit.append(e / n)
+    if not unit:
+        return None, 0
+
+    def _mean(vectors):
+        m = np.mean(vectors, axis=0)
+        n = np.linalg.norm(m)
+        return m / n if n > 0 else m
+
+    centroid = _mean(unit)
+    ignored = 0
+    if len(unit) >= 4:
+        sims = [float(v @ centroid) for v in unit]
+        keep = [v for v, s in zip(unit, sims) if s >= min_sim]
+        if len(keep) >= len(unit) - len(unit) // 2:
+            ignored = len(unit) - len(keep)
+            if ignored:
+                centroid = _mean(keep)
+    return centroid, ignored
 
 
 def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Optional[list[float]]:
@@ -1287,12 +1337,16 @@ def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Opt
         if not raw_embeddings:
             return None
 
-        embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
-        avg_emb = np.mean(embeddings, axis=0)
-        norm = np.linalg.norm(avg_emb)
-        if norm > 0:
-            avg_emb = avg_emb / norm
-        print(f"  Face tags for '{speaker_name}': {len(embeddings)} embeddings loaded")
+        from config import settings
+        avg_emb, ignored = _robust_mean_embedding(
+            raw_embeddings, settings.FACE_TAG_OUTLIER_MIN_SIMILARITY
+        )
+        if avg_emb is None:
+            return None
+        print(
+            f"  Face tags for '{speaker_name}': {len(raw_embeddings)} embeddings loaded"
+            + (f", ignored {ignored} outliers" if ignored else "")
+        )
         return avg_emb.tolist()
     except Exception as e:
         print(f"  Face tags lookup failed (non-critical): {e}")
@@ -2785,8 +2839,45 @@ async def _retrieve_visual_context(
                 "Checking face tags before falling back to text-only analysis."
             )
 
+        # Scene candidates restricted to frames where the named person actually
+        # appears. A global CLIP top-K is dominated by other people's frames, so
+        # "person + action" queries would otherwise never reach her real scenes.
+        preloaded_presence = None
+        if speaker_names and images_indexed:
+            presence_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+            if presence_face_embeddings:
+                preloaded_presence = (
+                    presence_face_embeddings,
+                    await _load_face_presence(video_hash, presence_face_embeddings),
+                )
+                present_ids = sorted(preloaded_presence[1][0])
+                restricted_added = 0
+                for query_variant in query_variants:
+                    for result in await _run_in_executor(
+                        image_embedding_service.search_images_within,
+                        video_hash,
+                        query_variant,
+                        user_id,
+                        present_ids,
+                        n_results=max(n_images, 4),
+                    ):
+                        key = _image_result_key(result)
+                        if key in seen_image_paths:
+                            continue
+                        seen_image_paths.add(key)
+                        result["visual_query_variant"] = query_variant
+                        image_results.append(result)
+                        restricted_added += 1
+                print(
+                    f"Person-restricted scene search: {len(present_ids)} frames with "
+                    f"{', '.join(speaker_names)}, {restricted_added} new candidates added"
+                )
+        person_frames_found = bool(preloaded_presence and preloaded_presence[1][0])
+
         face_tag_results = []
-        if speaker_names:
+        # Tagged frames are only a fallback when the face-presence index has no
+        # frames for this person; otherwise they crowd out scene-relevant ones.
+        if speaker_names and not person_frames_found:
             face_tag_results = await _face_tag_image_results(
                 video_hash,
                 speaker_names,
@@ -2831,12 +2922,16 @@ async def _retrieve_visual_context(
         if speaker_names and image_results:
             print(f"Applying presence correlation scoring for speakers: {speaker_names}")
 
-            speaker_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+            if preloaded_presence:
+                speaker_face_embeddings = preloaded_presence[0]
+                face_presence_by_image, presence_timelines = preloaded_presence[1]
+            else:
+                speaker_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+                face_presence_by_image, presence_timelines = await _load_face_presence(
+                    video_hash,
+                    speaker_face_embeddings,
+                )
             face_tags_available = bool(speaker_face_embeddings)
-            face_presence_by_image, presence_timelines = await _load_face_presence(
-                video_hash,
-                speaker_face_embeddings,
-            )
             has_face_presence = any(presence_timelines.values())
 
             if transcription:
@@ -2893,7 +2988,7 @@ async def _retrieve_visual_context(
                             # identity evidence; re-running face detection on
                             # them is slow and can fail on marginal frames.
                             if result.get("source") == "face_tag":
-                                result['face_score'] = 1.0
+                                result.setdefault('face_score', 1.0)
                                 if not result.get('likely_speakers'):
                                     result['likely_speakers'] = speaker_names
                                 continue

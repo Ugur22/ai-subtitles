@@ -1,11 +1,12 @@
 """
 Rate limiting middleware for upload quotas.
 
-Implements per-user daily upload limits (50/day) and file size validation (4GB max).
+Implements per-user daily upload limits (50/day) and file size validation (settings.MAX_UPLOAD_SIZE).
 """
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import HTTPException
+from config import settings
 from services.supabase_service import SupabaseService
 
 
@@ -100,17 +101,19 @@ async def get_upload_remaining(user_id: str) -> dict:
         }
 
 
-def validate_file_size(size_bytes: int, max_size_bytes: int = 4 * 1024 * 1024 * 1024) -> None:
+def validate_file_size(size_bytes: int, max_size_bytes: Optional[int] = None) -> None:
     """
-    Validate file size against maximum (default 4GB).
+    Validate file size against maximum (default settings.MAX_UPLOAD_SIZE).
 
     Args:
         size_bytes: File size in bytes
-        max_size_bytes: Maximum allowed size in bytes (default 4GB)
+        max_size_bytes: Maximum allowed size in bytes (default settings.MAX_UPLOAD_SIZE)
 
     Raises:
         HTTPException 400: If file too large
     """
+    if max_size_bytes is None:
+        max_size_bytes = settings.MAX_UPLOAD_SIZE
     if size_bytes > max_size_bytes:
         max_size_gb = max_size_bytes / (1024 * 1024 * 1024)
         raise HTTPException(

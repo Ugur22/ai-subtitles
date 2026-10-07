@@ -1403,6 +1403,8 @@ class LocalSupabaseClient:
         ("image_embeddings", "user_id", "TEXT"),
         ("image_embeddings", "caption", "TEXT"),
         ("image_embeddings", "caption_embedding", "TEXT"),
+        ("image_face_presence", "user_id", "TEXT"),
+        ("face_tags", "user_id", "TEXT"),
         ("jobs", "quota_reserved_seconds", "INTEGER NOT NULL DEFAULT 0"),
         ("jobs", "quota_reservation_period", "TEXT"),
         ("jobs", "upload_intent_id", "TEXT"),
@@ -1433,6 +1435,7 @@ class LocalSupabaseClient:
                         print(f"[LocalDB] migrated: {table}.{col}")
                 self._migrate_image_embeddings_unique_constraint()
                 self._migrate_transcript_embeddings_unique_constraint()
+                self._migrate_face_tags_unique_constraint()
                 self.conn.commit()
 
     def _migrate_image_embeddings_unique_constraint(self):
@@ -1475,6 +1478,44 @@ class LocalSupabaseClient:
             """
         )
         print("[LocalDB] migrated: image_embeddings UNIQUE(user_id, video_hash, segment_id)")
+
+    def _migrate_face_tags_unique_constraint(self):
+        """face_tags originally had UNIQUE(video_hash, screenshot_url, bbox_x,
+        bbox_y); owner scoping widened the app's on_conflict key to include
+        user_id. SQLite can't ALTER a UNIQUE constraint, so rebuild when an
+        old-shape DB is detected. Ownerless legacy rows are dropped (as in prod
+        migration 009) since every query filters by user_id."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='face_tags'"
+        ).fetchone()
+        if row is None or "UNIQUE(user_id, video_hash, screenshot_url, bbox_x, bbox_y)" in (row["sql"] or ""):
+            return
+        self.conn.executescript(
+            """
+            ALTER TABLE face_tags RENAME TO face_tags_old;
+            CREATE TABLE face_tags (
+                id TEXT PRIMARY KEY,
+                video_hash TEXT NOT NULL,
+                speaker_name TEXT NOT NULL,
+                screenshot_url TEXT NOT NULL,
+                bbox_x REAL NOT NULL,
+                bbox_y REAL NOT NULL,
+                bbox_w REAL NOT NULL,
+                bbox_h REAL NOT NULL,
+                embedding TEXT NOT NULL,
+                created_at TEXT,
+                user_id TEXT,
+                UNIQUE(user_id, video_hash, screenshot_url, bbox_x, bbox_y)
+            );
+            INSERT OR IGNORE INTO face_tags
+                SELECT id, video_hash, speaker_name, screenshot_url, bbox_x, bbox_y,
+                       bbox_w, bbox_h, embedding, created_at, user_id
+                FROM face_tags_old WHERE user_id IS NOT NULL;
+            DROP TABLE face_tags_old;
+            CREATE INDEX IF NOT EXISTS idx_face_tags_video_hash ON face_tags(video_hash);
+            """
+        )
+        print("[LocalDB] migrated: face_tags UNIQUE(user_id, video_hash, screenshot_url, bbox_x, bbox_y)")
 
     def _migrate_transcript_embeddings_unique_constraint(self):
         """transcript_embeddings originally had UNIQUE(user_id, video_hash,

@@ -667,6 +667,99 @@ class ImageEmbeddingService:
                         pass
         return indexed_count
 
+    def _format_search_results(
+        self, items: List[Dict], user_id: str, video_hash: str
+    ) -> List[Dict]:
+        """Shape raw image_embeddings rows into search results with fresh,
+        ownership-checked screenshot URLs."""
+        formatted_results = []
+        for item in items:
+            formatted_results.append({
+                'screenshot_url': item['screenshot_url'],
+                'metadata': {
+                    'video_hash': item['video_hash'],
+                    'segment_id': item['segment_id'],
+                    'image_embedding_id': item.get('id'),
+                    'start': item['start_time'],
+                    'end': item['end_time'],
+                    'speaker': item['speaker']
+                },
+                'similarity': item['similarity']
+            })
+
+        storage = get_media_storage()
+        refreshed_results = []
+        for image_result in formatted_results:
+            object_key = storage.parse_screenshot_key(image_result['screenshot_url'])
+            if not object_key or not storage.is_owned_screenshot_key(
+                object_key, user_id, video_hash, allow_legacy=False
+            ):
+                print("[ImageEmbedding] Ignoring unrecognized screenshot reference")
+                continue
+            try:
+                image_result['screenshot_url'] = storage.generate_download_url(object_key)
+            except (OSError, ValueError) as refresh_error:
+                print(f"[ImageEmbedding] Screenshot refresh failed closed: {refresh_error}")
+                continue
+            refreshed_results.append(image_result)
+        return refreshed_results
+
+    def search_images_within(
+        self,
+        video_hash: str,
+        query: str,
+        user_id: str,
+        image_embedding_ids: List[str],
+        n_results: int = 5,
+    ) -> List[Dict]:
+        """CLIP text search restricted to the given image_embeddings ids.
+
+        Used to find scene matches among frames where a named person appears;
+        a global top-K would be dominated by other people's frames.
+        """
+        import json
+        import numpy as np
+
+        if not image_embedding_ids:
+            return []
+        client = supabase()
+        query_vec = np.asarray(
+            self.clip_model.encode([query], convert_to_numpy=True)[0], dtype=np.float32
+        )
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return []
+
+        scored = []
+        ids = list(dict.fromkeys(image_embedding_ids))
+        for i in range(0, len(ids), 100):
+            rows = client.table('image_embeddings').select(
+                'id, video_hash, segment_id, start_time, end_time, speaker, '
+                'screenshot_url, embedding'
+            ).eq('user_id', user_id).eq('video_hash', video_hash).in_(
+                'id', ids[i:i + 100]
+            ).execute()
+            for row in rows.data or []:
+                embedding = row.pop('embedding', None)
+                if isinstance(embedding, str):
+                    embedding = json.loads(embedding)
+                if not embedding:
+                    continue
+                vec = np.asarray(embedding, dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm == 0:
+                    continue
+                row['similarity'] = float(vec @ query_vec / (norm * query_norm))
+                scored.append(row)
+
+        scored.sort(key=lambda r: r['similarity'], reverse=True)
+        results = self._format_search_results(scored[:n_results], user_id, video_hash)
+        print(
+            f"[ImageEmbedding] Found {len(results)} results among {len(ids)} "
+            f"restricted frames for query: {query}"
+        )
+        return results
+
     def search_images(
         self,
         video_hash: str,
@@ -714,39 +807,9 @@ class ImageEmbeddingService:
                 print(f"[ImageEmbedding] No results found for query: {query}")
                 return []
 
-            # Format results
-            formatted_results = []
-            for item in result.data:
-                formatted_results.append({
-                    'screenshot_url': item['screenshot_url'],
-                    'metadata': {
-                        'video_hash': item['video_hash'],
-                        'segment_id': item['segment_id'],
-                        'image_embedding_id': item.get('id'),
-                        'start': item['start_time'],
-                        'end': item['end_time'],
-                        'speaker': item['speaker']
-                    },
-                    'similarity': item['similarity']
-                })
-
-            storage = get_media_storage()
-            refreshed_results = []
-            for image_result in formatted_results:
-                object_key = storage.parse_screenshot_key(image_result['screenshot_url'])
-                if not object_key or not storage.is_owned_screenshot_key(
-                    object_key, user_id, video_hash, allow_legacy=False
-                ):
-                    print("[ImageEmbedding] Ignoring unrecognized screenshot reference")
-                    continue
-                try:
-                    image_result['screenshot_url'] = storage.generate_download_url(object_key)
-                except (OSError, ValueError) as refresh_error:
-                    print(f"[ImageEmbedding] Screenshot refresh failed closed: {refresh_error}")
-                    continue
-                refreshed_results.append(image_result)
-            formatted_results = refreshed_results
-
+            formatted_results = self._format_search_results(
+                result.data, user_id, video_hash
+            )
             print(f"[ImageEmbedding] Found {len(formatted_results)} results for query: {query}")
             return formatted_results
 
@@ -796,13 +859,25 @@ class ImageEmbeddingService:
                     for s in segments if s.get('local_path')
                 }
 
-            from llm_providers import GrokProvider
-            provider = GrokProvider()
-            if api_key:
-                provider.api_key = api_key
-            if not provider.api_key or provider.api_key == "your_xai_api_key_here":
-                print("[ImageEmbedding] No xAI API key available; skipping captions")
-                return 0
+            use_local = settings.CAPTION_PROVIDER == "lmstudio"
+            if use_local:
+                from llm_providers import LMStudioProvider
+                provider = LMStudioProvider()
+                if not provider.is_available():
+                    print("[ImageEmbedding] LM Studio server not reachable; skipping captions")
+                    return 0
+                caption_model = provider.model
+                concurrency = settings.LMSTUDIO_CAPTION_CONCURRENCY
+            else:
+                from llm_providers import GrokProvider
+                provider = GrokProvider()
+                if api_key:
+                    provider.api_key = api_key
+                if not provider.api_key or provider.api_key == "your_xai_api_key_here":
+                    print("[ImageEmbedding] No xAI API key available; skipping captions")
+                    return 0
+                caption_model = settings.XAI_CAPTION_MODEL
+                concurrency = settings.XAI_CAPTION_CONCURRENCY
 
             temp_files: List[str] = []
             resolved = []
@@ -836,9 +911,9 @@ class ImageEmbeddingService:
             total = len(resolved)
             print(
                 f"[ImageEmbedding] Captioning {total} frames for {video_hash} "
-                f"with {settings.XAI_CAPTION_MODEL}..."
+                f"with {caption_model}..."
             )
-            sem = asyncio.Semaphore(settings.XAI_CAPTION_CONCURRENCY)
+            sem = asyncio.Semaphore(concurrency)
             done_count = {'n': 0}
 
             async def _caption_one(row, path):
