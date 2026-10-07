@@ -151,6 +151,7 @@ export const updateSettings = async (settings: {
   default_llm_provider?: string;
   visual_search_terms?: string;
   visual_search_phrases?: string;
+  custom_instructions?: string;
 }): Promise<{ success: boolean }> => {
   const response = await fetch(`${API_BASE_URL}/api/settings`, {
     method: 'PATCH',

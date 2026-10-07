@@ -109,6 +109,7 @@ class UserProfileResponse(BaseModel):
     default_llm_provider: str
     visual_search_terms: Optional[str] = None
     visual_search_phrases: Optional[str] = None
+    custom_instructions: Optional[str] = None
     is_admin: bool
     email_verified: bool
     created_at: str
@@ -826,6 +827,7 @@ async def get_current_user(request: Request):
             default_llm_provider=profile.get("default_llm_provider", "groq"),
             visual_search_terms=profile.get("visual_search_terms") or "",
             visual_search_phrases=profile.get("visual_search_phrases") or "",
+            custom_instructions=profile.get("custom_instructions") or "",
             is_admin=profile.get("is_admin", False),
             email_verified=profile.get("email_verified", False),
             created_at=profile.get("created_at", "")
