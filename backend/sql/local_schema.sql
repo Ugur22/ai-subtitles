@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     default_llm_provider TEXT,
     visual_search_terms TEXT DEFAULT '',
     visual_search_phrases TEXT DEFAULT '',
+    custom_instructions TEXT DEFAULT '',
     email_verified INTEGER DEFAULT 0,
     is_admin INTEGER DEFAULT 0,
     subscription_plan TEXT NOT NULL DEFAULT 'free',

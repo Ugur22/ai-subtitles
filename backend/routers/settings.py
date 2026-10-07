@@ -19,12 +19,16 @@ router = APIRouter(prefix="/api/settings", tags=["Settings"])
 # Pydantic Models
 # =============================================================================
 
+MAX_CUSTOM_INSTRUCTIONS_CHARS = 4000
+
+
 class UpdateSettingsRequest(BaseModel):
     """Request to update user settings."""
     display_name: Optional[str] = None
     default_llm_provider: Optional[str] = None
     visual_search_terms: Optional[str] = None
     visual_search_phrases: Optional[str] = None
+    custom_instructions: Optional[str] = None
 
 
 class UpdateSettingsResponse(BaseModel):
@@ -76,6 +80,15 @@ async def update_settings(request: Request, body: UpdateSettingsRequest):
 
         if body.visual_search_phrases is not None:
             updates["visual_search_phrases"] = body.visual_search_phrases.strip()
+
+        if body.custom_instructions is not None:
+            custom_instructions = body.custom_instructions.strip()
+            if len(custom_instructions) > MAX_CUSTOM_INSTRUCTIONS_CHARS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Custom instructions too long (max {MAX_CUSTOM_INSTRUCTIONS_CHARS} characters)"
+                )
+            updates["custom_instructions"] = custom_instructions
 
         if not updates:
             return UpdateSettingsResponse(
