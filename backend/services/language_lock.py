@@ -31,14 +31,17 @@ def detect_dominant_language(whisper_model, audio_chunks: List[str], vad_paramet
     English) don't outvote the actual dialogue.
     """
     from faster_whisper import decode_audio
+    from faster_whisper.vad import VadOptions
 
+    # transcribe() accepts a dict, but detect_language() reads attributes off it.
+    vad_options = VadOptions(**vad_parameters)
     votes = []
     for path in _sample_chunks(audio_chunks):
         try:
             lang, prob, _ = whisper_model.detect_language(
                 decode_audio(path),
                 vad_filter=True,
-                vad_parameters=vad_parameters,
+                vad_parameters=vad_options,
                 language_detection_segments=3,
             )
             votes.append((lang, prob))
