@@ -62,6 +62,7 @@ from services.audio_service import AudioService
 from services.speaker_service import SpeakerService
 from services.subtitle_service import SubtitleService
 from services.translation_service import TranslationService
+from services.language_lock import detect_dominant_language
 from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
@@ -457,12 +458,29 @@ class BackgroundWorker:
                     "vad_parameters": dict(
                         min_silence_duration_ms=settings.VAD_MIN_SILENCE_DURATION_MS,
                         threshold=settings.VAD_THRESHOLD
-                    )
+                    ),
+                    # Each 5-min chunk is transcribed independently; carrying text across
+                    # chunk-local context only propagates hallucinations from music/silence.
+                    "condition_on_previous_text": False,
+                    "no_speech_threshold": 0.6,
+                    "compression_ratio_threshold": 2.4,
                 }
 
                 if language:
                     transcribe_params["language"] = language
                     print(f"[Worker] Using specified language: {language}")
+                else:
+                    # Without this Whisper re-guesses per chunk: a music-only chunk is
+                    # guessed as English and then emits English for Italian dialogue.
+                    locked = await _run_in_executor(
+                        detect_dominant_language,
+                        whisper_model,
+                        audio_chunks,
+                        transcribe_params["vad_parameters"],
+                    )
+                    if locked:
+                        transcribe_params["language"] = locked
+                        print(f"[Worker] Locked language across all chunks: {locked}")
 
                 # Transcribe each audio chunk and combine results
                 all_segments = []
