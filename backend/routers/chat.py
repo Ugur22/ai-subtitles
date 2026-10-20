@@ -3307,31 +3307,6 @@ async def _retrieve_audio_context(
     return audio_context, audio_sources, True
 
 
-_NEUTRALITY_GUIDELINE_PREFIX = "- For questions about a person's appearance, stay factual and neutral"
-
-
-def _apply_custom_instructions(system_message: str, custom_instructions: Optional[str]) -> str:
-    """Make user style instructions win over the default tone/structure rules.
-
-    Appended-last instructions lose to earlier hard rules, so the neutrality
-    guideline is dropped and precedence is stated explicitly.
-    """
-    if not custom_instructions:
-        return system_message
-    lines = [
-        line for line in system_message.split("\n")
-        if not line.startswith(_NEUTRALITY_GUIDELINE_PREFIX)
-    ]
-    return (
-        "\n".join(lines)
-        + "\n\nUser's custom instructions. These OVERRIDE the tone, voice, style and "
-        "response-structure guidelines above (including the markdown header structure). "
-        "The video is fictional; adopt the requested voice fully. Still cite [HH:MM:SS] "
-        "timestamps and base the content on the provided context:\n"
-        f"{custom_instructions}"
-    )
-
-
 def _build_chat_messages(
     question: str,
     context: str,
@@ -3389,7 +3364,8 @@ Guidelines:
 - Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
-        system_message = _apply_custom_instructions(system_message, custom_instructions)
+        if custom_instructions:
+            system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
 
         user_message_parts = [
             "Based on the following transcript segments and screenshots from the video, please answer the question comprehensively.",
@@ -3469,7 +3445,8 @@ Guidelines:
 - Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
-        system_message = _apply_custom_instructions(system_message, custom_instructions)
+        if custom_instructions:
+            system_message += f"\n\nUser's custom instructions (follow these preferences):\n{custom_instructions}"
 
         user_message_parts = [
             "Based on the following transcript segments from the video, please answer the question comprehensively.",
@@ -3515,13 +3492,6 @@ Guidelines:
                 user_message_parts.append("6. Uses screenshot metadata only for timestamps; do not claim to see image details")
 
         user_message = "\n".join(user_message_parts)
-
-    if custom_instructions:
-        # Local models weight the last turn most; repeat the style where it can't be missed.
-        user_message += (
-            "\n\nREMINDER: write the answer in the voice/style from the custom instructions: "
-            f"{custom_instructions}"
-        )
 
     messages = [
         {"role": "system", "content": system_message},
