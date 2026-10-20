@@ -20,7 +20,6 @@ import {
 } from "../../../services/api";
 import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
 import { useAuth } from "../../../hooks/useAuth";
-import { updateSettings } from "../../../services/admin";
 import { ComparisonTimelineStrip } from "./ComparisonTimelineStrip";
 
 // Alias for backward compatibility within this file
@@ -1363,37 +1362,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   });
 
   const { user } = useAuth();
-
-  // Custom instructions persist on the user profile so new chats start with them filled in.
-  const lastSavedInstructionsRef = useRef<string | null>(null);
-  const [instructionsSaveState, setInstructionsSaveState] = useState<
-    "idle" | "saving" | "saved" | "error"
-  >("idle");
-
-  useEffect(() => {
-    if (!user || lastSavedInstructionsRef.current !== null) return;
-    const saved = user.custom_instructions || "";
-    lastSavedInstructionsRef.current = saved;
-    setCustomInstructions(saved);
-  }, [user]);
-
-  const saveCustomInstructions = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (lastSavedInstructionsRef.current === null || trimmed === lastSavedInstructionsRef.current) return;
-    setInstructionsSaveState("saving");
-    try {
-      await updateSettings({ custom_instructions: trimmed });
-      lastSavedInstructionsRef.current = trimmed;
-      setInstructionsSaveState("saved");
-    } catch {
-      setInstructionsSaveState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => saveCustomInstructions(customInstructions), 800);
-    return () => clearTimeout(timer);
-  }, [customInstructions, saveCustomInstructions]);
 
 
   // @mention autocomplete state
@@ -2897,8 +2865,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <textarea
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
-                onBlur={() => saveCustomInstructions(customInstructions)}
-                maxLength={4000}
                 onKeyDown={(e) => {
                   if (isEditableTarget(e.target)) e.stopPropagation();
                 }}
@@ -2910,11 +2876,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 disabled={loading}
               />
               <p className="mt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
-                These instructions will be applied to all your questions and are
-                saved to your profile.
-                {instructionsSaveState === "saving" && " Saving…"}
-                {instructionsSaveState === "saved" && " Saved."}
-                {instructionsSaveState === "error" && " Couldn't save — will retry on next edit."}
+                These instructions will be applied to all your questions. They
+                persist across messages.
               </p>
             </div>
           )}
