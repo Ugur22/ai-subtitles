@@ -160,6 +160,11 @@ CREATE POLICY user_profiles_select_own ON user_profiles
   FOR SELECT TO authenticated USING (auth.uid() = id);
 REVOKE INSERT, UPDATE, DELETE ON user_profiles FROM anon, authenticated;
 
+-- invite_codes: signup-gate secrets, no client access. This file never enabled
+-- RLS on the table, so without this anon could read every code (see migration 016).
+ALTER TABLE invite_codes ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON invite_codes FROM anon, authenticated;
+
 -- user_api_keys: users see only their own keys
 DROP POLICY IF EXISTS user_api_keys_own ON user_api_keys;
 CREATE POLICY user_api_keys_own ON user_api_keys
@@ -213,17 +218,6 @@ BEGIN
   RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;
-
--- Function to get user's API key for a provider (used by backend)
-CREATE OR REPLACE FUNCTION get_user_api_key(p_user_id UUID, p_provider TEXT)
-RETURNS TABLE (encrypted_key TEXT, is_valid BOOLEAN) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT uak.encrypted_key, uak.is_valid
-  FROM user_api_keys uak
-  WHERE uak.user_id = p_user_id AND uak.provider = p_provider;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- Migration Complete!

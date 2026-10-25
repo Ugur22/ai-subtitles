@@ -285,26 +285,10 @@ CREATE POLICY user_api_keys_own ON user_api_keys
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
--- Invite codes: anyone can read unused codes (for registration)
-CREATE POLICY invite_codes_read_unused ON invite_codes
-  FOR SELECT
-  USING (used_by IS NULL);
-
--- Invite codes: admins can do everything
-CREATE POLICY invite_codes_admin ON invite_codes
-  FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND is_admin = TRUE
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND is_admin = TRUE
-    )
-  );
+-- Invite codes: no client policies. The codes are the signup gate's secrets, so
+-- readable-by-anon would let anyone register; the backend (service role) does
+-- all invite checks and admin management (see migration 016).
+REVOKE ALL ON invite_codes FROM anon, authenticated;
 
 -- Usage logs: users can read their own logs
 CREATE POLICY usage_logs_own_read ON usage_logs
