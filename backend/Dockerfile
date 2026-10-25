@@ -1,9 +1,10 @@
 # Railway/Cloud Run optimized Dockerfile for FastAPI Backend
 # Includes pre-downloaded translation models for production reliability
-# GPU-enabled with CUDA 12.1 support for NVIDIA L4 on Cloud Run
+# GPU-enabled with CUDA 12.6 + cuDNN 9 for NVIDIA L4 on Cloud Run
+# (faster-whisper/CTranslate2 4.x and onnxruntime-gpu need CUDA 12 + cuDNN 9)
 
-# Use NVIDIA CUDA base image with Python 3.9
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+# Use NVIDIA CUDA base image (Ubuntu 22.04 ships Python 3.10)
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
 
 # Set working directory
 WORKDIR /app
@@ -45,18 +46,23 @@ RUN mkdir -p /data/static/videos \
 COPY requirements.txt .
 
 # Install PyTorch with CUDA support first (before other requirements)
-# Using CUDA 11.8 wheels (forward-compatible with CUDA 12.1 runtime)
-RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu118
+# Using CUDA 12.6 wheels (match the CUDA 12.6 / cuDNN 9 base image)
+RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 
 # Install remaining Python dependencies
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Cheap build-time check (no GPU needed): the GPU libraries import cleanly
+RUN python -c "import ctranslate2, torch; print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda)"
+
 # Pre-download MarianMT translation models during build
 # This prevents runtime download failures in Cloud Run/Railway
 # Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic, Polish, Turkish, Korean, Czech
+# WHISPER_MODEL_REPO must match the FASTWHISPER_MODEL set at runtime (large-v3 -> this repo)
+ARG WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
 COPY download_models.py /tmp/download_models.py
-RUN python /tmp/download_models.py && rm /tmp/download_models.py
+RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/download_models.py && rm /tmp/download_models.py
 
 # Verify critical pre-downloaded artifacts are baked into the image so failures
 # surface at build time, not as silent runtime re-downloads on Cloud Run.

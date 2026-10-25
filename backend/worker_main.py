@@ -46,6 +46,27 @@ def _install_sigterm_handler(job_id: str) -> None:
     signal.signal(signal.SIGINT, _handler)
 
 
+def _check_gpu(job_id: str) -> bool:
+    """Log GPU/Whisper setup; fail fast if CUDA was requested but isn't usable instead of silently running on CPU."""
+    import torch
+    from dependencies import resolve_whisper_compute_type
+
+    cuda_ok = torch.cuda.is_available()
+    gpu_name = torch.cuda.get_device_name(0) if cuda_ok else "n/a"
+    print(
+        f"[worker_main] cuda_available={cuda_ok} gpu={gpu_name} torch_cuda={torch.version.cuda} "
+        f"whisper_model={settings.FASTWHISPER_MODEL} device={settings.FASTWHISPER_DEVICE} "
+        f"compute_type={resolve_whisper_compute_type()}"
+    )
+
+    if settings.FASTWHISPER_DEVICE == "cuda" and not cuda_ok:
+        message = "FASTWHISPER_DEVICE=cuda but CUDA is not available in this worker (check GPU allocation and CUDA/cuDNN libraries)"
+        print(f"[worker_main] ERROR: {message}", file=sys.stderr)
+        JobQueueService.mark_failed(job_id, message, "gpu_unavailable")
+        return False
+    return True
+
+
 async def _run(job_id: str) -> int:
     try:
         await asyncio.to_thread(
@@ -71,6 +92,8 @@ def main() -> int:
         return 2
 
     print(f"[worker_main] starting job {job_id}")
+    if not _check_gpu(job_id):
+        return 1
     _install_sigterm_handler(job_id)
     return asyncio.run(_run(job_id))
 
