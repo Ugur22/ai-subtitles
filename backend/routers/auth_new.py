@@ -209,6 +209,33 @@ def _rollback_registration(client, auth_client, user_id: str) -> None:
         print(f"[Auth] Failed to delete auth user {user_id} while rolling back registration: {e}")
 
 
+def _revoke_session(access_token: str, refresh_token: Optional[str]) -> None:
+    """
+    Revoke the caller's own session, identified by the tokens they presented.
+
+    Only a token that is valid for a real session can revoke anything, so an
+    anonymous request cannot sign out another user. The access token expires
+    long before the cookie does, so when it is rejected the refresh token is
+    exchanged for a fresh one and that session is revoked instead.
+    """
+    admin = SupabaseService.get_auth_client().auth.admin
+    if access_token:
+        try:
+            admin.sign_out(access_token, "local")
+            return
+        except Exception as e:
+            print(f"[Auth] Access token could not revoke its session: {e}")
+
+    if not refresh_token:
+        return
+    try:
+        session = SupabaseService.new_auth_client().auth.refresh_session(refresh_token).session
+        if session:
+            admin.sign_out(session.access_token, "local")
+    except Exception as e:
+        print(f"[Auth] Refresh token could not revoke its session: {e}")
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -255,9 +282,9 @@ async def register(request: RegisterRequest):
                 detail="An account with this email already exists."
             )
 
-        # Create Supabase auth user (on the dedicated auth client so the data
-        # client's session/headers are never mutated by sign_up)
-        auth_client = SupabaseService.get_auth_client()
+        # Create Supabase auth user (on a fresh auth client so neither the data
+        # client nor another user's request ever sees the sign_up session)
+        auth_client = SupabaseService.new_auth_client()
         try:
             auth_response = auth_client.auth.sign_up({
                 "email": request.email,
@@ -390,7 +417,7 @@ async def verify_email(request: VerifyEmailRequest, response: Response):
 
         # Verify the OTP against Supabase (confirms the auth user + returns a session).
         try:
-            otp_response = SupabaseService.get_auth_client().auth.verify_otp({
+            otp_response = SupabaseService.new_auth_client().auth.verify_otp({
                 "email": email,
                 "token": request.code,
                 "type": "signup"
@@ -520,11 +547,11 @@ async def resend_verification(request: ResendVerificationRequest):
 def _sign_in_with_password(email: str, password: str):
     """Blocking sign in - runs in executor.
 
-    Uses the dedicated auth client so the sign-in session never poisons the
-    shared data client (which background jobs/crons rely on for service-role
-    access).
+    Uses a fresh auth client so the sign-in session never poisons the shared
+    data client (which background jobs/crons rely on for service-role access)
+    and is never visible to another user's request.
     """
-    client = SupabaseService.get_auth_client()
+    client = SupabaseService.new_auth_client()
     return client.auth.sign_in_with_password({
         "email": email,
         "password": password
@@ -669,12 +696,10 @@ async def logout(request: Request, response: Response):
             # Clear from cache
             clear_token_cache(token)
 
-            # Sign out from Supabase (on the auth client, not the data client)
-            try:
-                client = SupabaseService.get_auth_client()
-                client.auth.sign_out()
-            except Exception as e:
-                print(f"[Auth] Error signing out from Supabase: {e}")
+        # Revoke this caller's own session. A bare sign_out() would act on
+        # whichever user last touched the shared auth client.
+        if token or request.cookies.get("auth_refresh_token"):
+            _revoke_session(token or "", request.cookies.get("auth_refresh_token"))
 
         # Clear both auth cookies
         response.delete_cookie(
@@ -763,7 +788,8 @@ async def reset_password(request: ResetPasswordRequest):
                 detail="Password must be at least 8 characters"
             )
 
-        auth_client = SupabaseService.get_auth_client()
+        # A fresh client: verify_otp stores the recovery session on the client.
+        auth_client = SupabaseService.new_auth_client()
 
         # Verify the recovery OTP - this establishes a session for the user.
         try:
@@ -785,9 +811,12 @@ async def reset_password(request: ResetPasswordRequest):
                 detail="Invalid or expired reset code"
             )
 
-        # Update the password for the now-authenticated (recovery) session.
+        # Update the password by user id. update_user() without a token acts on
+        # whatever session its client holds, not on the user the OTP belongs to.
         try:
-            auth_client.auth.update_user({"password": request.new_password})
+            auth_client.auth.admin.update_user_by_id(
+                otp_response.user.id, {"password": request.new_password}
+            )
             print(f"[Auth] Password reset successfully for user: {otp_response.user.id}")
         except Exception as e:
             print(f"[Auth] Failed to update password: {e}")
@@ -796,11 +825,12 @@ async def reset_password(request: ResetPasswordRequest):
                 detail="Failed to reset password. Please try again."
             )
         finally:
-            # Clean up the recovery session so it doesn't linger on the auth client.
-            try:
-                auth_client.auth.sign_out()
-            except Exception:
-                pass
+            # End all of the user's sessions, including the recovery one just created.
+            if otp_response.session:
+                try:
+                    SupabaseService.get_auth_client().auth.admin.sign_out(otp_response.session.access_token)
+                except Exception:
+                    pass
 
         return ResetPasswordResponse(
             success=True,

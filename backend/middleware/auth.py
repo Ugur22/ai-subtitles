@@ -197,7 +197,9 @@ def _refresh_supabase_session(refresh_token: str) -> Optional[Dict]:
         }
     """
     try:
-        client = SupabaseService.get_auth_client()
+        # A fresh client: refresh_session stores the refreshed session on the
+        # client, which must not be shared between users.
+        client = SupabaseService.new_auth_client()
 
         # Use Supabase's refresh_session method
         response = client.auth.refresh_session(refresh_token)
