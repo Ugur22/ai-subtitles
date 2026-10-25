@@ -103,9 +103,10 @@ class ImageEmbeddingService:
         total_batches: int,
         max_retries: int = 3,
     ) -> None:
-        # Supabase sits behind Cloudflare which closes idle sockets after ~60s. httpx's
-        # pooled connection can be dead by the time we write the next batch. Catch the
-        # transport errors, force the pool to rebuild, and retry with backoff.
+        # Supabase sits behind Cloudflare which closes idle sockets after ~60s, so a pooled
+        # connection can be dead by the next batch. The retry opens a fresh connection; never
+        # close the client here, it is the process-wide singleton and a closed httpx client
+        # cannot be reused.
         last_err: Optional[Exception] = None
         for attempt in range(max_retries):
             try:
@@ -119,12 +120,6 @@ class ImageEmbeddingService:
                 return
             except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
                 last_err = e
-                try:
-                    session = getattr(client.postgrest, 'session', None)
-                    if session is not None:
-                        session.close()
-                except Exception:
-                    pass
                 backoff = 0.5 * (2 ** attempt)
                 print(
                     f"[ImageEmbedding] Retry {attempt + 1}/{max_retries} for batch "
@@ -152,12 +147,6 @@ class ImageEmbeddingService:
                 return
             except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
                 last_err = e
-                try:
-                    session = getattr(client.postgrest, 'session', None)
-                    if session is not None:
-                        session.close()
-                except Exception:
-                    pass
                 backoff = 0.5 * (2 ** attempt)
                 print(
                     f"[ImageEmbedding] Retry {attempt + 1}/{max_retries} for face batch "
