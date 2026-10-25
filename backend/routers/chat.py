@@ -2691,6 +2691,17 @@ async def _retrieve_text_context(
 
 
 
+def _scene_score(result: dict) -> float:
+    """Best available scene-match signal for a visual candidate. MiniLM caption
+    cosines for real matches run ~0.45-0.8 vs CLIP's flat ~0.2-0.3 band, so
+    max() lets confident caption hits outrank weak CLIP hits without any scale
+    calibration."""
+    sim = result.get('similarity', 0) or 0
+    if sim == 0 and 'distance' in result:
+        sim = max(0, 1 - result['distance'])
+    return max(sim, result.get('caption_similarity') or 0.0)
+
+
 async def _retrieve_visual_context(
     video_hash: str,
     question: str,
@@ -2791,12 +2802,42 @@ async def _retrieve_visual_context(
 
             clip_candidate_limit = max(n_images * 4, min(32, n_images * (1 + total_segments // 100)))
             if len(image_results) > clip_candidate_limit:
-                image_results.sort(
-                    key=lambda result: result.get('similarity', 0),
-                    reverse=True,
-                )
+                image_results.sort(key=_scene_score, reverse=True)
                 image_results = image_results[:clip_candidate_limit]
 
+            # Third candidate source: vision-caption semantic search. Captions
+            # capture actions CLIP can't encode.
+            from config import settings
+            caption_results = await _run_in_executor(
+                image_embedding_service.search_images_by_caption,
+                video_hash,
+                visual_query,
+                user_id,
+                max(n_images, 6),
+            )
+            caption_added = 0
+            for result in caption_results:
+                if (result.get('similarity') or 0) < settings.CAPTION_MIN_SIMILARITY:
+                    continue
+                key = _image_result_key(result)
+                if key in seen_image_paths:
+                    # Frame already found by CLIP: annotate it so the
+                    # caption signal still boosts its score.
+                    for existing in image_results:
+                        if _image_result_key(existing) == key:
+                            existing['caption'] = result.get('caption')
+                            existing['caption_similarity'] = result['similarity']
+                            break
+                    continue
+                seen_image_paths.add(key)
+                result['caption_similarity'] = result['similarity']
+                image_results.append(result)
+                caption_added += 1
+            if caption_results:
+                print(
+                    f"Caption search: {len(caption_results)} matches, "
+                    f"{caption_added} new candidates added"
+                )
         else:
             print(
                 f"Images not indexed for video {video_hash}. "
@@ -2874,10 +2915,7 @@ async def _retrieve_visual_context(
 
         if configured_visual_query and image_results:
             before_trim = len(image_results)
-            image_results.sort(
-                key=lambda result: result.get('similarity', 0),
-                reverse=True,
-            )
+            image_results.sort(key=_scene_score, reverse=True)
             image_results = image_results[:n_images]
             if before_trim != len(image_results):
                 print(
@@ -3013,7 +3051,7 @@ async def _retrieve_visual_context(
                 # Hybrid ranking: temporal is on-screen face presence when the
                 # face-presence index exists, otherwise speaker voice overlap.
                 for result in image_results:
-                    clip_score = result.get('similarity', 0)
+                    clip_score = _scene_score(result)
 
                     max_overlap = 3
                     normalized_overlap = min(result.get('overlap_score', 0), max_overlap) / max_overlap
@@ -3052,10 +3090,7 @@ async def _retrieve_visual_context(
 
         if image_results:
             if not any("hybrid_score" in result for result in image_results):
-                image_results.sort(
-                    key=lambda result: result.get('similarity', 0),
-                    reverse=True,
-                )
+                image_results.sort(key=_scene_score, reverse=True)
             image_results = image_results[:n_images]
             owned_image_results = []
             for result in image_results:
@@ -3080,10 +3115,11 @@ async def _retrieve_visual_context(
                 metadata = img_result['metadata']
                 screenshot_url = img_result['screenshot_url']
 
-                speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker']
+                speaker_display = ', '.join(img_result.get('likely_speakers', [])) or metadata.get('speaker') or 'unknown'
+                caption_note = f", Caption: {img_result['caption']}" if img_result.get('caption') else ''
                 visual_parts.append(
                     f"Screenshot {i+1} - Timestamp: {metadata['start']:.2f}s - {metadata['end']:.2f}s, "
-                    f"Speaker: {speaker_display}"
+                    f"Speaker: {speaker_display}{caption_note}"
                 )
 
                 visual_sources.append({
@@ -3091,7 +3127,7 @@ async def _retrieve_visual_context(
                     "end_time": f"{int(metadata['end'] // 3600):02d}:{int((metadata['end'] % 3600) // 60):02d}:{int(metadata['end'] % 60):02d}",
                     "start": metadata['start'],
                     "end": metadata['end'],
-                    "speaker": ', '.join(img_result.get('likely_speakers', [])) or metadata['speaker'],
+                    "speaker": speaker_display,
                     "screenshot_url": screenshot_url,
                     "type": "visual",
                     "likely_speakers": img_result.get('likely_speakers', []),
@@ -3100,10 +3136,14 @@ async def _retrieve_visual_context(
                     "visual_similarity": img_result.get('similarity'),
                     "hybrid_score": img_result.get('hybrid_score'),
                     "face_score": img_result.get('face_score'),
+                    "caption": img_result.get("caption"),
+                    "caption_similarity": img_result.get("caption_similarity"),
                     "source_kind": img_result.get('source') or "clip",
                     "evidence_label": (
                         "Identity match"
                         if img_result.get('source') == "face_tag"
+                        else "Caption match"
+                        if img_result.get("source") == "caption"
                         else "Scene + identity"
                         if img_result.get('likely_speakers')
                         else "Scene match"
@@ -3587,7 +3627,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
         provider_name = chat_request.provider
         n_results = chat_request.n_results or 8
         include_visuals = chat_request.include_visuals or False
-        n_images = chat_request.n_images or 4
+        n_images = chat_request.n_images or 6
         custom_instructions = chat_request.custom_instructions
         user_visual_terms, user_visual_phrases = _user_visual_search_config(
             getattr(request.state, "profile", None)
@@ -3993,7 +4033,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
             provider_name = chat_request.provider
             n_results = chat_request.n_results or 8
             include_visuals = chat_request.include_visuals or False
-            n_images = chat_request.n_images or 4
+            n_images = chat_request.n_images or 6
             custom_instructions = chat_request.custom_instructions
             user_visual_terms, user_visual_phrases = _user_visual_search_config(
                 getattr(request.state, "profile", None)

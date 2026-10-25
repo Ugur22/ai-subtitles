@@ -7,6 +7,8 @@ maintaining an active connection.
 """
 import asyncio
 import logging
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Callable, Any
 from datetime import datetime
@@ -154,6 +156,16 @@ class BackfillFacePresenceResponse(BaseModel):
     skipped: int
     failed: int
     batch_size: int
+
+
+class BackfillCaptionsResponse(BaseModel):
+    processed_videos: int
+    captioned_images: int
+    dense_frames_added: int
+    skipped: int
+    failed: int
+    batch_size: int
+    stopped_early: bool = False
 
 
 # =============================================================================
@@ -1163,6 +1175,131 @@ async def backfill_face_presence(
         failed=failed,
         batch_size=batch_size,
     )
+
+
+@router.post("/backfill-captions", response_model=BackfillCaptionsResponse)
+@require_admin
+async def backfill_captions(
+    request: Request,
+    batch_size: int = Query(3, ge=1, le=10),
+    video_hash: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    force: bool = Query(False),
+    dense: bool = Query(True),
+    max_frames: int = Query(8, ge=1, le=32),
+):
+    from services.image_embedding_service import image_embedding_service
+    from services.supabase_service import supabase
+    from services.transcription_repository import transcription_repository
+    from services.background_worker import _extract_dense_segments
+    from routers.chat import _get_saved_provider_key
+
+    if bool(video_hash) != bool(user_id):
+        raise HTTPException(status_code=400, detail="video_hash and user_id are required together")
+    if not settings.ENABLE_VISION_CAPTIONS:
+        raise HTTPException(status_code=409, detail="Vision captions are disabled")
+    budget = min(max_frames, max(1, min(settings.CAPTION_BACKFILL_MAX_FRAMES, 32)))
+    timeout = max(10.0, min(settings.CAPTION_BACKFILL_TIMEOUT_SECONDS, 240.0))
+    deadline = time.monotonic() + timeout
+    client = supabase()
+    stats = dict(processed_videos=0, captioned_images=0, dense_frames_added=0,
+                 skipped=0, failed=0, batch_size=batch_size, stopped_early=False)
+    async def run_batch():
+        nonlocal budget
+        if video_hash:
+            candidates = [(user_id, video_hash)]
+        else:
+            try:
+                response = await _run_in_executor(
+                    lambda: client.rpc("videos_missing_captions", {
+                        "target_embedding_model": settings.TEXT_EMBEDDING_MODEL,
+                        "batch_limit": batch_size,
+                    }).execute()
+                )
+                candidates = [(row["user_id"], row["video_hash"]) for row in response.data or []]
+            except Exception:
+                logger.exception("[Jobs] Caption discovery failed")
+                stats["failed"] = 1
+                return BackfillCaptionsResponse(**stats)
+
+        for owner_id, vh in candidates[:batch_size]:
+            if budget <= 0 or time.monotonic() >= deadline:
+                stats["stopped_early"] = True
+                break
+            try:
+                job = await _run_in_executor(transcription_repository.get_job, vh, owner_id)
+                if not job:
+                    stats["skipped"] += 1
+                    continue
+                storage = get_media_storage()
+                dense_segments = []
+                if dense and budget > 1 and settings.DENSE_FRAME_INTERVAL_SECONDS > 0:
+                    source_key = job.get("gcs_path")
+                    if source_key and storage.is_owned_media_key(source_key, owner_id):
+                        source_exists = await _run_in_executor(storage.file_exists, source_key)
+                        if source_exists:
+                            def load_frame_times():
+                                frames, offset = [], 0
+                                while time.monotonic() < deadline:
+                                    page = client.table("image_embeddings").select("start_time,end_time").eq(
+                                        "user_id", owner_id
+                                    ).eq("video_hash", vh).order("id").range(offset, offset + 499).execute()
+                                    frames.extend(page.data or [])
+                                    if len(page.data or []) < 500:
+                                        return frames
+                                    offset += 500
+                                raise TimeoutError("Caption backfill deadline reached")
+
+                            indexed_rows = await _run_in_executor(load_frame_times)
+                            result = job.get("result_json") or {}
+                            transcript = result.get("transcription") or {}
+                            duration = max(
+                                [row.get("end_time") or 0 for row in indexed_rows]
+                                + [segment.get("end") or 0 for segment in transcript.get("segments", [])]
+                                + [0]
+                            )
+                            read_url = storage.generate_download_url(source_key)
+                            with tempfile.TemporaryDirectory(prefix="caption-backfill-") as output_dir:
+                                # A request can add at most two frames; remaining work resumes next call.
+                                dense_segments = await asyncio.wait_for(
+                                    _extract_dense_segments(
+                                        vh, owner_id, read_url, duration,
+                                        [row.get("start_time") or 0 for row in indexed_rows],
+                                        output_dir, min(2, budget // 2),
+                                    ), timeout=max(0.01, min(90.0, deadline - time.monotonic())),
+                                )
+                            if dense_segments:
+                                await _run_in_executor(
+                                    image_embedding_service.index_video_images,
+                                    vh, dense_segments, owner_id, force_reindex=True, face_force=False,
+                                )
+                                stats["dense_frames_added"] += len(dense_segments)
+                                budget -= len(dense_segments)
+                if budget <= 0 or time.monotonic() >= deadline:
+                    stats["stopped_early"] = True
+                    break
+                key = await _get_saved_provider_key(owner_id, "xai")
+                count = await image_embedding_service.caption_video_images(
+                    vh, owner_id, api_key=key, force=force, max_frames=budget,
+                    timeout_seconds=max(0.01, deadline - time.monotonic()),
+                )
+                stats["captioned_images"] += count
+                stats["processed_videos"] += 1
+                # Budget counts attempted frames as well as successful API calls.
+                budget = 0
+            except Exception:
+                logger.exception("[Jobs] Caption backfill failed for owner=%s video=%s", owner_id, vh)
+                stats["failed"] += 1
+            if time.monotonic() >= deadline:
+                stats["stopped_early"] = True
+                break
+        return BackfillCaptionsResponse(**stats)
+
+    try:
+        return await asyncio.wait_for(run_batch(), timeout=timeout)
+    except asyncio.TimeoutError:
+        stats["stopped_early"] = True
+        return BackfillCaptionsResponse(**stats)
 
 
 @router.get("/{job_id}/download/{format}")
