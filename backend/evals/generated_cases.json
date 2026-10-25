@@ -1,0 +1,122 @@
+[
+  {
+    "name": "generated-chunk-0",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Where should I start when frosting the cake?",
+    "expected_start_seconds": 0.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-30",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why did you decide to stop using the brand's products after the contest?",
+    "expected_start_seconds": 309.08,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-47",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why didn't you play Christmas trivia with Sadie?",
+    "expected_start_seconds": 621.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-86",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "How do you feel about the people who made it?",
+    "expected_start_seconds": 955.56,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-107",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why were you so hard on that person about the chocolate yesterday?",
+    "expected_start_seconds": 1200.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-122",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What are you having a party for?",
+    "expected_start_seconds": 1323.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-148",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "How does the number of people going out now compare to before?",
+    "expected_start_seconds": 1548.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-184",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Do you have enough time to build and decorate so many gingerbread houses?",
+    "expected_start_seconds": 1897.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-263",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why do you feel like a clumsy person here?",
+    "expected_start_seconds": 2522.32,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-294",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What did the speaker say when told everything looked fine?",
+    "expected_start_seconds": 2746.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-382",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What did the shepherds find when they rushed to Bethlehem?",
+    "expected_start_seconds": 3316.56,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-426",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "How are you feeling now that the anticipation is almost gone?",
+    "expected_start_seconds": 3839.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-464",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why isn't ordering peanut candy a bad idea even if you only do it at parties?",
+    "expected_start_seconds": 4179.64,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-499",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why didn't you say hello when we saw each other?",
+    "expected_start_seconds": 4534.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-541",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Who does Sadie return home with to lead Anedors as his new business partner?",
+    "expected_start_seconds": 4900.2,
+    "acceptable_window_seconds": 30
+  }
+]

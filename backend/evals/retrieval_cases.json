@@ -1,0 +1,114 @@
+[
+  {
+    "name": "generated-chunk-0",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Where should I start when frosting the cake?",
+    "expected_start_seconds": 0.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-47",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why didn't you play Christmas trivia with Sadie?",
+    "expected_start_seconds": 621.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "truffle-discovered-by-accident",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "How was the chocolate truffle discovered, according to Alex's story?",
+    "expected_start_seconds": 885.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-107",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why were you so hard on that person about the chocolate yesterday?",
+    "expected_start_seconds": 1200.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-122",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Who does Sadie say she invited to her parents' retirement party that night?",
+    "expected_start_seconds": 1323.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-148",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "How does the number of people going out now compare to before?",
+    "expected_start_seconds": 1548.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-184",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Do you have enough time to build and decorate so many gingerbread houses?",
+    "expected_start_seconds": 1897.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-263",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why do you feel like a clumsy person here?",
+    "expected_start_seconds": 2522.32,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-382",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What did the shepherds find when they rushed to Bethlehem?",
+    "expected_start_seconds": 3316.56,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-426",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "What does Alex say he feels the night before Christmas, now that the anticipation is almost over?",
+    "expected_start_seconds": 3839.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "peanuts-year-round",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why does someone suggest offering peanuts all year round?",
+    "expected_start_seconds": 1235,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "generated-chunk-499",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why didn't you say hello when we saw each other?",
+    "expected_start_seconds": 4534.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "alex-avoids-mentioning-wife",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "Why does Alex avoid mentioning his wife straight away?",
+    "expected_start_seconds": 2225.0,
+    "acceptable_window_seconds": 30
+  },
+  {
+    "name": "manual-who-died-in-movie",
+    "video_hash": "5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "question": "who died in this movie?",
+    "expected_start_seconds": 2217.0,
+    "acceptable_window_seconds": 30
+  }
+]
