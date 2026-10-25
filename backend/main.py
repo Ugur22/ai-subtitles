@@ -96,6 +96,11 @@ async def startup_event():
             print(f"- GCS cleanup failed (non-critical): {e}")
 
 
+# CSRF protection. Added before CORS so it sits inside it: CORS answers
+# preflight requests first and the rest reach this check.
+from middleware.csrf import CSRFProtectionMiddleware
+app.add_middleware(CSRFProtectionMiddleware, allowed_origins=app_settings.CORS_ORIGINS)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,

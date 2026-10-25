@@ -95,6 +95,7 @@ def db(monkeypatch):
     fake = _FakeSupabase()
     monkeypatch.setattr(auth_new.SupabaseService, "get_client", staticmethod(lambda: fake))
     monkeypatch.setattr(auth_new.SupabaseService, "get_auth_client", staticmethod(lambda: fake))
+    monkeypatch.setattr(auth_new.SupabaseService, "new_auth_client", staticmethod(lambda: fake))
     # Both registrations have already passed the early check before either
     # claims the code, which is the window the atomic claim has to close.
     monkeypatch.setattr(auth_new, "_verify_invite_code", lambda _code: True)
