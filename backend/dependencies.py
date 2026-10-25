@@ -29,6 +29,15 @@ _whisper_model: Optional[WhisperModel] = None
 _speaker_diarizer: Optional['SpeakerDiarizer'] = None
 _audio_analyzer: Optional['AudioAnalyzer'] = None
 
+def resolve_whisper_compute_type() -> str:
+    """int8 (the config default) is a CPU setting; default to float16 on CUDA unless set explicitly."""
+    import os
+
+    if settings.FASTWHISPER_DEVICE == "cuda" and "FASTWHISPER_COMPUTE_TYPE" not in os.environ:
+        return "float16"
+    return settings.FASTWHISPER_COMPUTE_TYPE
+
+
 def get_whisper_model() -> WhisperModel:
     """Get or initialize the faster-whisper model (singleton)"""
     global _whisper_model
@@ -38,13 +47,15 @@ def get_whisper_model() -> WhisperModel:
         # Use the same cache directory as set in Dockerfile/download_models.py
         cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
 
+        compute_type = resolve_whisper_compute_type()
+
         print(f"Initializing Whisper model: {settings.FASTWHISPER_MODEL} on {settings.FASTWHISPER_DEVICE}")
         print(f"Using cache directory: {cache_dir}")
 
         _whisper_model = WhisperModel(
             settings.FASTWHISPER_MODEL,
             device=settings.FASTWHISPER_DEVICE,
-            compute_type=settings.FASTWHISPER_COMPUTE_TYPE,
+            compute_type=compute_type,
             download_root=cache_dir  # Use pre-downloaded models
         )
         print("Whisper model initialized successfully")

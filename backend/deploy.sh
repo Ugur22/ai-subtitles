@@ -64,6 +64,8 @@ MAX_SPEAKERS="0"  # 0 = unlimited/auto-detect speakers
 
 # Whisper settings
 FASTWHISPER_DEVICE="cuda"  # Use GPU for transcription (faster than CPU)
+FASTWHISPER_MODEL="large-v3"  # Worker only; must match WHISPER_MODEL_REPO baked in the Dockerfile
+FASTWHISPER_COMPUTE_TYPE="float16"  # int8 is the CPU default
 
 # Ensure PATH includes gcloud
 export PATH="/opt/homebrew/share/google-cloud-sdk/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
@@ -172,7 +174,7 @@ deploy_worker_job() {
         --tasks=1 \
         --command="python" \
         --args="-m,worker_main" \
-        --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}" \
+        --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@FASTWHISPER_MODEL=${FASTWHISPER_MODEL}@FASTWHISPER_COMPUTE_TYPE=${FASTWHISPER_COMPUTE_TYPE}" \
         --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest"; then
         print_info "Worker Job deployment successful"
     else

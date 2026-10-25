@@ -123,7 +123,7 @@ async def translate_local_endpoint(http_request: Request, request: TranslationRe
         else:
             text_list = text
 
-        inputs = tokenizer(text_list, return_tensors="pt", padding=True)
+        inputs = tokenizer(text_list, return_tensors="pt", padding=True).to(model.device)
         translated = model.generate(**inputs)
         translations = [tokenizer.decode(t, skip_special_tokens=True) for t in translated]
 

@@ -35,8 +35,8 @@ def download_whisper_model():
     print("Downloading Faster-Whisper model...")
     print("="*50)
 
-    # The model used by faster-whisper (Systran/faster-whisper-small)
-    whisper_model = "Systran/faster-whisper-small"
+    # Must match FASTWHISPER_MODEL at runtime (e.g. "large-v3" resolves to this repo)
+    whisper_model = os.environ.get('WHISPER_MODEL_REPO', 'Systran/faster-whisper-large-v3')
     cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
 
     print(f"Cache directory: {cache_dir}")
@@ -60,11 +60,13 @@ def download_whisper_model():
         # Also try to load with faster_whisper to ensure it works
         from faster_whisper import WhisperModel
         print("  Verifying model loads correctly...")
+        # CPU is fine here: no GPU at build time. local_files_only proves the cache is complete.
         model = WhisperModel(
-            "small",
+            whisper_model,
             device="cpu",
             compute_type="int8",
-            download_root=cache_dir
+            download_root=cache_dir,
+            local_files_only=True
         )
         print("  OK: Model verified successfully")
         del model  # Free memory

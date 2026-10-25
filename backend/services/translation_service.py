@@ -3,9 +3,22 @@ Translation service using MarianMT models with optimized batch processing
 """
 from typing import List, Dict, Tuple, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import gc
+
+import torch
 from transformers import MarianMTModel, MarianTokenizer
 
 
+def _get_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+# TODO: translating out of English (opus-mt-en-{lang}) needs a target-language parameter through the
+# pipeline/API/UI, and not every pair exists under that name (ja/ko/tr/ar differ), so it isn't wired up here.
 class TranslationService:
     """Service for translating text using MarianMT models"""
 
@@ -37,8 +50,12 @@ class TranslationService:
             print(f"[INFO] Loading translation model: {model_name}")
             tokenizer = MarianTokenizer.from_pretrained(model_name)
             model = MarianMTModel.from_pretrained(model_name)
+            device = _get_device()
+            if device == "cuda":
+                model = model.half()
+            model = model.to(device).eval()
             cls._marian_models[model_name] = (tokenizer, model)
-            print(f"[SUCCESS] Model loaded: {model_name}")
+            print(f"[SUCCESS] Model loaded: {model_name} on {device}")
             return cls._marian_models[model_name]
 
         except Exception as e:
@@ -85,7 +102,7 @@ class TranslationService:
             Segments with 'translation' field populated
         """
         # Use larger batches for true batch processing (much faster than one-by-one)
-        BATCH_SIZE = 32  # Optimal for MarianMT on CPU
+        BATCH_SIZE = 64 if _get_device() == "cuda" else 32  # 32 is optimal on CPU; the GPU has headroom for more
 
         total_segments = len(segments)
         translated_count = 0
@@ -132,7 +149,7 @@ class TranslationService:
                     padding=True,
                     truncation=True,
                     max_length=512
-                )
+                ).to(model.device)
 
                 print(f"[Translation] Batch {batch_num}/{total_batches}: generating translations for {len(texts_to_translate)} segments...")
 
@@ -187,8 +204,21 @@ class TranslationService:
             if 'translation' not in segment:
                 segment['translation'] = '[No speech detected]'
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         print(f"[Translation] Completed: {translated_count}/{total_segments} segments translated")
         return segments
+
+    @classmethod
+    def unload_models(cls) -> None:
+        """Drop cached MarianMT models to free GPU memory."""
+        if cls._marian_models:
+            print("[Translation] Unloading cached translation models...")
+            cls._marian_models.clear()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     @classmethod
     def _translate_segments_individually(
@@ -203,7 +233,7 @@ class TranslationService:
         for idx in segment_indices:
             text = batch[idx].get('text', '').strip()
             try:
-                inputs = tokenizer(text, return_tensors="pt", padding=True)
+                inputs = tokenizer(text, return_tensors="pt", padding=True).to(model.device)
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(
                         model.generate,
