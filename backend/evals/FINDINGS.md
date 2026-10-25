@@ -1,0 +1,505 @@
+# Historical evaluation findings
+
+These notes were recorded on the source development branch. They describe past datasets and runs, not a verification of the current deployment.
+
+## Answer-synthesis fix: anchor-score propagation for Keyword Match segments (2026-09-07)
+
+**Follow-up to the entry below.** The retrieval-side causal-widening fix (lexical `after=8` window)
+made the "weapon" evidence for `why-forest-creatures-free-matteo` reachable, but the case still
+failed `terms_ok` -- not a retrieval miss, an answer-synthesis prioritization problem. Traced by
+capturing the exact assembled context (not just `sources`) via `_retrieve_text_context` +
+`_format_text_context` directly.
+
+**Root cause:** the assembled context contained *two* competing Keyword Match clusters -- the
+correct one ("...this is the only weapon to deal with that colonel," 00:34:07-00:34:11) and an
+unrelated nostalgic reminiscence scene ("...also had good qualities... a wonderful melody...",
+00:42:42-00:43:47, chronologically *after* the release announcement) -- both tagged with the
+identical generic label `[Evidence: Keyword Match (literal word overlap only, not semantic
+ranking)]`, with nothing distinguishing a direct causal statement from an off-target aside. Also
+confirmed: (a) not a visual-context issue -- 0 images were retrieved for this question, both
+competing explanations are transcript text; (b) the reminiscence scene was already reachable
+before the causal-widening fix (as a 1-line stub) -- that fix's `after=8` window, applied
+uniformly to every lexical anchor and not just the correct one, is what fleshed the wrong scene
+out into a fuller, more narratively persuasive mini-scene.
+
+**Rejected approach:** annotating segments with question-keyword-overlap counts computed
+*per-segment* (reusing the existing "TOP RANKED SEMANTIC MATCHES" header mechanism as-is) --
+tested and found to point the wrong way: the actual "weapon" line shares **zero** words with the
+question (a real causal answer, by nature, introduces new vocabulary the question doesn't use),
+while the wrong reminiscence cluster repeats "wind"/"Matteo" and would score *higher* per-segment.
+
+**Fix:** `_lexical_segment_matches` now tracks which scored *anchor* segment triggered each
+expanded window and propagates that anchor's own keyword-overlap score/keywords to every segment
+in its window (on a window collision between two anchors, the higher-scoring anchor wins -- same
+precedence pattern as `_expand_text_hits_with_neighbors`). The "weapon" line's cluster now
+annotates as overlapping 5/14 question keywords (`disasters, matteo, wind, caused, has`, from its
+"we know all too well the disasters..." anchor) vs. the reminiscence cluster's 4/14 (`matteo, wind,
+has, his`) -- correctly directioned, though a modest gap. `_format_text_context` renders this as
+`"its match cluster overlaps N/M question keywords: ..."` on Keyword Match segments; the system
+prompt (both branches of `_build_chat_messages`) gained one new guideline bullet explaining the
+annotation and telling the model to prefer the higher-N cluster when two Keyword Match segments
+conflict, without touching the existing (and still necessary) "trust Semantic Match over Keyword
+Match" instruction that resolved the earlier girlfriend/cafeteria lexical-distractor bug.
+
+**Verified impact (matched pre-fix/post-fix comparison, same case, `git stash` to isolate):**
+pre-fix, 4 isolated reruns: 1/4 pass (25%), 3/4 confidently cite the wrong reminiscence scene as
+the reason. Post-fix, 6 total observations (2 full-suite runs + 4 isolated reruns): 4/6 pass
+(67%), and the wrong reminiscence narrative never appears as the *primary* stated reason again --
+the 2 remaining post-fix failures are a different, safer failure mode (citing a different real
+semantic-hit explanation, or honestly abstaining with "the transcript does not explicitly state
+why") rather than confidently asserting the wrong scene. A real, measurable improvement, **not** a
+deterministic fix -- this specific case sits close enough to a decision boundary that LLM sampling
+variance still matters, consistent with the sampling-variance pattern already documented multiple
+times above for this case family. Movie 1: reran full 10-case suite twice post-fix, stayed 10/10
+both times.
+
+**Not chased further:** making this fully deterministic would mean constraining LLM sampling
+(temperature/seed) or adding a verifier/judge pass -- both explicitly out of scope (no LLM judge,
+no making the model guess when evidence is absent already holds -- the failure modes observed are
+"cite a different true fact" or "honestly abstain," never a hallucination).
+
+---
+
+## Accepted residual limitation: `mine-frees-wind-matteo` causal-mechanism miss (2026-09-07)
+
+**Not investigated further -- see the Movie 2 robustness fix above.** `estate-inheritance-to-
+benvenuto` and `colonel-death-matteo-reconciliation` were fixed outright (lexical-budget starvation
+bug + eval-rubric synonym groups); `why-forest-creatures-free-matteo` was substantially improved
+but not made fully deterministic (see the answer-synthesis entry above). This case was deliberately
+left unfixed.
+
+**Evidence:** the required chunk ("The mine is ready! ... Careful, if you mix it, go in half a
+minute.", ~2346-2353s) scores only **0.38 cosine similarity** against the question (recomputed
+locally with the production embedding model, `BAAI/bge-small-en-v1.5`) -- well below the ~0.58+
+band the actual top-5 semantic hits occupy for this question. It also sits **6 embedding chunks**
+past the nearest retrieved anchor (the "they're going to free the Matteo wind!" announcement,
+chunk ~158), with 5 chunks of unrelated filler dialogue in between ("who is this scarlet?",
+"Colonel Procolo", "old morro's redheads", "something should be done", "Old Fox is right",
+shouting about a "congiglione").
+
+**Why not fixed:** reaching it would require a forward-neighbor window roughly twice as wide as
+the one added for `why-forest-creatures-free-matteo` (which only needed ~1 chunk forward from a
+lexical anchor, not 6 from a semantic one). Applying a 6-chunk-forward window to every causal
+question globally would pull that same volume of low-relevance filler into every "why"/"because"
+question's context, including ones that already work correctly today (see the Movie 1 RESOLVED
+entries above) -- a real risk of trading one eval case for regressions elsewhere. Decision:
+documented as an accepted limitation, same category as the "party" ambiguity finding below, rather
+than force-fixed.
+
+---
+
+# Findings for later investigation
+
+Issues discovered while manually verifying retrieval eval cases against the
+app's chat feature. These are outside the scope of `evaluate_retrieval.py`
+(which only tests `search_transcript_chunks`, not the chat answer-synthesis
+pipeline on top of it) -- logged here to revisit separately.
+
+## RESOLVED: chat context assembly lost retrieval rank/tier (2026-09-04)
+
+Root cause for the three findings below (marked RESOLVED / PARTIALLY RESOLVED
+inline): `backend/routers/chat.py`'s `_retrieve_text_context()` pipeline
+called `search_transcript_chunks()` (which returns hits in similarity-rank
+order) but then `_expand_text_hits_with_neighbors()` rebuilt the list sorted
+by chronological video position, discarding the rank entirely. Neighbor
+segments and `_lexical_segment_matches()` keyword-overlap segments were then
+merged in with no marker distinguishing them from real semantic hits.
+`_format_text_context()` rendered all of this identically -- so by the time
+the prompt reached the LLM, a chunk `search_transcript_chunks` confidently
+ranked #1 looked structurally identical to 20+ other chunks, including
+keyword-overlap distractors.
+
+**Fix:** every context segment now carries `tier` (`semantic_hit` / `neighbor`
+/ `lexical` / `speaker_match`), `rank`, and `similarity`, threaded through
+`_expand_text_hits_with_neighbors`, `_lexical_segment_matches`,
+`_merge_text_results`, and `_speaker_segment_context`. `_format_text_context`
+renders an `[Evidence: ...]` label per segment (e.g. `Semantic Match, Rank 1,
+similarity 0.82` vs `Keyword Match (literal word overlap only, not semantic
+ranking)`), and `_build_chat_messages`'s system prompt now explicitly
+instructs the model to trust the lowest-numbered Rank Semantic Match over
+Surrounding Context or Keyword Match segments when they conflict. Scope:
+`backend/routers/chat.py` only -- `search_transcript_chunks`,
+`evaluate_retrieval.py`, and the visual/audio retrieval paths are untouched.
+
+**Retest results** (same repro questions as originally logged, re-run against
+the live `/api/chat/` endpoint after the fix):
+
+- **"Why didn't you say hello when we saw each other?"** (rank 1/5) --
+  **RESOLVED**. Direct Answer now cites `[01:15:30-01:15:48]` (the correct
+  `start_time=4534.0` chunk) with the actual quotes ("When we were
+  introduced, you acted like you didn't see me... I thought you didn't see
+  me... Trust me. I saw you."), explicitly labeled "Rank 1 Semantic Match" in
+  the model's own Key Analysis. Previously cited an unrelated
+  girlfriend/cafeteria scene ~4406s built on a "when we met" lexical
+  distractor.
+- **"Why does Alex avoid mentioning his wife straight away?"** (rank 5/5,
+  the weakest-ranked case) -- **RESOLVED**. Direct Answer now quotes Alex's
+  actual stated reason verbatim -- "Because people feel sorry for me and
+  treat me differently" -- at the exact right timestamp (`00:37:05`, matching
+  `start_time=2225.0`). Previously gave a generic "recent widower, grief is
+  hard to discuss" inference instead of the character's specific stated
+  reason. Notable as the best result of the three despite starting from the
+  weakest retrieval rank.
+- **"How do you feel about the people who made it?"** (rank 3/5) --
+  **PARTIALLY RESOLVED**. The correct segment (`start_time=955.56`) now
+  surfaces in Key Analysis with the exact right quote ("I'm sorry, I was
+  wrong, I'm happy for them, why not?... I didn't make it.") and is correctly
+  labeled "Rank 3". But the Direct Answer headline still picks the rank-1
+  chunk instead (an unrelated "how many more, like 50" production-quantity
+  line) and declares the question "not directly answered." Cause: ranks 1-3
+  for this query are all within a tight 0.60-0.62 similarity band with no
+  clear winner, so the "trust the lowest-numbered rank" prompt instruction
+  doesn't reliably help when the numeric top rank isn't actually the
+  semantically correct one. Different in kind from the other two fixes -- a
+  close three-way similarity tie, not a case of the signal being buried
+  entirely. Left as a known residual limitation rather than chased further;
+  fixing it would mean prompting for content relevance in addition to rank,
+  a separate, smaller design problem than what this fix targeted.
+
+---
+
+## Chat "Direct Answer" ignored a correct retrieval hit (2026-09-04) — PARTIALLY RESOLVED, see top of file
+
+**Question:** "How do you feel about the people who made it?"
+**Video:** local test video, `video_hash=5873f064e23434b5a520eb87b9830e9cb53be89cb50cde21db60843bcaf7f6f4`
+
+**What the retrieval eval says:** PASS. `search_transcript_chunks` returns the
+correct chunk (`chunk_index=86`, `start_time=955.56`) at rank 3 of 5. That
+chunk's text directly answers the question -- the speaker says they're happy
+for the people who made something they didn't make themselves.
+
+**What the chat feature's "Direct Answer" actually did:** cited three
+timestamps -- `00:05:00-00:05:09`, `00:05:19-00:05:24`, and
+`00:24:31-00:24:56` -- none of which are anywhere near 955.56s (~15:55) and
+none of which relate to the question. The `00:05:19-00:05:24` citation is in
+fact the line from the `generated-chunk-30` eval case we already dropped for
+being unrelated/ambiguous. The synthesized answer was a generic,
+Christmas-movie-flavored paragraph ("positive and warm... festive,
+family-oriented...") built from these unrelated scraps rather than the real
+line, and read as confidently correct despite being disconnected from the
+actual source.
+
+**Working hypothesis:** the core embedding retrieval (`search_transcript_chunks`)
+is fine here -- verified independently by the eval harness. The chat
+endpoint's answer-synthesis step (`backend/routers/chat.py`) pulls from
+multiple sources beyond plain transcript search (scene/caption matches, audio
+events, etc.) and something in how those are combined/prioritized for the
+final LLM prompt let irrelevant material win out over the transcript hit that
+actually mattered. Needs its own investigation into `routers/chat.py`'s
+context-assembly and answer-generation logic -- not a retrieval bug, not
+something `evaluate_retrieval.py`/`generate_cases.py` can catch by design.
+
+**Second example (2026-09-04), with a caveat -- not retested after the fix above:**
+similar pattern, different
+question -- "How are you feeling now that the anticipation is almost gone?"
+(`generated-chunk-426`, `start_time=3839.0`). The retrieval eval also passes
+this case. The chunk itself has a direct, quotable line ("...you know that
+all expectation is almost over... that's how I feel tonight."), but the
+chat's Direct Answer instead gave entirely generic, ungrounded mood language
+("reflective, bittersweet sentiment... quiet, contemplative aftermath...")
+with **no quote and no timestamp citation anywhere in the main answer** --
+not even a wrong one this time, just vibes. The scene-match thumbnails shown
+alongside it were all at unrelated timestamps (01:23:10, 00:43:47, etc.),
+nowhere near 3839s (~01:03:59).
+
+Caveat, unlike the first example: this question is itself fairly generic --
+it doesn't name a character, scene, or event, and this is a nearly two-hour
+Christmas movie with a lot of reflective, feelings-heavy dialogue throughout.
+So this may be closer in kind to the `generated-chunk-122` "party" ambiguity
+(a vague question over repetitive thematic material) than to the first
+example's clean case of the chat simply missing an unambiguous right answer.
+The vague, non-committal response could be a *symptom* of that underlying
+ambiguity rather than a pure synthesis bug independent of it. Still worth
+tracking alongside the first example, but with lower confidence that it's the
+exact same failure mode.
+
+**Not investigated yet:**
+- Whether this reproduces on other "how do you feel about X" / sentiment-style
+  questions, or is specific to these two -- and whether the failure correlates
+  more with question vagueness than with question *type* (sentiment vs.
+  factual).
+- Whether it's a context-window/prioritization issue (too many weak signals
+  crowding out one strong one) or a retrieval issue specific to the chat
+  endpoint's own search call (different from `search_transcript_chunks`'s
+  parameters/top-k).
+
+## Confirmed: "party" question is a real corpus ambiguity, not a bug (2026-09-04)
+
+**Question:** "What are you having a party for?" (`generated-chunk-122` in
+`retrieval_cases.json`, expected `start_time=1323.0`, "having a party for my
+parents to celebrate their retirement").
+
+This case is our one accepted, legitimate retrieval-eval failure (Hit@5 miss)
+-- the movie has ~10 distinct scenes mentioning "a party," so a generically
+phrased question doesn't disambiguate which one.
+
+Manually testing the same question in the chat feature confirms this rather
+than surfacing a new bug: the chat's Direct Answer cited `00:18:51-00:18:59`
+-- a *different*, also-genuine party ("We have to have a party, a retreat
+party... celebrate what you and Dad have done") -- which matches the top
+wrong hit our retrieval eval already found for this exact query
+(`start=1131.72`, similarity 0.6662, same "retreat party" line). Unlike the
+"people who made it" finding above, this answer is internally coherent and
+well-cited -- it's just answering about a different, equally real party than
+the one our ground truth points to.
+
+**Conclusion:** no action needed. This is corroborating evidence that
+`generated-chunk-122`'s failure is a genuine embedding-model ceiling on
+repetitive source material, not a retrieval or chat-synthesis bug -- consistent
+with the decision already made to leave it in the eval set as an accepted
+limitation rather than "fix" it.
+
+## Possible frontend issue: on-screen subtitle appears clipped mid-sentence (2026-09-04)
+
+**Not related to retrieval/eval correctness** -- filed here only because it
+surfaced during manual case verification and needs its own look later.
+
+**Observation:** screenshotting the video player during the `gingerbread-house`
+case's cited moment (`00:31:48-00:31:53`) showed only a partial line ("There's
+no way I can be") on screen, cut off before the rest of the sentence.
+
+**Confirmed NOT a data/indexing bug:** both the app's own generated transcript
+segment (`start=1908.0, end=1913.0`, i.e. the same `00:31:48-00:31:53` window)
+and the original source `.srt` file have the **complete** sentence as a single
+segment/cue ("...and decorate so many gengibre houses in time" included, same
+"gengibre" typo in both independently, which is itself a small confirmation
+the two sources genuinely agree rather than one copying the other's error by
+coincidence). So whatever's happening is downstream of the data, in how the
+frontend renders/times the subtitle overlay.
+
+**Hypothesis, unverified:** the subtitle overlay may reveal text progressively
+across a segment's display window rather than showing the full line
+immediately at segment start, in which case a screenshot taken early in the
+5-second window would naturally show a partial sentence -- expected behavior,
+not a bug. Alternative possibility: an actual truncation/clipping bug in the
+subtitle rendering component. Need to check the frontend subtitle-overlay
+component to determine which.
+
+**Not investigated yet:** which component renders the on-screen subtitle
+overlay, whether it does progressive/incremental text reveal by design, and if
+so whether that's the intended UX or should just show the full cue text
+immediately.
+
+## Chat confidently cited the wrong scene despite retrieval ranking the right one #1 (2026-09-04) — RESOLVED, see top of file
+
+**Question:** "Why didn't you say hello when we saw each other?"
+(`generated-chunk-499`, `start_time=4534.0`).
+
+**What the retrieval eval says:** PASS, and not a close call -- `search_transcript_chunks`
+returns the correct chunk at **rank 1** of 5 (`[4534.0, 4412.0, 563.0, 3810.0,
+4387.0]`). The eval case itself is fine, no fix needed.
+
+**What the chat's Direct Answer did:** confidently described a different scene
+entirely -- a girlfriend/cafeteria confrontation around `01:13:26-01:14:18`
+(~4406s, close to but not the same as the rank-2 result `4412.0`), built on a
+quote containing "when we met," which overlaps lexically with the question's
+"when we saw each other" but is a different exchange from our chunk 499's
+actual content ("You acted like you didn't see me... I thought you didn't see
+me.").
+
+**What makes this one distinct from the first two examples above:** the
+model's own "Key Analysis" text visibly hedges -- it flags a "timing
+discrepancy" between its transcript citation and the visual screenshots it
+pulled in, states outright "the transcript isn't entirely clear on this," and
+ends up listing two different competing interpretations without picking one.
+None of that uncertainty makes it into the headline "Direct Answer," which
+states its (wrong) scene as plain fact. So this isn't just a retrieval/context
+problem -- it's a case where the model's own internal uncertainty about its
+answer doesn't propagate to what the user actually sees.
+
+**Not investigated yet:**
+- Whether the answer-synthesis step has access to the same ranked results our
+  eval harness sees (i.e. did it also see the correct top-ranked chunk and
+  discard it, or never receive it at all).
+- Whether there's a way to surface the model's own hedging/uncertainty
+  language in the UI instead of only in the collapsed "Key Analysis" section,
+  so a wrong-but-confident-sounding headline answer is less likely.
+
+## Chat gave a plausible-but-wrong reason instead of the character's actual stated one (2026-09-04) — RESOLVED, see top of file
+
+**Question:** "Why does Alex avoid mentioning his wife straight away?"
+(`alex-avoids-mentioning-wife`, `start_time=2225.0`).
+
+**What the retrieval eval says:** PASS, but weak -- the correct chunk is only
+found at **rank 5 of 5**, the most marginal pass seen in this whole set. Worth
+remembering when weighing what follows: the chat's answer-synthesis may
+genuinely not have had this chunk available if its own retrieval call uses a
+smaller top-k or different parameters than our eval harness.
+
+**What the chat's Direct Answer did:** explained the avoidance as generic
+grief-avoidance -- "he is a recent widower... the emotional difficulty of
+discussing his loss" -- built from the earlier "my wife, Laura... died a
+little over a year ago" line and a behavioral inference (he mentions his
+daughter freely but only mentions his wife once directly prompted).
+
+**Why this is a real miss, not just imprecision:** the actual chunk (2225.0)
+has Alex stating his reason explicitly, in his own words: "That's why I don't
+mention it to anyone right away. Because people feel sorry for me and treat
+me differently." That's a specific, *social* reason (avoiding pity/being
+treated differently) -- meaningfully different from "grief is hard to talk
+about." A user reading only the Direct Answer would come away with a
+plausible-sounding but factually different understanding of Alex's own stated
+motivation. Same underlying shape as the other findings here -- confident,
+coherent, well-written answer that isn't actually what the source says --
+just softer than the "wrong scene" example above since this one is at least
+adjacent to the right scene and topic.
+
+**Calibration caveat:** on reconsideration, this is softer than the other
+findings in this file. "He's a recent widower and it's private/emotionally
+difficult" is not factually wrong -- it's a reasonable, defensible
+characterization consistent with the scene, just the model's own paraphrase
+rather than Alex's specific words. This is closer to "the model summarized
+instead of quoting" than to the other entries' "the model stated something
+the source doesn't support." Keeping it logged as a real, softer-severity
+example of the broader pattern (confident answers that substitute inference
+for the source's specific wording), not as a clear-cut error.
+
+**Not investigated yet:**
+- Whether raising this chunk's retrieval rank (currently a marginal 5th)
+  would fix this on its own, or whether the answer-synthesis step would still
+  favor the inferred explanation over the explicit one even with better
+  retrieval.
+
+## RESOLVED: chat ignored a correctly-ranked hit even with tier/rank labels present (2026-09-06)
+
+**Root cause:** the 2026-09-04 fix above added per-segment `[Evidence: tier,
+rank, similarity]` labels and told the model to trust the lowest-numbered
+rank "when segments conflict" -- but gave no instruction for what to do when
+the model doesn't perceive a conflict and simply overlooks a correct segment
+buried in a flat, ~30-item context block. Reproduced fresh via two tightened
+`retrieval_cases.json` questions: "Who does Sadie say she invited to her
+parents' retirement party that night?" (`generated-chunk-122`, chunk
+`1323.0`, retrieved rank 2/8) and "What does Alex say he feels the night
+before Christmas..." (`generated-chunk-426`, chunk `3839.0`, retrieved rank
+1/8) both got flat denials ("the transcript segments provided do not
+contain...") despite the correct, labeled chunk being verifiably present in
+the final LLM prompt -- confirmed by tracing `_expand_text_hits_with_neighbors`
+-> `_merge_text_results` -> `_format_text_context` -> `_build_chat_messages`
+directly in a Python shell: the chunk survives every step, correctly tagged,
+un-truncated, at 4,601 characters total (nowhere near a token-budget
+concern).
+
+**Fix:** `backend/routers/chat.py` -- `_format_text_context()` now accepts
+the raw, un-fragmented `search_transcript_chunks()` hits and prepends a
+compact "TOP RANKED SEMANTIC MATCHES" block above the existing flat segment
+list, one line per hit, each annotated with its literal question-keyword
+overlap (e.g. "3/5 question keywords: invited, party, retirement") via a new
+shared `_extract_keywords()` helper (extracted from
+`_lexical_segment_matches`'s existing stop-word tokenization, no behavior
+change there). `_build_chat_messages()`'s system prompt now explicitly tells
+the model to check every entry in that block, and treat a keyword-overlap
+annotation as a strong signal, before concluding the transcript doesn't
+address the question.
+
+**Retest results** (same two repro questions, re-run against the live
+`/api/chat/` endpoint after the fix):
+- Both now surface the correct chunk, correctly ranked, and quote it
+  **verbatim** in Key Analysis (e.g. "Rank 2 is the strongest match for
+  keywords related to 'invited,' 'night,' 'party,' and 'retirement'"). The
+  evidence-blindness failure mode is fixed.
+- Neither produces a fully clean Direct Answer, but for a *different*
+  reason than before -- see the speaker-diarization finding below. That gap
+  is independent of this fix; this entry closes only the evidence-blindness
+  half.
+- Regression-checked against `alex-avoids-mentioning-wife` (a previously
+  RESOLVED case) and a new `truffle-discovered-by-accident` case -- both
+  still produce clean, fully correct Direct Answers, so the new block
+  doesn't crowd out or distract from already-working cases.
+- `evals/evaluate_retrieval.py` re-run post-fix: unaffected (14/14 passing),
+  as expected since it never calls into `chat.py`.
+
+## Speaker-diarization clustering merges multiple characters under one label (2026-09-06)
+
+**Not a `chat.py` bug -- a data-quality limitation of this test video's
+diarization run.** Discovered while investigating why the two cases above
+still don't produce a clean Direct Answer even after the evidence-surfacing
+fix: the model won't commit that `SPEAKER_02` = Sadie or `SPEAKER_05` = Alex,
+even while holding the correct quote in hand.
+
+**Root cause:** neither `face_tags` nor `speaker_voiceprints` has any rows
+for this video/user, so no name-resolution has ever been applied -- every
+segment carries its raw pyannote diarization label. The app already has a
+feature for exactly this (`POST /api/transcription/{video_hash}/speaker`,
+`update_speaker_name` in `routers/speaker.py`, which bulk-renames a label
+across the transcript and re-syncs `transcript_embeddings`); it has simply
+never been run for this video.
+
+**Why a blanket rename isn't a safe fix:** sampling `SPEAKER_05`'s full
+99-segment span shows it isn't one character -- it mixes at least four: the
+mother in the prologue ("My sweet Christmas," 0s), Taylor ("Well, just
+because of the smell...", 709s), Francie the child ("Don't eat them,
+Daddy.", 2480s), and Alex (the "anticipation" line above, 3839s, and again
+at 4417s). `SPEAKER_01` (which did resolve correctly to "Alex" in the
+already-passing `alex-avoids-mentioning-wife` case) is cleaner but not
+perfectly clean either -- mostly Alex, with a few early stray lines.
+Renaming `SPEAKER_05` to "Alex" wholesale would confidently misattribute the
+mother's, Taylor's, and Francie's lines to him -- a worse failure than the
+model's current honest refusal to guess.
+
+**Conclusion:** the model's hedging in these two cases is the correct
+response to genuinely ambiguous underlying diarization, not something to
+prompt-engineer away. No action taken.
+
+**Addendum (2026-09-06):** re-running the `generated-chunk-426` question
+("What does Alex say he feels the night before Christmas...") in the live UI
+produced a *worse* variant of the same symptom on a later turn: instead of
+neutrally declining to confirm the speaker ("this speaker is not identified
+as Alex"), the model asserted outright that the segment is "between
+SPEAKER_05 and SPEAKER_01, **not involving Alex**" -- a confident negative
+claim the transcript doesn't actually support (the diarization label simply
+carries no identity information either way; it's not evidence of exclusion).
+Same prompt, same root cause, but LLM sampling variance means the failure
+mode ranges from an honest hedge to a confidently wrong exclusion depending
+on the run. Reinforces that this is a data-completeness problem (no
+`face_tags`/`speaker_voiceprints` for this video) rather than something a
+prompt tweak can reliably bound.
+
+**Not investigated yet:**
+- Whether re-running diarization with different clustering parameters would
+  produce cleaner speaker separation for this specific video.
+- Whether `auto_identify_speakers` (voiceprint-based auto-matching,
+  `routers/speaker.py`) would perform better than a manual bulk rename,
+  since it works from voice embeddings rather than a single blanket label
+  swap.
+- If this recurs on other test videos: first check `face_tags`/
+  `speaker_voiceprints` row counts and spot-check a few of the larger
+  `SPEAKER_XX` clusters for internal consistency before assuming a rename
+  is safe.
+
+## IDEA (not investigated): share speaker/face identity labels across users for the same video_hash (2026-09-06)
+
+**Problem this would address:** the speaker-diarization finding above is
+expensive to fix per-user -- nobody can reasonably ask every uploader to
+manually tag speakers on every video, especially for popular
+already-existing content (movies, shows) that many different users upload
+independently. Right now each user's tagging effort (if they ever do it) is
+siloed to their own account, even when `video_hash` proves the underlying
+file is byte-identical to one another user already tagged.
+
+**Proposed direction:** key identity labels by `video_hash` instead of
+`user_id`, so the first person to tag "this is Sadie" benefits every later
+uploader of the same file -- the same dedup pattern this codebase already
+uses for job processing (`create_job` already dedupes work by `video_hash`).
+
+**Why it's not a simple schema change:**
+- `face_tags` is already keyed by `video_hash` (schema has no `user_id`
+  column) -- plausibly shareable across users today with little/no change,
+  but this hasn't been verified against how Supabase RLS actually scopes
+  reads/writes to it in production (the local-mode schema alone doesn't
+  prove cross-user access is possible or intended).
+- `speaker_voiceprints` is keyed by `user_id` only, by design -- it's built
+  for "enroll a recurring colleague once, reuse across your own meeting
+  recordings," a personal-recurring-speaker use case, not a per-video cast
+  list. Repurposing it into a shared per-video registry is a different
+  feature, not a tweak.
+- Conflict arbitration: what happens when two users tag the same cluster
+  with different names (typo, disagreement, or two different people
+  genuinely being merged into one cluster, per the finding above)?
+- Turns "your private speaker enrollment" into a shared, semi-public
+  who's-who database for what is often copyrighted media (movies/shows) --
+  a product/moderation question, not purely an engineering one.
+
+**Next step (deferred):** check whether `face_tags` can already be read
+cross-user for a matching `video_hash` today (schema suggests maybe; RLS
+policy needs checking), before scoping what a `speaker_voiceprints` redesign
+would require.
