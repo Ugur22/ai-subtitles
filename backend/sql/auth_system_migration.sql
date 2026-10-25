@@ -151,10 +151,19 @@ ALTER TABLE user_api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
 
--- user_profiles: users see only their own profile
+-- user_profiles: users can only read their own profile. Writes go through the
+-- backend (service role), because is_admin/subscription_plan/email_verified
+-- live in this row and must not be user-writable (see migration 015).
 DROP POLICY IF EXISTS user_profiles_own ON user_profiles;
-CREATE POLICY user_profiles_own ON user_profiles
-  FOR ALL USING (auth.uid() = id);
+DROP POLICY IF EXISTS user_profiles_select_own ON user_profiles;
+CREATE POLICY user_profiles_select_own ON user_profiles
+  FOR SELECT TO authenticated USING (auth.uid() = id);
+REVOKE INSERT, UPDATE, DELETE ON user_profiles FROM anon, authenticated;
+
+-- invite_codes: signup-gate secrets, no client access. This file never enabled
+-- RLS on the table, so without this anon could read every code (see migration 016).
+ALTER TABLE invite_codes ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON invite_codes FROM anon, authenticated;
 
 -- user_api_keys: users see only their own keys
 DROP POLICY IF EXISTS user_api_keys_own ON user_api_keys;
@@ -209,17 +218,6 @@ BEGIN
   RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;
-
--- Function to get user's API key for a provider (used by backend)
-CREATE OR REPLACE FUNCTION get_user_api_key(p_user_id UUID, p_provider TEXT)
-RETURNS TABLE (encrypted_key TEXT, is_valid BOOLEAN) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT uak.encrypted_key, uak.is_valid
-  FROM user_api_keys uak
-  WHERE uak.user_id = p_user_id AND uak.provider = p_provider;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- Migration Complete!

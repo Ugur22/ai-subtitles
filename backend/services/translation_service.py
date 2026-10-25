@@ -52,6 +52,7 @@ class TranslationService:
                 'ru': ['Helsinki-NLP/opus-mt-ru-en'],
                 'zh': ['Helsinki-NLP/opus-mt-zh-en'],
                 'ja': ['Helsinki-NLP/opus-mt-ja-en'],
+                'cs': ['Helsinki-NLP/opus-mt-cs-en'],
             }
 
             alt_models = available_alternatives.get(source_lang, [])
