@@ -260,11 +260,14 @@ ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_verifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE password_resets ENABLE ROW LEVEL SECURITY;
 
--- User profiles: users can only see and modify their own profile
-CREATE POLICY user_profiles_own ON user_profiles
-  FOR ALL
-  USING (auth.uid() = id)
-  WITH CHECK (auth.uid() = id);
+-- User profiles: users can only read their own profile. Writes go through the
+-- backend (service role), because is_admin/subscription_plan/email_verified
+-- live in this row and must not be user-writable (see migration 015).
+CREATE POLICY user_profiles_select_own ON user_profiles
+  FOR SELECT TO authenticated
+  USING (auth.uid() = id);
+
+REVOKE INSERT, UPDATE, DELETE ON user_profiles FROM anon, authenticated;
 
 -- Admin policy: admins can see all profiles
 CREATE POLICY user_profiles_admin_read ON user_profiles

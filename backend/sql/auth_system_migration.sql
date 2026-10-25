@@ -151,10 +151,14 @@ ALTER TABLE user_api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
 
--- user_profiles: users see only their own profile
+-- user_profiles: users can only read their own profile. Writes go through the
+-- backend (service role), because is_admin/subscription_plan/email_verified
+-- live in this row and must not be user-writable (see migration 015).
 DROP POLICY IF EXISTS user_profiles_own ON user_profiles;
-CREATE POLICY user_profiles_own ON user_profiles
-  FOR ALL USING (auth.uid() = id);
+DROP POLICY IF EXISTS user_profiles_select_own ON user_profiles;
+CREATE POLICY user_profiles_select_own ON user_profiles
+  FOR SELECT TO authenticated USING (auth.uid() = id);
+REVOKE INSERT, UPDATE, DELETE ON user_profiles FROM anon, authenticated;
 
 -- user_api_keys: users see only their own keys
 DROP POLICY IF EXISTS user_api_keys_own ON user_api_keys;
