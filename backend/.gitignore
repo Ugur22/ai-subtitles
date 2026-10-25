@@ -35,3 +35,7 @@ logs/
 # Large media files (handled by .gcloudignore for Cloud Build)
 static/videos/
 static/screenshots/
+
+# Evaluation output is reproducible and may contain private transcript excerpts.
+evals/chat_eval_results*.json
+evals/eval_history.db*

@@ -52,6 +52,56 @@ from services.audio_analysis_service import AudioAnalysisService
 from services.pipeline_cache_service import PipelineCacheService
 
 
+def _compute_dense_timestamps(duration, existing_ts, interval, min_gap, max_count=None):
+    if duration <= 0 or interval <= 0 or max_count == 0:
+        return []
+    timestamps = []
+    timestamp = interval / 2
+    while timestamp < duration:
+        candidate = round(timestamp, 2)
+        if all(abs(candidate - other) > min_gap for other in existing_ts):
+            timestamps.append(candidate)
+        timestamp += interval
+    if max_count and len(timestamps) > max_count:
+        step = len(timestamps) / max_count
+        timestamps = [timestamps[int(index * step)] for index in range(max_count)]
+    return timestamps
+
+
+async def _extract_dense_segments(
+    video_hash, user_id, read_url, duration, existing_ts, output_dir, max_frames
+):
+    timestamps = _compute_dense_timestamps(
+        duration, existing_ts, settings.DENSE_FRAME_INTERVAL_SECONDS,
+        settings.DENSE_FRAME_MIN_GAP_SECONDS, max_frames,
+    )
+    if not timestamps:
+        return []
+    results = await _run_in_executor(
+        VideoService.extract_screenshots_parallel_from_url,
+        source_url=read_url, timestamps=timestamps, output_dir=output_dir,
+        video_hash=video_hash, max_workers=4,
+    )
+    try:
+        usable = {timestamp: path for timestamp, path in results.items() if path}
+        urls = await _run_in_executor(
+            get_media_storage().upload_screenshots_batch,
+            screenshot_paths=usable, video_hash=video_hash, user_id=user_id,
+        )
+        return [
+            {"id": f"dense_{timestamp:.2f}", "start": timestamp, "end": timestamp,
+             "speaker": None, "screenshot_url": urls[timestamp]}
+            for timestamp in timestamps if urls.get(timestamp)
+        ]
+    finally:
+        for path in results.values():
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
 
@@ -819,19 +869,72 @@ class BackgroundWorker:
                                 "segment_screenshot_urls": screenshot_url_map,
                             })
 
-                        # Auto-index images into Supabase pgvector in either explicit storage mode.
-                        if screenshot_count > 0:
+                        dense_segments = []
+                        if settings.DENSE_FRAME_INTERVAL_SECONDS > 0 and read_url:
+                            try:
+                                _check_cancelled(job_id)
+                                duration = probed_duration_seconds or (
+                                    formatted_segments[-1]['end'] if formatted_segments else 0
+                                )
+                                existing_ts = [
+                                    segment.get('screenshot_timestamp', segment['start'])
+                                    for segment in formatted_segments if segment.get('screenshot_url')
+                                ]
+                                dense_segments = await _extract_dense_segments(
+                                    video_hash, user_id, read_url, duration, existing_ts,
+                                    screenshots_dir, max(0, min(settings.DENSE_FRAME_MAX_COUNT, 1000)),
+                                )
+                            except JobCancelled:
+                                raise
+                            except Exception as error:
+                                print(f"[Worker] Dense frame sampling failed (non-critical): {error}")
+
+                        if screenshot_count > 0 or dense_segments:
+                            caption_segments = []
                             try:
                                 from services.image_embedding_service import image_embedding_service
+                                _check_cancelled(job_id)
                                 JobQueueService.update_progress(job_id, 80, "indexing", "Indexing images for visual search...")
-                                print(f"[Worker] Auto-indexing {screenshot_count} images for visual search...")
-                                log_all_memory("Worker:BeforeImageIndexing")
-                                indexed_count = image_embedding_service.index_video_images(video_hash, formatted_segments, force_reindex=False, user_id=user_id)
-                                log_all_memory("Worker:AfterImageIndexing")
+                                indexed_count = await _run_in_executor(
+                                    image_embedding_service.index_video_images,
+                                    video_hash, formatted_segments + dense_segments, user_id,
+                                    collect_segments=caption_segments,
+                                )
                                 print(f"[Worker] Successfully indexed {indexed_count} images for visual search")
-                            except Exception as e:
-                                print(f"[Worker] Image indexing failed (non-critical): {e}")
+                                if settings.ENABLE_VISION_CAPTIONS:
+                                    api_key = None
+                                    try:
+                                        from routers.chat import _get_saved_provider_key
+                                        api_key = await _get_saved_provider_key(user_id, "xai")
+                                    except Exception:
+                                        pass
 
+                                    def caption_progress(done, total):
+                                        _check_cancelled(job_id)
+                                        JobQueueService.update_progress(
+                                            job_id, 81, "captioning", f"Captioning frames... {done}/{total}"
+                                        )
+
+                                    captioned = await image_embedding_service.caption_video_images(
+                                        video_hash, user_id, segments=caption_segments,
+                                        api_key=api_key, progress_cb=caption_progress,
+                                    )
+                                    print(f"[Worker] Captioned {captioned} frames for visual search")
+                            except JobCancelled:
+                                raise
+                            except Exception as error:
+                                print(f"[Worker] Image indexing/captioning failed (non-critical): {error}")
+                            finally:
+                                for segment in caption_segments:
+                                    local_path = segment.get('local_path')
+                                    if local_path:
+                                        try:
+                                            os.unlink(local_path)
+                                        except OSError:
+                                            pass
+
+                    except JobCancelled:
+                        raise
                     except Exception as e:
                         print(f"[Worker] Screenshot extraction failed (non-critical): {e}")
                         for seg in formatted_segments:

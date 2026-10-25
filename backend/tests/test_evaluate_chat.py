@@ -1,0 +1,318 @@
+"""
+Pure unit tests for evals/evaluate_chat.py's standalone scoring functions and
+validate_case -- no network, no LLM calls, no FastAPI TestClient, no
+LOCAL_MODE. These functions are deliberately dependency-free so they can be
+tested in isolation from the real chat endpoint.
+
+Run: python -m pytest tests/test_evaluate_chat.py -q  (from backend/)
+"""
+import os
+import sys
+import json
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from evals.evaluate_chat import (  # noqa: E402
+    answer_terms_ok,
+    citation_overlap,
+    forbidden_claims_ok,
+    run_case,
+    validate_case,
+)
+
+
+def _case(**overrides):
+    base = {
+        "id": "case",
+        "video_hash": "hash-1",
+        "user_id": "user-1",
+        "question": "why?",
+        "expected_answer": "because reasons",
+        "required_terms": ["reasons"],
+        "expected_time_range": {"start": 100.0, "end": 110.0},
+    }
+    base.update(overrides)
+    return base
+
+
+# --- citation_overlap ---------------------------------------------------
+
+
+def test_citation_overlap_true_when_source_fully_inside_expected_range():
+    sources = [{"start": 102.0, "end": 105.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is True
+
+
+def test_citation_overlap_true_when_source_partially_overlaps():
+    sources = [{"start": 95.0, "end": 101.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is True
+
+
+def test_citation_overlap_true_when_ranges_only_touch_at_edge():
+    sources = [{"start": 90.0, "end": 100.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is True
+
+
+def test_citation_overlap_false_when_ranges_do_not_overlap():
+    sources = [{"start": 200.0, "end": 210.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is False
+
+
+def test_citation_overlap_false_when_no_sources():
+    assert citation_overlap([], {"start": 100.0, "end": 110.0}) is False
+
+
+def test_citation_overlap_true_if_any_of_multiple_sources_overlaps():
+    sources = [{"start": 0.0, "end": 1.0}, {"start": 105.0, "end": 106.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is True
+
+
+def test_citation_overlap_ignores_sources_missing_start_or_end():
+    sources = [{"start": None, "end": None}, {"start": 105.0, "end": 106.0}]
+    assert citation_overlap(sources, {"start": 100.0, "end": 110.0}) is True
+
+
+# --- answer_terms_ok ------------------------------------------------------
+
+
+def test_answer_terms_ok_true_when_all_required_terms_present():
+    answer = "Trust me, I saw you. I didn't see you at first."
+    assert answer_terms_ok(answer, ["saw you", "trust me"]) is True
+
+
+def test_answer_terms_ok_false_when_one_required_term_missing():
+    answer = "Because people feel sorry for me."
+    assert answer_terms_ok(answer, ["sorry", "differently"]) is False
+
+
+def test_answer_terms_ok_false_when_answer_is_unrelated():
+    answer = "The weather in the scene looks cold and snowy."
+    assert answer_terms_ok(answer, ["sorry", "differently"]) is False
+
+
+def test_answer_terms_ok_true_when_required_terms_is_empty():
+    assert answer_terms_ok("anything at all", []) is True
+
+
+def test_answer_terms_ok_case_insensitive():
+    answer = "TRUFFLE was discovered by ACCIDENT, apparently."
+    assert answer_terms_ok(answer, ["accident", "truffle"]) is True
+
+
+def test_answer_terms_ok_synonym_group_passes_on_any_match():
+    answer = "The visiting spirit says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is True
+
+
+def test_answer_terms_ok_synonym_group_passes_on_literal_term():
+    answer = "Matthew says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is True
+
+
+def test_answer_terms_ok_synonym_group_fails_when_none_present():
+    answer = "SPEAKER_03 says the colonel was ashamed."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit", "the wind spirit"], "ashamed"]) is False
+
+
+def test_answer_terms_ok_synonym_group_still_requires_other_strict_terms():
+    answer = "The visiting spirit says the colonel was proud."
+    assert answer_terms_ok(answer, [["Matthew", "the visiting spirit"], "ashamed"]) is False
+
+
+# --- forbidden_claims_ok ---------------------------------------------------
+
+
+def test_forbidden_claims_ok_true_when_list_is_empty():
+    assert forbidden_claims_ok("any answer text", []) is True
+
+
+def test_forbidden_claims_ok_true_when_forbidden_terms_absent():
+    assert forbidden_claims_ok("a scene about trust and honesty", ["cafeteria", "girlfriend"]) is True
+
+
+def test_forbidden_claims_ok_false_when_forbidden_term_present():
+    assert forbidden_claims_ok("a girlfriend confrontation scene", ["girlfriend"]) is False
+
+
+def test_forbidden_claims_ok_case_insensitive():
+    assert forbidden_claims_ok("A CAFETERIA scene", ["cafeteria"]) is False
+
+
+# --- validate_case ----------------------------------------------------------
+
+
+def test_valid_case_has_no_validation_problems():
+    assert validate_case(_case()) == []
+
+
+def test_valid_case_with_what_must_not_be_claimed_has_no_problems():
+    assert validate_case(_case(what_must_not_be_claimed=["foo", "bar"])) == []
+
+
+def test_missing_field_fails_validation():
+    case = _case()
+    del case["expected_answer"]
+    problems = validate_case(case)
+    assert any("expected_answer" in p for p in problems)
+
+
+def test_placeholder_field_fails_validation():
+    problems = validate_case(_case(question="REPLACE_ME"))
+    assert any("REPLACE_ME" in p for p in problems)
+
+
+def test_non_dict_case_fails_validation():
+    problems = validate_case(["not", "a", "dict"])
+    assert len(problems) == 1
+
+
+def test_expected_time_range_not_a_dict_fails_validation():
+    problems = validate_case(_case(expected_time_range=[100, 110]))
+    assert any("expected_time_range" in p for p in problems)
+
+
+def test_expected_time_range_missing_key_fails_validation():
+    problems = validate_case(_case(expected_time_range={"start": 100.0}))
+    assert any("end" in p for p in problems)
+
+
+def test_expected_time_range_non_numeric_value_fails_validation():
+    problems = validate_case(_case(expected_time_range={"start": "soon", "end": 110.0}))
+    assert any("expected_time_range.start" in p for p in problems)
+
+
+def test_what_must_not_be_claimed_wrong_type_fails_validation():
+    problems = validate_case(_case(what_must_not_be_claimed="not a list"))
+    assert any("what_must_not_be_claimed" in p for p in problems)
+
+
+def test_missing_required_terms_fails_validation():
+    case = _case()
+    del case["required_terms"]
+    problems = validate_case(case)
+    assert any("required_terms" in p for p in problems)
+
+
+def test_empty_required_terms_fails_validation():
+    problems = validate_case(_case(required_terms=[]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_wrong_type_fails_validation():
+    problems = validate_case(_case(required_terms="not a list"))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_blank_string_fails_validation():
+    problems = validate_case(_case(required_terms=["ok", "  "]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_synonym_group_passes_validation():
+    problems = validate_case(_case(required_terms=[["Matthew", "the visiting spirit"], "ashamed"]))
+    assert problems == []
+
+
+def test_required_terms_with_empty_synonym_group_fails_validation():
+    problems = validate_case(_case(required_terms=[[], "ashamed"]))
+    assert any("required_terms" in p for p in problems)
+
+
+def test_required_terms_with_blank_string_in_synonym_group_fails_validation():
+    problems = validate_case(_case(required_terms=[["Matthew", "  "], "ashamed"]))
+    assert any("required_terms" in p for p in problems)
+
+
+# --- run_case top_k passthrough -----------------------------------------
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {"answer": "because reasons", "sources": []}
+
+
+class _FakeClient:
+    def __init__(self):
+        self.last_payload = None
+
+    def post(self, url, json):
+        self.last_payload = json
+        return _FakeResponse()
+
+
+def test_run_case_includes_n_results_when_top_k_given():
+    client = _FakeClient()
+    run_case(_case(), client, provider=None, top_k=5)
+    assert client.last_payload["n_results"] == 5
+
+
+def test_run_case_omits_n_results_when_top_k_not_given():
+    client = _FakeClient()
+    run_case(_case(), client, provider=None)
+    assert "n_results" not in client.last_payload
+
+
+@pytest.mark.parametrize("origin", [
+    "http://staging.example.com", "https://user:secret@example.com",
+    "https://example.com/?token=secret", "https://example.com/api",
+])
+def test_authenticated_client_rejects_unsafe_origins(origin):
+    from evals.evaluate_chat import _AuthenticatedHTTPClient
+
+    with pytest.raises(ValueError):
+        _AuthenticatedHTTPClient(origin, "session-secret")
+
+
+def test_authenticated_client_sends_cookie_and_checks_session_owner(monkeypatch):
+    import httpx
+    from evals.evaluate_chat import _AuthenticatedHTTPClient
+
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"user_id": "user-1"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: real_client(
+        transport=httpx.MockTransport(handle), **kwargs,
+    ))
+    client = _AuthenticatedHTTPClient("https://staging.example.com", "session-secret")
+    try:
+        client.verify_owner("user-1")
+        with pytest.raises(ValueError, match="does not match"):
+            client.verify_owner("user-2")
+    finally:
+        client.close()
+
+    assert requests[0].url.path == "/api/auth/me"
+    assert "auth_token=session-secret" in requests[0].headers["cookie"]
+
+
+def test_chat_runner_rejects_wrong_owner_before_submitting_cases(monkeypatch, tmp_path, capsys):
+    from evals import evaluate_chat
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([_case(user_id="other-user")]))
+    monkeypatch.setenv("EVAL_BASE_URL", "https://staging.example.com")
+    monkeypatch.setenv("EVAL_AUTH_TOKEN", "session-secret")
+    monkeypatch.setenv("EVAL_USER_ID", "user-1")
+    monkeypatch.setattr(sys, "argv", ["evaluate_chat.py", "--cases", str(cases)])
+    monkeypatch.setattr(evaluate_chat, "_AuthenticatedHTTPClient", lambda *_args: pytest.fail("unexpected request"))
+
+    assert evaluate_chat.main() == 1
+    assert "session-secret" not in capsys.readouterr().out
+
+
+def test_request_failures_do_not_store_session_material():
+    class BrokenClient:
+        def post(self, *_args, **_kwargs):
+            raise RuntimeError("request failed with auth_token=session-secret")
+
+    result = run_case(_case(), BrokenClient(), provider=None)
+    assert result["passed"] is False
+    assert result["error"] == "Request failed (RuntimeError)"

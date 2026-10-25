@@ -54,7 +54,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download MarianMT translation models during build
 # This prevents runtime download failures in Cloud Run/Railway
-# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic
+# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic, Polish, Turkish, Korean, Czech
 COPY download_models.py /tmp/download_models.py
 RUN python /tmp/download_models.py && rm /tmp/download_models.py
 
@@ -65,12 +65,15 @@ RUN test -f /root/panns_data/Cnn14_mAP=0.431.pth \
     && ls -la /root/panns_data/
 
 # Verify the sentence-transformers embedding model cache is COMPLETE. The runtime
-# loads all-MiniLM-L6-v2 and needs the module subfolder files (1_Pooling/config.json,
+# loads bge-small-en-v1.5 and needs the module subfolder files (1_Pooling/config.json,
 # modules.json); a partial cache previously shipped and crash-looped the worker at
 # import time. Fail the build loudly instead.
+RUN find /app/.cache/huggingface -path '*bge-small-en-v1.5*/1_Pooling/config.json' | grep -q . \
+    && find /app/.cache/huggingface -path '*bge-small-en-v1.5*/modules.json' | grep -q . \
+    && echo "OK: bge-small-en-v1.5 cache is complete"
 RUN find /app/.cache/huggingface -path '*all-MiniLM-L6-v2*/1_Pooling/config.json' | grep -q . \
     && find /app/.cache/huggingface -path '*all-MiniLM-L6-v2*/modules.json' | grep -q . \
-    && echo "OK: all-MiniLM-L6-v2 cache is complete"
+    && echo "OK: MiniLM comparison/rollback cache is complete"
 
 # Copy the rest of the application
 COPY . .

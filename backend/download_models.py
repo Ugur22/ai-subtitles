@@ -134,40 +134,18 @@ def download_panns_model():
 
 
 def download_sentence_transformers_model():
-    """Download sentence-transformers model for embeddings."""
-    print("="*50)
-    print("Downloading Sentence-Transformers model...")
-    print("="*50)
+    from sentence_transformers import SentenceTransformer
 
-    model_name = "all-MiniLM-L6-v2"
-
-    try:
-        from sentence_transformers import SentenceTransformer
-
-        # Fetch the FULL repo snapshot first (no allow_patterns) so every module
-        # file — including 1_Pooling/config.json and modules.json — is baked into
-        # the image cache. SentenceTransformer(name) alone has, on some
-        # huggingface_hub/sentence-transformers versions, left these subfolder
-        # files out of the cache, crashing the model load at runtime.
-        print(f"Snapshot-downloading sentence-transformers/{model_name} (all files)...")
-        snapshot_download(f"sentence-transformers/{model_name}")
-        print(f"  OK: Full snapshot cached")
-
-        print(f"Downloading sentence-transformers/{model_name}...")
-        model = SentenceTransformer(model_name)
-        print(f"  OK: Sentence-transformers model downloaded successfully")
-
-        # Test that it works
-        print("  Verifying model works...")
-        test_embedding = model.encode(["Test sentence"])
-        print(f"  OK: Embedding dimension: {len(test_embedding[0])}")
-        del model  # Free memory
-
-    except Exception as e:
-        print(f"  ERROR: Sentence-transformers model failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise  # This is critical for the chat feature
+    # Cache complete repos for the active model and an offline MiniLM comparison/rollback.
+    for repo_id in ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2"):
+        print(f"Snapshot-downloading {repo_id} (all files)...")
+        snapshot_download(repo_id)
+        model = SentenceTransformer(repo_id)
+        embedding = model.encode(["Test sentence"])
+        if len(embedding[0]) != 384:
+            raise RuntimeError(f"{repo_id} must produce 384-dimensional embeddings")
+        print(f"OK: {repo_id} cache and embedding dimension verified")
+        del model
 
 
 def download_clip_model():
