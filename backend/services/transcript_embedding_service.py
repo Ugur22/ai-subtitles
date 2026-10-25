@@ -1,13 +1,33 @@
 """
 Transcript & Audio-Event Embedding Service using Supabase pgvector
-Handles persistent storage of MiniLM embeddings for transcript chunks and audio events
+Handles persistent storage of text embeddings for transcript chunks and audio events
 """
 
 import time
 import httpx
 from typing import List, Dict, Optional
 from sentence_transformers import SentenceTransformer
+from config import settings
 from services.supabase_service import supabase
+
+# bge-small-en-v1.5 is retrieval-tuned and expects this instruction prefix on
+# the query side only -- passages/chunks being indexed are encoded as-is.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+# Named configurations let retrieval experiments coexist without changing the production chunk size.
+DEFAULT_INDEX_CONFIG = "chunk_size_3"
+INDEX_CONFIGS: Dict[str, int] = {
+    "chunk_size_2": 2,
+    "chunk_size_3": 3,
+    "chunk_size_5": 5,
+}
+
+
+def prepare_embedding_query(query: str, model_name: Optional[str] = None) -> str:
+    model_name = model_name or settings.TEXT_EMBEDDING_MODEL
+    if model_name == "BAAI/bge-small-en-v1.5":
+        return _BGE_QUERY_PREFIX + query
+    return query
 
 
 class TranscriptEmbeddingService:
@@ -23,63 +43,45 @@ class TranscriptEmbeddingService:
         Lazy load text embedding model shared by transcript chunks and audio events
 
         Returns:
-            sentence-transformers all-MiniLM-L6-v2 model
+            sentence-transformers model configured via settings.TEXT_EMBEDDING_MODEL
         """
         if self._embedding_model is None:
-            print("[TranscriptEmbedding] Loading text embedding model (all-MiniLM-L6-v2)...")
-            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print(f"[TranscriptEmbedding] Loading text embedding model ({settings.TEXT_EMBEDDING_MODEL})...")
+            self._embedding_model = SentenceTransformer(settings.TEXT_EMBEDDING_MODEL)
             print("[TranscriptEmbedding] Text embedding model loaded successfully")
         return self._embedding_model
 
-    def _upsert_with_retry(
-        self,
-        client,
-        table: str,
-        on_conflict: str,
-        records: List[Dict],
-        batch_num: int,
-        total_batches: int,
-        max_retries: int = 3,
-    ) -> None:
-        # Supabase sits behind Cloudflare which closes idle sockets after ~60s. httpx's
-        # pooled connection can be dead by the time we write the next batch. Catch the
-        # transport errors, force the pool to rebuild, and retry with backoff.
-        last_err: Optional[Exception] = None
-        for attempt in range(max_retries):
+    def _replace_index(self, client, kind: str, video_hash: str, user_id: str,
+                       records: List[Dict], index_config: str = DEFAULT_INDEX_CONFIG) -> int:
+        params = {
+            'p_user_id': user_id,
+            'target_video_hash': video_hash,
+            'p_embedding_model': settings.TEXT_EMBEDDING_MODEL,
+            'p_rows': records,
+        }
+        if kind == 'transcript':
+            params['target_index_config'] = index_config
+        for attempt in range(3):
             try:
-                client.table(table).upsert(records, on_conflict=on_conflict).execute()
-                print(
-                    f"[TranscriptEmbedding] Inserted {table} batch {batch_num}/{total_batches} "
-                    f"({len(records)} rows)"
-                )
-                return
-            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
-                last_err = e
-                try:
-                    session = getattr(client.postgrest, 'session', None)
-                    if session is not None:
-                        session.close()
-                except Exception:
-                    pass
-                backoff = 0.5 * (2 ** attempt)
-                print(
-                    f"[TranscriptEmbedding] Retry {attempt + 1}/{max_retries} for {table} batch "
-                    f"{batch_num} after {type(e).__name__}: {e}. Sleeping {backoff}s"
-                )
-                time.sleep(backoff)
-        raise last_err if last_err else RuntimeError(f"{table} batch upsert failed")
+                client.rpc(f'replace_{kind}_embedding_index', params).execute()
+                return len(records)
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError):
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (2 ** attempt))
+        return 0
 
     # ------------------------------------------------------------------
     # Transcript chunks
     # ------------------------------------------------------------------
 
-    def transcript_chunks_exist(self, video_hash: str, user_id: str) -> bool:
+    def transcript_chunks_exist(self, video_hash: str, user_id: str, index_config: str = DEFAULT_INDEX_CONFIG) -> bool:
         """Check if transcript chunks are indexed for a video"""
         try:
             client = supabase()
-            result = client.table('transcript_embeddings').select(
+            result = client.table('transcript_embeddings_v2').select(
                 'id', count='exact'
-            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).eq('embedding_model', settings.TEXT_EMBEDDING_MODEL).eq('index_config', index_config).limit(1).execute()
             return (result.count or 0) > 0
         except Exception as e:
             raise RuntimeError(f"Transcript chunk availability check failed: {e}") from e
@@ -90,22 +92,30 @@ class TranscriptEmbeddingService:
         segments: List[Dict],
         user_id: str,
         chunk_size: int = 3,
+        index_config: str = DEFAULT_INDEX_CONFIG,
         force_reindex: bool = False,
     ) -> int:
         """
-        Index transcription segments into Supabase using MiniLM embeddings
+        Index transcription segments under the configured model and chunk configuration
 
         Args:
             video_hash: Unique hash of the video
             segments: List of transcription segments
             user_id: Owner ID for tenant isolation
             chunk_size: Number of segments to combine into one chunk (default: 3)
-            force_reindex: If True, bypass the already-indexed skip and re-upsert
+            index_config: Named indexing configuration this index belongs to
+                (default: "chunk_size_3", the production baseline). Distinct
+                configs are stored side by side and never overwrite each other.
+            force_reindex: If True, atomically replace this model/config index
 
         Returns:
             Number of chunks indexed
         """
-        if not segments:
+        if index_config not in INDEX_CONFIGS:
+            raise ValueError(f"Unknown index configuration: {index_config}")
+        if chunk_size != INDEX_CONFIGS[index_config]:
+            raise ValueError("chunk_size must match index_config")
+        if not segments and not force_reindex:
             print("[TranscriptEmbedding] No segments to index")
             return 0
         if not user_id:
@@ -114,18 +124,18 @@ class TranscriptEmbeddingService:
         client = supabase()
 
         if not force_reindex:
-            existing = client.table('transcript_embeddings').select(
+            existing = client.table('transcript_embeddings_v2').select(
                 'id', count='exact'
-            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).eq('embedding_model', settings.TEXT_EMBEDDING_MODEL).eq(
+                'index_config', index_config
+            ).limit(1).execute()
             if existing.data:
                 count = existing.count or len(existing.data)
-                print(f"[TranscriptEmbedding] Video {video_hash} already has {count} indexed chunks")
+                print(
+                    f"[TranscriptEmbedding] Video {video_hash} already has {count} indexed chunks "
+                    f"for index_config={index_config}"
+                )
                 return count
-
-        # Upsert on (user_id, video_hash, chunk_index) overwrites rows in place, so we
-        # intentionally do NOT pre-delete on force_reindex — mirrors image_embedding_service's
-        # image indexing: partial progress is never destroyed if an insert fails partway
-        # through. force_reindex only bypasses the early-return "already indexed" check above.
 
         chunks: List[str] = []
         chunk_records: List[Dict] = []
@@ -150,6 +160,7 @@ class TranscriptEmbeddingService:
             chunk_records.append({
                 'user_id': user_id,
                 'video_hash': video_hash,
+                'index_config': index_config,
                 'chunk_index': chunk_index,
                 'start_time': first_segment.get('start', 0.0),
                 'end_time': last_segment.get('end', 0.0),
@@ -161,10 +172,11 @@ class TranscriptEmbeddingService:
             })
 
         if not chunks:
-            print("[TranscriptEmbedding] No valid chunks to index")
+            if force_reindex:
+                return self._replace_index(client, 'transcript', video_hash, user_id, [], index_config)
             return 0
 
-        print(f"[TranscriptEmbedding] Encoding {len(chunks)} chunks with MiniLM for video {video_hash}...")
+        print(f"[TranscriptEmbedding] Encoding {len(chunks)} chunks with {settings.TEXT_EMBEDDING_MODEL} for video {video_hash}...")
         embeddings = self.embedding_model.encode(
             chunks,
             convert_to_numpy=True,
@@ -175,33 +187,7 @@ class TranscriptEmbeddingService:
             for record, embedding in zip(chunk_records, embeddings)
         ]
 
-        insert_batch_size = 50
-        total_batches = (len(records) + insert_batch_size - 1) // insert_batch_size
-        indexed_count = 0
-        for i in range(0, len(records), insert_batch_size):
-            batch = records[i:i + insert_batch_size]
-            batch_num = i // insert_batch_size + 1
-            try:
-                self._upsert_with_retry(
-                    client,
-                    'transcript_embeddings',
-                    'user_id,video_hash,chunk_index',
-                    batch,
-                    batch_num,
-                    total_batches,
-                )
-                indexed_count += len(batch)
-            except Exception as e:
-                print(
-                    f"[TranscriptEmbedding] Chunk batch {batch_num}/{total_batches} permanently "
-                    f"failed after retries: {e}"
-                )
-
-        print(
-            f"[TranscriptEmbedding] Successfully indexed {indexed_count}/{len(records)} "
-            f"chunks for video {video_hash}"
-        )
-        return indexed_count
+        return self._replace_index(client, 'transcript', video_hash, user_id, records, index_config)
 
     def search_transcript_chunks(
         self,
@@ -209,6 +195,7 @@ class TranscriptEmbeddingService:
         query: str,
         user_id: str,
         n_results: int = 5,
+        index_config: str = DEFAULT_INDEX_CONFIG,
     ) -> List[Dict]:
         """
         Search for relevant transcript chunks using semantic similarity
@@ -218,6 +205,9 @@ class TranscriptEmbeddingService:
             query: Search query
             user_id: Owner ID for tenant isolation
             n_results: Number of results to return
+            index_config: Named indexing configuration to search within
+                (default: "chunk_size_3", the production baseline). Chunks
+                from other configs are never returned.
 
         Returns:
             List of relevant chunks shaped like {"text", "metadata", "similarity"}
@@ -227,18 +217,20 @@ class TranscriptEmbeddingService:
 
         client = supabase()
         query_embedding = self.embedding_model.encode(
-            [query],
+            [prepare_embedding_query(query)],
             convert_to_numpy=True,
         ).tolist()[0]
 
         try:
             result = client.rpc(
-                'search_transcript_chunks_by_embedding',
+                'search_transcript_chunks_by_embedding_v2',
                 {
                     'p_user_id': user_id,
+                    'p_embedding_model': settings.TEXT_EMBEDDING_MODEL,
                     'query_embedding': query_embedding,
                     'target_video_hash': video_hash,
                     'match_count': n_results,
+                    'target_index_config': index_config,
                 }
             ).execute()
         except Exception as e:
@@ -271,9 +263,9 @@ class TranscriptEmbeddingService:
             return False
         try:
             client = supabase()
-            result = client.table('audio_event_embeddings').select(
+            result = client.table('audio_event_embeddings_v2').select(
                 'id', count='exact'
-            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).eq('embedding_model', settings.TEXT_EMBEDDING_MODEL).limit(1).execute()
             return (result.count or 0) > 0
         except Exception as e:
             raise RuntimeError(f"Audio event availability check failed: {e}") from e
@@ -292,12 +284,12 @@ class TranscriptEmbeddingService:
             video_hash: Unique hash of the video
             segments: List of transcription segments with audio_events or audio_analysis
             user_id: Owner ID for tenant isolation
-            force_reindex: If True, bypass the already-indexed skip and re-upsert
+            force_reindex: If True, atomically replace this model/config index
 
         Returns:
             Number of audio events indexed
         """
-        if not segments:
+        if not segments and not force_reindex:
             print("[TranscriptEmbedding] No segments to index")
             return 0
         if not user_id:
@@ -306,9 +298,9 @@ class TranscriptEmbeddingService:
         client = supabase()
 
         if not force_reindex:
-            existing = client.table('audio_event_embeddings').select(
+            existing = client.table('audio_event_embeddings_v2').select(
                 'id', count='exact'
-            ).eq('user_id', user_id).eq('video_hash', video_hash).limit(1).execute()
+            ).eq('user_id', user_id).eq('video_hash', video_hash).eq('embedding_model', settings.TEXT_EMBEDDING_MODEL).limit(1).execute()
             if existing.data:
                 count = existing.count or len(existing.data)
                 print(f"[TranscriptEmbedding] Video {video_hash} already has {count} indexed audio events")
@@ -380,7 +372,8 @@ class TranscriptEmbeddingService:
         )
 
         if not audio_data:
-            print("[TranscriptEmbedding] No valid audio events found in segments")
+            if force_reindex:
+                return self._replace_index(client, 'audio', video_hash, user_id, [])
             return 0
 
         texts = [item['text'] for item in audio_data]
@@ -406,33 +399,7 @@ class TranscriptEmbeddingService:
                 'embedding': embedding,
             })
 
-        insert_batch_size = 50
-        total_batches = (len(records) + insert_batch_size - 1) // insert_batch_size
-        indexed_count = 0
-        for i in range(0, len(records), insert_batch_size):
-            batch = records[i:i + insert_batch_size]
-            batch_num = i // insert_batch_size + 1
-            try:
-                self._upsert_with_retry(
-                    client,
-                    'audio_event_embeddings',
-                    'user_id,video_hash,segment_id',
-                    batch,
-                    batch_num,
-                    total_batches,
-                )
-                indexed_count += len(batch)
-            except Exception as e:
-                print(
-                    f"[TranscriptEmbedding] Audio batch {batch_num}/{total_batches} permanently "
-                    f"failed after retries: {e}"
-                )
-
-        print(
-            f"[TranscriptEmbedding] Successfully indexed {indexed_count}/{len(records)} "
-            f"audio events for video {video_hash}"
-        )
-        return indexed_count
+        return self._replace_index(client, 'audio', video_hash, user_id, records)
 
     def search_audio_events(
         self,
@@ -458,15 +425,16 @@ class TranscriptEmbeddingService:
 
         client = supabase()
         query_embedding = self.embedding_model.encode(
-            [query],
+            [prepare_embedding_query(query)],
             convert_to_numpy=True,
         ).tolist()[0]
 
         try:
             result = client.rpc(
-                'search_audio_events_by_embedding',
+                'search_audio_events_by_embedding_v2',
                 {
                     'p_user_id': user_id,
+                    'p_embedding_model': settings.TEXT_EMBEDDING_MODEL,
                     'query_embedding': query_embedding,
                     'target_video_hash': video_hash,
                     'match_count': n_results,
@@ -519,35 +487,18 @@ class TranscriptEmbeddingService:
         results = {"text_updated": 0, "audio_updated": 0}
         client = supabase()
 
-        try:
-            response = client.table('transcript_embeddings').update(
-                {'speaker': new_speaker}
-            ).eq('user_id', user_id).eq('video_hash', video_hash).eq(
-                'speaker', old_speaker
-            ).execute()
-            results['text_updated'] = len(response.data or [])
-            if results['text_updated']:
-                print(
-                    f"[TranscriptEmbedding] Updated {results['text_updated']} text chunks "
-                    f"from '{old_speaker}' to '{new_speaker}'"
-                )
-        except Exception as e:
-            print(f"[TranscriptEmbedding] Error updating transcript_embeddings: {e}")
-
-        try:
-            response = client.table('audio_event_embeddings').update(
-                {'speaker': new_speaker}
-            ).eq('user_id', user_id).eq('video_hash', video_hash).eq(
-                'speaker', old_speaker
-            ).execute()
-            results['audio_updated'] = len(response.data or [])
-            if results['audio_updated']:
-                print(
-                    f"[TranscriptEmbedding] Updated {results['audio_updated']} audio events "
-                    f"from '{old_speaker}' to '{new_speaker}'"
-                )
-        except Exception as e:
-            print(f"[TranscriptEmbedding] Error updating audio_event_embeddings: {e}")
+        for key, tables in (
+            ('text_updated', ('transcript_embeddings', 'transcript_embeddings_v2')),
+            ('audio_updated', ('audio_event_embeddings', 'audio_event_embeddings_v2')),
+        ):
+            for table in tables:
+                try:
+                    response = client.table(table).update({'speaker': new_speaker}).eq(
+                        'user_id', user_id
+                    ).eq('video_hash', video_hash).eq('speaker', old_speaker).execute()
+                    results[key] += len(response.data or [])
+                except Exception as e:
+                    print(f"[TranscriptEmbedding] Speaker update failed for {table}: {e}")
 
         return results
 

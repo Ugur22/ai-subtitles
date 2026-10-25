@@ -104,6 +104,18 @@ class Settings(BaseSettings):
     ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
     CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
 
+    TEXT_EMBEDDING_MODEL: str = os.getenv("TEXT_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    ENABLE_VISION_CAPTIONS: bool = os.getenv("ENABLE_VISION_CAPTIONS", "true").lower() == "true"
+    XAI_CAPTION_MODEL: str = os.getenv("XAI_CAPTION_MODEL", "grok-4.3")
+    XAI_CAPTION_CONCURRENCY: int = int(os.getenv("XAI_CAPTION_CONCURRENCY", "4"))
+    CAPTION_MAX_FRAMES: int = int(os.getenv("CAPTION_MAX_FRAMES", "300"))
+    CAPTION_BACKFILL_MAX_FRAMES: int = int(os.getenv("CAPTION_BACKFILL_MAX_FRAMES", "8"))
+    CAPTION_BACKFILL_TIMEOUT_SECONDS: float = float(os.getenv("CAPTION_BACKFILL_TIMEOUT_SECONDS", "180"))
+    CAPTION_MIN_SIMILARITY: float = float(os.getenv("CAPTION_MIN_SIMILARITY", "0.30"))
+    DENSE_FRAME_INTERVAL_SECONDS: float = float(os.getenv("DENSE_FRAME_INTERVAL_SECONDS", "10"))
+    DENSE_FRAME_MIN_GAP_SECONDS: float = float(os.getenv("DENSE_FRAME_MIN_GAP_SECONDS", "2"))
+    DENSE_FRAME_MAX_COUNT: int = int(os.getenv("DENSE_FRAME_MAX_COUNT", "360"))
+
     # Face Presence Index Configuration
     # Cosine similarity threshold for matching a detected face against a
     # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
