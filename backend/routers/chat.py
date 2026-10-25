@@ -119,7 +119,7 @@ def _provider_http_status(err: Optional[BaseException]) -> int:
 
 def _stored_key_provider_name(provider_name: Optional[str]) -> Optional[str]:
     """Map chat provider ids to the provider ids used in user_api_keys."""
-    if provider_name == "grok":
+    if provider_name in ("grok", "xai"):
         return "xai"
     if provider_name in ("groq", "openai", "anthropic", "deepseek"):
         return provider_name
@@ -546,7 +546,8 @@ def _resolve_contextual_visual_question(
     q = question or ""
     q_lower = q.lower()
     has_followup_reference = bool(re.search(
-        r"\b(doing it|that|this|there|those|them|same scene|while doing)\b",
+        r"\b(doing it|that|this|there|those|them|same scene|while doing"
+        r"|she|her|hers|herself|he|him|his|himself|they|their)\b",
         q_lower,
     ))
     if not has_followup_reference:
@@ -566,11 +567,17 @@ def _resolve_contextual_visual_question(
     # If a recent message named a person tagged in this video but the current
     # question doesn't, anchor retrieval to them so follow-ups keep the subject.
     if video_hash:
+        # Most recently mentioned wins, so "her" follows the latest subject rather than tag-list order.
+        latest_pos, latest_name = -1, None
         for name in _load_face_tag_names(video_hash):
             name_lower = name.lower()
-            if re.search(rf"\b{re.escape(name_lower)}\b", recent_user_text) and name_lower not in q_lower:
-                additions.append(f"involving {name_lower}")
-                break
+            if name_lower in q_lower:
+                continue
+            matches = list(re.finditer(rf"\b{re.escape(name_lower)}\b", recent_user_text))
+            if matches and matches[-1].start() > latest_pos:
+                latest_pos, latest_name = matches[-1].start(), name_lower
+        if latest_name:
+            additions.append(f"involving {latest_name}")
 
     if not additions:
         return question
@@ -680,14 +687,77 @@ def _segment_as_search_result(video_hash: str, segment: dict) -> dict:
     }
 
 
-def _format_text_context(video_hash: str, search_results: list) -> tuple[str, list]:
+_TIER_LABELS = {
+    "semantic_hit": "Semantic Match",
+    "neighbor": "Surrounding Context",
+    "lexical": "Keyword Match",
+    "speaker_match": "Speaker Match",
+}
+
+
+def _format_text_context(
+    video_hash: str,
+    search_results: list,
+    top_ranked_hits: Optional[list] = None,
+    question: Optional[str] = None,
+) -> tuple[str, list]:
     context_parts = []
     sources = []
+    question_keywords = _extract_keywords(question) if question else set()
+
+    if top_ranked_hits:
+        top_lines = [
+            "TOP RANKED SEMANTIC MATCHES (check every one of these before "
+            "concluding the transcript doesn't address the question):"
+        ]
+        for rank, hit in enumerate(top_ranked_hits, start=1):
+            metadata = hit["metadata"]
+            similarity = hit.get("similarity")
+            sim_part = f"similarity {similarity:.2f}" if similarity is not None else "similarity n/a"
+            keyword_part = ""
+            if question_keywords:
+                overlap = question_keywords & _extract_keywords(hit["text"])
+                if overlap:
+                    keyword_part = (
+                        f", {len(overlap)}/{len(question_keywords)} question "
+                        f"keywords: {', '.join(sorted(overlap))}"
+                    )
+            top_lines.append(
+                f"Rank {rank} ({sim_part}{keyword_part}) "
+                f"[{metadata['start_time']} - {metadata['end_time']}] "
+                f"{metadata['speaker']}: {hit['text']}"
+            )
+        context_parts.append("\n".join(top_lines))
 
     for result in search_results:
         metadata = result["metadata"]
         text = result["text"]
+        tier = result.get("tier", "semantic_hit")
+        rank = result.get("rank")
+        similarity = result.get("similarity")
+        label = _TIER_LABELS.get(tier, "Semantic Match")
+
+        if tier == "semantic_hit":
+            evidence = f"{label}, Rank {rank}" if rank else label
+            if similarity is not None:
+                evidence += f", similarity {similarity:.2f}"
+        elif tier == "neighbor":
+            evidence = f"{label} (near Rank {rank} Semantic Match)" if rank else label
+        elif tier == "speaker_match":
+            evidence = f"{label} (named-speaker lookup, not semantic ranking)"
+        else:
+            anchor_keywords = result.get("lexical_anchor_keywords")
+            if anchor_keywords and question_keywords:
+                evidence = (
+                    f"{label}, its match cluster overlaps {len(anchor_keywords)}/"
+                    f"{len(question_keywords)} question keywords: {', '.join(anchor_keywords)} "
+                    f"(literal word overlap only, not semantic ranking)"
+                )
+            else:
+                evidence = f"{label} (literal word overlap only, not semantic ranking)"
+
         context_parts.append(
+            f"[Evidence: {evidence}] "
             f"[Timestamp: {metadata['start_time']} - {metadata['end_time']}] "
             f"[Speaker: {metadata['speaker']}]\n{text}"
         )
@@ -698,31 +768,91 @@ def _format_text_context(video_hash: str, search_results: list) -> tuple[str, li
             "end": metadata["end"],
             "speaker": metadata["speaker"],
             "text": text[:200] + "..." if len(text) > 200 else text,
+            "tier": tier,
+            "rank": rank,
+            "similarity": similarity,
         })
 
     return "\n\n".join(context_parts), sources
+
+
+def _tag_semantic_rank(search_results: list) -> list:
+    """Tag raw search_transcript_chunks results with tier/rank so downstream
+    formatting can distinguish real semantic hits from neighbor/lexical
+    evidence. Shallow-copies each dict so the caller's original list (which
+    may be cached/reused elsewhere) is never mutated."""
+    tagged = []
+    for rank, result in enumerate(search_results, start=1):
+        item = dict(result)
+        item["tier"] = "semantic_hit"
+        item["rank"] = rank
+        tagged.append(item)
+    return tagged
 
 
 def _expand_text_hits_with_neighbors(
     video_hash: str,
     search_results: list,
     segments: list,
-    neighbor_count: int = 1,
-    max_results: int = 24,
+    neighbor_chunks: int = 1,
+    chunk_size: int = 1,
+    hit_budget: int = 24,
+    neighbor_budget: int = 24,
+    neighbor_chunks_after: Optional[int] = None,
 ) -> list:
     """
-    Add nearby transcript segments around vector hits.
+    Add nearby transcript segments around vector hits, tagging every segment
+    with the tier/rank/similarity of the semantic hit that produced it.
 
     Vector hits are indexed as small chunks. For movie/chat questions the
     surrounding line or two often carries the setup, referent, or resolution,
-    so we include adjacent transcript segments before prompting the LLM.
+    so we include adjacent transcript segments before prompting the LLM --
+    but grouped by originating rank (best first) rather than chronological
+    position, so the LLM (and any max_results truncation) can tell a real
+    semantic hit apart from filler pulled in only for continuity.
+
+    neighbor_chunks_after: forward-only override for how many chunks past a
+    hit's own span to include, independent of the backward `neighbor_chunks`
+    reach. Defaults to None, which keeps expansion symmetric (uses
+    `neighbor_chunks` on both sides, byte-identical to passing no override) --
+    for causal ("why"/"because"/"reason") questions, the explanation more
+    often follows the retrieved event than precedes it, so callers can widen
+    only the forward reach without also pulling in more backward filler.
+
+    Expansion is done in chunk-index space, not raw-segment count: a hit's
+    own overlapping raw-segment span is rounded out to whole embedding-chunk
+    boundaries (`chunk_size` raw segments per chunk) before stepping
+    `neighbor_chunks` whole chunks further on each side. This keeps "one
+    chunk of new context on each side" true regardless of how many raw
+    segments the hit's own span happens to claim -- a raw-segment-count
+    window would silently shrink whenever the overlap check (which is
+    boundary-inclusive) swept extra segments into the hit's own span.
+
+    Two rank-ascending passes over search_results: pass 1 claims each hit's
+    own overlapping segment(s) as tier="semantic_hit"; pass 2 claims the
+    chunk-expanded window as tier="neighbor", never overwriting an index
+    pass 1 already claimed. This makes precedence deterministic -- a segment
+    that is simultaneously rank 1's exact hit and rank 3's neighbor always
+    keeps "semantic_hit", and ties within a tier keep the better (lower) rank.
+
+    "semantic_hit" and "neighbor" tiers are truncated against **separate**
+    budgets (`hit_budget`, `neighbor_budget`), not one shared pool. They
+    used to share a single cap, which meant guaranteeing every hit's own
+    segment survives truncation (so `sources` never omits a hit that
+    actually grounded the answer -- see `_format_text_context`'s untruncated
+    "TOP RANKED SEMANTIC MATCHES" header, which always includes it) came at
+    the direct expense of neighbor padding for "why"/causal questions,
+    whichever ate the shared budget first. Separate budgets mean growing
+    one can never starve the other.
     """
-    if not search_results or not segments:
-        return search_results
+    tagged_results = _tag_semantic_rank(search_results)
+    if not tagged_results or not segments:
+        return tagged_results
 
-    selected_indexes: set[int] = set()
+    index_info: dict[int, dict] = {}
+    per_hit_overlap: list[list[int]] = []
 
-    for result in search_results:
+    for result in tagged_results:
         metadata = result.get("metadata") or {}
         hit_start = float(metadata.get("start", 0) or 0)
         hit_end = float(metadata.get("end", hit_start) or hit_start)
@@ -735,30 +865,108 @@ def _expand_text_hits_with_neighbors(
             seg_start, seg_end, _, _ = _segment_bounds(segment)
             if seg_start <= hit_end and seg_end >= hit_start:
                 overlapping.append(idx)
+        per_hit_overlap.append(overlapping)
 
+        for idx in overlapping:
+            if idx not in index_info:
+                index_info[idx] = {
+                    "tier": "semantic_hit",
+                    "rank": result["rank"],
+                    "similarity": result.get("similarity"),
+                }
+
+    chunks_after = neighbor_chunks if neighbor_chunks_after is None else neighbor_chunks_after
+    for result, overlapping in zip(tagged_results, per_hit_overlap):
         if not overlapping:
             continue
+        chunk_start = min(overlapping) // chunk_size
+        chunk_end = max(overlapping) // chunk_size
+        start_idx = max(0, (chunk_start - neighbor_chunks) * chunk_size)
+        end_idx = min(len(segments) - 1, (chunk_end + chunks_after + 1) * chunk_size - 1)
+        for idx in range(start_idx, end_idx + 1):
+            if idx in index_info:
+                continue
+            index_info[idx] = {
+                "tier": "neighbor",
+                "rank": result["rank"],
+                "similarity": result.get("similarity"),
+            }
 
-        start_idx = max(0, min(overlapping) - neighbor_count)
-        end_idx = min(len(segments) - 1, max(overlapping) + neighbor_count)
-        selected_indexes.update(range(start_idx, end_idx + 1))
+    if not index_info:
+        return tagged_results
+
+    hit_items = sorted(
+        ((idx, info) for idx, info in index_info.items() if info["tier"] == "semantic_hit"),
+        key=lambda kv: (kv[1]["rank"], kv[0]),
+    )
+    neighbor_items = sorted(
+        ((idx, info) for idx, info in index_info.items() if info["tier"] != "semantic_hit"),
+        key=lambda kv: (kv[1]["rank"], kv[0]),
+    )
 
     expanded = []
     seen = set()
-    for idx in sorted(selected_indexes):
-        segment = segments[idx]
-        text = _segment_text(segment)
-        if not text:
-            continue
-        key = _segment_key(segment)
-        if key in seen:
-            continue
-        seen.add(key)
-        expanded.append(_segment_as_search_result(video_hash, segment))
-        if len(expanded) >= max_results:
-            break
 
-    return expanded or search_results
+    def _add_up_to_budget(items: list, budget: int) -> None:
+        added = 0
+        for idx, info in items:
+            if added >= budget:
+                break
+            segment = segments[idx]
+            text = _segment_text(segment)
+            if not text:
+                continue
+            key = _segment_key(segment)
+            if key in seen:
+                continue
+            seen.add(key)
+            result = _segment_as_search_result(video_hash, segment)
+            result["tier"] = info["tier"]
+            result["rank"] = info["rank"]
+            result["similarity"] = info["similarity"]
+            expanded.append(result)
+            added += 1
+
+    _add_up_to_budget(hit_items, hit_budget)
+    _add_up_to_budget(neighbor_items, neighbor_budget)
+
+    return expanded or tagged_results
+
+
+_CAUSAL_MARKERS = {"why", "because", "reason", "reasons"}
+
+
+def _is_causal_question(question: str) -> bool:
+    """True if the question is asking for a cause/explanation ("why"/"because"
+    /"reason"). Movie dialogue tends to state the reason for an event shortly
+    *after* the event itself, so causal questions get a forward-biased
+    context window in `_retrieve_text_context` -- see `_expand_text_hits_with_
+    neighbors`'s `neighbor_chunks_after` and `_lexical_segment_matches`'s
+    `after` param."""
+    import re
+
+    tokens = re.findall(r"[a-z']+", (question or "").lower())
+    return any(token in _CAUSAL_MARKERS for token in tokens)
+
+
+def _extract_keywords(text: str) -> set[str]:
+    """Stop-word-filtered lowercase token set, shared by lexical matching
+    and top-ranked-hit keyword annotation."""
+    import re
+
+    stop_words = {
+        "a", "an", "and", "are", "about", "at", "can", "could", "did", "do",
+        "does", "for", "from", "happen", "happened", "how", "i", "in", "is",
+        "it", "me", "movie", "of", "on", "or", "scene", "show", "tell",
+        "the", "this", "to", "video", "was", "what", "when", "where", "who",
+        "why", "with", "would",
+    }
+    cleaned = _clean_query_for_retrieval(text).lower()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_'-]+", cleaned)
+        if len(token) > 2 and token not in stop_words
+    }
 
 
 def _lexical_segment_matches(
@@ -766,8 +974,32 @@ def _lexical_segment_matches(
     question: str,
     segments: list,
     limit: int,
+    before: int = 1,
+    after: int = 1,
 ) -> list:
-    """Find transcript segments with exact query term/phrase overlap."""
+    """Find transcript segments with exact query term/phrase overlap.
+
+    before/after: raw-segment window expanded around each of the top `limit`
+    scored anchors (default ±1, matching prior hardcoded behavior). Callers
+    widen `after` for causal questions, where the explanation tends to follow
+    shortly after a lexically-matched setup line rather than surround it
+    symmetrically -- the internal result cap below scales with the window so
+    a wider `after` isn't silently truncated back down to the old size.
+
+    Every returned segment also carries `lexical_anchor_keywords`/
+    `lexical_anchor_keyword_count`, propagated from the *anchor* segment that
+    earned it a window (not the segment's own text). This matters because a
+    real causal explanation often shares zero words with the question -- e.g.
+    "this is the only weapon to deal with that colonel" doesn't repeat any
+    word from a "why do they free him" question -- so scoring/annotating a
+    segment on its own overlap would rank the actual explanation *below* a
+    same-topic but off-target segment that happens to repeat the subject's
+    name. The anchor's overlap (computed from the setup line that pulled the
+    explanation into range, e.g. "...the disasters that the Matteo wind has
+    caused") is a much better relevance proxy for the whole matched cluster.
+    On a window collision between two anchors, the higher-scoring anchor's
+    keywords win -- same "better source wins on tie" precedence already used
+    in `_expand_text_hits_with_neighbors`."""
     import re
 
     query = _clean_query_for_retrieval(question).lower()
@@ -779,51 +1011,45 @@ def _lexical_segment_matches(
         phrase = (double_quoted or single_quoted).strip().lower()
         if phrase:
             quoted_phrases.append(phrase)
-    stop_words = {
-        "a", "an", "and", "are", "about", "at", "can", "could", "did", "do",
-        "does", "for", "from", "happen", "happened", "how", "i", "in", "is",
-        "it", "me", "movie", "of", "on", "or", "scene", "show", "tell",
-        "the", "this", "to", "video", "was", "what", "when", "where", "who",
-        "why", "with", "would",
-    }
-    tokens = [
-        token
-        for token in re.findall(r"[a-z0-9_'-]+", query)
-        if len(token) > 2 and token not in stop_words
-    ]
+    tokens = _extract_keywords(question)
     if not tokens and not quoted_phrases:
         return []
 
-    scored: list[tuple[int, int, dict]] = []
+    scored: list[tuple[int, int, dict, set]] = []
     for idx, segment in enumerate(segments):
         text = _segment_text(segment)
         if not text:
             continue
         haystack = f"{segment.get('speaker', '')} {text}".lower()
         haystack_tokens = set(re.findall(r"[a-z0-9_'-]+", haystack))
-        score = 0
+        overlap = tokens & haystack_tokens
+        score = len(overlap)
 
         for phrase in quoted_phrases:
             if phrase in haystack:
                 score += 8 + len(phrase.split())
 
-        token_hits = len(set(tokens) & haystack_tokens)
-        score += token_hits
-
         if score > 0:
-            scored.append((score, idx, segment))
+            scored.append((score, idx, segment, overlap))
 
     if not scored:
         return []
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    selected_indexes: set[int] = set()
-    for _, idx, _ in scored[:limit]:
-        selected_indexes.update(range(max(0, idx - 1), min(len(segments), idx + 2)))
+    anchors = scored[:limit]
+
+    index_info: dict[int, tuple[int, set]] = {}
+    for score, anchor_idx, _, overlap in anchors:
+        window = range(max(0, anchor_idx - before), min(len(segments), anchor_idx + after + 1))
+        for idx in window:
+            existing = index_info.get(idx)
+            if existing is None or score > existing[0]:
+                index_info[idx] = (score, overlap)
 
     results = []
     seen = set()
-    for idx in sorted(selected_indexes):
+    max_results = max(limit * (before + after + 1), limit)
+    for idx in sorted(index_info):
         segment = segments[idx]
         text = _segment_text(segment)
         if not text:
@@ -832,8 +1058,15 @@ def _lexical_segment_matches(
         if key in seen:
             continue
         seen.add(key)
-        results.append(_segment_as_search_result(video_hash, segment))
-        if len(results) >= max(limit * 3, limit):
+        _, anchor_overlap = index_info[idx]
+        tagged = _segment_as_search_result(video_hash, segment)
+        tagged["tier"] = "lexical"
+        tagged["rank"] = None
+        tagged["similarity"] = None
+        tagged["lexical_anchor_keywords"] = sorted(anchor_overlap)
+        tagged["lexical_anchor_keyword_count"] = len(anchor_overlap)
+        results.append(tagged)
+        if len(results) >= max_results:
             break
 
     print(f"Lexical transcript matches: {len(results)} context segments")
@@ -841,6 +1074,10 @@ def _lexical_segment_matches(
 
 
 def _merge_text_results(primary: list, supplemental: list, max_results: int) -> list:
+    """Concat + dedupe by (start, end, text prefix). `primary` must be the
+    higher-tier list (semantic hits/neighbors) and `supplemental` the
+    lower-tier one (lexical) -- dedup keeps the first occurrence, so this
+    order is what makes an overlapping segment keep its higher-tier tag."""
     merged = []
     seen = set()
 
@@ -887,49 +1124,27 @@ def _speaker_segment_context(video_hash: str, question: str, limit: int) -> tupl
         return [], "", []
 
     selected = matching_segments[:max(1, limit)]
-    context_parts = []
-    sources = []
     search_results = []
 
     for seg in selected:
         text = (seg.get("translation") or seg.get("text") or "").strip()
         if not text:
             continue
-        start = float(seg.get("start", 0) or 0)
-        end = float(seg.get("end", start) or start)
-        start_time = seg.get("start_time") or _format_segment_time(start)
-        end_time = seg.get("end_time") or _format_segment_time(end)
-        speaker = seg.get("speaker") or speaker_names[0]
-        metadata = {
-            "video_hash": video_hash,
-            "start": start,
-            "end": end,
-            "start_time": start_time,
-            "end_time": end_time,
-            "speaker": speaker,
-        }
-        search_results.append({"text": text, "metadata": metadata, "distance": None})
-        context_parts.append(
-            f"[Timestamp: {start_time} - {end_time}] "
-            f"[Speaker: {speaker}]\n{text}"
-        )
-        sources.append({
-            "start_time": start_time,
-            "end_time": end_time,
-            "start": start,
-            "end": end,
-            "speaker": speaker,
-            "text": text[:200] + "..." if len(text) > 200 else text,
-        })
+        result = _segment_as_search_result(video_hash, seg)
+        result["tier"] = "speaker_match"
+        result["rank"] = None
+        result["similarity"] = None
+        search_results.append(result)
 
     if not search_results:
         return [], "", []
 
+    context, sources = _format_text_context(video_hash, search_results)
     print(
         f"Speaker fallback context: {len(search_results)} segments for "
         f"{', '.join(speaker_names)}"
     )
-    return search_results, "\n\n".join(context_parts), sources
+    return search_results, context, sources
 
 
 def _timestamp_from_screenshot_url(url: str) -> float:
@@ -983,7 +1198,7 @@ async def _face_tag_image_results(
         for speaker_name in speaker_names:
             response = (
                 face_client.table("face_tags")
-                .select("speaker_name, screenshot_url")
+                .select("speaker_name, screenshot_url, embedding")
                 .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .eq("speaker_name", speaker_name)
@@ -993,12 +1208,26 @@ async def _face_tag_image_results(
             for row in response.data or []:
                 rows.append(row)
 
+        from config import settings
+        references = {
+            name: _load_speaker_reference_embedding(video_hash, name)
+            for name in speaker_names
+        }
         results = []
         seen_paths = set()
         for row in rows:
             screenshot_url = row.get("screenshot_url")
             if not screenshot_url:
                 continue
+            # A tag far from the person's reference is a mis-tag; don't let it
+            # surface as identity evidence.
+            reference = references.get(row.get("speaker_name"))
+            tag_embedding = _parse_vector(row.get("embedding"))
+            face_score = 1.0
+            if reference and tag_embedding:
+                face_score = max(0.0, _cosine_similarity(reference, tag_embedding))
+                if face_score < settings.FACE_PRESENCE_SIMILARITY_THRESHOLD:
+                    continue
             try:
                 from services.gcs_service import gcs_service
                 dedupe_key = gcs_service.extract_gcs_path_from_signed_url(screenshot_url) or screenshot_url.split("?", 1)[0]
@@ -1026,7 +1255,7 @@ async def _face_tag_image_results(
                 # object. Keep it below CLIP scene matches so named-person
                 # action queries do not get flooded by face-only examples.
                 "similarity": 0.25,
-                "face_score": 1.0,
+                "face_score": face_score,
                 "overlap_score": 0,
                 "likely_speakers": [row.get("speaker_name") or speaker_names[0]],
                 "source": "face_tag",
@@ -1043,6 +1272,42 @@ async def _face_tag_image_results(
     except Exception as e:
         print(f"Face-tag visual candidate lookup failed (non-critical): {e}")
         return []
+
+
+def _robust_mean_embedding(embeddings: list, min_sim: float) -> tuple[Any, int]:
+    """Normalized mean of tag embeddings, ignoring tags far from the centroid.
+
+    One wrong-person tag skews a plain average enough to make every later face
+    match drift, so tags below `min_sim` cosine to the centroid are dropped.
+    Needs >=4 tags to judge outliers and never drops more than half of them.
+    Returns (mean, ignored_count).
+    """
+    import numpy as np
+
+    unit = []
+    for e in embeddings:
+        e = np.asarray(e, dtype=np.float32)
+        n = np.linalg.norm(e)
+        if n > 0:
+            unit.append(e / n)
+    if not unit:
+        return None, 0
+
+    def _mean(vectors):
+        m = np.mean(vectors, axis=0)
+        n = np.linalg.norm(m)
+        return m / n if n > 0 else m
+
+    centroid = _mean(unit)
+    ignored = 0
+    if len(unit) >= 4:
+        sims = [float(v @ centroid) for v in unit]
+        keep = [v for v, s in zip(unit, sims) if s >= min_sim]
+        if len(keep) >= len(unit) - len(unit) // 2:
+            ignored = len(unit) - len(keep)
+            if ignored:
+                centroid = _mean(keep)
+    return centroid, ignored
 
 
 def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Optional[list[float]]:
@@ -1075,12 +1340,16 @@ def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Opt
         if not raw_embeddings:
             return None
 
-        embeddings = [np.array(e, dtype=np.float32) for e in raw_embeddings]
-        avg_emb = np.mean(embeddings, axis=0)
-        norm = np.linalg.norm(avg_emb)
-        if norm > 0:
-            avg_emb = avg_emb / norm
-        print(f"  Face tags for '{speaker_name}': {len(embeddings)} embeddings loaded")
+        from config import settings
+        avg_emb, ignored = _robust_mean_embedding(
+            raw_embeddings, settings.FACE_TAG_OUTLIER_MIN_SIMILARITY
+        )
+        if avg_emb is None:
+            return None
+        print(
+            f"  Face tags for '{speaker_name}': {len(raw_embeddings)} embeddings loaded"
+            + (f", ignored {ignored} outliers" if ignored else "")
+        )
         return avg_emb.tolist()
     except Exception as e:
         print(f"  Face tags lookup failed (non-critical): {e}")
@@ -2361,35 +2630,65 @@ async def _retrieve_text_context(
             return lexical_results, context, sources
         return [], "", []
 
-    max_context_results = max(n_results * 4, 16)
+    raw_semantic_hits = search_results
+    chunk_size_val = 3
+    # Separate, non-competing budgets: hit_budget guarantees every top-k
+    # hit's own segment survives (so `sources` never omits a hit that
+    # actually grounded the answer -- see _expand_text_hits_with_neighbors'
+    # docstring), sized tightly around what top-k hits actually claim
+    # (chunk_size each, +2 slack for the boundary-touch overlap quirk).
+    # neighbor_budget is the "read a bit more around it" allowance for
+    # causal/"why" questions, independent of how much of hit_budget got used.
+    # lexical_budget is a third, equally independent pool: without it,
+    # expanded_results alone can saturate hit_budget+neighbor_budget (both
+    # tiers full, zero dedup collisions), and _merge_text_results' shared
+    # max_results cap then drops lexical_results entirely before the merge
+    # loop ever reaches it -- silently defeating the lexical fallback exactly
+    # when semantic search alone missed the answer, which is the one case it
+    # exists to catch.
+    causal = _is_causal_question(question)
+    hit_budget = n_results * (chunk_size_val + 2)
+    neighbor_budget = max(n_results * 6, 24) if causal else max(n_results * 4, 16)
+    lexical_budget = 24 if causal else max(n_results * 2, 10)
     expanded_results = _expand_text_hits_with_neighbors(
         video_hash,
         search_results,
         segments,
-        neighbor_count=1,
-        max_results=max_context_results,
+        neighbor_chunks=1,
+        neighbor_chunks_after=3 if causal else None,
+        chunk_size=chunk_size_val,
+        hit_budget=hit_budget,
+        neighbor_budget=neighbor_budget,
     )
     lexical_results = _lexical_segment_matches(
         video_hash,
         question,
         segments,
         limit=max(3, n_results // 2),
+        after=8 if causal else 1,
     )
     combined_results = _merge_text_results(
         expanded_results,
         lexical_results,
-        max_results=max_context_results,
+        max_results=hit_budget + neighbor_budget + lexical_budget,
     )
 
     if len(combined_results) != len(search_results):
+        tier_counts: dict[str, int] = {}
+        for r in combined_results:
+            t = r.get("tier", "semantic_hit")
+            tier_counts[t] = tier_counts.get(t, 0) + 1
         print(
             f"Text retrieval context expanded: semantic={len(search_results)}, "
-            f"context_segments={len(combined_results)}"
+            f"context_segments={len(combined_results)} ({tier_counts})"
         )
 
-    context, sources = _format_text_context(video_hash, combined_results)
+    context, sources = _format_text_context(
+        video_hash, combined_results, top_ranked_hits=raw_semantic_hits, question=question
+    )
     search_results = combined_results
     return search_results, context, sources
+
 
 
 async def _retrieve_visual_context(
@@ -2497,14 +2796,52 @@ async def _retrieve_visual_context(
                     reverse=True,
                 )
                 image_results = image_results[:clip_candidate_limit]
+
         else:
             print(
                 f"Images not indexed for video {video_hash}. "
                 "Checking face tags before falling back to text-only analysis."
             )
 
+        # Scene candidates restricted to frames where the named person actually
+        # appears. A global CLIP top-K is dominated by other people's frames, so
+        # "person + action" queries would otherwise never reach her real scenes.
+        preloaded_presence = None
+        if speaker_names and images_indexed:
+            presence_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+            if presence_face_embeddings:
+                preloaded_presence = (
+                    presence_face_embeddings,
+                    await _load_face_presence(video_hash, presence_face_embeddings),
+                )
+                present_ids = sorted(preloaded_presence[1][0])
+                restricted_added = 0
+                for query_variant in query_variants:
+                    for result in await _run_in_executor(
+                        image_embedding_service.search_images_within,
+                        video_hash,
+                        query_variant,
+                        user_id,
+                        present_ids,
+                        n_results=max(n_images, 4),
+                    ):
+                        key = _image_result_key(result)
+                        if key in seen_image_paths:
+                            continue
+                        seen_image_paths.add(key)
+                        result["visual_query_variant"] = query_variant
+                        image_results.append(result)
+                        restricted_added += 1
+                print(
+                    f"Person-restricted scene search: {len(present_ids)} frames with "
+                    f"{', '.join(speaker_names)}, {restricted_added} new candidates added"
+                )
+        person_frames_found = bool(preloaded_presence and preloaded_presence[1][0])
+
         face_tag_results = []
-        if speaker_names:
+        # Tagged frames are only a fallback when the face-presence index has no
+        # frames for this person; otherwise they crowd out scene-relevant ones.
+        if speaker_names and not person_frames_found:
             face_tag_results = await _face_tag_image_results(
                 video_hash,
                 speaker_names,
@@ -2552,12 +2889,16 @@ async def _retrieve_visual_context(
         if speaker_names and image_results:
             print(f"Applying presence correlation scoring for speakers: {speaker_names}")
 
-            speaker_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+            if preloaded_presence:
+                speaker_face_embeddings = preloaded_presence[0]
+                face_presence_by_image, presence_timelines = preloaded_presence[1]
+            else:
+                speaker_face_embeddings = _load_speaker_face_embeddings(video_hash, speaker_names)
+                face_presence_by_image, presence_timelines = await _load_face_presence(
+                    video_hash,
+                    speaker_face_embeddings,
+                )
             face_tags_available = bool(speaker_face_embeddings)
-            face_presence_by_image, presence_timelines = await _load_face_presence(
-                video_hash,
-                speaker_face_embeddings,
-            )
             has_face_presence = any(presence_timelines.values())
 
             if transcription:
@@ -2614,7 +2955,7 @@ async def _retrieve_visual_context(
                             # identity evidence; re-running face detection on
                             # them is slow and can fail on marginal frames.
                             if result.get("source") == "face_tag":
-                                result['face_score'] = 1.0
+                                result.setdefault('face_score', 1.0)
                                 if not result.get('likely_speakers'):
                                     result['likely_speakers'] = speaker_names
                                 continue
@@ -2973,6 +3314,10 @@ Guidelines:
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
+- Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- Some Keyword Match segments carry an extra annotation, "its match cluster overlaps N/M question keywords: ...": this counts words shared with the question by the nearby line that pulled this segment into context, not necessarily by the segment quoted here -- a real answer to a "why"/"because" question often uses words the question itself never used (e.g. a question about freeing someone from prison may be answered by a line using the word "weapon", which shares no words with the question at all), so a Keyword Match segment sharing zero words with the question can still be the right one if its cluster annotation is high. When two Keyword Match segments suggest conflicting answers, prefer the one from the higher-N cluster over one from a lower-N or unannotated cluster
+- When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
+- Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:
@@ -3050,6 +3395,10 @@ Guidelines:
 - Explain context, implications, and connections between ideas
 - If asked to summarize, organize information logically with bullet points or sections
 - Reference multiple sources/timestamps to support your answers
+- Transcript segments in VIDEO TRANSCRIPT CONTEXT are labeled by evidence tier: "[Evidence: Semantic Match, Rank N, similarity X.XX]" is the strongest, most relevant match to the question (Rank 1 is the single best match); "[Evidence: Surrounding Context ...]" segments exist only to help you follow the narrative around a nearby Semantic Match and are not evidence on their own; "[Evidence: Keyword Match ...]" segments matched only on literal word overlap with the question and are the weakest, most likely to be coincidental
+- Some Keyword Match segments carry an extra annotation, "its match cluster overlaps N/M question keywords: ...": this counts words shared with the question by the nearby line that pulled this segment into context, not necessarily by the segment quoted here -- a real answer to a "why"/"because" question often uses words the question itself never used (e.g. a question about freeing someone from prison may be answered by a line using the word "weapon", which shares no words with the question at all), so a Keyword Match segment sharing zero words with the question can still be the right one if its cluster annotation is high. When two Keyword Match segments suggest conflicting answers, prefer the one from the higher-N cluster over one from a lower-N or unannotated cluster
+- When segments conflict, trust the lowest-numbered Rank Semantic Match over any Surrounding Context or Keyword Match segment, even if a Keyword Match segment shares more literal words with the question -- shared wording does not mean shared meaning
+- Before concluding the transcript doesn't address the question, check every entry under "TOP RANKED SEMANTIC MATCHES" at the top of VIDEO TRANSCRIPT CONTEXT first -- these are the highest-confidence direct hits from vector search, and an entry's "N/M question keywords" annotation (when present) means it shares those literal words with the question -- treat that as a strong signal it answers the question, not something to explain away. Only fall back to Surrounding Context or Keyword Match segments, or say the information is missing, if none of the top ranked matches answer it
 - If the context is insufficient, explain what information is missing"""
 
         if custom_instructions:
@@ -3223,9 +3572,12 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
     from model_preloader import models_ready, wait_for_models
     if not models_ready():
         if not wait_for_models(timeout=5.0):
+            # video_hash is required by ChatResponse — omitting it turns this
+            # friendly cold-start message into a 500 ResponseValidationError.
             return {
                 "answer": "The server just started and is still loading AI models. Please try again in about 30 seconds.",
                 "sources": [],
+                "video_hash": chat_request.video_hash,
                 "provider_used": "none",
             }
 

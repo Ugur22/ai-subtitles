@@ -161,24 +161,52 @@ def _verify_invite_code(code: str) -> bool:
         return False
 
 
-def _mark_invite_used(code: str, user_id: str) -> None:
+def _claim_invite_code(code: str, user_id: str) -> bool:
     """
-    Mark invite code as used by a user.
+    Atomically claim an invite code for a user.
+
+    The code is single-use, so the claim must be one conditional UPDATE
+    (use_invite_code does WHERE used_by IS NULL). A separate check followed by
+    an unconditional update lets concurrent registrations all pass the check.
+    Any error counts as not claimed, so the caller rolls the registration back
+    instead of leaving an account that never consumed a code.
 
     Args:
         code: UUID invite code
         user_id: User UUID who used the code
+
+    Returns:
+        True only if this call consumed the code
     """
     try:
         client = SupabaseService.get_client()
 
-        client.table("invite_codes").update({
-            "used_by": user_id,
-            "used_at": datetime.utcnow().isoformat()
-        }).eq("code", code).execute()
+        response = client.rpc("use_invite_code", {
+            "code_input": code,
+            "user_id_input": user_id,
+        }).execute()
+
+        claimed = response.data
+        if isinstance(claimed, list):
+            claimed = claimed[0] if claimed else None
+        return claimed is True
 
     except Exception as e:
-        print(f"[Auth] Error marking invite as used: {e}")
+        print(f"[Auth] Error claiming invite code: {e}")
+        return False
+
+
+def _rollback_registration(client, auth_client, user_id: str) -> None:
+    """Remove the profile and auth user created by a registration that lost the invite-code claim."""
+    try:
+        client.table("user_profiles").delete().eq("id", user_id).execute()
+    except Exception as e:
+        print(f"[Auth] Failed to delete profile {user_id} while rolling back registration: {e}")
+
+    try:
+        auth_client.auth.admin.delete_user(user_id)
+    except Exception as e:
+        print(f"[Auth] Failed to delete auth user {user_id} while rolling back registration: {e}")
 
 
 # =============================================================================
@@ -298,8 +326,13 @@ async def register(request: RegisterRequest):
                 detail="Failed to create user profile"
             )
 
-        # Mark invite code as used
-        _mark_invite_used(request.invite_code, user_id)
+        # The profile must exist for the invite's foreign key before the atomic claim.
+        if not _claim_invite_code(request.invite_code, user_id):
+            _rollback_registration(client, auth_client, user_id)
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or already used invite code"
+            )
 
         # The verification email (6-digit OTP) is sent by Supabase as part of
         # sign_up above, because "Confirm email" is enabled on the project and

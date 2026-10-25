@@ -942,6 +942,11 @@ class LLMManager:
         if name == "local":
             name = "ollama"
 
+        # The xAI provider is registered as 'grok'; accept the name the
+        # API-keys page uses ('xai') as an alias.
+        if name == "xai":
+            name = "grok"
+
         if name not in self.providers:
             raise ValueError(f"Unknown provider: {name}")
 

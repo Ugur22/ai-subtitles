@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
     FACE_PRESENCE_SIMILARITY_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_SIMILARITY_THRESHOLD", "0.5"))
 
+    # A mis-tag can skew the person reference enough to make later matches drift.
+    FACE_TAG_OUTLIER_MIN_SIMILARITY: float = float(os.getenv("FACE_TAG_OUTLIER_MIN_SIMILARITY", "0.5"))
+
     # Relaxed cosine threshold used ONLY for the A/B person-comparison candidate
     # pool, so faint faces (low light, profile, distance - e.g. dim/intimate
     # scenes) still surface as selectable "other moments". Lower than the global

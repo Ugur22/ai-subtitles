@@ -288,6 +288,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       chinese: "zh",
       japanese: "ja",
       korean: "ko",
+      czech: "cs",
     };
     const languageCode =
       languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
@@ -575,6 +576,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     { value: "pt", label: "Portuguese" },
     { value: "ru", label: "Russian" },
     { value: "zh", label: "Chinese" },
+    { value: "cs", label: "Czech" },
     // Add more languages as needed
   ];
 
