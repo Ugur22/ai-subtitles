@@ -14,6 +14,7 @@ from sentence_transformers import SentenceTransformer
 from services.supabase_service import supabase
 from services.media_storage import get_media_storage
 from config import settings
+from services.index_errors import IncompleteIndexError
 
 
 _REFUSAL_PATTERN = re.compile(
@@ -332,6 +333,35 @@ class ImageEmbeddingService:
                 except Exception:
                     pass
 
+    @staticmethod
+    def _resolve_screenshot_keys(
+        storage, segments: List[Dict], user_id: str, video_hash: str,
+        available_keys: List[str],
+    ) -> List[tuple]:
+        """Pair each segment with its owned screenshot object key, skipping segments whose
+        screenshot is missing. Metadata only; nothing is downloaded."""
+        keys_by_timestamp = {
+            key.rsplit('/', 1)[-1].rsplit('.', 1)[0]: key
+            for key in available_keys
+        }
+        resolved = []
+        for seg in segments:
+            screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
+
+            object_key = storage.parse_screenshot_key(screenshot_url) if screenshot_url else None
+            if not object_key:
+                start = seg.get('start', 0)
+                ts_str = f"{start:.2f}"
+                if ts_str not in keys_by_timestamp:
+                    ts_str = f"{seg.get('screenshot_timestamp', start):.2f}"
+                object_key = keys_by_timestamp.get(ts_str)
+            if not object_key or not storage.is_owned_screenshot_key(
+                object_key, user_id, video_hash, False
+            ):
+                continue
+            resolved.append((seg, object_key))
+        return resolved
+
     def index_video_images(
         self,
         video_hash: str,
@@ -360,24 +390,34 @@ class ImageEmbeddingService:
             raise ValueError("user_id is required for owner-scoped image indexing")
 
         client = supabase()
+        storage = get_media_storage()
+        available_keys = storage.list_screenshot_keys(
+            user_id, video_hash, allow_legacy=False
+        )
+        resolved = self._resolve_screenshot_keys(
+            storage, segments, user_id, video_hash, available_keys
+        )
 
-        # Check if already indexed (unless force_reindex)
+        # Check if already indexed (unless force_reindex). A partial index left by a failed run
+        # must not count as done, so compare against the screenshots that actually exist.
         if not force_reindex:
-            existing = client.table('image_embeddings').select('id').eq(
+            existing = client.table('image_embeddings').select('id', count='exact').eq(
                 'user_id', user_id
             ).eq('video_hash', video_hash).limit(1).execute()
+            count = existing.count or len(existing.data or [])
 
-            if existing.data:
-                count_result = client.table('image_embeddings').select(
-                    'id', count='exact'
-                ).eq('user_id', user_id).eq('video_hash', video_hash).execute()
-                count = count_result.count if count_result.count else len(existing.data)
+            if count and count >= len(resolved):
                 print(f"[ImageEmbedding] Video {video_hash} already has {count} indexed images")
                 print(
                     "[ImageEmbedding] Face presence catch-up skipped in image indexing path; "
                     "use /api/jobs/backfill-face-presence for background backfill."
                 )
                 return count
+            if count:
+                print(
+                    f"[ImageEmbedding] Video {video_hash} has {count}/{len(resolved)} "
+                    "indexed images, completing the index"
+                )
 
         # Upsert on (video_hash, segment_id) overwrites rows in place, so we intentionally
         # do NOT pre-delete on force_reindex — partial progress is never destroyed if an
@@ -388,30 +428,7 @@ class ImageEmbeddingService:
         segments_to_index = []
         temp_files = []  # Track temp files for cleanup
 
-        storage = get_media_storage()
-        available_keys = storage.list_screenshot_keys(
-            user_id, video_hash, allow_legacy=False
-        )
-        keys_by_timestamp = {
-            key.rsplit('/', 1)[-1].rsplit('.', 1)[0]: key
-            for key in available_keys
-        }
-
-        for seg in segments:
-            screenshot_url = seg.get('screenshot_url') or seg.get('screenshot_path')
-
-            object_key = storage.parse_screenshot_key(screenshot_url) if screenshot_url else None
-            if not object_key:
-                start = seg.get('start', 0)
-                ts_str = f"{start:.2f}"
-                if ts_str not in keys_by_timestamp:
-                    ts_str = f"{seg.get('screenshot_timestamp', start):.2f}"
-                object_key = keys_by_timestamp.get(ts_str)
-            if not object_key or not storage.is_owned_screenshot_key(
-                object_key, user_id, video_hash, False
-            ):
-                continue
-
+        for seg, object_key in resolved:
             try:
                 local_path = storage.materialize_screenshot(
                     object_key, user_id, video_hash, False
@@ -548,6 +565,8 @@ class ImageEmbeddingService:
                         os.unlink(temp_path)
                     except Exception:
                         pass
+        if indexed_count < len(records):
+            raise IncompleteIndexError(indexed_count, len(records))
         return indexed_count
 
     def _format_search_results(

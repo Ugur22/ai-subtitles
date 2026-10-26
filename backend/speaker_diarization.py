@@ -20,7 +20,7 @@ def _patched_torch_load(*args, **kwargs):
     return _original_torch_load(*args, **kwargs)
 torch.load = _patched_torch_load
 
-from pyannote.audio import Pipeline, Model
+from pyannote.audio import Pipeline, Model, Inference
 from pyannote.audio.pipelines.utils import get_devices
 from pyannote.core import Segment
 from typing import List, Dict, Tuple, Optional
@@ -233,6 +233,7 @@ class ChunkedSpeakerDiarizer:
         self.use_auth_token = use_auth_token
         self.pipeline = None
         self.embedding_model = None
+        self.embedding_inference = None
         self.device = None
 
     def load_pipeline(self):
@@ -292,6 +293,10 @@ class ChunkedSpeakerDiarizer:
                     self.device = torch.device("cpu")
 
             self.embedding_model.to(self.device)
+            # The raw Model only takes waveform tensors; Inference is what accepts a file + segment.
+            self.embedding_inference = Inference(
+                self.embedding_model, window="whole", device=self.device
+            )
 
             log_gpu_memory("ChunkedDiarizer:EmbeddingLoaded")
             print("[ChunkedDiarizer] Speaker embedding model loaded")
@@ -304,6 +309,7 @@ class ChunkedSpeakerDiarizer:
             print("[ChunkedDiarizer] Unloading embedding model...")
             del self.embedding_model
             self.embedding_model = None
+            self.embedding_inference = None
             clear_gpu_memory("ChunkedDiarizer:EmbeddingUnloaded")
 
     def unload_pipeline(self):
@@ -315,6 +321,7 @@ class ChunkedSpeakerDiarizer:
         if self.embedding_model is not None:
             del self.embedding_model
             self.embedding_model = None
+            self.embedding_inference = None
 
         if self.pipeline is not None:
             del self.pipeline
@@ -805,18 +812,8 @@ class ChunkedSpeakerDiarizer:
                     # Create a pyannote Segment object for extraction
                     segment = Segment(start=seg['local_start'], end=seg['local_end'])
 
-                    # Extract embedding using pyannote embedding model
-                    # The model expects a dict with 'audio' key containing the file path
-                    result = self.embedding_model({
-                        'audio': audio_path,
-                        'segment': segment
-                    })
-
-                    # Pyannote returns a dict with 'embeddings' key
-                    if isinstance(result, dict):
-                        embedding = result.get('embeddings', result.get('embedding'))
-                    else:
-                        embedding = result
+                    # window="whole" makes crop() return a single embedding vector for the segment
+                    embedding = self.embedding_inference.crop(audio_path, segment)
 
                     # Convert to numpy array if needed
                     if embedding is None:
