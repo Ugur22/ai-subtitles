@@ -33,6 +33,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(_transcription_executor, func, *args)
 
 from config import settings
+from services.index_errors import IncompleteIndexError
 from services.job_queue_service import JobQueueService
 from services.supabase_service import supabase
 from services.media_storage import get_media_storage
@@ -922,6 +923,11 @@ class BackgroundWorker:
                                     print(f"[Worker] Captioned {captioned} frames for visual search")
                             except JobCancelled:
                                 raise
+                            except IncompleteIndexError as error:
+                                print(
+                                    f"[Worker] Visual index INCOMPLETE ({error}); job still completes. "
+                                    "Re-open the video in the app to finish indexing."
+                                )
                             except Exception as error:
                                 print(f"[Worker] Image indexing/captioning failed (non-critical): {error}")
                             finally:
