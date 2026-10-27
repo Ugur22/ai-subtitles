@@ -1,0 +1,4 @@
+#!/bin/bash
+# Git pre-commit: same offline checks as the agent's Stop hook.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+make check
