@@ -71,6 +71,7 @@ backend/transcriptions.db
 # AI/Agent tool configs
 .claude/*
 !.claude/settings.json
+!.claude/agents/
 graphify-out/
 .agent/
 .agents/
