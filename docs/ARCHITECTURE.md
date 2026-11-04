@@ -7,56 +7,63 @@ Detailed architecture documentation for AI-Subs. For resource names, secrets, sc
 The API runs on a cheap CPU Cloud Run service. Anything heavy (transcription, diarization, embeddings) runs in a separate GPU Cloud Run Job that the API triggers per upload.
 
 ```mermaid
-flowchart TB
-    subgraph Client["Browser (React + TypeScript, Netlify)"]
-        UI[UI Components]
-        API[API Client<br/>axios, cookie auth]
-        RT[Supabase Realtime]
+flowchart LR
+    subgraph Client["Browser · Netlify"]
+        UI("React UI<br/>axios · cookie auth")
+        RT("Supabase Realtime<br/>client")
     end
 
-    subgraph GCP["Google Cloud"]
-        subgraph Service["ai-subs-backend (Cloud Run, CPU)"]
-            MW[Middleware<br/>auth, CSRF, quota, rate limit]
-            Routers[Routers<br/>jobs, upload, chat, speaker,<br/>video, face tags, chapters,<br/>keys, billing, admin]
-            Disp[Job dispatcher]
-        end
-
-        subgraph Worker["ai-subs-worker (Cloud Run Job, L4 GPU)"]
-            BW[worker_main.py<br/>BackgroundWorker]
-            subgraph ML["ML pipeline"]
-                WH[faster-whisper large-v3]
-                PY[pyannote<br/>chunked diarization]
-                EMB[Sentence Transformers<br/>text + caption embeddings]
-                CL[CLIP image embeddings]
-                PN[PANNs + wav2vec2<br/>audio events, emotion]
-                MT[MarianMT translation]
-            end
-        end
-
-        GCS[(Cloud Storage<br/>media, screenshots)]
-        Sched[Cloud Scheduler]
+    subgraph Service["API · Cloud Run · CPU"]
+        MW("Middleware<br/>auth · CSRF · quota · rate limit")
+        Routers("Routers<br/>jobs · upload · chat · speaker<br/>video · face tags · chapters<br/>keys · billing · admin")
+        Disp("Job dispatcher")
     end
 
-    subgraph SB["Supabase"]
-        PG[(Postgres + pgvector)]
-        SBRT[Realtime]
+    subgraph Worker["GPU worker · Cloud Run Job · L4"]
+        BW("worker_main.py<br/>BackgroundWorker")
+        WH("faster-whisper<br/>large-v3")
+        PY("pyannote<br/>chunked diarization")
+        EMB("Sentence Transformers<br/>text + caption embeddings")
+        CL("CLIP<br/>image embeddings")
+        PN("PANNs + wav2vec2<br/>audio events · emotion")
+        MT("MarianMT<br/>translation")
     end
 
-    subgraph LLM["LLM providers"]
-        GRK[Grok default]
-        Others[Groq, OpenAI, Anthropic,<br/>DeepSeek, Ollama]
+    subgraph Data["Data"]
+        PG[("Supabase Postgres<br/>pgvector")]
+        SBRT("Supabase Realtime")
+        GCS[("Cloud Storage<br/>media · screenshots")]
     end
 
-    UI --> API --> MW --> Routers
+    LLM("LLM providers<br/>Grok (default) · Groq · OpenAI<br/>Anthropic · DeepSeek · Ollama")
+    Sched(["Cloud Scheduler"])
+
+    UI --> MW --> Routers
     UI -. signed URL upload .-> GCS
-    Routers --> PG
-    Routers --> Disp -- run_job --> BW
-    BW --> ML
+    Routers <--> PG
+    Routers --> Disp -->|run_job| BW
+    BW --> WH & PY & EMB & CL & PN & MT
     BW <--> GCS
-    BW --> PG
-    PG --> SBRT --> RT
-    Routers -- RAG chat --> LLM
-    Sched -- "check-stale, URL refresh" --> Routers
+    BW -->|results| PG
+    PG --> SBRT -.->|live progress| RT
+    Routers -->|RAG chat| LLM
+    Sched -->|check-stale · URL refresh| Routers
+
+    classDef app fill:#0f2a3d,stroke:#38a3d8,color:#e6f4fb,stroke-width:1.5px
+    classDef gpu fill:#3d2a10,stroke:#f0a030,color:#fdf0dc,stroke-width:1.5px
+    classDef data fill:#2c1f45,stroke:#a56cf0,color:#f1e8fd,stroke-width:1.5px
+    classDef ai fill:#1f3314,stroke:#7cc043,color:#eaf7dc,stroke-width:1.5px
+    classDef misc fill:#2b2f36,stroke:#8b95a5,color:#eef0f3,stroke-width:1.5px
+
+    class UI,RT,MW,Routers,Disp app
+    class BW,WH,PY,EMB,CL,PN,MT gpu
+    class PG,SBRT,GCS data
+    class LLM ai
+    class Sched misc
+    style Client fill:none,stroke:#38a3d8,stroke-dasharray:4 3
+    style Service fill:none,stroke:#38a3d8,stroke-dasharray:4 3
+    style Worker fill:none,stroke:#f0a030,stroke-dasharray:4 3
+    style Data fill:none,stroke:#a56cf0,stroke-dasharray:4 3
 ```
 
 ## Background Job Flow
