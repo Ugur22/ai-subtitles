@@ -1,31 +1,32 @@
 # AI Subtitles
 
-Local-first AI video transcription with speaker diarization, semantic search, and RAG-powered chat.
+AI video transcription with speaker diarization, multimodal search (transcript, visuals, audio, faces), and RAG-powered chat. Heavy processing runs on a Cloud Run GPU job; the API stays on a cheap CPU service.
 <img width="1244" height="778" alt="image" src="https://github.com/user-attachments/assets/d88087ab-de24-4e6f-a6e9-9845eba3154b" />
 
 ## Features
 
-- **Local AI Transcription** - Faster Whisper runs on your machine, no API costs
-- **Speaker Diarization** - Automatically identifies and labels different speakers
+- **GPU Transcription** - faster-whisper `large-v3` on an L4 GPU worker (`small` on CPU in local mode)
+- **Speaker Diarization & Recognition** - Chunked pyannote diarization plus saved speaker voiceprints
 - **Multi-format Support** - MP4, MP3, WAV, WebM, MKV, and more
 - **Multi-language** - Auto-detection and translation using MarianMT
-- **Semantic Search** - Find content by meaning with vector embeddings
-- **Visual Search** - CLIP-powered search by describing what you see
-- **Audio Analysis** - Detect laughter, applause, music, and emotions
+- **Semantic Search** - Transcript search by meaning with pgvector embeddings
+- **Visual Search** - CLIP image embeddings plus vision-model captions, searchable by describing what you see
+- **Face Tags** - Tag people and find where they appear
+- **Audio Analysis** - Detect laughter, applause, music (PANNs) and speech emotion
+- **Chapters** - Auto-generated chapters and summaries
 - **RAG Chat** - Ask questions about your video with context-aware answers
-- **Background Jobs** - Queue large files for async processing
-- **Real-time Updates** - Live progress via Supabase
-- **Share Links** - Generate public links to share results
-- **Subtitle Export** - WebVTT and SRT with translation support
-- **Multiple LLMs** - Ollama (local), Groq, OpenAI, Anthropic, Grok
+- **Background Jobs** - Async processing with live progress via Supabase Realtime and automatic stale-job recovery
+- **Accounts** - Cookie auth, invite codes, quotas/billing tiers, and bring-your-own LLM API keys
+- **Share Links & Subtitle Export** - Public links; WebVTT and SRT with translation
+- **Multiple LLMs** - Grok (default), Groq, OpenAI, Anthropic, DeepSeek, Ollama (local)
 
 ## Tech Stack
 
 | Layer | Technologies |
 |-------|-------------|
-| **Frontend** | React 19, TypeScript, Vite, TailwindCSS, React Query |
-| **Backend** | FastAPI, Faster Whisper, PyTorch, Pyannote, pgvector |
-| **Infrastructure** | Supabase, Google Cloud (Run, Storage), Netlify |
+| **Frontend** | React 19, TypeScript, Vite, TailwindCSS, React Query, Supabase JS (Realtime) |
+| **Backend** | FastAPI, faster-whisper, PyTorch, pyannote, sentence-transformers, pgvector |
+| **Infrastructure** | Cloud Run (CPU service + L4 GPU job), Cloud Storage, Cloud Scheduler, Supabase (Postgres, Auth, Realtime), Netlify |
 
 ## Quick Start
 
@@ -40,7 +41,7 @@ Local-first AI video transcription with speaker diarization, semantic search, an
 cd backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # Edit with your settings
+cp .env.example .env  # Supabase credentials + LOCAL_MODE=true for running without GCS
 uvicorn main:app --reload --port 8000
 ```
 
@@ -57,29 +58,45 @@ Open http://localhost:5173
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Frontend["Frontend (React)"]
-        UI[UI] --> API[API Client]
-        API --> RT[Supabase Realtime]
+flowchart LR
+    User([Browser<br/>React on Netlify])
+
+    subgraph GCP["Google Cloud"]
+        API["ai-subs-backend<br/>Cloud Run, CPU<br/>FastAPI: auth, jobs, search, chat"]
+        Worker["ai-subs-worker<br/>Cloud Run Job, L4 GPU<br/>Whisper, diarization,<br/>embeddings, translation"]
+        GCS[("Cloud Storage<br/>media, screenshots")]
+        Sched[Cloud Scheduler]
     end
 
-    subgraph Cloud["Cloud Services"]
-        GCS[(GCS)]
-        SB[(Supabase + pgvector)]
+    subgraph SB["Supabase"]
+        PG[("Postgres + pgvector<br/>jobs, transcripts, image / caption /<br/>audio / face / voiceprint vectors")]
+        RT[Realtime]
     end
 
-    subgraph Backend["Backend (FastAPI)"]
-        TR[Transcription] --> WH[Whisper]
-        SR[Speaker] --> PY[Pyannote]
-        CR[Chat] --> SB
-        CR --> LLM[LLM Providers]
-    end
+    LLM["LLM providers<br/>Grok, Groq, OpenAI,<br/>Anthropic, DeepSeek, Ollama"]
 
-    API --> TR & SR & CR
-    RT <--> SB
-    TR --> SB
-    TR --> GCS
+    User -- "REST + cookie auth" --> API
+    User -. "signed URLs: media" .-> GCS
+    RT -. "live job progress" .-> User
+    API -- "create job" --> PG
+    API -- "run_job" --> Worker
+    Worker <--> GCS
+    Worker -- "results + progress" --> PG
+    PG --> RT
+    API -- "vector search, RAG" --> PG
+    API --> LLM
+    Sched -- "check-stale every 5 min,<br/>daily URL refresh" --> API
 ```
+
+**Life of a job**
+
+1. The browser uploads media and calls `POST /api/jobs/submit`; the API writes a `jobs` row to Supabase.
+2. The API triggers the `ai-subs-worker` Cloud Run Job (`worker_main.py`), which runs on an L4 GPU.
+3. The worker transcribes, diarizes, extracts screenshots, computes embeddings, and translates. Media goes through GCS, results land in Supabase.
+4. Supabase Realtime pushes progress to the browser. Cloud Scheduler recovers jobs whose worker died (`check-stale`).
+5. Search and chat are served by the CPU API from pgvector, with answers generated by the configured LLM provider.
+
+With `LOCAL_MODE=true`, GCS and the Cloud Run Job are replaced by local disk and a local subprocess. Supabase is still required.
 
 ## Troubleshooting
 
@@ -113,8 +130,13 @@ ai-subs/
 ├── backend/           # FastAPI + ML
 │   ├── routers/       # API endpoints
 │   ├── services/      # Business logic
+│   ├── middleware/    # Auth, CSRF, quota, rate limiting
 │   ├── models/        # Pydantic schemas
-│   └── main.py
+│   ├── sql/           # Supabase schemas and migrations
+│   ├── evals/         # Paid LLM evals (manual)
+│   ├── worker_main.py # GPU worker entrypoint (Cloud Run Job)
+│   ├── deploy.sh      # Builds and deploys service + worker
+│   └── main.py        # API entrypoint
 └── docs/              # Documentation
 ```
 
