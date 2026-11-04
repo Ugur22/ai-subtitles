@@ -59,33 +59,54 @@ Open http://localhost:5173
 
 ```mermaid
 flowchart LR
-    User([Browser<br/>React on Netlify])
+    User(["User"])
 
-    subgraph GCP["Google Cloud"]
-        API["ai-subs-backend<br/>Cloud Run, CPU<br/>FastAPI: auth, jobs, search, chat"]
-        Worker["ai-subs-worker<br/>Cloud Run Job, L4 GPU<br/>Whisper, diarization,<br/>embeddings, translation"]
-        GCS[("Cloud Storage<br/>media, screenshots")]
-        Sched[Cloud Scheduler]
+    subgraph App["Application"]
+        FE("React frontend<br/>Netlify")
+        API("FastAPI API<br/>Cloud Run · CPU")
     end
 
-    subgraph SB["Supabase"]
-        PG[("Postgres + pgvector<br/>jobs, transcripts, image / caption /<br/>audio / face / voiceprint vectors")]
-        RT[Realtime]
+    subgraph GPU["GPU worker · Cloud Run Job · L4"]
+        Runner("Job runner")
+        WH("faster-whisper<br/>Transcription")
+        PY("pyannote<br/>Speakers")
+        CL("CLIP + captions<br/>Visual search")
+        AU("PANNs<br/>Audio events")
     end
 
-    LLM["LLM providers<br/>Grok, Groq, OpenAI,<br/>Anthropic, DeepSeek, Ollama"]
+    subgraph Data["Data"]
+        SB[("Supabase<br/>Auth · Jobs · Realtime<br/>pgvector")]
+        GCS[("Cloud Storage<br/>Media · Screenshots")]
+    end
 
-    User -- "REST + cookie auth" --> API
-    User -. "signed URLs: media" .-> GCS
-    RT -. "live job progress" .-> User
-    API -- "create job" --> PG
-    API -- "run_job" --> Worker
-    Worker <--> GCS
-    Worker -- "results + progress" --> PG
-    PG --> RT
-    API -- "vector search, RAG" --> PG
-    API --> LLM
-    Sched -- "check-stale every 5 min,<br/>daily URL refresh" --> API
+    LLM("LLM providers<br/>Grok · OpenAI · Anthropic ·<br/>Groq · DeepSeek · Ollama")
+    Sched(["Cloud Scheduler"])
+
+    User --> FE --> API
+    API -->|dispatch job| Runner
+    Runner --> WH & PY & CL & AU
+    Runner -->|results| SB
+    Runner <--> GCS
+    API <-->|jobs · search| SB
+    SB -.->|live progress| FE
+    FE -.->|signed upload| GCS
+    API -->|chat · RAG| LLM
+    Sched -->|check-stale| API
+
+    classDef app fill:#0f2a3d,stroke:#38a3d8,color:#e6f4fb,stroke-width:1.5px
+    classDef gpu fill:#3d2a10,stroke:#f0a030,color:#fdf0dc,stroke-width:1.5px
+    classDef data fill:#2c1f45,stroke:#a56cf0,color:#f1e8fd,stroke-width:1.5px
+    classDef ai fill:#1f3314,stroke:#7cc043,color:#eaf7dc,stroke-width:1.5px
+    classDef misc fill:#2b2f36,stroke:#8b95a5,color:#eef0f3,stroke-width:1.5px
+
+    class FE,API app
+    class Runner,WH,PY,CL,AU gpu
+    class SB,GCS data
+    class LLM ai
+    class User,Sched misc
+    style App fill:none,stroke:#38a3d8,stroke-dasharray:4 3
+    style GPU fill:none,stroke:#f0a030,stroke-dasharray:4 3
+    style Data fill:none,stroke:#a56cf0,stroke-dasharray:4 3
 ```
 
 **Life of a job**
