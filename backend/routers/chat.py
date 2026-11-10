@@ -2,7 +2,6 @@
 Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
 import asyncio
-import copy
 import json
 import re
 from contextvars import ContextVar
@@ -25,6 +24,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(_chat_executor, func, *args)
 
 from middleware.auth import require_auth
+from services.model_catalog import list_models
 from services.transcription_access import (
     authenticated_user_id,
 )
@@ -176,12 +176,7 @@ async def _get_chat_provider(request: Request, provider_name: Optional[str], mod
     `model` overrides the provider's default for this request only.
     """
     saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
-    provider = llm_manager.get_provider(provider_name, api_key_override=saved_key)
-    if model and hasattr(provider, "model"):
-        # Copy so the override never leaks into the shared provider instance.
-        provider = copy.copy(provider)
-        provider.model = model
-    return provider
+    return llm_manager.get_provider(provider_name, api_key_override=saved_key, model_override=model)
 
 
 async def _generate_visual_observations_with_fallback(
@@ -270,6 +265,7 @@ from models import (
     ChatRequest,
     ChatResponse,
     ComparisonSwapRequest,
+    ProviderModelsResponse,
     TestLLMRequest,
     TestLLMResponse,
     SearchImagesRequest,
@@ -4397,11 +4393,7 @@ async def list_llm_providers(request: Request) -> Dict:
     try:
         providers = llm_manager.list_available_providers()
 
-        user_id = None
-        if hasattr(request.state, "profile") and request.state.profile:
-            user_id = request.state.profile.get("id")
-        if not user_id and hasattr(request.state, "user") and request.state.user:
-            user_id = request.state.user.get("id")
+        user_id = _request_user_id(request)
 
         saved_key_providers = set()
         if user_id:
@@ -4433,42 +4425,40 @@ async def list_llm_providers(request: Request) -> Dict:
 
 @router.get(
     "/llm/providers/{provider_name}/models",
-    response_model=Dict,
+    response_model=ProviderModelsResponse,
     summary="List models for an LLM provider",
     description="Models the provider's own API currently offers; falls back to the configured default.",
 )
 @require_auth
-async def list_provider_models(request: Request, provider_name: str) -> Dict:
+async def list_provider_models(request: Request, provider_name: str) -> ProviderModelsResponse:
     if not LLM_AVAILABLE:
         raise HTTPException(status_code=503, detail="LLM features not available")
 
+    saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
     try:
-        provider = llm_manager.get_provider(provider_name)
+        provider = llm_manager.get_provider(provider_name, api_key_override=saved_key)
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name}")
     except Exception:
-        # Not configured server-side; a user-saved key may still make it usable.
-        provider = llm_manager.providers.get("grok" if provider_name == "xai" else provider_name)
-        if provider is None:
-            raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name}")
+        # Known provider with no usable key: nothing to list, and chat will report it.
+        return ProviderModelsResponse(models=[], source="fallback")
 
     default_model = getattr(provider, "model", None)
-    saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
-    api_key = saved_key or getattr(provider, "api_key", None)
     catalog_name = _stored_key_provider_name(provider_name)
-
     models: List[str] = []
-    if catalog_name and api_key:
+    source = "fallback"
+    if catalog_name:
         try:
-            from services.model_catalog import list_models
-            models = await list_models(catalog_name, api_key)
+            models = await list_models(catalog_name, provider.api_key)
+            source = "api"
         except Exception as e:
             # A picker must not break chat; the default model keeps working.
             print(f"[Chat] Model listing failed for {provider_name}: {e}")
 
-    if models:
-        return {"models": models, "default": default_model, "source": "api"}
-    return {"models": [default_model] if default_model else [], "default": default_model, "source": "fallback"}
+    # Always offer the default so the UI never has to merge it in.
+    if default_model and default_model not in models:
+        models = [default_model, *models]
+    return ProviderModelsResponse(models=models, default=default_model, source=source)
 
 
 @router.post(

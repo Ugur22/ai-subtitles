@@ -756,6 +756,16 @@ interface LLMProvider {
   model: string;
 }
 
+// Display only; the raw id is what the backend expects.
+const PROVIDER_LABELS: Record<string, string> = {
+  grok: "Grok (xAI)",
+  openai: "OpenAI",
+  anthropic: "Claude (Anthropic)",
+  groq: "Groq",
+  deepseek: "DeepSeek",
+  ollama: "Ollama (local)",
+};
+
 // Helper function to get emoji, label, and category for audio event types
 const getEventDetails = (eventType: string) => {
   const type = eventType.toLowerCase();
@@ -1433,10 +1443,32 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     loadProviders();
   }, []);
 
+  const providersLoaded = providers.length > 0;
+  const modelsCache = useRef<Record<string, { models: string[]; default: string | null }>>({});
+
   // Fetch the provider's live model list when the provider changes (no polling).
   useEffect(() => {
-    if (!selectedProvider || providers.length === 0) return;
+    if (!selectedProvider || !providersLoaded) return;
     let cancelled = false;
+
+    const apply = ({ models, default: defaultModel }: { models: string[]; default: string | null }) => {
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem(`chat-model:${selectedProvider}`);
+      } catch {
+        /* storage unavailable */
+      }
+      setProviderModels(models);
+      setSelectedModel(saved && models.includes(saved) ? saved : (defaultModel ?? models[0] ?? ""));
+    };
+
+    const cached = modelsCache.current[selectedProvider];
+    if (cached) {
+      apply(cached);
+      return;
+    }
+
+    // Clear so a model from the previous provider is never sent to this one.
     setProviderModels([]);
     setSelectedModel("");
     axios
@@ -1444,21 +1476,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         withCredentials: true,
       })
       .then((response) => {
-        if (cancelled) return;
-        const { models, default: defaultModel } = response.data as {
-          models: string[];
-          default: string | null;
-        };
-        // Keep the server default selectable even if the listing omitted it.
-        const list = defaultModel && !models.includes(defaultModel) ? [defaultModel, ...models] : models;
-        let saved: string | null = null;
-        try {
-          saved = localStorage.getItem(`chat-model:${selectedProvider}`);
-        } catch {
-          /* storage unavailable */
-        }
-        setProviderModels(list);
-        setSelectedModel(saved && list.includes(saved) ? saved : (defaultModel ?? list[0] ?? ""));
+        modelsCache.current[selectedProvider] = response.data;
+        if (!cancelled) apply(response.data);
       })
       .catch((error) => {
         // Chat still works with the provider's default model.
@@ -1467,7 +1486,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [selectedProvider, providers.length]);
+  }, [selectedProvider, providersLoaded]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -2105,7 +2124,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {/* Model Selector */}
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-                Model:
+                Provider:
               </label>
               <div className="relative">
                 {loadingProviders ? (
@@ -2152,7 +2171,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         value={provider.name}
                         disabled={!provider.available}
                       >
-                        {provider.name} - {provider.model}{" "}
+                        {PROVIDER_LABELS[provider.name] ?? provider.name}{" "}
                         {!provider.available && "(unavailable)"}
                       </option>
                     ))}
