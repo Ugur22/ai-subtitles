@@ -1023,7 +1023,12 @@ class LLMManager:
         if self.default_provider == "local":
             self.default_provider = "ollama"
 
-    def get_provider(self, provider_name: Optional[str] = None, api_key_override: Optional[str] = None) -> BaseLLMProvider:
+    def get_provider(
+        self,
+        provider_name: Optional[str] = None,
+        api_key_override: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> BaseLLMProvider:
         """Get a specific LLM provider or the default one"""
         name = provider_name or self.default_provider
 
@@ -1041,9 +1046,16 @@ class LLMManager:
 
         provider = self.providers[name]
 
-        if api_key_override and hasattr(provider, "api_key"):
+        # Copy once so per-request overrides never leak into the shared instance.
+        overrides = {
+            attr: value
+            for attr, value in (("api_key", api_key_override), ("model", model_override))
+            if value and hasattr(provider, attr)
+        }
+        if overrides:
             provider = copy.copy(provider)
-            provider.api_key = api_key_override
+            for attr, value in overrides.items():
+                setattr(provider, attr, value)
 
         if not provider.is_available():
             raise Exception(f"Provider '{name}' is not available. Check configuration.")

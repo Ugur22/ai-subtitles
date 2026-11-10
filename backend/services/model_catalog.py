@@ -9,13 +9,12 @@ import httpx
 
 CACHE_TTL_SECONDS = 300
 
-# provider -> (models URL, extra headers builder)
 _ENDPOINTS = {
     "openai": "https://api.openai.com/v1/models",
     "anthropic": "https://api.anthropic.com/v1/models?limit=100",
     "xai": "https://api.x.ai/v1/models",
     "groq": "https://api.groq.com/openai/v1/models",
-    "deepseek": None,  # base URL is env-configurable, resolved in _url()
+    "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/models",
 }
 
 # Listings mix in embeddings, speech, image and moderation models that cannot chat.
@@ -25,12 +24,6 @@ _NON_CHAT_MARKERS = (
 )
 
 _cache: Dict[Tuple[str, str], Tuple[float, List[str]]] = {}
-
-
-def _url(provider: str) -> Optional[str]:
-    if provider == "deepseek":
-        return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/models"
-    return _ENDPOINTS.get(provider)
 
 
 def _headers(provider: str, api_key: str) -> Dict[str, str]:
@@ -53,7 +46,7 @@ def filter_chat_models(provider: str, ids: List[str]) -> List[str]:
 
 async def list_models(provider: str, api_key: str, timeout: float = 10.0) -> List[str]:
     """Return chat-capable model IDs, cached briefly. Raises on upstream failure."""
-    url = _url(provider)
+    url = _ENDPOINTS.get(provider)
     if not url or not api_key:
         raise ValueError(f"No model listing for provider '{provider}'")
 
@@ -68,5 +61,9 @@ async def list_models(provider: str, api_key: str, timeout: float = 10.0) -> Lis
     response.raise_for_status()
     ids = [m["id"] for m in response.json().get("data", []) if m.get("id")]
     models = filter_chat_models(provider, ids)
-    _cache[cache_key] = (time.monotonic(), models)
+    now = time.monotonic()
+    # Evict on write so rotated keys cannot accumulate forever.
+    for key in [k for k, (stamp, _) in _cache.items() if now - stamp >= CACHE_TTL_SECONDS]:
+        del _cache[key]
+    _cache[cache_key] = (now, models)
     return models

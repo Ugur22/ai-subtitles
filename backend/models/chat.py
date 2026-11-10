@@ -1,7 +1,7 @@
 """
 Chat and RAG Pydantic models
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -171,6 +171,15 @@ class TestLLMRequest(BaseModel):
             }
         }
     }
+
+
+class ProviderModelsResponse(BaseModel):
+    """Models a provider currently offers, with the configured default"""
+    models: List[str]
+    default: Optional[str] = None
+    source: Literal["api", "fallback"] = Field(
+        description="'api' when listed by the provider, 'fallback' when only the configured default is known"
+    )
 
 
 class TestLLMResponse(BaseModel):
