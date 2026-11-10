@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 import httpx
 import pytest
@@ -73,24 +72,16 @@ def test_chat_request_rejects_malformed_model_id():
         ChatRequest(question="hi", model="gpt 5; drop table")
 
 
-def test_get_chat_provider_override_does_not_mutate_shared_provider(monkeypatch):
-    from types import SimpleNamespace
+def test_model_override_does_not_mutate_shared_provider(monkeypatch):
+    from llm_providers import LLMManager
 
-    from llm_providers import OpenAIProvider
-    from routers import chat
-
-    shared = OpenAIProvider()
+    llm_manager = LLMManager()
+    shared = llm_manager.providers["openai"]
+    monkeypatch.setattr(shared, "api_key", "sk-test")
     original = shared.model
-    monkeypatch.setattr(chat.llm_manager, "get_provider", lambda name, api_key_override=None: shared)
 
-    async def no_key(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(chat, "_get_saved_provider_key", no_key)
-    request = SimpleNamespace(state=SimpleNamespace(profile=None, user=None))
-
-    picked = asyncio.run(chat._get_chat_provider(request, "openai", "gpt-5.6-sol"))
-    default = asyncio.run(chat._get_chat_provider(request, "openai"))
+    picked = llm_manager.get_provider("openai", model_override="gpt-5.6-sol")
+    default = llm_manager.get_provider("openai")
 
     assert picked.model == "gpt-5.6-sol"
     assert shared.model == original
