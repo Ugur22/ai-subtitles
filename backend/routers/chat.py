@@ -2,6 +2,7 @@
 Chat and RAG (Retrieval-Augmented Generation) endpoints
 """
 import asyncio
+import copy
 import json
 import re
 from contextvars import ContextVar
@@ -160,16 +161,27 @@ async def _get_saved_provider_key(user_id: Optional[str], provider_name: Optiona
         return None
 
 
-async def _get_chat_provider(request: Request, provider_name: Optional[str]):
-    """Resolve an LLM provider, preferring a validated user-saved key over env keys."""
+def _request_user_id(request: Request) -> Optional[str]:
     user_id = None
     if hasattr(request.state, "profile") and request.state.profile:
         user_id = request.state.profile.get("id")
     if not user_id and hasattr(request.state, "user") and request.state.user:
         user_id = request.state.user.get("id")
+    return user_id
 
-    saved_key = await _get_saved_provider_key(user_id, provider_name)
-    return llm_manager.get_provider(provider_name, api_key_override=saved_key)
+
+async def _get_chat_provider(request: Request, provider_name: Optional[str], model: Optional[str] = None):
+    """Resolve an LLM provider, preferring a validated user-saved key over env keys.
+
+    `model` overrides the provider's default for this request only.
+    """
+    saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
+    provider = llm_manager.get_provider(provider_name, api_key_override=saved_key)
+    if model and hasattr(provider, "model"):
+        # Copy so the override never leaks into the shared provider instance.
+        provider = copy.copy(provider)
+        provider.model = model
+    return provider
 
 
 async def _generate_visual_observations_with_fallback(
@@ -2349,6 +2361,7 @@ async def _run_person_comparison_llm(
     provider_name: Optional[str],
     video_hash: str,
     timeline_appearances: Optional[list[dict]] = None,
+    model: Optional[str] = None,
 ) -> Dict:
     """
     Build the comparison prompt for the resolved pair, run the vision LLM, and return
@@ -2374,7 +2387,7 @@ async def _run_person_comparison_llm(
         ]
         intermediates.sort(key=lambda row: float(row.get("start_time") or 0.0))
 
-    provider = await _get_chat_provider(request, provider_name)
+    provider = await _get_chat_provider(request, provider_name, model)
     if not provider.supports_vision():
         provider = await _get_chat_provider(request, "grok")
         provider_name = "grok"
@@ -2565,6 +2578,7 @@ async def _handle_person_comparison(
         provider_name=chat_request.provider,
         video_hash=video_hash,
         timeline_appearances=timeline_appearances,
+        model=chat_request.model,
     )
 
 
@@ -3724,7 +3738,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
         # Get LLM provider and generate response
         try:
-            provider = await _get_chat_provider(request, provider_name)
+            provider = await _get_chat_provider(request, provider_name, chat_request.model)
             provider_supports_vision = provider.supports_vision()
 
             if include_visuals and image_paths and not provider_supports_vision:
@@ -4163,7 +4177,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
                 return
 
-            provider = await _get_chat_provider(request, provider_name)
+            provider = await _get_chat_provider(request, provider_name, chat_request.model)
             provider_supports_vision = provider.supports_vision()
 
             if include_visuals and image_paths and not provider_supports_vision:
@@ -4415,6 +4429,46 @@ async def list_llm_providers(request: Request) -> Dict:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/llm/providers/{provider_name}/models",
+    response_model=Dict,
+    summary="List models for an LLM provider",
+    description="Models the provider's own API currently offers; falls back to the configured default.",
+)
+@require_auth
+async def list_provider_models(request: Request, provider_name: str) -> Dict:
+    if not LLM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="LLM features not available")
+
+    try:
+        provider = llm_manager.get_provider(provider_name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name}")
+    except Exception:
+        # Not configured server-side; a user-saved key may still make it usable.
+        provider = llm_manager.providers.get("grok" if provider_name == "xai" else provider_name)
+        if provider is None:
+            raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name}")
+
+    default_model = getattr(provider, "model", None)
+    saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
+    api_key = saved_key or getattr(provider, "api_key", None)
+    catalog_name = _stored_key_provider_name(provider_name)
+
+    models: List[str] = []
+    if catalog_name and api_key:
+        try:
+            from services.model_catalog import list_models
+            models = await list_models(catalog_name, api_key)
+        except Exception as e:
+            # A picker must not break chat; the default model keeps working.
+            print(f"[Chat] Model listing failed for {provider_name}: {e}")
+
+    if models:
+        return {"models": models, "default": default_model, "source": "api"}
+    return {"models": [default_model] if default_model else [], "default": default_model, "source": "fallback"}
 
 
 @router.post(
