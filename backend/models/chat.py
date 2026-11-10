@@ -180,6 +180,7 @@ class ProviderModelsResponse(BaseModel):
     source: Literal["api", "fallback"] = Field(
         description="'api' when listed by the provider, 'fallback' when only the configured default is known"
     )
+    error: Optional[str] = Field(None, description="Why listing failed, when the provider offers a listing")
 
 
 class TestLLMResponse(BaseModel):
