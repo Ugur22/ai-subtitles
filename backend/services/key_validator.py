@@ -268,7 +268,7 @@ async def _test_anthropic(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, O
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-3-haiku-20240307",
+                    "model": "claude-haiku-5-5",
                     "max_tokens": 1,
                     "messages": [{"role": "user", "content": "test"}]
                 }
