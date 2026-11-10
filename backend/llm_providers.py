@@ -250,8 +250,23 @@ class OpenAIProvider(BaseLLMProvider):
 
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
         self.base_url = "https://api.openai.com/v1"
+
+    def _build_payload(self, messages: List[Dict[str, Any]], max_tokens: int) -> Dict[str, Any]:
+        # GPT-5+ rejects max_tokens and any non-default temperature with HTTP 400.
+        return {
+            "model": self.model,
+            "messages": messages,
+            "max_completion_tokens": max_tokens,
+        }
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        # raise_for_status() drops OpenAI's JSON error body, which is the only place
+        # model_not_found / insufficient_quota show up.
+        if response.is_error:
+            raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
 
     async def generate(
         self,
@@ -271,14 +286,9 @@ class OpenAIProvider(BaseLLMProvider):
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json"
                     },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens
-                    }
+                    json=self._build_payload(messages, max_tokens)
                 )
-                response.raise_for_status()
+                self._raise_for_status(response)
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
@@ -289,7 +299,7 @@ class OpenAIProvider(BaseLLMProvider):
         return bool(self.api_key and self.api_key != "your_openai_api_key_here")
 
     def supports_vision(self) -> bool:
-        """OpenAI supports vision with gpt-4-vision models"""
+        """Current OpenAI chat models accept image_url content natively"""
         return True
 
     async def generate_with_images(
@@ -350,14 +360,9 @@ class OpenAIProvider(BaseLLMProvider):
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json"
                     },
-                    json={
-                        "model": self.model if "vision" in self.model.lower() else "gpt-4-vision-preview",
-                        "messages": formatted_messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens
-                    }
+                    json=self._build_payload(formatted_messages, max_tokens)
                 )
-                response.raise_for_status()
+                self._raise_for_status(response)
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
@@ -369,7 +374,7 @@ class AnthropicProvider(BaseLLMProvider):
 
     def __init__(self):
         self.api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+        self.model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
         self.base_url = "https://api.anthropic.com/v1"
 
     async def generate(

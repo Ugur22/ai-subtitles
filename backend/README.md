@@ -174,11 +174,11 @@ GROQ_MODEL=llama-3.1-70b-versatile
 
 # OpenAI Settings
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4
+OPENAI_MODEL=gpt-5.6-terra
 
 # Anthropic Settings
 ANTHROPIC_API_KEY=your_anthropic_api_key
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_MODEL=claude-sonnet-5-5
 
 # xAI Grok Settings
 XAI_API_KEY=your_xai_api_key
