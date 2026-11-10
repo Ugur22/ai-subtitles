@@ -10,6 +10,7 @@ from typing import Tuple, Optional
 import httpx
 from services.supabase_service import SupabaseService
 from services.encryption import get_encryption_key, decrypt_api_key
+from services.provider_http import is_credit_exhausted, provider_error_detail
 
 
 # After this many seconds a key still pending validation is considered stuck.
@@ -172,8 +173,8 @@ async def _test_groq(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Option
 async def _test_xai(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Optional[str]]:
     """Test xAI (Grok) API key by making a minimal generation request.
 
-    Listing models can succeed when the account is out of credits. A one-token
-    completion verifies that chat can actually run.
+    xAI also refuses model listing when the team is out of credits, so a one-token
+    completion is the check that chat can actually run.
     """
     try:
         model = os.getenv("XAI_MODEL", "grok-beta")
@@ -194,27 +195,18 @@ async def _test_xai(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Optiona
 
             if response.status_code == 200:
                 return True, None
-            elif response.status_code == 401:
+
+            # xAI answers 403 for exhausted credits too, so read the body before blaming permissions.
+            detail = provider_error_detail(response)
+            if response.status_code == 402 or is_credit_exhausted(detail):
+                return False, f"xAI account is out of credits or billing quota: {detail}"
+            if response.status_code == 401:
                 return False, "Invalid API key"
-            elif response.status_code == 403:
-                return False, "API key does not have required permissions"
-            elif response.status_code == 402:
-                return False, "xAI account is out of credits or billing quota"
-            elif response.status_code == 429:
+            if response.status_code == 403:
+                return False, f"xAI refused the key: {detail}"
+            if response.status_code == 429:
                 return False, "xAI rate limit or quota exceeded"
-            else:
-                error_text = response.text[:300]
-                error_lower = error_text.lower()
-                if (
-                    "credit" in error_lower
-                    or "insufficient balance" in error_lower
-                    or "insufficient_quota" in error_lower
-                    or "payment required" in error_lower
-                    or "billing" in error_lower
-                    or "usage limit" in error_lower
-                ):
-                    return False, "xAI account is out of credits or billing quota"
-                return False, f"API returned status {response.status_code}: {error_text}"
+            return False, f"API returned status {response.status_code}: {detail}"
 
     except httpx.TimeoutException:
         return False, "Request timed out"

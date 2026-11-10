@@ -756,6 +756,9 @@ interface LLMProvider {
   model: string;
 }
 
+const FIELD_LABEL_CLASS = "text-xs font-medium w-[4.5rem] shrink-0";
+const FIELD_WIDTH_CLASS = "w-56";
+
 const SelectChevron = () => (
   <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
     <svg
@@ -1470,14 +1473,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   }, []);
 
   const providersLoaded = providers.length > 0;
-  const modelsCache = useRef<Record<string, { models: string[]; default: string | null }>>({});
+  type ProviderModels = { models: string[]; default: string | null; error?: string | null };
+  const modelsCache = useRef<Record<string, ProviderModels>>({});
+  const [modelListError, setModelListError] = useState<string | null>(null);
 
   // Fetch the provider's live model list when the provider changes (no polling).
   useEffect(() => {
     if (!selectedProvider || !providersLoaded) return;
     let cancelled = false;
 
-    const apply = ({ models, default: defaultModel }: { models: string[]; default: string | null }) => {
+    const apply = ({ models, default: defaultModel, error }: ProviderModels) => {
+      setModelListError(error ?? null);
       let saved: string | null = null;
       try {
         saved = localStorage.getItem(`chat-model:${selectedProvider}`);
@@ -1498,13 +1504,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     // Clear so a model from the previous provider is never sent to this one.
     setProviderModels([]);
     setSelectedModel("");
+    setModelListError(null);
     setModelsLoading(true);
     axios
       .get(`${API_BASE_URL}/api/llm/providers/${selectedProvider}/models`, {
         withCredentials: true,
       })
       .then((response) => {
-        modelsCache.current[selectedProvider] = response.data;
+        // Failed listings are not cached, so topping up credits recovers on the next switch.
+        if (!response.data.error) modelsCache.current[selectedProvider] = response.data;
         if (cancelled) return;
         apply(response.data);
         setModelsLoading(false);
@@ -2154,12 +2162,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <div className="flex items-center gap-3 flex-wrap">
             {/* Model Selector */}
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+              <label className={FIELD_LABEL_CLASS} style={{ color: "var(--text-secondary)" }}>
                 Provider:
               </label>
               <div className="relative">
                 {loadingProviders ? (
-                  <div className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base" style={{ color: "var(--text-secondary)" }}>
+                  <div className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg ${FIELD_WIDTH_CLASS} input-base`} style={{ color: "var(--text-secondary)" }}>
                     <Spinner />
                     <span>Loading providers...</span>
                   </div>
@@ -2174,7 +2182,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         setIncludeVisuals(false);
                       }
                     }}
-                    className="input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium min-w-[200px]"
+                    className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium ${FIELD_WIDTH_CLASS}`}
                     title="Select LLM Provider"
                   >
                     {providers.map((provider) => (
@@ -2196,12 +2204,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {/* Model Selector - slot is reserved while loading so it never looks missing */}
             {providersLoaded && (
               <div className="flex items-center gap-2">
-                <label htmlFor="chat-model" className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                <label htmlFor="chat-model" className={FIELD_LABEL_CLASS} style={{ color: "var(--text-secondary)" }}>
                   Model:
                 </label>
                 {modelsLoading ? (
                   <div
-                    className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base"
+                    className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg ${FIELD_WIDTH_CLASS} input-base`}
                     style={{ color: "var(--text-secondary)" }}
                     aria-busy="true"
                   >
@@ -2221,7 +2229,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           /* storage unavailable: the choice just won't persist */
                         }
                       }}
-                      className="input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium min-w-[200px] max-w-[280px] truncate"
+                      className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium ${FIELD_WIDTH_CLASS} truncate`}
                       title="Select model"
                     >
                       {providerModels.map((id) => (
@@ -2234,7 +2242,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   </div>
                 ) : (
                   <div
-                    className="input-base px-4 py-2 text-sm font-medium min-w-[200px] max-w-[280px] truncate cursor-default select-none"
+                    className={`input-base px-4 py-2 text-sm font-medium ${FIELD_WIDTH_CLASS} truncate cursor-default select-none`}
                     style={{ color: "var(--text-secondary)" }}
                     title="This provider only offers its default model"
                   >
@@ -2242,6 +2250,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   </div>
                 )}
               </div>
+            )}
+
+            {modelListError && (
+              <p className="basis-full text-xs" style={{ color: "var(--text-tertiary)" }}>
+                Couldn't load the model list, using the default model. {modelListError}
+              </p>
             )}
 
             {/* Visual Search Toggle - only show for vision-capable models */}

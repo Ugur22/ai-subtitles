@@ -25,6 +25,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
 
 from middleware.auth import require_auth
 from services.model_catalog import list_models
+from services.provider_http import is_credit_exhausted
 from services.transcription_access import (
     authenticated_user_id,
 )
@@ -63,14 +64,7 @@ def _classify_provider_error(err: Optional[BaseException]) -> str:
     msg = (str(err) or "").lower()
     if "api key" in msg or "unauthorized" in msg or "401" in msg or "xai_api_key_missing" in msg:
         return "llm_config"
-    if (
-        "credit" in msg
-        or "insufficient balance" in msg
-        or "insufficient_quota" in msg
-        or "payment required" in msg
-        or "billing" in msg
-        or "usage limit" in msg
-    ):
+    if is_credit_exhausted(msg):
         return "llm_provider_quota"
     if "429" in msg or "rate limit" in msg or "quota" in msg:
         return "llm_rate_limited"
@@ -4447,18 +4441,20 @@ async def list_provider_models(request: Request, provider_name: str) -> Provider
     catalog_name = _stored_key_provider_name(provider_name)
     models: List[str] = []
     source = "fallback"
+    error: Optional[str] = None
     if catalog_name:
         try:
             models = await list_models(catalog_name, provider.api_key)
             source = "api"
         except Exception as e:
             # A picker must not break chat; the default model keeps working.
-            print(f"[Chat] Model listing failed for {provider_name}: {e}")
+            error = str(e)[:300]
+            print(f"[Chat] Model listing failed for {provider_name}: {error}")
 
     # Always offer the default so the UI never has to merge it in.
     if default_model and default_model not in models:
         models = [default_model, *models]
-    return ProviderModelsResponse(models=models, default=default_model, source=source)
+    return ProviderModelsResponse(models=models, default=default_model, source=source, error=error)
 
 
 @router.post(
