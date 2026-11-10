@@ -756,6 +756,31 @@ interface LLMProvider {
   model: string;
 }
 
+const SelectChevron = () => (
+  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+    <svg
+      className="w-4 h-4"
+      style={{ color: "var(--text-secondary)" }}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  </div>
+);
+
+const Spinner = () => (
+  <svg className="w-4 h-4 animate-spin" style={{ color: "var(--text-secondary)" }} fill="none" viewBox="0 0 24 24">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+    <path
+      className="opacity-75"
+      fill="currentColor"
+      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+    />
+  </svg>
+);
+
 // Display only; the raw id is what the backend expects.
 const PROVIDER_LABELS: Record<string, string> = {
   grok: "Grok (xAI)",
@@ -1345,6 +1370,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [selectedProvider, setSelectedProvider] = useState<string>("grok");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
@@ -1465,23 +1491,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     const cached = modelsCache.current[selectedProvider];
     if (cached) {
       apply(cached);
+      setModelsLoading(false);
       return;
     }
 
     // Clear so a model from the previous provider is never sent to this one.
     setProviderModels([]);
     setSelectedModel("");
+    setModelsLoading(true);
     axios
       .get(`${API_BASE_URL}/api/llm/providers/${selectedProvider}/models`, {
         withCredentials: true,
       })
       .then((response) => {
         modelsCache.current[selectedProvider] = response.data;
-        if (!cancelled) apply(response.data);
+        if (cancelled) return;
+        apply(response.data);
+        setModelsLoading(false);
       })
       .catch((error) => {
         // Chat still works with the provider's default model.
         console.error("Failed to load models:", error);
+        if (!cancelled) setModelsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -2129,27 +2160,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div className="relative">
                 {loadingProviders ? (
                   <div className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base" style={{ color: "var(--text-secondary)" }}>
-                    <svg
-                      className="w-4 h-4 animate-spin"
-                      style={{ color: "var(--text-secondary)" }}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                    <span>Loading models...</span>
+                    <Spinner />
+                    <span>Loading providers...</span>
                   </div>
                 ) : (
                   <select
@@ -2177,52 +2189,59 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     ))}
                   </select>
                 )}
-                {/* Custom chevron icon */}
-                {!loadingProviders && (
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <svg
-                      className="w-4 h-4"
-                      style={{ color: "var(--text-secondary)" }}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
+                {!loadingProviders && <SelectChevron />}
+              </div>
+            </div>
+
+            {/* Model Selector - slot is reserved while loading so it never looks missing */}
+            {providersLoaded && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="chat-model" className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                  Model:
+                </label>
+                {modelsLoading ? (
+                  <div
+                    className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg min-w-[200px] input-base"
+                    style={{ color: "var(--text-secondary)" }}
+                    aria-busy="true"
+                  >
+                    <Spinner />
+                    <span>Loading models...</span>
+                  </div>
+                ) : providerModels.length > 1 ? (
+                  <div className="relative">
+                    <select
+                      id="chat-model"
+                      value={selectedModel}
+                      onChange={(e) => {
+                        setSelectedModel(e.target.value);
+                        try {
+                          localStorage.setItem(`chat-model:${selectedProvider}`, e.target.value);
+                        } catch {
+                          /* storage unavailable: the choice just won't persist */
+                        }
+                      }}
+                      className="input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium min-w-[200px] max-w-[280px] truncate"
+                      title="Select model"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
+                      {providerModels.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                    <SelectChevron />
+                  </div>
+                ) : (
+                  <div
+                    className="input-base px-4 py-2 text-sm font-medium min-w-[200px] max-w-[280px] truncate cursor-default select-none"
+                    style={{ color: "var(--text-secondary)" }}
+                    title="This provider only offers its default model"
+                  >
+                    {selectedModel || "Default model"}
                   </div>
                 )}
               </div>
-              {providerModels.length > 1 && (
-                <select
-                  value={selectedModel}
-                  onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    try {
-                      localStorage.setItem(`chat-model:${selectedProvider}`, e.target.value);
-                    } catch {
-                      /* storage unavailable: the choice just won't persist */
-                    }
-                  }}
-                  className="input-base text-sm px-3 py-2 cursor-pointer max-w-[260px]"
-                  title="Select model"
-                >
-                  {providerModels.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            {/* Divider - only show if vision supported */}
-            {VISION_SUPPORTED_PROVIDERS.includes(selectedProvider) && (
-              <div className="h-6 w-px" style={{ background: "var(--border-default)" }}></div>
             )}
 
             {/* Visual Search Toggle - only show for vision-capable models */}
