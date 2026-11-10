@@ -1333,6 +1333,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("grok");
+  const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
@@ -1430,6 +1432,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   useEffect(() => {
     loadProviders();
   }, []);
+
+  // Fetch the provider's live model list when the provider changes (no polling).
+  useEffect(() => {
+    if (!selectedProvider || providers.length === 0) return;
+    let cancelled = false;
+    setProviderModels([]);
+    setSelectedModel("");
+    axios
+      .get(`${API_BASE_URL}/api/llm/providers/${selectedProvider}/models`, {
+        withCredentials: true,
+      })
+      .then((response) => {
+        if (cancelled) return;
+        const { models, default: defaultModel } = response.data as {
+          models: string[];
+          default: string | null;
+        };
+        // Keep the server default selectable even if the listing omitted it.
+        const list = defaultModel && !models.includes(defaultModel) ? [defaultModel, ...models] : models;
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem(`chat-model:${selectedProvider}`);
+        } catch {
+          /* storage unavailable */
+        }
+        setProviderModels(list);
+        setSelectedModel(saved && list.includes(saved) ? saved : (defaultModel ?? list[0] ?? ""));
+      })
+      .catch((error) => {
+        // Chat still works with the provider's default model.
+        console.error("Failed to load models:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProvider, providers.length]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -1598,6 +1636,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             question: textToSend,
             video_hash: videoHash,
             provider: selectedProvider,
+            model: selectedModel || undefined,
             n_results: 8,
             include_visuals: includeVisuals,
             n_images: includeVisuals ? 6 : undefined,
@@ -1720,6 +1759,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           question: originalQuestion,
           custom_instructions: customInstructions || undefined,
           provider: selectedProvider,
+          model: selectedModel || undefined,
         },
         {
           signal: controller.signal,
@@ -2138,6 +2178,27 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   </div>
                 )}
               </div>
+              {providerModels.length > 1 && (
+                <select
+                  value={selectedModel}
+                  onChange={(e) => {
+                    setSelectedModel(e.target.value);
+                    try {
+                      localStorage.setItem(`chat-model:${selectedProvider}`, e.target.value);
+                    } catch {
+                      /* storage unavailable: the choice just won't persist */
+                    }
+                  }}
+                  className="input-base text-sm px-3 py-2 cursor-pointer max-w-[260px]"
+                  title="Select model"
+                >
+                  {providerModels.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Divider - only show if vision supported */}
