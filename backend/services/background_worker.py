@@ -33,6 +33,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(_transcription_executor, func, *args)
 
 from config import settings
+from services.db_retry import with_db_retry
 from services.index_errors import IncompleteIndexError
 from services.job_queue_service import JobQueueService
 from services.supabase_service import supabase
@@ -414,11 +415,11 @@ class BackgroundWorker:
             if probed_duration_seconds is None or probed_duration_seconds <= 0:
                 raise RuntimeError("Could not determine media duration for quota enforcement")
             try:
-                profile = (
+                profile = with_db_retry(lambda: (
                     supabase().table("user_profiles")
                     .select("id, is_admin, subscription_plan")
                     .eq("id", user_id).single().execute()
-                ).data
+                ), label="owner profile").data
             except Exception as e:
                 raise RuntimeError("Could not load owner profile for quota enforcement") from e
             if not profile:
@@ -432,12 +433,13 @@ class BackgroundWorker:
                     job_id, "This file exceeds your plan's per-file duration limit.", "quota_exceeded"
                 )
                 return False
-            reserved = supabase().rpc("adjust_job_quota_reservation", {
+            # Safe to repeat: it replaces this job's reservation, it does not add to it.
+            reserved = with_db_retry(lambda: supabase().rpc("adjust_job_quota_reservation", {
                 "p_job_id": job_id,
                 "p_user_id": user_id,
                 "p_actual_seconds": probed_duration_seconds,
                 "p_monthly_limit_seconds": limits["monthly_transcription_seconds"],
-            }).execute()
+            }).execute(), label="adjust_job_quota_reservation")
             if reserved.data is not True:
                 JobQueueService.mark_failed(
                     job_id, "This transcription would exceed your monthly quota.", "quota_exceeded"
@@ -1224,7 +1226,14 @@ class BackgroundWorker:
             error_code = "processing_error"
 
             # Categorize common errors
-            if "not found" in error_message.lower():
+            if isinstance(e, httpx.TransportError):
+                # Retries are already exhausted at this point (services/db_retry.py).
+                error_code = "connection_lost"
+                error_message = (
+                    "Lost the connection while saving your results. "
+                    "Your progress is saved; retry to finish."
+                )
+            elif "not found" in error_message.lower():
                 error_code = "file_not_found"
             elif "audio" in error_message.lower():
                 error_code = "audio_extraction_error"

@@ -8,7 +8,7 @@ import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
 import { ShareJobDialog } from "./ShareJobDialog";
 import { Job, JobStatus, isActiveJobStatus } from "../../../types/job";
-import { cancelJob } from "../../../services/api";
+import { cancelJob, retryJob } from "../../../services/api";
 
 interface JobCardProps {
   job: Job;
@@ -31,6 +31,8 @@ const statusConfig: Record<JobStatus, { label: string; color: string; bg: string
 const FAILURE_MESSAGES: Record<string, string> = {
   worker_timeout:
     "Processing ran out of time before this file was finished. Your progress is saved. We retry once automatically; if this still shows as failed, press Retry to continue from where it stopped.",
+  connection_lost:
+    "Lost the connection while saving your results. Your progress is saved; press Retry to finish.",
   max_continuations_reached:
     "This file needed more processing runs than allowed. Your progress is saved; press Retry to continue from where it stopped.",
 };
@@ -52,8 +54,9 @@ export const JobCard: React.FC<JobCardProps> = ({
   const handleRetry = async () => {
     setIsRetrying(true);
     try {
-      const response = await fetch(`/api/jobs/${job.job_id}/retry?token=${job.access_token}`, { method: "POST" });
-      if (!response.ok) throw new Error("Failed to retry job");
+      // Must go through the shared client: the auth cookie belongs to the API
+      // host, so a same-origin fetch to /api reaches the backend without it.
+      await retryJob(job.job_id, job.access_token);
     } catch (error) {
       console.error("Failed to retry job:", error);
     } finally {
