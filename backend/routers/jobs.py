@@ -723,9 +723,11 @@ async def delete_job_permanent(
     Permanently delete a job and all associated files.
 
     Deletes:
-    - Video file from GCS (if exists)
-    - Screenshots folder from GCS (if exists)
     - Job record from database
+    - Video file from GCS (if exists)
+    - When no other job of this user has the same file: the pipeline cache,
+      search embeddings, face tags and the owner's screenshot folder, so a
+      re-upload is processed from scratch
 
     **Warning**: This action is irreversible. All job data and results will be lost.
 
@@ -755,7 +757,7 @@ async def delete_job_permanent(
     try:
         deleted_resources = {
             "video": False,
-            "screenshots": 0,
+            "screenshots": False,
             "database": False
         }
 
@@ -775,25 +777,29 @@ async def delete_job_permanent(
             raise HTTPException(status_code=409, detail="Job could not be deleted")
 
         deleted_resources["database"] = True
-        outbox_id = deletion.get("outbox_id")
         cleanup_pending = False
-        if outbox_id:
+        # The database function already removed the cache and search data;
+        # these outbox rows cover the video file and the screenshot folder.
+        for resource, outbox_id in (
+            ("video", deletion.get("outbox_id")),
+            ("screenshots", deletion.get("screenshots_outbox_id")),
+        ):
+            if not outbox_id:
+                continue
             cleanup = await _run_in_executor(
                 JobQueueService.drain_media_deletions_best_effort,
                 limit=1,
                 outbox_id=outbox_id,
             )
-            deleted_resources["video"] = cleanup["completed"] == 1
-            cleanup_pending = not deleted_resources["video"]
-
-        # Shared, legacy, and screenshot resources are deliberately retained.
+            deleted_resources[resource] = cleanup["completed"] == 1
+            cleanup_pending = cleanup_pending or not deleted_resources[resource]
 
         # Build response message
         message_parts = ["Job deleted permanently"]
         if deleted_resources["video"]:
             message_parts.append("video file removed")
-        if deleted_resources["screenshots"] > 0:
-            message_parts.append(f"{deleted_resources['screenshots']} screenshots removed")
+        if deleted_resources["screenshots"]:
+            message_parts.append("screenshots removed")
 
         message = ". ".join(message_parts) + "."
 
