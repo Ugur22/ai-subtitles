@@ -183,6 +183,16 @@ class Settings(BaseSettings):
     WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
     WORKER_JOB_NAME: str = os.getenv("WORKER_JOB_NAME", "ai-subs-worker")
 
+    # Long-job continuations. One worker execution works until its time budget is
+    # used, checkpoints, and hands the job to a fresh execution.
+    # 0 = derive from CLOUD_RUN_TASK_TIMEOUT minus a safety margin (about 50 min).
+    WORKER_TIME_BUDGET_SECONDS: int = int(os.getenv("WORKER_TIME_BUDGET_SECONDS", "0"))
+    CLOUD_RUN_TASK_TIMEOUT: int = int(os.getenv("CLOUD_RUN_TASK_TIMEOUT", "0"))
+    MAX_JOB_CONTINUATIONS: int = int(os.getenv("MAX_JOB_CONTINUATIONS", "12"))
+    # Rough whole-pipeline processing seconds per second of media on the L4
+    # worker. Only used to warn about files that look too long to finish.
+    PROCESSING_REALTIME_FACTOR: float = float(os.getenv("PROCESSING_REALTIME_FACTOR", "0.35"))
+
     def validate_runtime(self) -> None:
         """Reject ambiguous or incomplete runtime modes before accepting work."""
         if self.LOCAL_MODE and self.ENABLE_GCS_UPLOADS:
