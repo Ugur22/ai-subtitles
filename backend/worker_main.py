@@ -39,18 +39,32 @@ from services.media_storage import get_media_storage
 from services.transcription_checkpoint import TimeBudget, resolve_budget_seconds
 
 
-def _install_sigterm_handler(job_id: str) -> None:
-    """Mark the job 'cancelled' on Cloud Run SIGTERM so the cancel-poll loop in process_job notices on the next stage boundary and the row doesn't end up stuck in 'processing'."""
+def _on_sigterm(job_id: str) -> None:
+    """Cloud Run sends SIGTERM when the task timeout is reached, ~10s before SIGKILL.
 
-    def _handler(signum, frame):
-        print(f"[worker_main] Received signal {signum}; marking job {job_id} cancelled")
-        try:
-            JobQueueService.cancel_job(job_id)
-        except Exception as e:
-            print(f"[worker_main] cancel_job failed during SIGTERM handling: {e}")
+    That is a failure, not a cancellation: the job becomes failed/worker_timeout
+    so check-stale can retry it once from the chunk cache. mark_worker_timeout
+    only touches a job that is still 'processing', so a job the user cancelled
+    stays 'cancelled' and a job already handed to a continuation stays 'pending'.
+    Either way the pipeline's next cancel check sees the status change and stops.
+    """
+    print(f"[worker_main] Received SIGTERM; treating job {job_id} as a worker timeout")
+    if not JobQueueService.mark_worker_timeout(job_id):
+        print(f"[worker_main] Job {job_id} was not processing; left as is")
 
-    signal.signal(signal.SIGTERM, _handler)
-    signal.signal(signal.SIGINT, _handler)
+
+def _on_sigint(job_id: str) -> None:
+    """Ctrl-C on a local worker is a deliberate stop, so it stays a cancellation."""
+    print(f"[worker_main] Received SIGINT; marking job {job_id} cancelled")
+    try:
+        JobQueueService.cancel_job(job_id)
+    except Exception as e:
+        print(f"[worker_main] cancel_job failed during SIGINT handling: {e}")
+
+
+def _install_signal_handlers(job_id: str) -> None:
+    signal.signal(signal.SIGTERM, lambda signum, frame: _on_sigterm(job_id))
+    signal.signal(signal.SIGINT, lambda signum, frame: _on_sigint(job_id))
 
 
 def _check_gpu(job_id: str) -> bool:
@@ -107,7 +121,7 @@ def main() -> int:
     print(f"[worker_main] starting job {job_id}")
     if not _check_gpu(job_id):
         return 1
-    _install_sigterm_handler(job_id)
+    _install_signal_handlers(job_id)
     return asyncio.run(_run(job_id))
 
 
