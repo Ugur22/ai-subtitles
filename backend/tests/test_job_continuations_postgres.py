@@ -188,3 +188,62 @@ def test_manual_retry_starts_a_fresh_continuation_chain():
         assert _job(cursor, job_id, "status, continuation_count, retry_count") == (
             "pending", 0, 1,
         )
+
+
+MIGRATIONS = ("018_job_continuations.sql", "019_worker_timeout_retry.sql")
+
+
+def test_timeout_only_fails_a_processing_job_and_releases_its_reservation():
+    with scratch_schema(*MIGRATIONS) as cursor:
+        user_id, job_id = _processing_job(cursor)
+
+        cursor.execute("SELECT timeout_job_secure(%s, 'out of time')", (job_id,))
+        assert cursor.fetchone()[0] is True
+        assert _job(cursor, job_id, "status, error_code, quota_reserved_seconds") == (
+            "failed", "worker_timeout", 0,
+        )
+        assert _reserved(cursor, user_id) == (0, 0)
+
+        for status in ("cancelled", "pending", "finalizing", "completed"):
+            cursor.execute(
+                "UPDATE jobs SET status = %s, error_code = NULL WHERE id = %s", (status, job_id)
+            )
+            cursor.execute("SELECT timeout_job_secure(%s, 'out of time')", (job_id,))
+            assert cursor.fetchone()[0] is False
+            assert _job(cursor, job_id, "status, error_code") == (status, None)
+
+
+def test_timeout_auto_retry_is_granted_once_and_respects_limits():
+    with scratch_schema(*MIGRATIONS) as cursor:
+        user_id, job_id = _processing_job(cursor)
+        cursor.execute("UPDATE jobs SET continuation_count = 3 WHERE id = %s", (job_id,))
+        cursor.execute("SELECT timeout_job_secure(%s, 'out of time')", (job_id,))
+
+        # Owner is at their concurrency limit: deferred, not consumed.
+        other = uuid.uuid4()
+        cursor.execute(
+            "INSERT INTO jobs (id, user_id, status) VALUES (%s, %s, 'processing')",
+            (other, user_id),
+        )
+        cursor.execute("SELECT auto_retry_timed_out_job(%s, %s, 3, 1)", (job_id, user_id))
+        assert cursor.fetchone()[0] is False
+        assert _job(cursor, job_id, "status, timeout_auto_retries") == ("failed", 0)
+        cursor.execute("DELETE FROM jobs WHERE id = %s", (other,))
+
+        cursor.execute("SELECT auto_retry_timed_out_job(%s, %s, 3, 1)", (job_id, user_id))
+        assert cursor.fetchone()[0] is True
+        assert _job(
+            cursor, job_id,
+            "status, error_code, retry_count, timeout_auto_retries, continuation_count",
+        ) == ("pending", None, 1, 1, 3)
+
+        # A second call (a concurrent check-stale run) gets nothing to dispatch.
+        cursor.execute("SELECT auto_retry_timed_out_job(%s, %s, 3, 1)", (job_id, user_id))
+        assert cursor.fetchone()[0] is False
+
+        # Timing out again does not earn another automatic retry.
+        cursor.execute("SELECT claim_job(%s, 3)", (job_id,))
+        cursor.execute("SELECT timeout_job_secure(%s, 'out of time')", (job_id,))
+        cursor.execute("SELECT auto_retry_timed_out_job(%s, %s, 3, 1)", (job_id, user_id))
+        assert cursor.fetchone()[0] is False
+        assert _job(cursor, job_id, "status, error_code") == ("failed", "worker_timeout")
