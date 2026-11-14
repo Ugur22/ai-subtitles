@@ -5,12 +5,18 @@ This is invoked as `python -m worker_main <job_id>` by a Cloud Run Job
 execution. It runs the pipeline that used to live behind FastAPI's
 `BackgroundTasks`, but standalone — no HTTP server, no scale-to-zero risk.
 
-Exit code 0 = success, 1 = failure or cancellation.
+Exit code 0 = success or a clean hand-over to a continuation execution,
+1 = failure or cancellation.
 """
 import asyncio
 import os
 import signal
 import sys
+import time
+
+# The task timeout counts from container start, so the budget clock starts
+# before the heavy imports and model loading below.
+_PROCESS_STARTED_AT = time.monotonic()
 
 from dotenv import load_dotenv
 
@@ -30,6 +36,7 @@ settings.validate_runtime()
 from services.background_worker import background_worker, JobCancelled
 from services.job_queue_service import JobQueueService
 from services.media_storage import get_media_storage
+from services.transcription_checkpoint import TimeBudget, resolve_budget_seconds
 
 
 def _install_sigterm_handler(job_id: str) -> None:
@@ -74,7 +81,13 @@ async def _run(job_id: str) -> int:
             storage=get_media_storage(),
             limit=10,
         )
-        ok = await background_worker.process_job(job_id)
+        budget_seconds = resolve_budget_seconds(
+            settings.WORKER_TIME_BUDGET_SECONDS, settings.CLOUD_RUN_TASK_TIMEOUT
+        )
+        print(f"[worker_main] time budget for this execution: {budget_seconds}s")
+        ok = await background_worker.process_job(
+            job_id, time_budget=TimeBudget(budget_seconds, started_at=_PROCESS_STARTED_AT)
+        )
         return 0 if ok else 1
     except JobCancelled as e:
         print(f"[worker_main] {e}")

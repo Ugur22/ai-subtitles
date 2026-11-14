@@ -44,6 +44,9 @@ PORT="8000"
 WORKER_MEMORY="16Gi"
 WORKER_CPU="4"
 WORKER_TASK_TIMEOUT="3600"
+# Cloud Run does not expose the task timeout to the container, so it is passed
+# as CLOUD_RUN_TASK_TIMEOUT. The worker stops ~10 min before it and continues
+# in a new execution (see docs/ARCHITECTURE.md, "Long files").
 WORKER_MAX_RETRIES="0"  # Don't auto-retry — leave it to our own retry endpoint.
 GPU_COUNT="1"
 GPU_TYPE="nvidia-l4"
@@ -174,7 +177,7 @@ deploy_worker_job() {
         --tasks=1 \
         --command="python" \
         --args="-m,worker_main" \
-        --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@FASTWHISPER_MODEL=${FASTWHISPER_MODEL}@FASTWHISPER_COMPUTE_TYPE=${FASTWHISPER_COMPUTE_TYPE}" \
+        --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@FASTWHISPER_MODEL=${FASTWHISPER_MODEL}@FASTWHISPER_COMPUTE_TYPE=${FASTWHISPER_COMPUTE_TYPE}@CLOUD_RUN_TASK_TIMEOUT=${WORKER_TASK_TIMEOUT}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
         --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@XAI_API_KEY=xai-api-key:latest"; then
         print_info "Worker Job deployment successful"
     else

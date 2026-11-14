@@ -73,6 +73,47 @@ class PipelineCacheService:
             return False
 
     @staticmethod
+    def get_cached_prefix(user_id: str, video_hash: str, prefix: str) -> Dict[str, Dict]:
+        """Return {stage: data} for every stage starting with prefix, in one query."""
+        try:
+            response = (
+                supabase().table("pipeline_cache")
+                .select("stage,data")
+                .eq("user_id", user_id)
+                .eq("video_hash", video_hash)
+                .like("stage", f"{prefix}%")
+                .execute()
+            )
+            # "_" is a LIKE wildcard, so match the literal prefix again here.
+            rows = {
+                row["stage"]: row["data"] for row in (response.data or [])
+                if row["stage"].startswith(prefix)
+            }
+            if rows:
+                print(f"[PipelineCache] {len(rows)} checkpoint rows for {prefix} (video_hash={video_hash[:8]}...)")
+            return rows
+        except Exception as e:
+            print(f"[PipelineCache] Error reading cache prefix {prefix}: {e}")
+            return {}
+
+    @staticmethod
+    def clear_prefix(user_id: str, video_hash: str, prefix: str) -> int:
+        """Delete every stage starting with prefix (used once a stage's merged result is saved)."""
+        try:
+            response = (
+                supabase().table("pipeline_cache")
+                .delete()
+                .eq("user_id", user_id)
+                .eq("video_hash", video_hash)
+                .like("stage", f"{prefix}%")
+                .execute()
+            )
+            return len(response.data) if response.data else 0
+        except Exception as e:
+            print(f"[PipelineCache] Error clearing cache prefix {prefix}: {e}")
+            return 0
+
+    @staticmethod
     def clear_cache(user_id: str, video_hash: str) -> int:
         """
         Clear all cached stages for a video.

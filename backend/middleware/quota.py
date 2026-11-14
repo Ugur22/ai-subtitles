@@ -20,6 +20,8 @@ from typing import Optional
 
 from fastapi import HTTPException, Request
 
+from config import settings
+from services.transcription_checkpoint import projected_executions, resolve_budget_seconds
 from services.usage_meter import get_current_month_usage
 
 
@@ -71,6 +73,41 @@ def _get_plan_limits(profile: Optional[dict]) -> dict:
 
 # ─── Public helpers ──────────────────────────────────────────────────────────
 
+def warn_if_processing_time_unrealistic(
+    duration_seconds: Optional[int], *, context: str = ""
+) -> Optional[str]:
+    """
+    Log (never block) when a file's projected processing time is long.
+
+    The tier caps above allow 3h and 6h files, but one GPU execution lasts at
+    most an hour, so long files run as a chain of continuations. Returns the
+    warning text, or None when the file fits in a single execution.
+    """
+    if not duration_seconds or duration_seconds <= 0:
+        return None
+    budget = resolve_budget_seconds(
+        settings.WORKER_TIME_BUDGET_SECONDS, settings.CLOUD_RUN_TASK_TIMEOUT
+    )
+    projected = duration_seconds * settings.PROCESSING_REALTIME_FACTOR
+    if projected <= budget:
+        return None
+    executions = projected_executions(projected, budget)
+    allowed = settings.MAX_JOB_CONTINUATIONS + 1
+    if executions > allowed:
+        message = (
+            f"{duration_seconds}s of media projects to ~{projected:.0f}s of processing, "
+            f"about {executions} worker executions; only {allowed} are allowed, "
+            "so this job is unlikely to finish"
+        )
+    else:
+        message = (
+            f"{duration_seconds}s of media projects to ~{projected:.0f}s of processing, "
+            f"about {executions} worker executions of {budget}s"
+        )
+    print(f"[Quota] WARNING{f' ({context})' if context else ''}: {message}")
+    return message
+
+
 def check_can_transcribe(
     profile: Optional[dict],
     *,
@@ -86,6 +123,8 @@ def check_can_transcribe(
       file_duration_seconds: if known up-front (rare — usually we only know
                after probing), enforce the per-file cap.
     """
+    warn_if_processing_time_unrealistic(file_duration_seconds, context="submit")
+
     if _profile_is_admin(profile):
         return
 
