@@ -6,6 +6,7 @@ when a job is retried after a Cloud Run crash.
 """
 from typing import Optional, Dict
 
+from services.db_retry import with_db_retry
 from services.supabase_service import supabase
 
 
@@ -26,14 +27,16 @@ class PipelineCacheService:
         """
         try:
             client = supabase()
-            response = (
+            # Without the retry a dropped connection reads as a cache miss and
+            # the whole stage is recomputed.
+            response = with_db_retry(lambda: (
                 client.table("pipeline_cache")
                 .select("data")
                 .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .eq("stage", stage)
                 .execute()
-            )
+            ), label=f"pipeline_cache read {stage}")
             if response.data and len(response.data) > 0:
                 print(f"[PipelineCache] Cache HIT for {stage} (video_hash={video_hash[:8]}...)")
                 return response.data[0]["data"]
@@ -57,7 +60,7 @@ class PipelineCacheService:
         """
         try:
             client = supabase()
-            client.table("pipeline_cache").upsert(
+            with_db_retry(lambda: client.table("pipeline_cache").upsert(
                 {
                     "user_id": user_id,
                     "video_hash": video_hash,
@@ -65,7 +68,7 @@ class PipelineCacheService:
                     "data": data,
                 },
                 on_conflict="user_id,video_hash,stage",
-            ).execute()
+            ).execute(), label=f"pipeline_cache write {stage}")
             print(f"[PipelineCache] Cached {stage} for video_hash={video_hash[:8]}...")
             return True
         except Exception as e:
@@ -76,14 +79,14 @@ class PipelineCacheService:
     def get_cached_prefix(user_id: str, video_hash: str, prefix: str) -> Dict[str, Dict]:
         """Return {stage: data} for every stage starting with prefix, in one query."""
         try:
-            response = (
+            response = with_db_retry(lambda: (
                 supabase().table("pipeline_cache")
                 .select("stage,data")
                 .eq("user_id", user_id)
                 .eq("video_hash", video_hash)
                 .like("stage", f"{prefix}%")
                 .execute()
-            )
+            ), label=f"pipeline_cache read {prefix}*")
             # "_" is a LIKE wildcard, so match the literal prefix again here.
             rows = {
                 row["stage"]: row["data"] for row in (response.data or [])
