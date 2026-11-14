@@ -6,7 +6,13 @@
 # This script builds and deploys the AI-Subs backend to Google Cloud Run
 # with proper environment configuration and secret management.
 #
-# Usage: ./deploy.sh
+# Usage: ./deploy.sh [--skip-build]
+#   --skip-build  Redeploy the Service and the worker Job from the existing
+#                 :latest image without running Cloud Build.
+#
+# This script is the only definition of the deployed resources. There is
+# deliberately no Cloud Run YAML next to it: a second copy drifts, and
+# `gcloud run services replace` with a stale file drops env vars and secrets.
 #
 # Requirements:
 # - gcloud CLI installed and configured
@@ -241,6 +247,14 @@ verify_deployment() {
 
 # Main execution
 main() {
+    SKIP_BUILD="false"
+    for arg in "$@"; do
+        case "${arg}" in
+            --skip-build) SKIP_BUILD="true" ;;
+            *) print_error "Unknown argument: ${arg}"; exit 2 ;;
+        esac
+    done
+
     echo ""
     print_info "╔═══════════════════════════════════════════════════════════╗"
     print_info "║         AI-Subs Backend - Cloud Run Deployment           ║"
@@ -264,7 +278,11 @@ main() {
 
     # Run deployment steps
     check_prerequisites
-    build_and_push
+    if [ "${SKIP_BUILD}" == "true" ]; then
+        print_warning "Skipping image build; deploying the existing ${IMAGE_NAME}"
+    else
+        build_and_push
+    fi
     deploy_to_cloud_run
     deploy_worker_job
     get_service_url

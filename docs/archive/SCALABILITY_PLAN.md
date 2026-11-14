@@ -1,6 +1,13 @@
 # Scalability Architecture Redesign: AI-Subs Backend
 
-> **Status:** Planning - Not Implemented
+> **Status:** Superseded. Never implemented. Archived 2026-11-14.
+>
+> This plan proposed Cloud Tasks queuing in front of a separate GPU worker *service*.
+> What was built instead: the CPU API service starts one Cloud Run **Job** execution
+> per transcription job, job state lives in a Postgres table with heartbeats, Cloud
+> Scheduler recovers stale jobs, and long files are checkpointed per chunk and
+> continued across executions. See [ARCHITECTURE.md](../ARCHITECTURE.md). Resource
+> names, model sizes and limits below are historical and do not match production.
 > **Created:** 2026-01-10
 > **Priority:** High
 
