@@ -51,6 +51,37 @@ from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer
 from services.audio_analysis_service import AudioAnalysisService
 from services.pipeline_cache_service import PipelineCacheService
+from services.transcription_checkpoint import (
+    BudgetedCheckpoint,
+    ContinuationRequested,
+    DIARIZATION_PREFIX,
+    MANIFEST_STAGE,
+    TRANSCRIPTION_CHUNK_SECONDS,
+    TRANSCRIPTION_PREFIX,
+    TimeBudget,
+    merge_chunks,
+    resolve_budget_seconds,
+    settings_key,
+    stage_prefix,
+)
+
+# First-unit estimates, used until this execution has timed a real one.
+INITIAL_TRANSCRIPTION_CHUNK_ESTIMATE = 120
+INITIAL_DIARIZATION_GROUP_ESTIMATE = 240
+INITIAL_EMBEDDING_GROUP_ESTIMATE = 60
+# Time the uncheckpointed tail (audio analysis, screenshots, indexing,
+# captions, translation) is assumed to need, as a share of media duration.
+TAIL_SECONDS_PER_MEDIA_SECOND = 0.1
+TAIL_MIN_SECONDS = 300
+
+
+def _transcribe_chunk(whisper_model, chunk_path: str, transcribe_params: dict):
+    """Run one chunk to completion. faster-whisper decodes lazily, so the generator is drained here, in the executor thread, to keep the event loop (and signal handling) responsive."""
+    segments, info = whisper_model.transcribe(chunk_path, **transcribe_params)
+    return [
+        {"start": segment.start, "end": segment.end, "text": segment.text}
+        for segment in segments
+    ], info.language
 
 
 def _compute_dense_timestamps(duration, existing_ts, interval, min_gap, max_count=None):
@@ -250,7 +281,7 @@ class BackgroundWorker:
         self.running = False
         self._heartbeat_threads = {}  # job_id -> HeartbeatThread
 
-    async def process_job(self, job_id: str) -> bool:
+    async def process_job(self, job_id: str, time_budget: Optional[TimeBudget] = None) -> bool:
         """
         Main processing function for a transcription job.
 
@@ -278,6 +309,9 @@ class BackgroundWorker:
         temp_dirs = []
         heartbeat_thread = None
         gpu_start_ts = time.monotonic()  # for cost-accounting (gpu_seconds)
+        budget = time_budget or TimeBudget(resolve_budget_seconds(
+            settings.WORKER_TIME_BUDGET_SECONDS, settings.CLOUD_RUN_TASK_TIMEOUT
+        ))
         probed_duration_seconds = None  # real duration from ffprobe (quota + usage)
 
         try:
@@ -350,7 +384,13 @@ class BackgroundWorker:
             cached_screenshots = PipelineCacheService.get_cached(user_id, video_hash, "screenshots") if is_video_format else None
 
             # Determine if we need audio files at all
-            need_audio = not cached_transcription or (not cached_diarization and settings.ENABLE_SPEAKER_DIARIZATION)
+            # Audio analysis reads the extracted audio too, so a resumed run that
+            # finds transcription and diarization cached must still extract it.
+            need_audio = (
+                not cached_transcription
+                or (not cached_diarization and settings.ENABLE_SPEAKER_DIARIZATION)
+                or settings.ENABLE_AUDIO_ANALYSIS
+            )
 
             audio_chunks = []
             full_audio_path = None
@@ -383,7 +423,8 @@ class BackgroundWorker:
                 raise RuntimeError("Could not load owner profile for quota enforcement") from e
             if not profile:
                 raise RuntimeError("Could not load owner profile for quota enforcement")
-            from middleware.quota import _get_plan_limits
+            from middleware.quota import _get_plan_limits, warn_if_processing_time_unrealistic
+            warn_if_processing_time_unrealistic(probed_duration_seconds, context=f"job {job_id}")
             limits = _get_plan_limits(profile)
             file_cap = limits["max_file_duration_seconds"]
             if file_cap is not None and probed_duration_seconds > file_cap:
@@ -426,7 +467,7 @@ class BackgroundWorker:
                             AudioService.extract_audio_streaming,
                             source_url=temp_video_path,
                             output_dir=temp_dir,
-                            segment_duration=300
+                            segment_duration=TRANSCRIPTION_CHUNK_SECONDS
                         )
                         temp_files.extend(audio_chunks)
                         print(f"[Worker] Extracted {len(audio_chunks)} audio chunks")
@@ -495,29 +536,73 @@ class BackgroundWorker:
                     "compression_ratio_threshold": 2.4,
                 }
 
+                total_chunks = len(audio_chunks)
+                # Everything that changes a chunk's text goes into the cache key.
+                base_key = settings_key(
+                    model=settings.FASTWHISPER_MODEL,
+                    compute_type=settings.FASTWHISPER_COMPUTE_TYPE,
+                    requested_language=language,
+                    chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
+                    params=transcribe_params,
+                )
+
                 if language:
                     transcribe_params["language"] = language
                     print(f"[Worker] Using specified language: {language}")
                 else:
                     # Without this Whisper re-guesses per chunk: a music-only chunk is
                     # guessed as English and then emits English for Italian dialogue.
-                    locked = await _run_in_executor(
-                        detect_dominant_language,
-                        whisper_model,
-                        audio_chunks,
-                        transcribe_params["vad_parameters"],
-                    )
+                    # The lock is stored so a resumed run keeps the same language and
+                    # therefore the same chunk cache key.
+                    manifest = PipelineCacheService.get_cached(user_id, video_hash, MANIFEST_STAGE)
+                    if (
+                        manifest
+                        and manifest.get("base_key") == base_key
+                        and manifest.get("total_chunks") == total_chunks
+                    ):
+                        locked = manifest.get("language")
+                        print(f"[Worker] Reusing locked language from checkpoint: {locked}")
+                    else:
+                        locked = await _run_in_executor(
+                            detect_dominant_language,
+                            whisper_model,
+                            audio_chunks,
+                            transcribe_params["vad_parameters"],
+                        )
+                        PipelineCacheService.save_cache(user_id, video_hash, MANIFEST_STAGE, {
+                            "base_key": base_key,
+                            "total_chunks": total_chunks,
+                            "language": locked,
+                        })
                     if locked:
                         transcribe_params["language"] = locked
                         print(f"[Worker] Locked language across all chunks: {locked}")
 
-                # Transcribe each audio chunk and combine results
-                all_segments = []
-                detected_language = None
-                chunk_duration_seconds = 300  # Must match segment_duration above
+                chunk_key = settings_key(
+                    base=base_key, language=transcribe_params.get("language")
+                )
+                transcription_checkpoint = BudgetedCheckpoint(
+                    PipelineCacheService, user_id, video_hash,
+                    stage_prefix(TRANSCRIPTION_PREFIX, chunk_key),
+                    budget=budget,
+                    initial_estimates={"chunk": INITIAL_TRANSCRIPTION_CHUNK_ESTIMATE},
+                    check_cancelled=lambda: _check_cancelled(job_id),
+                )
+                already_done = transcription_checkpoint.count("chunk")
+                if already_done:
+                    print(f"[Worker] Resuming transcription: {already_done}/{total_chunks} chunks already checkpointed")
 
-                total_chunks = len(audio_chunks)
+                # Transcribe the chunks that are not checkpointed yet, saving each as it finishes
+                chunk_results = {}
                 for i, chunk_path in enumerate(audio_chunks):
+                    cached_chunk = transcription_checkpoint.load("chunk", i)
+                    if cached_chunk is not None:
+                        chunk_results[i] = cached_chunk
+                        continue
+
+                    # Raises JobCancelled, or ContinuationRequested when this chunk would not fit.
+                    transcription_checkpoint.before_unit("chunk", i)
+
                     progress = 35 + int((i / total_chunks) * 15)  # 35-50% progress
                     JobQueueService.update_progress(
                         job_id, progress, "transcribing",
@@ -526,24 +611,20 @@ class BackgroundWorker:
 
                     print(f"[Worker] Transcribing chunk {i+1}/{total_chunks}: {chunk_path}")
 
-                    segments, info = await _run_in_executor(
-                        whisper_model.transcribe,
-                        chunk_path,
-                        **transcribe_params
+                    chunk_started = time.monotonic()
+                    chunk_segments, chunk_language = await _run_in_executor(
+                        _transcribe_chunk, whisper_model, chunk_path, transcribe_params
                     )
+                    chunk_results[i] = {"segments": chunk_segments, "language": chunk_language}
+                    transcription_checkpoint.save("chunk", i, chunk_results[i])
+                    transcription_checkpoint.after_unit("chunk", i, time.monotonic() - chunk_started)
 
-                    chunk_segments = list(segments)
-
-                    if detected_language is None:
-                        detected_language = info.language
-                        print(f"[Worker] Whisper detected language: {detected_language}")
-
-                    chunk_offset = i * chunk_duration_seconds
-                    for seg in chunk_segments:
-                        seg.start += chunk_offset
-                        seg.end += chunk_offset
-
-                    all_segments.extend(chunk_segments)
+                all_segments, detected_language = merge_chunks(
+                    chunk_results, total_chunks, TRANSCRIPTION_CHUNK_SECONDS
+                )
+                if detected_language is None:
+                    detected_language = transcribe_params.get("language") or "en"
+                print(f"[Worker] Whisper detected language: {detected_language}")
 
                 JobQueueService.update_progress(job_id, 50, "transcribing", "Processing transcription segments...")
 
@@ -562,11 +643,11 @@ class BackgroundWorker:
                 for seg in all_segments:
                     formatted_segments.append({
                         "id": str(uuid.uuid4()),
-                        "start": seg.start,
-                        "end": seg.end,
-                        "start_time": format_timestamp(seg.start),
-                        "end_time": format_timestamp(seg.end),
-                        "text": seg.text,
+                        "start": seg["start"],
+                        "end": seg["end"],
+                        "start_time": format_timestamp(seg["start"]),
+                        "end_time": format_timestamp(seg["end"]),
+                        "text": seg["text"],
                         "translation": None,
                     })
 
@@ -588,12 +669,13 @@ class BackgroundWorker:
                 }
                 normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
-                # Cache transcription results
-                PipelineCacheService.save_cache(user_id, video_hash, "transcription", {
+                # Cache the merged result; the per-chunk rows are only needed until it exists
+                if PipelineCacheService.save_cache(user_id, video_hash, "transcription", {
                     "formatted_segments": formatted_segments,
                     "detected_language": detected_language,
                     "normalized_lang": normalized_lang,
-                })
+                }):
+                    transcription_checkpoint.clear()
 
             # === MEMORY CLEANUP: Unload Whisper before diarization ===
             if not cached_transcription:
@@ -611,8 +693,9 @@ class BackgroundWorker:
             elif settings.ENABLE_SPEAKER_DIARIZATION:
                 _check_cancelled(job_id)
                 JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
+                diarization_checkpoint_to_clear = None
                 try:
-                    total_duration = len(audio_chunks) * 300
+                    total_duration = len(audio_chunks) * TRANSCRIPTION_CHUNK_SECONDS
 
                     if total_duration > settings.USE_CHUNKED_DIARIZATION_ABOVE:
                         print(f"[Worker] Using chunked diarization for {total_duration}s ({total_duration/60:.1f} min) video")
@@ -624,20 +707,41 @@ class BackgroundWorker:
                             use_auth_token=settings.HUGGINGFACE_TOKEN
                         )
 
-                        speaker_segments = await _run_in_executor(
-                            chunked_diarizer.diarize_chunked,
-                            audio_chunks=audio_chunks,
-                            chunk_duration=300,
-                            num_speakers=num_speakers,
-                            min_speakers=min_speakers,
-                            max_speakers=max_speakers
+                        diarization_key = settings_key(
+                            speakers=diarization_param_key,
+                            group_seconds=settings.DIARIZATION_CHUNK_DURATION,
+                            chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
+                            total_chunks=len(audio_chunks),
+                            pipeline="pyannote/speaker-diarization-3.1",
+                        )
+                        diarization_checkpoint = BudgetedCheckpoint(
+                            PipelineCacheService, user_id, video_hash,
+                            stage_prefix(DIARIZATION_PREFIX, diarization_key),
+                            budget=budget,
+                            initial_estimates={
+                                "segments": INITIAL_DIARIZATION_GROUP_ESTIMATE,
+                                "embeddings": INITIAL_EMBEDDING_GROUP_ESTIMATE,
+                            },
+                            check_cancelled=lambda: _check_cancelled(job_id),
                         )
 
-                        formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+                        try:
+                            speaker_segments = await _run_in_executor(
+                                chunked_diarizer.diarize_chunked,
+                                audio_chunks=audio_chunks,
+                                chunk_duration=TRANSCRIPTION_CHUNK_SECONDS,
+                                num_speakers=num_speakers,
+                                min_speakers=min_speakers,
+                                max_speakers=max_speakers,
+                                checkpoint=diarization_checkpoint,
+                            )
+                        finally:
+                            chunked_diarizer.unload_pipeline()
+                            del chunked_diarizer
+                            clear_gpu_memory("Worker:AfterChunkedDiarization")
 
-                        chunked_diarizer.unload_pipeline()
-                        del chunked_diarizer
-                        clear_gpu_memory("Worker:AfterChunkedDiarization")
+                        formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+                        diarization_checkpoint_to_clear = diarization_checkpoint
 
                     else:
                         print(f"[Worker] Using standard full-video diarization for {total_duration}s ({total_duration/60:.1f} min) video")
@@ -673,13 +777,18 @@ class BackgroundWorker:
 
                     # Cache diarization results
                     if speaker_segments is not None:
-                        PipelineCacheService.save_cache(user_id, video_hash, "diarization", {
+                        saved = PipelineCacheService.save_cache(user_id, video_hash, "diarization", {
                             "speaker_segments": speaker_segments,
                             "param_key": diarization_param_key,
                         })
+                        if saved and diarization_checkpoint_to_clear is not None:
+                            diarization_checkpoint_to_clear.clear()
 
                     JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
 
+                except (JobCancelled, ContinuationRequested):
+                    # Must not fall into the "label everything SPEAKER_00" fallback below.
+                    raise
                 except Exception as e:
                     print(f"[Worker] Speaker diarization failed: {e}")
                     traceback.print_exc()
@@ -691,6 +800,18 @@ class BackgroundWorker:
                 for seg in formatted_segments:
                     seg['speaker'] = "SPEAKER_00"
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
+
+            # The remaining stages are not checkpointed. If this execution already
+            # spent its time on transcription/diarization, hand over now so they
+            # start with a full budget instead of being cut off by the task timeout.
+            tail_estimate = max(
+                TAIL_MIN_SECONDS, (probed_duration_seconds or 0) * TAIL_SECONDS_PER_MEDIA_SECOND
+            )
+            if budget.units_done > 0 and budget.remaining() < tail_estimate:
+                raise ContinuationRequested(
+                    f"post-processing needs ~{tail_estimate:.0f}s but only "
+                    f"{budget.remaining():.0f}s of the time budget is left"
+                )
 
             # Step 4.25: Audio analysis (non-critical)
             _check_cancelled(job_id)
@@ -1050,7 +1171,10 @@ class BackgroundWorker:
                 except (ValueError, TypeError):
                     video_duration_seconds = None
 
-            gpu_seconds = round(time.monotonic() - gpu_start_ts, 2)
+            # Earlier executions of the same job reported their share when they handed over.
+            gpu_seconds = round(
+                time.monotonic() - gpu_start_ts + float(job.get("gpu_seconds_accumulated") or 0), 2
+            )
 
             if not JobQueueService.begin_finalization(
                 job_id=job_id,
@@ -1087,6 +1211,12 @@ class BackgroundWorker:
             # Don't overwrite with mark_failed; just log and exit cleanly.
             print(f"[Worker] {e}; aborting pipeline")
             return False
+
+        except ContinuationRequested as e:
+            print(f"[Worker] Job {job_id} is out of time budget ({e}); handing over to a new execution")
+            return self._hand_over_to_continuation(
+                job_id, round(time.monotonic() - gpu_start_ts, 2)
+            )
 
         except Exception as e:
             # Extract user-friendly error message
@@ -1140,6 +1270,30 @@ class BackgroundWorker:
                         print(f"[Worker] Cleaned up temp directory: {temp_dir}")
                 except Exception as e:
                     print(f"[Worker] Failed to cleanup temp directory {temp_dir}: {e}")
+
+    def _hand_over_to_continuation(self, job_id: str, gpu_seconds: float) -> bool:
+        """Requeue a checkpointed job and start its next execution. True means this execution ended cleanly."""
+        try:
+            outcome = JobQueueService.request_continuation(
+                job_id, gpu_seconds, settings.MAX_JOB_CONTINUATIONS
+            )
+        except Exception as error:
+            # Still 'processing'; the heartbeat stops now, so check-stale recovers it.
+            print(f"[Worker] Could not requeue job {job_id} for continuation: {error}")
+            return False
+
+        if outcome == "exhausted":
+            print(f"[Worker] Job {job_id} reached the continuation limit ({settings.MAX_JOB_CONTINUATIONS}); marked failed")
+            return False
+        if outcome != "continue":
+            return False
+
+        try:
+            JobQueueService.trigger_worker_job(job_id)
+        except Exception as error:
+            # The job is 'pending'; check-stale re-dispatches pending jobs nobody picked up.
+            print(f"[Worker] Continuation dispatch failed for {job_id}, leaving it to check-stale: {error}")
+        return True
 
     async def _resume_finalization(self, job: Dict, media_storage) -> bool:
         """Resume the copy-and-settle tail without rerunning transcription."""

@@ -558,6 +558,24 @@ class JobQueueService:
             return False
 
     @staticmethod
+    def request_continuation(job_id: str, gpu_seconds: float, max_continuations: int) -> str:
+        """
+        Hand a checkpointed job back to the queue for the next worker execution.
+
+        Returns 'continue' (job is pending again, dispatch it), 'exhausted' (the
+        continuation cap was hit and the job is now failed), or 'not_processing'
+        (the job was cancelled or finished elsewhere; nothing to do).
+        """
+        response = supabase().rpc("requeue_job_for_continuation", {
+            "p_job_id": job_id,
+            "p_max_continuations": max_continuations,
+            "p_gpu_seconds": gpu_seconds,
+        }).execute()
+        outcome = response.data if isinstance(response.data, str) else "not_processing"
+        print(f"[JobQueue] Continuation request for job {job_id}: {outcome}")
+        return outcome
+
+    @staticmethod
     def cancel_job(job_id: str, user_id: Optional[str] = None) -> bool:
         """
         Cancel a pending or processing job.
