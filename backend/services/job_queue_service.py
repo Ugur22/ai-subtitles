@@ -158,8 +158,11 @@ class JobQueueService:
         for row in rows:
             error = None
             try:
-                deleted = storage.delete_file(row["media_key"])
-                if deleted is not True:
+                if row["media_key"].endswith("/"):
+                    error = JobQueueService._delete_screenshot_folder(
+                        client, storage, row["media_key"]
+                    )
+                elif storage.delete_file(row["media_key"]) is not True:
                     error = "delete_file returned False"
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
@@ -175,6 +178,29 @@ class JobQueueService:
                 print(f"[JobQueue] Media cleanup remains pending for {row['id']}: {error}")
 
         return {"claimed": len(rows), "completed": completed, "pending": pending}
+
+    @staticmethod
+    def _delete_screenshot_folder(client, storage, media_key: str) -> Optional[str]:
+        """Delete screenshots/{user_id}/{video_hash}/; return an error message or None."""
+        parts = media_key.rstrip("/").split("/")
+        if len(parts) != 3 or parts[0] != "screenshots":
+            return f"not a screenshot folder: {media_key}"
+        _, user_id, video_hash = parts
+        # The user may have uploaded the same file again after the delete was
+        # queued; that job now owns this folder.
+        live = client.table("jobs").select("id").eq("user_id", user_id).eq(
+            "video_hash", video_hash
+        ).limit(1).execute()
+        if live.data:
+            print(f"[JobQueue] Kept {media_key}: a newer job uses the same file")
+            return None
+        failed = [
+            key for key in storage.list_screenshot_keys(user_id, video_hash)
+            if storage.delete_file(key) is not True
+        ]
+        if failed:
+            return f"delete_file returned False for {len(failed)} screenshots"
+        return None
 
     @staticmethod
     def drain_media_deletions_best_effort(

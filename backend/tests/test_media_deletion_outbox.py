@@ -90,6 +90,155 @@ def test_storage_false_result_returns_claim_to_pending(monkeypatch):
     assert client.calls[-1][1]["p_error"] == "delete_file returned False"
 
 
+class JobsTable:
+    def __init__(self, rows):
+        self.rows = rows
+        self.filters = {}
+
+    def select(self, _columns):
+        return self
+
+    def eq(self, column, value):
+        self.filters[column] = value
+        return self
+
+    def limit(self, _count):
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=[
+            row for row in self.rows
+            if all(row.get(column) == value for column, value in self.filters.items())
+        ])
+
+
+class ClientWithJobs(Client):
+    def __init__(self, responses, jobs=()):
+        super().__init__(responses)
+        self.jobs = list(jobs)
+
+    def table(self, name):
+        assert name == "jobs"
+        return JobsTable(self.jobs)
+
+
+class ScreenshotStorage(Storage):
+    def __init__(self, keys, result=True):
+        super().__init__(result=result)
+        self.keys = keys
+        self.listed = []
+
+    def list_screenshot_keys(self, user_id, video_hash, allow_legacy=False):
+        self.listed.append((user_id, video_hash, allow_legacy))
+        return list(self.keys)
+
+
+SCREENSHOT_FOLDER = "screenshots/user-a/hash-a/"
+SCREENSHOT_KEYS = ["screenshots/user-a/hash-a/1.00.jpg", "screenshots/user-a/hash-a/2.00.jpg"]
+
+
+def _screenshot_claim(jobs=()):
+    return ClientWithJobs({
+        "claim_media_deletes": [{"id": "outbox-s", "media_key": SCREENSHOT_FOLDER}],
+        "finish_media_delete": True,
+    }, jobs)
+
+
+def test_screenshot_folder_row_deletes_every_owned_screenshot(monkeypatch):
+    client = _screenshot_claim(jobs=[{"user_id": "user-b", "video_hash": "hash-a"}])
+    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
+
+    result = JobQueueService.process_media_delete_outbox(storage=storage)
+
+    assert result == {"claimed": 1, "completed": 1, "pending": 0}
+    assert storage.listed == [("user-a", "hash-a", False)]
+    assert storage.deleted == SCREENSHOT_KEYS
+
+
+def test_screenshot_folder_is_kept_when_the_file_was_uploaded_again(monkeypatch):
+    client = _screenshot_claim(jobs=[{"user_id": "user-a", "video_hash": "hash-a"}])
+    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
+
+    result = JobQueueService.process_media_delete_outbox(storage=storage)
+
+    assert result == {"claimed": 1, "completed": 1, "pending": 0}
+    assert storage.deleted == []
+
+
+def test_screenshot_folder_stays_pending_when_a_delete_fails(monkeypatch):
+    client = _screenshot_claim()
+    storage = ScreenshotStorage(SCREENSHOT_KEYS, result=False)
+    monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
+
+    result = JobQueueService.process_media_delete_outbox(storage=storage)
+
+    assert result == {"claimed": 1, "completed": 0, "pending": 1}
+    assert "2 screenshots" in client.calls[-1][1]["p_error"]
+
+
+def test_malformed_folder_row_is_never_deleted(monkeypatch):
+    client = ClientWithJobs({
+        "claim_media_deletes": [{"id": "outbox-s", "media_key": "screenshots/user-a/"}],
+        "finish_media_delete": True,
+    })
+    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
+
+    result = JobQueueService.process_media_delete_outbox(storage=storage)
+
+    assert result["pending"] == 1
+    assert storage.listed == [] and storage.deleted == []
+
+
+def test_local_screenshot_folder_delete_leaves_other_videos(monkeypatch, tmp_path):
+    from services.local_storage_service import LocalStorageService
+
+    storage = LocalStorageService(str(tmp_path / "media"))
+    for video_hash in ("hash-a", "hash-b"):
+        with storage.atomic_writer(storage.screenshot_key("user-a", video_hash, 1.0)) as handle:
+            handle.write(b"jpg")
+    client = _screenshot_claim()
+    monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
+
+    result = JobQueueService.process_media_delete_outbox(storage=storage)
+
+    assert result["completed"] == 1
+    assert storage.list_screenshot_keys("user-a", "hash-a") == []
+    assert storage.list_screenshot_keys("user-a", "hash-b") == ["screenshots/user-a/hash-b/1.00.jpg"]
+
+
+def test_permanent_delete_drains_video_and_screenshots(monkeypatch):
+    from routers import jobs
+
+    request = SimpleNamespace(state=SimpleNamespace(user={"id": "user-a"}))
+    drained = []
+    monkeypatch.setattr(
+        jobs, "require_job_owner", lambda _job_id, _user_id: {"id": "job-a", "status": "completed"}
+    )
+    monkeypatch.setattr(
+        JobQueueService,
+        "claim_permanent_deletion",
+        staticmethod(lambda *_args: {
+            "deleted": True, "outbox_id": "outbox-v", "screenshots_outbox_id": "outbox-s",
+        }),
+    )
+    monkeypatch.setattr(
+        JobQueueService,
+        "drain_media_deletions_best_effort",
+        staticmethod(lambda **kwargs: drained.append(kwargs["outbox_id"]) or {
+            "claimed": 1, "completed": 1, "pending": 0,
+        }),
+    )
+
+    result = asyncio.run(jobs.delete_job_permanent.__wrapped__(request, "job-a", None))
+
+    assert drained == ["outbox-v", "outbox-s"]
+    assert result["deleted_resources"] == {"video": True, "screenshots": True, "database": True}
+    assert result["cleanup_pending"] is False
+
+
 def test_database_claim_failure_never_touches_storage(monkeypatch):
     client = Client({"claim_media_deletes": RuntimeError("database unavailable")})
     storage = Storage()
