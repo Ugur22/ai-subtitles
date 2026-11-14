@@ -46,3 +46,50 @@ def test_rollbacks_remove_everything_the_migrations_add():
 
     assert _created_functions(rollback_018) == {"claim_job", "retry_job_secure"}
     assert _created_functions(rollback_019) == set()
+
+
+DERIVED_TABLES = (
+    "pipeline_cache", "transcript_embeddings", "transcript_embeddings_v2",
+    "audio_event_embeddings", "audio_event_embeddings_v2", "image_embeddings", "face_tags",
+)
+
+
+def _delete_function(sql: str) -> str:
+    start = sql.index("CREATE FUNCTION delete_job_permanent_secure(")
+    return sql[start:sql.index("$$;\n", start) + 4]
+
+
+def test_020_rollback_restores_the_live_delete_function():
+    rollback = _delete_function(_read("020_delete_job_derived_data_rollback.sql"))
+    # Live differs from 006 only in naming the unique constraint.
+    live = _function(_read("006_media_deletion_outbox.sql"), "delete_job_permanent_secure").replace(
+        "CREATE OR REPLACE FUNCTION", "CREATE FUNCTION"
+    ).replace("ON CONFLICT (media_key)", "ON CONFLICT ON CONSTRAINT media_delete_outbox_media_key_key")
+
+    assert rollback == live
+    assert "screenshots_outbox_id" not in rollback
+
+
+def test_020_deletes_derived_data_only_for_the_owner_and_only_for_the_last_job():
+    sql = _read("020_delete_job_derived_data.sql")
+    function = _delete_function(sql)
+
+    for table in DERIVED_TABLES:
+        assert (
+            f"DELETE FROM {table}\n      WHERE user_id = p_user_id AND video_hash = v_job.video_hash;"
+            in function
+        )
+    guard = function.index("AND id <> p_job_id")
+    assert all(function.index(f"DELETE FROM {table}\n") > guard for table in DERIVED_TABLES)
+    assert "'screenshots/' || p_user_id::text || '/' || v_job.video_hash || '/'" in function
+    assert "WHERE media_delete_outbox.status = 'completed'" in function
+    assert "REVOKE ALL ON FUNCTION delete_job_permanent_secure(UUID, UUID) FROM PUBLIC, anon, authenticated;" in sql
+    assert "GRANT EXECUTE ON FUNCTION delete_job_permanent_secure(UUID, UUID) TO service_role;" in sql
+    assert sql.count("BEGIN;") == 1 and sql.rstrip().endswith("COMMIT;")
+
+
+def test_orphan_cleanup_covers_the_same_tables_as_020():
+    cleanup = (MIGRATIONS.parent / "cleanup" / "2026-11_orphaned_derived_data.sql").read_text(encoding="utf-8")
+    deleted = set(re.findall(r"DELETE FROM (\w+) d WHERE NOT EXISTS", cleanup))
+
+    assert deleted == set(DERIVED_TABLES)
