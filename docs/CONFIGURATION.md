@@ -92,6 +92,16 @@ GCS_AUDIO_PREFIX=audio/
 GCS_URL_EXPIRY=3600
 ```
 
+### Long Jobs (GPU worker)
+
+```bash
+WORKER_TIME_BUDGET_SECONDS=0     # 0 = CLOUD_RUN_TASK_TIMEOUT - 600, or 3000 when that is unset
+MAX_JOB_CONTINUATIONS=12         # Executions a job may be handed over to before it fails
+PROCESSING_REALTIME_FACTOR=0.35  # Only used for log warnings about very long files
+```
+
+A worker execution transcribes in 5-minute chunks and checkpoints each one. When its time budget is used it hands the job to a new execution. `CLOUD_RUN_TASK_TIMEOUT` is set by `backend/deploy.sh` and should not be set by hand.
+
 ### Supabase (Job Queue)
 
 ```bash
