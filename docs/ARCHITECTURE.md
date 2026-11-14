@@ -91,9 +91,17 @@ sequenceDiagram
 
     FE->>SB: Subscribe to job updates (Realtime)
 
-    W->>SB: Mark processing, send heartbeats
+    W->>SB: claim_job (pending → processing), heartbeat every 30s
     W->>GCS: Read media
-    W->>W: Transcribe, diarize, screenshots,<br/>embeddings, translation, audio analysis
+    loop each 5-minute audio chunk
+        W->>W: Transcribe chunk
+        W->>SB: Save chunk checkpoint (pipeline_cache)
+    end
+    opt time budget used up (long file)
+        W->>SB: requeue_job_for_continuation (processing → pending)
+        W->>W: run_job again, same job_id, resumes from checkpoints
+    end
+    W->>W: Diarize, screenshots, embeddings,<br/>translation, audio analysis
     W->>GCS: Write screenshots
     W->>SB: Write results + embeddings, mark completed
     SB-->>FE: Realtime: completed
@@ -104,7 +112,67 @@ sequenceDiagram
 
 The worker exits with a `gpu_unavailable` failure if CUDA is missing, instead of silently falling back to CPU.
 
-**Stale-job recovery.** Cloud Scheduler calls `POST /api/jobs/check-stale` every 5 minutes. Jobs in `processing` with no heartbeat for 90s, or `pending` for over 600s, are recovered through the same dispatch path as a manual retry.
+### Job lifecycle
+
+There is no queue service. The `jobs` table in Postgres is the queue, and every transition is an SQL function that takes a per-user advisory lock, so state changes, concurrency limits and quota bookkeeping happen in one transaction.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: create_job_secure
+    pending --> processing: claim_job
+    processing --> pending: requeue_job_for_continuation (time budget used)
+    processing --> finalizing: begin_job_finalization
+    finalizing --> completed: settle_finalizing_job
+    processing --> failed: fail_job_secure / timeout_job_secure
+    pending --> failed: dispatch or startup failure
+    failed --> pending: retry_job_secure (manual) or auto_retry_timed_out_job (once)
+    pending --> cancelled: cancel_job_secure
+    processing --> cancelled: cancel_job_secure
+    completed --> [*]
+```
+
+- **One execution per job.** `services/job_dispatcher.py` calls `run_job` on the `ai-subs-worker` Cloud Run Job with the job ID as an argument. The execution claims the row with `claim_job`, which also enforces the global limit of 3 concurrent `processing` jobs.
+- **Heartbeats.** A thread in the worker updates `jobs.last_seen` every 30 seconds, independent of the event loop, so a busy GPU stage does not look dead.
+- **Limits and quota.** Per-user concurrency counts the owner's `pending` and `processing` jobs. Monthly minutes are reserved at submission, corrected against the probed duration in the worker, and settled once at finalization.
+
+### Long files: per-chunk checkpoints and continuations
+
+Cloud Run caps a GPU task at one hour, while the Pro and Studio plans allow 3h and 6h files. A long job therefore runs as a chain of executions that share one `jobs` row.
+
+- Audio is cut into fixed 5-minute chunks, so chunk `i` always covers the same span. Each transcribed chunk is saved to `pipeline_cache` under a stage name that includes a hash of the model, language, chunk length and decoding settings. Changing any of them changes the key, so stale chunks are never reused.
+- On start, the worker loads the cached chunks, transcribes only the missing ones, and merges with fixed per-chunk offsets. The merged result is stored as the `transcription` stage, as before.
+- Chunked diarization checkpoints each group's segments and speaker embeddings the same way. Matching speakers across groups always runs over all groups, cached or not.
+- The worker tracks a time budget (about 50 minutes: `CLOUD_RUN_TASK_TIMEOUT` minus 10, or `WORKER_TIME_BUDGET_SECONDS`). When the next chunk would not fit, it stops after the current one, calls `requeue_job_for_continuation`, and dispatches a new execution for the same job through the normal dispatcher.
+- A continuation is the same job. It goes back to `pending` (stage `continuing`), keeps its quota reservation, and does not count as a new job against concurrency or monthly minutes. `jobs.continuation_count` is capped by `MAX_JOB_CONTINUATIONS` (12); past that the job fails with `max_continuations_reached`.
+- Audio analysis, screenshots, indexing, captioning and translation are not checkpointed. The worker hands over before them if it has little budget left, so they start with a full hour.
+
+Code: `services/transcription_checkpoint.py`, `services/background_worker.py`, `speaker_diarization.py`, migration `018`.
+
+### Failure and recovery
+
+Cloud Scheduler calls `POST /api/jobs/check-stale` every 5 minutes. Each call handles at most one job, in this order:
+
+| Condition | Action |
+|-----------|--------|
+| `finalizing`, no heartbeat for 90s | Re-dispatch to finish the media copy (`claim_stale_finalizing_job`) |
+| `failed` with `worker_timeout`, not yet auto-retried | One automatic retry (`auto_retry_timed_out_job`), resuming from checkpoints |
+| `processing`, no heartbeat for 90s | Worker died without a signal: back to `pending`, re-dispatch |
+| `pending` for over 600s | Execution never started: re-dispatch |
+
+Recovery increments `retry_count`; after `MAX_RETRIES` (3) the job is failed and left for a manual retry. Claims are compare-and-set, so overlapping scheduler runs cannot dispatch a job twice.
+
+A task that reaches the timeout receives SIGTERM. The worker marks the job `failed` with `error_code = worker_timeout`, unless the user already cancelled it or it was already handed over to a continuation. User cancellations stay `cancelled` and are never retried.
+
+## Why not Kubernetes
+
+The workload is a handful of GPU jobs per day with long idle gaps, run by one person.
+
+- **Cost follows usage.** A Cloud Run Job bills the L4 only while an execution runs and the API service scales to zero. A GKE cluster needs a control plane and at least one node around the clock, or node-pool autoscaling from zero with multi-minute GPU node start-up.
+- **The scheduling problem is small.** One execution per job, at most three at a time. `run_job` plus a Postgres table covers it; a Kubernetes Job controller, queue and autoscaler would be more moving parts for the same result.
+- **Nothing to operate.** No node images, GPU driver DaemonSets, upgrades or cluster RBAC.
+- **The one real limit has a workaround.** The 1-hour GPU task cap is what Kubernetes would remove, and per-chunk checkpoints with continuations handle it while also making crashes cheap to recover from.
+
+Kubernetes becomes worth it with sustained GPU load (a warm node pool is cheaper than per-second billing at high utilization), many concurrent jobs needing bin-packing or priorities, or stages that cannot be checkpointed inside an hour.
 
 ## Multi-Modal RAG Chat
 
@@ -197,16 +265,19 @@ Schemas are in `backend/sql/` and `backend/sql/migrations/`.
 | Storage | Google Cloud Storage | Videos and screenshots |
 | Scheduling | Cloud Scheduler | `check-stale` (5 min), screenshot URL refresh (daily) |
 
+Deployment is defined only in `backend/deploy.sh`; there is no Cloud Run YAML. See [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md).
+
 ## Data Flow
 
 ### Transcription Flow
 
 1. **Upload**: File uploaded directly to GCS via signed URL
 2. **Job Creation**: Supabase record created with `pending` status, worker job dispatched
-3. **Processing**: The GPU worker reads the media from GCS and runs faster-whisper
-4. **Diarization**: Chunked pyannote identifies speakers
-5. **Storage**: Results and job status saved to Supabase
-6. **Notification**: Realtime update sent to the frontend via Supabase
+3. **Processing**: The GPU worker reads the media from GCS and runs faster-whisper chunk by chunk, checkpointing each chunk
+4. **Continuation**: If the time budget runs out, the job is requeued and a new execution resumes from the checkpoints
+5. **Diarization**: Chunked pyannote identifies speakers
+6. **Storage**: Results and job status saved to Supabase
+7. **Notification**: Realtime update sent to the frontend via Supabase
 
 ### Search Indexing Flow
 

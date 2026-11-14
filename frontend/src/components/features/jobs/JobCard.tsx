@@ -27,6 +27,14 @@ const statusConfig: Record<JobStatus, { label: string; color: string; bg: string
   cancelled:  { label: 'Cancelled',  color: 'var(--text-tertiary)',  bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
 };
 
+// Failures the user can act on get a fixed explanation instead of the raw backend message.
+const FAILURE_MESSAGES: Record<string, string> = {
+  worker_timeout:
+    "Processing ran out of time before this file was finished. Your progress is saved. We retry once automatically; if this still shows as failed, press Retry to continue from where it stopped.",
+  max_continuations_reached:
+    "This file needed more processing runs than allowed. Your progress is saved; press Retry to continue from where it stopped.",
+};
+
 export const JobCard: React.FC<JobCardProps> = ({
   job,
   onViewTranscript,
@@ -139,7 +147,9 @@ export const JobCard: React.FC<JobCardProps> = ({
               <svg style={{ width: '13px', height: '13px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Waiting to start…
+              {job.progress_stage === "continuing"
+                ? job.progress_message || "Continuing in a new worker…"
+                : "Waiting to start…"}
             </span>
             <button
               onClick={handleCancel}
@@ -261,7 +271,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                {job.error_message || "An error occurred during processing"}
+                {(job.error_code && FAILURE_MESSAGES[job.error_code]) || job.error_message || "An error occurred during processing"}
               </p>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

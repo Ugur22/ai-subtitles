@@ -6,6 +6,7 @@ different speakers in audio/video files.
 """
 
 import os
+import time
 import torch
 
 # Fix for PyTorch 2.6+ which changed weights_only default to True
@@ -336,10 +337,16 @@ class ChunkedSpeakerDiarizer:
         chunk_duration: int = 300,
         num_speakers: int = None,
         min_speakers: int = None,
-        max_speakers: int = None
+        max_speakers: int = None,
+        checkpoint=None
     ) -> List[Dict]:
         """
         Diarize audio in chunks and unify speaker labels across chunks.
+
+        With a checkpoint (see services.transcription_checkpoint.StageCheckpoint),
+        each group's segments and speaker embeddings are saved as they finish and
+        reused on the next run. checkpoint.before_unit may raise to stop early;
+        speaker matching always runs over every group, cached or not.
 
         Uses phased memory management:
         1. Phase 1: Diarize all chunks (pipeline only)
@@ -362,10 +369,6 @@ class ChunkedSpeakerDiarizer:
         """
         from utils.memory_utils import clear_gpu_memory
 
-        # Ensure pipeline is loaded
-        if self.pipeline is None:
-            self.load_pipeline()
-
         print(f"[ChunkedDiarizer] Starting chunked diarization for {len(audio_chunks)} audio chunks")
         print(f"[ChunkedDiarizer] Target diarization chunk duration: {self.chunk_duration}s, input chunk duration: {chunk_duration}s")
 
@@ -373,97 +376,125 @@ class ChunkedSpeakerDiarizer:
         diarization_groups = self._group_chunks(audio_chunks, chunk_duration)
         print(f"[ChunkedDiarizer] Created {len(diarization_groups)} diarization groups")
 
-        # PHASE 0: Pre-concatenate all group audio files in parallel (CPU-only)
-        # This overlaps FFmpeg concat work across groups instead of doing it sequentially
-        groups_needing_concat = [g for g in diarization_groups if len(g['chunks']) > 1]
-        if groups_needing_concat:
-            print(f"\n=== PHASE 0: Pre-concatenating {len(groups_needing_concat)} groups in parallel ===")
-            from concurrent.futures import ThreadPoolExecutor as ConcatExecutor
-            concat_workers = min(len(groups_needing_concat), 4)
-            with ConcatExecutor(max_workers=concat_workers, thread_name_prefix="concat") as concat_pool:
+        for index, group in enumerate(diarization_groups):
+            group['_segments'] = self._load_checkpoint(checkpoint, "segments", index, "segments")
+            group['_embeddings'] = self._load_checkpoint(checkpoint, "embeddings", index, "embeddings")
+            # Audio is only needed for whatever this group still has to compute.
+            group['_needs_audio'] = group['_segments'] is None or group['_embeddings'] is None
+            group['_concat_path'] = None
+            group['_is_temp'] = False
+
+        resumed = sum(1 for g in diarization_groups if not g['_needs_audio'])
+        if resumed:
+            print(f"[ChunkedDiarizer] {resumed}/{len(diarization_groups)} groups restored from checkpoint")
+
+        try:
+            # PHASE 0: Pre-concatenate group audio files in parallel (CPU-only)
+            # This overlaps FFmpeg concat work across groups instead of doing it sequentially
+            groups_needing_concat = [
+                g for g in diarization_groups if g['_needs_audio'] and len(g['chunks']) > 1
+            ]
+            if groups_needing_concat:
+                print(f"\n=== PHASE 0: Pre-concatenating {len(groups_needing_concat)} groups in parallel ===")
+                from concurrent.futures import ThreadPoolExecutor as ConcatExecutor
+                concat_workers = min(len(groups_needing_concat), 4)
+
                 def _prepare_group(group):
                     temp_f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                    output_path = temp_f.name
-                    temp_f.close()
-                    self._concatenate_audio_files(group['chunks'], output_path)
-                    return output_path
-
-                concat_results = list(concat_pool.map(_prepare_group, groups_needing_concat))
-
-            # Assign pre-concatenated paths back to groups
-            concat_idx = 0
-            for group in diarization_groups:
-                if len(group['chunks']) > 1:
-                    group['_concat_path'] = concat_results[concat_idx]
+                    group['_concat_path'] = temp_f.name
                     group['_is_temp'] = True
-                    concat_idx += 1
-                else:
-                    group['_concat_path'] = group['chunks'][0]
-                    group['_is_temp'] = False
-            print(f"[ChunkedDiarizer] Pre-concatenation complete for {len(groups_needing_concat)} groups")
-        else:
+                    temp_f.close()
+                    self._concatenate_audio_files(group['chunks'], group['_concat_path'])
+
+                with ConcatExecutor(max_workers=concat_workers, thread_name_prefix="concat") as concat_pool:
+                    list(concat_pool.map(_prepare_group, groups_needing_concat))
+                print(f"[ChunkedDiarizer] Pre-concatenation complete for {len(groups_needing_concat)} groups")
             for group in diarization_groups:
-                group['_concat_path'] = group['chunks'][0]
-                group['_is_temp'] = False
+                if group['_needs_audio'] and group['_concat_path'] is None:
+                    group['_concat_path'] = group['chunks'][0]
 
-        # PHASE 1: Diarize all groups (pipeline only, no embeddings)
-        print("\n=== PHASE 1: Diarizing all chunks ===")
-        chunk_results = []
-        for i, group in enumerate(diarization_groups):
-            print(f"\n[Chunk {i+1}/{len(diarization_groups)}] Diarizing group with {len(group['chunks'])} audio files...")
-            result = self._diarize_group_with_preconcat(
-                concat_audio_path=group['_concat_path'],
-                is_temp=group['_is_temp'],
-                time_offset=group['time_offset'],
-                num_speakers=num_speakers,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers
-            )
-            chunk_results.append(result)
+            # PHASE 1: Diarize all groups (pipeline only, no embeddings)
+            print("\n=== PHASE 1: Diarizing all chunks ===")
+            chunk_results = []
+            for i, group in enumerate(diarization_groups):
+                if group['_segments'] is not None:
+                    chunk_results.append({
+                        "time_offset": group['time_offset'],
+                        "segments": group['_segments'],
+                        "audio_path": group['_concat_path'],
+                        "is_temp": group['_is_temp'],
+                        "speaker_embeddings": {}
+                    })
+                    continue
 
-            # Clear GPU cache after each chunk to prevent fragmentation
-            clear_gpu_memory(f"Chunk{i+1}Complete")
+                if checkpoint is not None:
+                    checkpoint.before_unit("segments", i)
+                if self.pipeline is None:
+                    self.load_pipeline()
 
-        # PHASE 2: Unload pipeline to free GPU memory
-        print("\n=== PHASE 2: Unloading diarization pipeline ===")
-        if self.pipeline is not None:
-            del self.pipeline
-            self.pipeline = None
-            clear_gpu_memory("PipelineUnloaded")
+                print(f"\n[Chunk {i+1}/{len(diarization_groups)}] Diarizing group with {len(group['chunks'])} audio files...")
+                unit_started = time.monotonic()
+                result = self._diarize_group_with_preconcat(
+                    concat_audio_path=group['_concat_path'],
+                    is_temp=group['_is_temp'],
+                    time_offset=group['time_offset'],
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers
+                )
+                chunk_results.append(result)
+                if checkpoint is not None:
+                    checkpoint.save("segments", i, {"segments": result['segments']})
+                    checkpoint.after_unit("segments", i, time.monotonic() - unit_started)
 
-        # PHASE 3: Load embedding model
-        print("\n=== PHASE 3: Loading embedding model ===")
-        self.load_embedding_model()
+                # Clear GPU cache after each chunk to prevent fragmentation
+                clear_gpu_memory(f"Chunk{i+1}Complete")
 
-        # PHASE 4: Extract embeddings from all chunks
-        print("\n=== PHASE 4: Extracting embeddings from all chunks ===")
-        try:
+            # PHASE 2: Unload pipeline to free GPU memory
+            print("\n=== PHASE 2: Unloading diarization pipeline ===")
+            if self.pipeline is not None:
+                del self.pipeline
+                self.pipeline = None
+                clear_gpu_memory("PipelineUnloaded")
+
+            # PHASE 3 + 4: Extract embeddings for groups that do not have them yet
+            print("\n=== PHASE 3/4: Extracting embeddings ===")
             for i, result in enumerate(chunk_results):
+                cached_embeddings = diarization_groups[i]['_embeddings']
+                if cached_embeddings is not None:
+                    result['speaker_embeddings'] = {
+                        speaker: np.asarray(vector, dtype=np.float32)
+                        for speaker, vector in cached_embeddings.items()
+                    }
+                    continue
+
+                if checkpoint is not None:
+                    checkpoint.before_unit("embeddings", i)
+                self.load_embedding_model()
+
                 print(f"\n[Chunk {i+1}/{len(chunk_results)}] Extracting embeddings for {len(set(s['speaker'] for s in result['segments']))} speakers...")
-                speaker_embeddings = self._extract_speaker_embeddings(result['audio_path'], result['segments'])
-                result['speaker_embeddings'] = speaker_embeddings
+                unit_started = time.monotonic()
+                result['speaker_embeddings'] = self._extract_speaker_embeddings(
+                    result['audio_path'], result['segments']
+                )
+                if checkpoint is not None:
+                    checkpoint.save("embeddings", i, {"embeddings": {
+                        speaker: np.asarray(vector).tolist()
+                        for speaker, vector in result['speaker_embeddings'].items()
+                    }})
+                    checkpoint.after_unit("embeddings", i, time.monotonic() - unit_started)
 
                 # Clear GPU cache after each chunk
                 clear_gpu_memory(f"EmbeddingChunk{i+1}Complete")
-
-                # Clean up temporary audio file immediately after embedding extraction
-                if result.get('is_temp', False):
-                    try:
-                        import os
-                        os.unlink(result['audio_path'])
-                        print(f"  Cleaned up temp file: {result['audio_path']}")
-                    except Exception as e:
-                        print(f"  Warning: Could not delete temp file {result['audio_path']}: {e}")
         finally:
-            # Ensure we clean up any remaining temp files even if extraction fails
-            for result in chunk_results:
-                if result.get('is_temp', False):
+            # Runs on success, failure and an early stop for the time budget.
+            for group in diarization_groups:
+                if group['_is_temp'] and group['_concat_path']:
                     try:
-                        import os
-                        if os.path.exists(result['audio_path']):
-                            os.unlink(result['audio_path'])
-                    except Exception:
-                        pass
+                        if os.path.exists(group['_concat_path']):
+                            os.unlink(group['_concat_path'])
+                    except Exception as e:
+                        print(f"  Warning: Could not delete temp file {group['_concat_path']}: {e}")
 
         # PHASE 5: Unload embedding model
         print("\n=== PHASE 5: Unloading embedding model ===")
@@ -479,6 +510,14 @@ class ChunkedSpeakerDiarizer:
 
         print(f"\n[ChunkedDiarizer] Chunked diarization complete. Total segments: {len(unified_segments)}, Unique speakers: {global_speaker_count}")
         return unified_segments
+
+    @staticmethod
+    def _load_checkpoint(checkpoint, kind: str, index: int, field: str):
+        """Return the cached field for a group, or None when it has to be computed."""
+        if checkpoint is None:
+            return None
+        cached = checkpoint.load(kind, index)
+        return cached.get(field) if cached else None
 
     def _group_chunks(self, audio_chunks: List[str], chunk_duration: int) -> List[Dict]:
         """

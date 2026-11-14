@@ -17,6 +17,14 @@ STALE_THRESHOLD_SECONDS = 90
 # comfortably above worker cold-start + provisioning (~2-3 min observed).
 PENDING_STALE_SECONDS = 600
 MAX_RETRIES = 3
+WORKER_TIMEOUT_ERROR_CODE = "worker_timeout"
+WORKER_TIMEOUT_MESSAGE = (
+    "Processing stopped because the worker ran out of time. "
+    "Progress was saved; retrying continues from where it stopped."
+)
+# How many failed-by-timeout jobs one check-stale run looks at. More than one
+# so a job deferred by its owner's concurrency limit does not block the rest.
+TIMEOUT_RETRY_CANDIDATES = 5
 
 
 class JobQueueError(Exception):
@@ -558,6 +566,102 @@ class JobQueueService:
             return False
 
     @staticmethod
+    def mark_worker_timeout(job_id: str) -> bool:
+        """
+        Fail a job that is still processing with error_code 'worker_timeout'.
+
+        Returns False (and changes nothing) when the job is no longer
+        'processing': cancelled by the user, already handed over to a
+        continuation, or finished.
+        """
+        try:
+            response = supabase().rpc("timeout_job_secure", {
+                "p_job_id": job_id,
+                "p_error_message": WORKER_TIMEOUT_MESSAGE,
+            }).execute()
+            marked = response.data is True
+            if marked:
+                print(f"[JobQueue] Marked job {job_id} as failed: worker_timeout")
+            return marked
+        except Exception as e:
+            print(f"[JobQueue] Failed to mark job {job_id} as timed out: {e}")
+            return False
+
+    @staticmethod
+    def auto_retry_worker_timeout() -> Optional[str]:
+        """
+        Give one job that failed with 'worker_timeout' its single automatic retry.
+
+        The claim is an atomic compare-and-set in auto_retry_timed_out_job, so
+        concurrent check-stale runs cannot both dispatch the same job. The
+        retried execution resumes from the per-chunk cache.
+
+        Returns the job ID that was re-dispatched, or None.
+        """
+        from middleware.quota import _get_plan_limits
+
+        client = supabase()
+        candidates = (
+            client.table("jobs")
+            .select("id,user_id")
+            .eq("status", "failed")
+            .eq("error_code", WORKER_TIMEOUT_ERROR_CODE)
+            .lt("timeout_auto_retries", 1)
+            .lt("retry_count", MAX_RETRIES)
+            .order("failed_at", desc=False)
+            .limit(TIMEOUT_RETRY_CANDIDATES)
+            .execute()
+        ).data or []
+
+        for candidate in candidates:
+            job_id, user_id = candidate["id"], candidate.get("user_id")
+            if not user_id:
+                continue
+            profile = (
+                client.table("user_profiles")
+                .select("id,is_admin,subscription_plan")
+                .eq("id", user_id).limit(1).execute()
+            ).data
+            if not profile:
+                continue
+            claimed = client.rpc("auto_retry_timed_out_job", {
+                "p_job_id": job_id,
+                "p_user_id": user_id,
+                "p_max_retries": MAX_RETRIES,
+                "p_user_concurrent_limit": _get_plan_limits(profile[0])["max_concurrent_jobs"],
+            }).execute().data is True
+            if not claimed:
+                continue
+
+            try:
+                JobQueueService.trigger_worker_job(job_id)
+            except Exception as dispatch_error:
+                JobQueueService.mark_failed(job_id, "Failed to dispatch worker job", "dispatch_error")
+                print(f"[JobQueue] Timeout retry dispatch failed for {job_id}: {dispatch_error}")
+            else:
+                print(f"[JobQueue] Auto-retried timed-out job {job_id} (resumes from checkpoints)")
+            return job_id
+        return None
+
+    @staticmethod
+    def request_continuation(job_id: str, gpu_seconds: float, max_continuations: int) -> str:
+        """
+        Hand a checkpointed job back to the queue for the next worker execution.
+
+        Returns 'continue' (job is pending again, dispatch it), 'exhausted' (the
+        continuation cap was hit and the job is now failed), or 'not_processing'
+        (the job was cancelled or finished elsewhere; nothing to do).
+        """
+        response = supabase().rpc("requeue_job_for_continuation", {
+            "p_job_id": job_id,
+            "p_max_continuations": max_continuations,
+            "p_gpu_seconds": gpu_seconds,
+        }).execute()
+        outcome = response.data if isinstance(response.data, str) else "not_processing"
+        print(f"[JobQueue] Continuation request for job {job_id}: {outcome}")
+        return outcome
+
+    @staticmethod
     def cancel_job(job_id: str, user_id: Optional[str] = None) -> bool:
         """
         Cancel a pending or processing job.
@@ -650,6 +754,8 @@ class JobQueueService:
         Two stuck conditions are handled, processing first:
           1. status='processing' with no heartbeat for STALE_THRESHOLD_SECONDS —
              the worker crashed mid-job.
+          0. status='failed' with error_code 'worker_timeout' that has not had
+             its one automatic retry yet (the worker hit the task timeout).
           2. status='pending' older than PENDING_STALE_SECONDS — the worker never
              started (dispatch failed, or the container crashed before
              mark_processing). There is no other poller for pending jobs, so
@@ -693,6 +799,11 @@ class JobQueueService:
                     "job is available for manual retry"
                 )
             return job_id
+
+        # A worker that hit the task timeout marked its job failed/worker_timeout.
+        timed_out_job_id = JobQueueService.auto_retry_worker_timeout()
+        if timed_out_job_id:
+            return timed_out_job_id
 
         # 1. Stale processing jobs (crashed mid-job)
         proc_threshold = now - timedelta(seconds=STALE_THRESHOLD_SECONDS)
@@ -741,14 +852,24 @@ class JobQueueService:
 
         # Reset to pending, bump the retry counter, refresh the heartbeat so we
         # don't re-trigger before the worker has a chance to boot, then re-dispatch.
-        client.table("jobs").update({
+        # Conditional on the state that was read, so a concurrent check-stale run
+        # (or a job that finished meanwhile) cannot lead to a second dispatch.
+        recovery = client.table("jobs").update({
             "status": "pending",
             "stage": "queued",
             "message": f"Recovered ({reason}) - retrying (attempt {retry_count + 1}/{MAX_RETRIES})",
             "retry_count": retry_count + 1,
             "updated_at": now.isoformat(),
             "last_seen": now.isoformat(),
-        }).eq("id", job_id).execute()
+        }).eq("id", job_id).eq("status", stuck_job["status"])
+        raw_retry_count = stuck_job.get("retry_count")
+        recovery = (
+            recovery.is_("retry_count", "null") if raw_retry_count is None
+            else recovery.eq("retry_count", raw_retry_count)
+        )
+        if not recovery.execute().data:
+            print(f"[JobQueue] {reason} job {job_id} changed before recovery; skipping dispatch")
+            return None
 
         try:
             JobQueueService.trigger_worker_job(job_id)
