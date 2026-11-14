@@ -59,3 +59,65 @@ To update env vars (no rebuild needed):
 ```bash
 gcloud run services update ai-subs-backend --platform=managed --region=us-central1 --project=ai-subs-poc --update-env-vars="VAR=value"
 ```
+
+### Encryption key rotation
+
+Users' saved LLM API keys (`user_api_keys.encrypted_key`) are encrypted with AES-256-GCM. The key is a 32-byte value stored as 64 hex characters in the Supabase Vault secret `api_key_encryption`, read through the `get_vault_secret` RPC and cached in memory per process (`backend/services/encryption.py`). It is not in Secret Manager, on disk, or in any env var.
+
+Rotate it whenever the key may have been exposed. Run everything from your own terminal; steps 2 and 4 run in the Supabase SQL editor.
+
+1. Generate the new key and keep it in your shell only:
+   ```bash
+   export NEW_ENCRYPTION_KEY_HEX="$(openssl rand -hex 32)"
+   ```
+2. Read the current key from Vault and export it as `OLD_ENCRYPTION_KEY_HEX`:
+   ```sql
+   SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'api_key_encryption';
+   ```
+3. Dry run. It writes nothing and must report `undecryptable 0`:
+   ```bash
+   cd backend && source venv/bin/activate
+   python scripts/rotate_encryption_key.py
+   ```
+   A row that decrypts with neither key was encrypted with some third key. Find out why before continuing; the script will not touch it.
+4. Store the new key in Vault:
+   ```sql
+   SELECT vault.update_secret(
+     (SELECT id FROM vault.secrets WHERE name = 'api_key_encryption'),
+     '<value of NEW_ENCRYPTION_KEY_HEX>'
+   );
+   ```
+5. Re-encrypt the stored keys:
+   ```bash
+   python scripts/rotate_encryption_key.py --apply
+   ```
+6. Roll the API service so no instance keeps the old key cached (worker executions are short-lived and pick up the new key on their next start):
+   ```bash
+   gcloud run services update ai-subs-backend --region=us-central1 --project=ai-subs-poc \
+     --update-env-vars="ENCRYPTION_KEY_ROTATED_AT=$(date -u +%Y%m%dT%H%M%SZ)"
+   ```
+7. Run the script again with `--apply`. An instance that still had the old key cached may have saved a key between steps 4 and 6; this catches it. Then run once more without `--apply` and confirm it reports `would rotate 0` and `undecryptable 0`.
+8. `unset OLD_ENCRYPTION_KEY_HEX NEW_ENCRYPTION_KEY_HEX` and clear the SQL editor history that shows the old key.
+
+Between steps 4 and 6, chat with a user's own key can fail for instances holding the other key. The window is as long as steps 5 and 6 take. The script is idempotent: a successful AES-GCM decrypt identifies which key a row is under, rows already on the new key are skipped, and each update is conditional on the ciphertext it read.
+
+### Removing a leaked file from git history
+
+`backend/local_data/encryption.key` was committed in `f789445` and removed from the tree later, but it stays readable in history until the history is rewritten. Rotate the key first (above); the rewrite only stops future readers.
+
+```bash
+brew install git-filter-repo
+git clone --mirror git@github.com:Ugur22/ai-subtitles.git ai-subtitles-rewrite.git
+cd ai-subtitles-rewrite.git
+git filter-repo --invert-paths --path backend/local_data/encryption.key
+git log --all --oneline -- backend/local_data/encryption.key   # must print nothing
+git remote add origin git@github.com:Ugur22/ai-subtitles.git   # filter-repo removes the remote
+git push origin --force --all
+git push origin --force --tags
+```
+
+Merge or close open pull requests before the rewrite. Afterwards:
+
+- Every commit hash changes. Anyone with a clone or fork must delete it and clone again. Pulling, merging or pushing an old clone puts the file back.
+- GitHub keeps the old commits reachable through pull-request refs and cached views. Ask GitHub Support to remove cached views and dereference the old commits for the repository, and list the affected pull requests.
+- Forks are not rewritten. They keep the file until their owners delete or rewrite them.

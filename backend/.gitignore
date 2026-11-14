@@ -27,6 +27,11 @@ build/
 *.log
 logs/
 
+# Local runtime data (LOCAL_MODE media, logs) and key material. Never commit these.
+local_data/
+*.key
+*.pem
+
 # Local config
 .env
 .env.local
