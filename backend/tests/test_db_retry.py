@@ -29,33 +29,36 @@ class Flaky:
 
 
 @pytest.fixture(autouse=True)
-def no_real_sleep(monkeypatch):
-    monkeypatch.setattr("services.db_retry.time.sleep", lambda _seconds: None)
+def delays(monkeypatch):
+    recorded = []
+    monkeypatch.setattr("services.db_retry.time.sleep", recorded.append)
+    return recorded
 
 
-def test_succeeds_after_dropped_connections_with_growing_delays():
-    operation, delays = Flaky([DISCONNECT, httpx.ReadTimeout("slow")]), []
+def test_succeeds_after_dropped_connections_with_growing_delays(delays):
+    operation = Flaky([DISCONNECT, httpx.ReadError("reset")])
 
-    assert with_db_retry(operation, sleep=delays.append) == "ok"
+    assert with_db_retry(operation, label="test") == "ok"
     assert operation.calls == 3
     assert delays == [0.5, 2.0]
 
 
-def test_gives_up_after_the_configured_attempts_and_raises_the_original_error():
-    operation, delays = Flaky([DISCONNECT] * 5), []
+def test_gives_up_after_three_attempts_and_raises_the_original_error(delays):
+    operation = Flaky([DISCONNECT] * 5)
 
     with pytest.raises(httpx.RemoteProtocolError, match="Server disconnected"):
-        with_db_retry(operation, sleep=delays.append)
+        with_db_retry(operation, label="test")
 
     assert operation.calls == 3
     assert len(delays) == 2
 
 
-def test_other_errors_are_not_retried():
-    operation = Flaky([ValueError("bad input")])
+@pytest.mark.parametrize("error", [ValueError("bad input"), httpx.ReadTimeout("slow")])
+def test_timeouts_and_other_errors_are_not_retried(error):
+    operation = Flaky([error])
 
-    with pytest.raises(ValueError):
-        with_db_retry(operation, sleep=lambda _seconds: None)
+    with pytest.raises(type(error)):
+        with_db_retry(operation, label="test")
 
     assert operation.calls == 1
 
@@ -75,8 +78,7 @@ class RpcClient:
             pending = self.errors.get(name)
             if pending:
                 raise pending.pop(0)
-            value = result.pop(0) if isinstance(result, list) and result and isinstance(result[0], list) else result
-            return SimpleNamespace(data=value)
+            return SimpleNamespace(data=result)
         return SimpleNamespace(execute=execute)
 
     def rpc(self, name, _params):
@@ -116,11 +118,22 @@ def test_finalization_still_fails_when_the_database_stays_unreachable(monkeypatc
         _finalize()
 
 
-def test_cancel_check_read_is_retried(monkeypatch):
-    client = RpcClient(rows=[{"id": "job-a", "status": "processing"}], errors={"table:jobs": [DISCONNECT]})
+def test_api_job_read_is_not_retried(monkeypatch):
+    # The API calls get_job from async routes, where a retry sleep would block the event loop.
+    client = RpcClient(errors={"table:jobs": [DISCONNECT]})
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
-    assert JobQueueService.get_job("job-a")["status"] == "processing"
+    with pytest.raises(httpx.RemoteProtocolError):
+        JobQueueService.get_job("job-a")
+    assert client.calls == ["table:jobs"]
+
+
+def test_worker_retries_its_job_reads():
+    worker = (REPO / "backend/services/background_worker.py").read_text(encoding="utf-8")
+    cancel_check = worker[worker.index("def _check_cancelled"):worker.index("class HeartbeatThread")]
+
+    assert "with_db_retry(lambda: JobQueueService.get_job(job_id)" in cancel_check
+    assert 'with_db_retry(lambda: JobQueueService.get_job(job_id), label="get_job")' in worker
 
 
 def test_claim_is_not_retried(monkeypatch):
@@ -154,7 +167,8 @@ def test_continuation_on_a_cancelled_job_is_not_turned_into_continue(monkeypatch
 
     assert JobQueueService.request_continuation("job-a", 1.0, 12) == "not_processing"
 
-    # No retry happened: 'not_processing' is taken at face value without a re-read.
+
+def test_continuation_without_a_retry_takes_not_processing_at_face_value(monkeypatch):
     clean = RpcClient(rpc_results={"requeue_job_for_continuation": "not_processing"})
     monkeypatch.setattr(job_queue_service, "supabase", lambda: clean)
     assert JobQueueService.request_continuation("job-a", 1.0, 12) == "not_processing"

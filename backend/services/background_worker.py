@@ -145,7 +145,7 @@ class JobCancelled(Exception):
 
 def _check_cancelled(job_id: str) -> None:
     """Re-fetch the job and raise JobCancelled if the user/admin cancelled it. Cheap (single Supabase row read) — call between pipeline stages, not inside hot loops."""
-    job = JobQueueService.get_job(job_id)
+    job = with_db_retry(lambda: JobQueueService.get_job(job_id), label="cancel check")
     if not job:
         raise JobCancelled(f"Job {job_id} no longer exists")
     if job.get("status") != "processing":
@@ -322,8 +322,7 @@ class BackgroundWorker:
                 storage=media_storage,
                 limit=10,
             )
-            # Get job
-            job = JobQueueService.get_job(job_id)
+            job = with_db_retry(lambda: JobQueueService.get_job(job_id), label="get_job")
             if not job:
                 print(f"[Worker] Job {job_id} not found")
                 return False

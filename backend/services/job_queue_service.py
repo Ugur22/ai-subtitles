@@ -206,10 +206,7 @@ class JobQueueService:
             Job record or None if not found
         """
         client = supabase()
-        response = with_db_retry(
-            lambda: client.table("jobs").select("*").eq("id", job_id).execute(),
-            label="get_job",
-        )
+        response = client.table("jobs").select("*").eq("id", job_id).execute()
 
         if response.data and len(response.data) > 0:
             return response.data[0]
