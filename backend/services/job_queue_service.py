@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from services.db_retry import with_db_retry
 from services.supabase_service import supabase
 
 
@@ -205,7 +206,10 @@ class JobQueueService:
             Job record or None if not found
         """
         client = supabase()
-        response = client.table("jobs").select("*").eq("id", job_id).execute()
+        response = with_db_retry(
+            lambda: client.table("jobs").select("*").eq("id", job_id).execute(),
+            label="get_job",
+        )
 
         if response.data and len(response.data) > 0:
             return response.data[0]
@@ -515,7 +519,9 @@ class JobQueueService:
         gpu_seconds: float,
         final_media_key: str,
     ) -> bool:
-        response = supabase().rpc("begin_job_finalization", {
+        # Safe to repeat: the SQL returns TRUE when the job is already
+        # 'finalizing' with this media key and hash.
+        response = with_db_retry(lambda: supabase().rpc("begin_job_finalization", {
             "p_job_id": job_id,
             "p_user_id": user_id,
             "p_video_hash": video_hash,
@@ -525,15 +531,16 @@ class JobQueueService:
             "p_video_duration_seconds": video_duration_seconds,
             "p_gpu_seconds": gpu_seconds,
             "p_final_media_key": final_media_key,
-        }).execute()
+        }).execute(), label="begin_job_finalization")
         return response.data is True
 
     @staticmethod
     def settle_finalization(job_id: str, user_id: str) -> bool:
-        response = supabase().rpc("settle_finalizing_job", {
+        # Safe to repeat: the SQL returns TRUE when the job is already 'completed'.
+        response = with_db_retry(lambda: supabase().rpc("settle_finalizing_job", {
             "p_job_id": job_id,
             "p_user_id": user_id,
-        }).execute()
+        }).execute(), label="settle_finalizing_job")
         return response.data is True
 
     @staticmethod
@@ -652,12 +659,25 @@ class JobQueueService:
         continuation cap was hit and the job is now failed), or 'not_processing'
         (the job was cancelled or finished elsewhere; nothing to do).
         """
-        response = supabase().rpc("requeue_job_for_continuation", {
-            "p_job_id": job_id,
-            "p_max_continuations": max_continuations,
-            "p_gpu_seconds": gpu_seconds,
-        }).execute()
+        calls = 0
+
+        def requeue():
+            nonlocal calls
+            calls += 1
+            return supabase().rpc("requeue_job_for_continuation", {
+                "p_job_id": job_id,
+                "p_max_continuations": max_continuations,
+                "p_gpu_seconds": gpu_seconds,
+            }).execute()
+
+        response = with_db_retry(requeue, label="requeue_job_for_continuation")
         outcome = response.data if isinstance(response.data, str) else "not_processing"
+        if outcome == "not_processing" and calls > 1:
+            # The first attempt may have requeued the job before its connection
+            # dropped; the repeat then finds it no longer 'processing'.
+            job = JobQueueService.get_job(job_id)
+            if job and job.get("status") == "pending" and job.get("stage") == "continuing":
+                outcome = "continue"
         print(f"[JobQueue] Continuation request for job {job_id}: {outcome}")
         return outcome
 
