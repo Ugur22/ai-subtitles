@@ -1,7 +1,7 @@
 # AI Subtitles
 
 AI video transcription with speaker diarization, multimodal search (transcript, visuals, audio, faces), and RAG-powered chat. Heavy processing runs on a Cloud Run GPU job; the API stays on a cheap CPU service.
-<img width="1244" height="778" alt="image" src="https://github.com/user-attachments/assets/d88087ab-de24-4e6f-a6e9-9845eba3154b" />
+<img width="1056" alt="AI Subs upload screen" src="docs/images/app-screenshot.png" />
 
 ## Features
 
