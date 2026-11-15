@@ -2,7 +2,22 @@
 Time and timestamp formatting utilities
 """
 
+import re
+from datetime import datetime
 from typing import Dict, List
+
+_FRACTION = re.compile(r"\.(\d+)")
+
+
+def parse_db_timestamp(value: str) -> datetime:
+    """Parse a Postgres/Supabase timestamp such as '2026-10-26T10:36:31.33511+00:00'.
+
+    Postgres drops trailing zeros from the fraction, and Python 3.10 (the
+    Docker image) only accepts exactly 3 or 6 digits in fromisoformat.
+    """
+    normalized = value.replace("Z", "+00:00")
+    normalized = _FRACTION.sub(lambda m: "." + m.group(1)[:6].ljust(6, "0"), normalized, count=1)
+    return datetime.fromisoformat(normalized)
 
 
 def format_timestamp(seconds: float) -> str:

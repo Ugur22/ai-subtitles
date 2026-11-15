@@ -210,6 +210,11 @@ def format_speaker_label(speaker: str, custom_names: Dict[str, str] = None) -> s
     return speaker
 
 
+# Thresholds reported in the [SpeakerLink] log to calibrate
+# DIARIZATION_SIMILARITY_THRESHOLD; ascending, the lowest bounds the clustering.
+LINK_THRESHOLD_SWEEP = (0.4, 0.5, 0.6, 0.7)
+
+
 class ChunkedSpeakerDiarizer:
     """
     Handles speaker diarization for long videos using chunked processing
@@ -893,56 +898,137 @@ class ChunkedSpeakerDiarizer:
             - chunk_to_global_map: List of dicts mapping local to global speaker labels for each chunk
             - global_speaker_count: Total number of unique speakers found
         """
-        global_speakers = {}  # global_id -> {"embedding": ndarray, "count": int}
-        chunk_to_global_map = []
-
+        # One entry per (group, local speaker), so every local label gets a
+        # global one, also when its embedding could not be extracted.
+        speakers, vectors = [], []
         for chunk_idx, chunk_result in enumerate(chunk_results):
-            local_to_global = {}
-            speaker_embeddings = chunk_result['speaker_embeddings']
+            first_start, seconds = {}, {}
+            for seg in chunk_result['segments']:
+                label = seg['speaker']
+                first_start[label] = min(first_start.get(label, seg['start']), seg['start'])
+                seconds[label] = seconds.get(label, 0.0) + seg['end'] - seg['start']
+            for label in sorted(first_start):
+                speakers.append({
+                    "group": chunk_idx, "label": label,
+                    "first_start": first_start[label], "seconds": seconds[label],
+                })
+                vectors.append(chunk_result['speaker_embeddings'].get(label))
 
-            for local_speaker, local_embedding in speaker_embeddings.items():
-                # Find best matching global speaker
-                best_match = None
-                best_similarity = self.similarity_threshold
+        group_of = np.array([speaker["group"] for speaker in speakers], dtype=int)
+        similarity = self._similarity_matrix(vectors, group_of)
+        history = self._merge_history(similarity, min(LINK_THRESHOLD_SWEEP[0], self.similarity_threshold))
+        self._log_cross_group_similarity(speakers, group_of, similarity, history)
 
-                for global_id, global_data in global_speakers.items():
-                    global_embedding = global_data['embedding']
+        clusters = self._clusters_at(len(speakers), history, self.similarity_threshold)
+        # Global labels in order of first appearance in the video.
+        clusters.sort(key=lambda members: min(speakers[i]["first_start"] for i in members))
 
-                    # Cosine similarity (embeddings already normalized)
-                    similarity = np.dot(local_embedding, global_embedding)
+        chunk_to_global_map = [{} for _ in chunk_results]
+        for global_index, members in enumerate(clusters):
+            global_id = f"SPEAKER_{global_index:02d}"
+            for i in members:
+                chunk_to_global_map[speakers[i]["group"]][speakers[i]["label"]] = global_id
+        return chunk_to_global_map, len(clusters)
 
-                    if similarity > best_similarity:
-                        best_similarity = similarity
-                        best_match = global_id
+    @staticmethod
+    def _similarity_matrix(vectors: List[Optional[np.ndarray]], group_of: np.ndarray) -> np.ndarray:
+        """
+        Cosine similarity of unit-norm speaker embeddings. NaN marks pairs that
+        must never merge: speakers of the same group (diarization already
+        separated them) and speakers without an embedding.
+        """
+        has_embedding = np.array([vector is not None for vector in vectors], dtype=bool)
+        dim = next((len(vector) for vector in vectors if vector is not None), 1)
+        stacked = np.zeros((len(vectors), dim))
+        for i, vector in enumerate(vectors):
+            if vector is not None:
+                stacked[i] = np.asarray(vector, dtype=float)
+        similarity = stacked @ stacked.T
+        similarity[~has_embedding, :] = np.nan
+        similarity[:, ~has_embedding] = np.nan
+        similarity[group_of[:, None] == group_of[None, :]] = np.nan
+        return similarity
 
-                if best_match:
-                    # Existing speaker - map to global ID
-                    local_to_global[local_speaker] = best_match
+    @staticmethod
+    def _merge_history(similarity: np.ndarray, floor: float) -> List[Tuple[float, int, int]]:
+        """
+        Average-linkage clustering down to `floor`; returns the merges as
+        (score, member of one cluster, member of the other), best first.
 
-                    # Update global embedding as running average
-                    count = global_speakers[best_match]['count']
-                    current_avg = global_speakers[best_match]['embedding']
-                    new_avg = (current_avg * count + local_embedding) / (count + 1)
-                    # Re-normalize
-                    new_avg = new_avg / (np.linalg.norm(new_avg) + 1e-8)
-                    global_speakers[best_match]['embedding'] = new_avg
-                    global_speakers[best_match]['count'] = count + 1
+        A NaN anywhere between two clusters keeps the pair NaN, so the
+        never-merge pairs are respected. Average-linkage scores never rise
+        after a merge, so the clustering for any threshold >= floor is the
+        prefix of this history (see _clusters_at).
+        """
+        count = len(similarity)
+        sums = similarity.copy()
+        sizes = np.ones(count)
+        active = np.ones(count, dtype=bool)
+        members = [[i] for i in range(count)]
+        history = []
+        while active.sum() > 1:
+            average = sums / np.outer(sizes, sizes)
+            average[~active, :] = np.nan
+            average[:, ~active] = np.nan
+            if np.isnan(average).all():
+                break
+            a, b = np.unravel_index(np.nanargmax(average), average.shape)
+            score = float(average[a, b])
+            if score < floor:
+                break
+            history.append((score, members[a][0], members[b][0]))
+            sums[a, :] += sums[b, :]
+            sums[:, a] = sums[a, :]
+            sizes[a] += sizes[b]
+            members[a] += members[b]
+            active[b] = False
+        return history
 
-                    print(f"  Chunk {chunk_idx}: {local_speaker} -> {best_match} (similarity: {best_similarity:.3f})")
-                else:
-                    # New speaker - create global ID
-                    new_global_id = f"SPEAKER_{len(global_speakers):02d}"
-                    global_speakers[new_global_id] = {
-                        'embedding': local_embedding,
-                        'count': 1
-                    }
-                    local_to_global[local_speaker] = new_global_id
+    @staticmethod
+    def _clusters_at(count: int, history: List[Tuple[float, int, int]], threshold: float) -> List[List[int]]:
+        """Replay the merges scoring at least `threshold`; returns lists of speaker indices."""
+        parent = list(range(count))
 
-                    print(f"  Chunk {chunk_idx}: {local_speaker} -> {new_global_id} (new speaker)")
+        def root(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
 
-            chunk_to_global_map.append(local_to_global)
+        for score, a, b in history:
+            if score < threshold:
+                break
+            parent[root(b)] = root(a)
+        clusters: Dict[int, List[int]] = {}
+        for i in range(count):
+            clusters.setdefault(root(i), []).append(i)
+        return list(clusters.values())
 
-        return chunk_to_global_map, len(global_speakers)
+    def _log_cross_group_similarity(
+        self,
+        speakers: List[Dict],
+        group_of: np.ndarray,
+        similarity: np.ndarray,
+        history: List[Tuple[float, int, int]],
+    ) -> None:
+        """Log what is needed to calibrate DIARIZATION_SIMILARITY_THRESHOLD."""
+        for i, speaker in enumerate(speakers):
+            best_per_group = []
+            for group in np.unique(group_of):
+                if group == speaker["group"]:
+                    continue
+                row = similarity[i, group_of == group]
+                best = f"{np.nanmax(row):.3f}" if not np.isnan(row).all() else "n/a"
+                best_per_group.append(f"g{group}={best}")
+            print(
+                f"  [SpeakerLink] g{speaker['group']} {speaker['label']} "
+                f"{speaker['seconds']:.0f}s best: {' '.join(best_per_group) or '-'}"
+            )
+        sweep = " ".join(
+            f"{t}={len(speakers) - sum(score >= t for score, _, _ in history)}"
+            for t in LINK_THRESHOLD_SWEEP
+        )
+        print(f"  [SpeakerLink] speakers per threshold: {sweep} (using {self.similarity_threshold})")
 
     def _unify_segments(self, chunk_results: List[Dict], chunk_to_global_map: List[Dict[str, str]]) -> List[Dict]:
         """
@@ -961,14 +1047,11 @@ class ChunkedSpeakerDiarizer:
             mapping = chunk_to_global_map[chunk_idx]
 
             for seg in chunk_result['segments']:
-                local_speaker = seg['speaker']
-                global_speaker = mapping.get(local_speaker, local_speaker)
-
                 # Create unified segment (remove local timing)
                 unified_segment = {
                     "start": seg['start'],
                     "end": seg['end'],
-                    "speaker": global_speaker
+                    "speaker": mapping[seg['speaker']]
                 }
                 unified_segments.append(unified_segment)
 
