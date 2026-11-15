@@ -118,3 +118,5 @@ static/videos/
 *.mp3
 *.wav
 *.m4a 
+# Local-only test data (real film dialogue); tests skip without it
+backend/tests/fixtures/per_word_speaker_scene.json

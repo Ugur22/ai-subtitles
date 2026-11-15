@@ -46,6 +46,7 @@ from services.language_lock import detect_dominant_language
 from services.video_service import VideoService
 from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
+from services.word_speakers import assign_speakers
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
@@ -80,7 +81,15 @@ def _transcribe_chunk(whisper_model, chunk_path: str, transcribe_params: dict):
     """Run one chunk to completion. faster-whisper decodes lazily, so the generator is drained here, in the executor thread, to keep the event loop (and signal handling) responsive."""
     segments, info = whisper_model.transcribe(chunk_path, **transcribe_params)
     return [
-        {"start": segment.start, "end": segment.end, "text": segment.text}
+        {
+            "start": segment.start,
+            "end": segment.end,
+            "text": segment.text,
+            "words": [
+                {"start": word.start, "end": word.end, "word": word.word}
+                for word in (segment.words or [])
+            ],
+        }
         for segment in segments
     ], info.language
 
@@ -228,56 +237,20 @@ class HeartbeatThread(threading.Thread):
         self._stop_event.set()
 
 
+def _drop_word_timings(segments: list) -> None:
+    for seg in segments:
+        seg.pop("words", None)
+
+
 def assign_speakers_to_segments(transcription_segments: list, speaker_segments: list) -> list:
-    """
-    Assign speaker labels from diarization to transcription segments based on time overlap.
-
-    Args:
-        transcription_segments: List of transcription segments with 'start' and 'end' times
-        speaker_segments: List of speaker diarization segments with 'start', 'end', and 'speaker'
-
-    Returns:
-        Transcription segments with added 'speaker' field
-    """
     print(f"[Worker] Assigning speakers to {len(transcription_segments)} transcription segments...")
-
-    for trans_seg in transcription_segments:
-        # Get the start and end times of the transcription segment
-        trans_start = trans_seg.get('start', 0.0)
-        trans_end = trans_seg.get('end', 0.0)
-        trans_mid = (trans_start + trans_end) / 2
-
-        # Find the speaker segment with maximum overlap
-        best_speaker = "UNKNOWN"
-        max_overlap = 0
-
-        for spk_seg in speaker_segments:
-            spk_start = spk_seg['start']
-            spk_end = spk_seg['end']
-
-            # Calculate overlap
-            overlap_start = max(trans_start, spk_start)
-            overlap_end = min(trans_end, spk_end)
-            overlap = max(0, overlap_end - overlap_start)
-
-            if overlap > max_overlap:
-                max_overlap = overlap
-                best_speaker = spk_seg['speaker']
-
-            # Alternative: Check if midpoint falls within speaker segment
-            # This can be faster and often more accurate
-            if spk_start <= trans_mid <= spk_end:
-                best_speaker = spk_seg['speaker']
-                break
-
-        # Assign the speaker to the transcription segment
-        trans_seg['speaker'] = best_speaker
-
-    # Count speakers
-    unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
-    print(f"[Worker] Speaker assignment complete. Identified {len(unique_speakers)} unique speakers")
-
-    return transcription_segments
+    segments = assign_speakers(transcription_segments, speaker_segments)
+    unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in segments)
+    print(
+        f"[Worker] Speaker assignment complete: {len(transcription_segments)} -> {len(segments)} "
+        f"segments, {len(unique_speakers)} unique speakers"
+    )
+    return segments
 
 
 class BackgroundWorker:
@@ -539,6 +512,7 @@ class BackgroundWorker:
                     "condition_on_previous_text": False,
                     "no_speech_threshold": 0.6,
                     "compression_ratio_threshold": 2.4,
+                    "word_timestamps": True,
                 }
 
                 total_chunks = len(audio_chunks)
@@ -654,6 +628,7 @@ class BackgroundWorker:
                         "end_time": format_timestamp(seg["end"]),
                         "text": seg["text"],
                         "translation": None,
+                        "words": seg.get("words", []),
                     })
 
                 print(f"[Worker] Combined {len(formatted_segments)} segments from {total_chunks} chunks")
@@ -809,6 +784,8 @@ class BackgroundWorker:
                 for seg in formatted_segments:
                     seg['speaker'] = "SPEAKER_00"
                 JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
+
+            _drop_word_timings(formatted_segments)
 
             # The remaining stages are not checkpointed. If this execution already
             # spent its time on transcription/diarization, hand over now so they
