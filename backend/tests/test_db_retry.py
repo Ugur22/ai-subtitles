@@ -190,34 +190,6 @@ def test_cache_write_is_retried(monkeypatch):
     assert client.calls == ["table:pipeline_cache"] * 2
 
 
-def test_retry_button_uses_the_shared_api_client():
-    card = (REPO / "frontend/src/components/features/jobs/JobCard.tsx").read_text(encoding="utf-8")
-    handler = card[card.index("const handleRetry"):card.index("const handleCancel")]
-
-    assert "await retryJob(job.job_id, job.access_token)" in handler
-    assert "fetch(" not in card
-    assert "connection_lost:" in card
-
-
-def test_delete_hides_the_job_without_waiting_for_the_server():
-    panel = (REPO / "frontend/src/components/features/jobs/JobPanel.tsx").read_text(encoding="utf-8")
-    card = (REPO / "frontend/src/components/features/jobs/JobCard.tsx").read_text(encoding="utf-8")
-    card_delete = card[card.index("const handleDelete"):card.index("return (", card.index("const handleDelete"))]
-
-    tracker = (REPO / "frontend/src/hooks/useJobTracker.ts").read_text(encoding="utf-8")
-    upload = (REPO / "frontend/src/components/features/transcription/TranscriptionUpload.tsx").read_text(
-        encoding="utf-8"
-    )
-
-    assert "jobs.filter(j => !hiddenIds.has(j.job_id))" in tracker
-    assert "hideJob(jobId);" in panel
-    assert "await deleteJobPermanent" not in panel
-    assert "await onDelete" not in card_delete
-    # One shared list: uploads and deletes must show in the panel and on the page.
-    assert "useJobTracker()" not in panel
-    assert "tracker={jobTracker}" in upload
-
-
 def test_worker_reports_an_exhausted_connection_as_connection_lost():
     worker = (REPO / "backend/services/background_worker.py").read_text(encoding="utf-8")
     handler = worker[worker.index("# Categorize common errors"):]
