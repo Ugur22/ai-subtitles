@@ -6,7 +6,6 @@
 import { useState, Fragment } from "react";
 import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
-import { ShareJobDialog } from "./ShareJobDialog";
 import { Job, JobStatus, isActiveJobStatus } from "../../../types/job";
 import { cancelJob, retryJob } from "../../../services/api";
 
@@ -44,7 +43,6 @@ export const JobCard: React.FC<JobCardProps> = ({
   onDelete,
   estimatedRemaining,
 }) => {
-  const [showShare, setShowShare] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -152,27 +150,16 @@ export const JobCard: React.FC<JobCardProps> = ({
 
         {/* Completed */}
         {job.status === "completed" && (
-          <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
             <button
               onClick={() => onViewTranscript?.(job)}
               className="btn-ghost"
-              style={{ flex: 1, justifyContent: 'center', padding: '8px 10px', fontSize: '12px', color: 'var(--accent)', backgroundColor: 'var(--accent-dim)', borderRadius: '8px' }}
+              style={{ flex: 1, minHeight: '36px', justifyContent: 'center', padding: '8px 10px', fontSize: '12px', color: 'var(--accent)', backgroundColor: 'var(--accent-dim)', borderRadius: '8px' }}
             >
               View transcript
             </button>
-            <button
-              onClick={() => setShowShare(true)}
-              className="btn-ghost"
-              style={{ padding: '6px 8px' }}
-              title="Share"
-              aria-label="Share transcript"
-            >
-              <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-              </svg>
-            </button>
-            <Menu as="div" className="relative">
-              <Menu.Button className="btn-ghost" style={{ padding: '6px 8px' }} title="Download" aria-label="Download transcript">
+            <Menu as="div" className="relative flex shrink-0">
+              <Menu.Button className="btn-ghost" style={{ width: '36px', height: '36px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, borderRadius: '8px' }} title="Download" aria-label="Download transcript">
                 <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
@@ -242,7 +229,7 @@ export const JobCard: React.FC<JobCardProps> = ({
             <button
               onClick={handleDelete}
               className="btn-ghost"
-              style={{ padding: '6px 8px' }}
+              style={{ width: '36px', height: '36px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, borderRadius: '8px' }}
               title="Delete"
               aria-label="Delete transcript"
             >
@@ -294,7 +281,6 @@ export const JobCard: React.FC<JobCardProps> = ({
         </div>
       </div>
 
-      {showShare && <ShareJobDialog job={job} onClose={() => setShowShare(false)} />}
     </>
   );
 };

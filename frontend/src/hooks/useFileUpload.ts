@@ -76,6 +76,7 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
   };
 
   const resetFile = () => {
+    if (videoUrl?.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
     setFile(null);
     setVideoUrl(null);
     if (fileInputRef.current) {
