@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 
 from services.db_retry import with_db_retry
 from services.supabase_service import supabase
+from utils.time_utils import parse_db_timestamp
 
 
 # Configuration constants
@@ -963,8 +964,8 @@ class JobQueueService:
 
                 for job in response.data:
                     try:
-                        started = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
-                        completed = datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+                        started = parse_db_timestamp(job["started_at"])
+                        completed = parse_db_timestamp(job["completed_at"])
                         duration = (completed - started).total_seconds()
 
                         file_mb = job["file_size_bytes"] / (1024 * 1024)
