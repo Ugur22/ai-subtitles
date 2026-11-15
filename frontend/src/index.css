@@ -31,7 +31,6 @@
   --accent-text:   oklch(98% 0.005 145);     /* near-white on dark emerald btn   */
   --accent-border: oklch(42% 0.18 145 / 0.25);
 
-  /* Warm secondary (used sparingly — speaker 2, user avatar) */
   --warm:     oklch(62% 0.14 55);
   --warm-dim: oklch(62% 0.14 55 / 0.12);
 
@@ -64,6 +63,7 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --scrim: oklch(0% 0 0 / 0.62);
+  --rp-width: clamp(360px, 30%, 480px);
   --scrim-strong: oklch(0% 0 0 / 0.78);
   --on-scrim: oklch(98% 0 0);
 }
@@ -428,12 +428,6 @@ body {
   }
   .fade-up { animation: fadeUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
-  /* ─── Three-dot typing indicator ─── */
-  @keyframes typing {
-    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-    30%           { opacity: 1;   transform: translateY(-3px); }
-  }
-
   /* ─── Audio-bar wave (dropzone) ─── */
   @keyframes waveBar {
     0%, 100% { transform: scaleY(0.35); }
@@ -557,24 +551,9 @@ button.badge-default:hover { color: var(--text-primary); }
 .brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: oklch(20% 0.012 250);
-  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.08);
-  position: relative;
-  overflow: hidden;
   flex-shrink: 0;
+  display: block;
 }
-.brand-mark::before,
-.brand-mark::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  height: 2px;
-  border-radius: 1px;
-  transform: translateX(-50%);
-}
-.brand-mark::before { bottom: 12px; width: 16px; background: oklch(96% 0.004 250); }
-.brand-mark::after  { bottom: 7px;  width: 10px; background: var(--accent); }
 
 .brand-word {
   font-size: 15px;
@@ -1026,6 +1005,13 @@ button.badge-default:hover { color: var(--text-primary); }
 /* Tips grid */
 
 /* ─── Right panel (transcript / chat / summary / chapters) ─────────────────── */
+@media (min-width: 1280px) {
+  .watch-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--rp-width);
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
 .rp {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -1183,87 +1169,92 @@ button.badge-default:hover { color: var(--text-primary); }
   gap: 6px;
 }
 
-/* Message bubbles */
 .msg {
   display: flex;
-  gap: 10px;
   animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
   align-items: flex-start;
 }
-.msg.user { flex-direction: row-reverse; }
+.msg.user { justify-content: flex-end; }
 
-.msg-av {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.msg-col {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: #fff;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
-.msg.user .msg-av {
-  background: linear-gradient(135deg, var(--warm) 0%, oklch(55% 0.14 55) 100%);
-}
-.msg.ai .msg-av {
-  background: linear-gradient(135deg, var(--accent) 0%, oklch(36% 0.18 165) 100%);
-  position: relative;
-}
-.msg.ai .msg-av::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  right: 7px;
-  bottom: 8px;
-  height: 1.5px;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.85);
-  box-shadow: 0 3px 0 rgba(255, 255, 255, 0.55);
-}
+.msg.user .msg-col { max-width: 85%; align-items: flex-end; }
+.msg.ai .msg-col { flex: 1; }
 
 .msg-bubble {
-  max-width: 85%;
-  padding: 10px 12px;
-  border-radius: 12px;
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--text-primary);
   text-wrap: pretty;
+}
+.msg.user .msg-bubble,
+.msg-bubble.is-error {
+  padding: 12px;
+  border-radius: 12px;
 }
 .msg.user .msg-bubble {
   background: var(--text-primary);
   color: var(--bg-surface);
   border-bottom-right-radius: 4px;
 }
-.msg.ai .msg-bubble {
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-subtle);
-  border-bottom-left-radius: 4px;
+.msg-bubble.is-error {
+  background: color-mix(in oklch, var(--c-error) 8%, transparent);
+  border: 1px solid color-mix(in oklch, var(--c-error) 25%, transparent);
 }
 
-/* Thinking indicator (three bouncing dots) */
-.thinking-dots {
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 12px 8px;
+}
+.scene-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  cursor: zoom-in;
+  border-radius: var(--radius-sm);
+}
+.scene-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-overlay);
+}
+.scene-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 150ms var(--ease-out);
+}
+.scene-item:hover .scene-frame img { opacity: 0.9; }
+.phase-icon {
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 10px 14px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  border-bottom-left-radius: 4px;
+  justify-content: center;
+  flex-shrink: 0;
 }
-.thinking-dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.4;
-  animation: typing 1.2s ease-in-out infinite;
+.scene-tc {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
 }
-.thinking-dots i:nth-child(2) { animation-delay: 0.15s; }
-.thinking-dots i:nth-child(3) { animation-delay: 0.3s; }
+.scene-cap {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Suggestion cards */
 .sug-list {

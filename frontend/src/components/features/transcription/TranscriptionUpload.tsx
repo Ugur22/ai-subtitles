@@ -854,11 +854,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
             <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full" style={{ gap: '8px' }}>
               {/* Main Column: Video and Transcript/Summary */}
               <div
-                className={`flex-grow flex flex-col xl:flex-row overflow-hidden gap-4 w-full`}
+                className="watch-layout flex-grow flex flex-col overflow-hidden gap-4 w-full"
               >
-                {/* Video Player (Top/Left) — always mounted so layout is stable; shows skeleton until videoUrl arrives */}
                   <div
-                    className="overflow-hidden flex-shrink-0 w-full xl:w-3/4 flex flex-col"
+                    className="overflow-hidden flex-shrink-0 w-full flex flex-col"
                     style={{ backgroundColor: '#000', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
                   >
                     <div className="w-full bg-black flex justify-center relative flex-grow items-center">
@@ -1086,11 +1085,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     )}
                   </div>
 
-                {/* Tabs for Transcript, Chat, Chapters, Summary */}
                 <div
-                  className="rp overflow-hidden flex-grow flex flex-col w-full xl:w-1/4"
+                  className="rp overflow-hidden flex-grow flex flex-col w-full"
                 >
-                  {/* Tab bar */}
                   <div className="rp-tabs">
                     {[
                       { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length, active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
