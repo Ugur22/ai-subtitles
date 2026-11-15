@@ -174,11 +174,17 @@ def merge_chunks(
         if language is None and chunk.get("language"):
             language = chunk["language"]
         for segment in chunk.get("segments", []):
-            segments.append({
+            merged = {
                 "start": segment["start"] + offset,
                 "end": segment["end"] + offset,
                 "text": segment["text"],
-            })
+            }
+            if segment.get("words"):
+                merged["words"] = [
+                    {**word, "start": word["start"] + offset, "end": word["end"] + offset}
+                    for word in segment["words"]
+                ]
+            segments.append(merged)
     return segments, language
 
 
