@@ -3,7 +3,7 @@
  * Coordinates job fetching, pagination, real-time subscriptions, and notifications
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Job, isActiveJobStatus } from '../types/job';
 import { useJobStorage } from './useJobStorage';
 import { useJobNotifications } from './useJobNotifications';
@@ -20,6 +20,8 @@ export const useJobTracker = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  // Jobs hidden from every view while their DELETE request runs.
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
   const { getStoredJobs, removeInvalidJobs } = useJobStorage();
   const { notifyJobComplete, notifyJobFailed } = useJobNotifications();
@@ -215,8 +217,27 @@ export const useJobTracker = () => {
     fetchJobs();
   }, [fetchJobs]);
 
+  const hideJob = useCallback((jobId: string) => {
+    setHiddenIds(prev => new Set(prev).add(jobId));
+  }, []);
+
+  const unhideJob = useCallback((jobId: string) => {
+    setHiddenIds(prev => {
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
+  }, []);
+
+  const visibleJobs = useMemo(
+    () => jobs.filter(j => !hiddenIds.has(j.job_id)),
+    [jobs, hiddenIds],
+  );
+
   return {
-    jobs,
+    jobs: visibleJobs,
+    hideJob,
+    unhideJob,
     isLoading,
     isOffline,
     page,
