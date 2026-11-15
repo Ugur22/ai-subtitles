@@ -218,10 +218,15 @@ LINK_THRESHOLD_SWEEP = (0.3, 0.4, 0.5, 0.6, 0.7)
 DEFAULT_LINK_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
 DEFAULT_LINK_THRESHOLD = 0.5
 
+# Labels with less speech than this are dropped before linking. They have nothing to
+# embed and never own a transcript line; E04's 0.39 s g0 SPEAKER_11 showed up as an
+# extra speaker. Of 130 labels across 3 test sources, no real one was under 3 s.
+MIN_LINK_SPEECH_SECONDS = 1.0
+
 
 def linking_signature(link_model: str, similarity_threshold: float) -> str:
     """Everything about cross-group linking that changes its output; part of the cache keys."""
-    return f"{link_model}@{similarity_threshold}"
+    return f"{link_model}@{similarity_threshold}/min{MIN_LINK_SPEECH_SECONDS}"
 
 
 class ChunkedSpeakerDiarizer:
@@ -921,10 +926,10 @@ class ChunkedSpeakerDiarizer:
             - chunk_to_global_map: List of dicts mapping local to global speaker labels for each chunk
             - global_speaker_count: Total number of unique speakers found
         """
-        # One entry per (group, local speaker) with speech, so every such label gets
-        # a global one, also when its embedding could not be extracted. Labels with
-        # 0 s of speech have nothing to embed or transcribe and would only inflate
-        # the speaker count.
+        # One entry per (group, local speaker) with enough speech, so every such label
+        # gets a global one, also when its embedding could not be extracted. Labels
+        # under MIN_LINK_SPEECH_SECONDS never own a transcript line and would only
+        # inflate the speaker count.
         speakers, vectors = [], []
         for chunk_idx, chunk_result in enumerate(chunk_results):
             first_start, seconds = {}, {}
@@ -934,7 +939,8 @@ class ChunkedSpeakerDiarizer:
                 # max(0, ...): a malformed negative segment must not cancel real speech.
                 seconds[label] = seconds.get(label, 0.0) + max(0.0, seg['end'] - seg['start'])
             for label in sorted(first_start):
-                if seconds[label] <= 0:
+                if seconds[label] < MIN_LINK_SPEECH_SECONDS:
+                    print(f"  [SpeakerLink] dropped g{chunk_idx} {label} ({seconds[label]:.1f} s of speech)")
                     continue
                 speakers.append({
                     "group": chunk_idx, "label": label,
@@ -1050,7 +1056,7 @@ class ChunkedSpeakerDiarizer:
                 best_per_group.append(f"g{group}={best}")
             print(
                 f"  [SpeakerLink] g{speaker['group']} {speaker['label']} "
-                f"{speaker['seconds']:.0f}s best: {' '.join(best_per_group) or '-'}"
+                f"{speaker['seconds']:.1f}s best: {' '.join(best_per_group) or '-'}"
             )
         sweep = " ".join(
             f"{t}={len(speakers) - sum(score >= t for score, _, _ in history)}"

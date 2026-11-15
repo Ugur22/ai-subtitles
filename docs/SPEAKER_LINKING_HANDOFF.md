@@ -113,6 +113,32 @@ Implementation:
 - Labels with 0 s of speech are dropped before linking.
 - The link model and threshold are part of the diarization cache key (`_diarization_param_key` in `backend/services/background_worker.py`), so old results are recomputed rather than reused.
 
+## Prod result after the fix (2026-11-15)
+
+Job `c8c2a250`, Cloud Run execution `ai-subs-worker-29t4p`: a fresh run, 1798 GPU seconds.
+
+| Check | Result |
+|---|---|
+| Fresh run, not cached | ✅ transcription and all 4 groups were recomputed |
+| New model ran | ✅ `Loading speaker embedding model pyannote/wespeaker-voxceleb-resnet34-LM` |
+| Unique speakers about 22 (19–25) | ✅ **24**, down from 35 |
+| Unique speakers equal to assigned speakers | ❌ **24 unique vs 23 assigned** |
+
+- Per-group counts were 12/11/8/7, the same as before the fix.
+- Sweep: `0.3=18 0.4=21 0.5=24 0.6=25 0.7=30`.
+
+**Why the last check fails:**
+- The "0 s" speaker, g0 SPEAKER_11, isn't actually 0 s. It has 0.39 s of speech (0.37 s + 0.02 s); the log rounds it to "0s".
+- The new drop rule only removes labels with exactly zero speech, so SPEAKER_11 survives.
+- It has no embedding (`No valid embeddings extracted for SPEAKER_11`) and never wins a transcript line, which explains the 24 vs 23.
+
+**Fixed:**
+- `MIN_LINK_SPEECH_SECONDS = 1.0` in `backend/speaker_diarization.py`: labels with less speech than that are dropped before linking and logged as `[SpeakerLink] dropped ...`.
+- The `[SpeakerLink]` log now prints seconds with one decimal, so a 0.4 s speaker can't pass as "0s" again.
+- Why 1.0 s is safe: of 130 labels across the three sources, only this one is under 3 s.
+- Offline on E04, using the prod linking code: the count goes from 22 to 21, and every remaining speaker has speech (the shortest has 5.9 s).
+- In prod, expect about 23 unique speakers, all of them assigned.
+
 ## How to check a run
 
 - **Find the job:** the worker is a Cloud Run Job in `ai-subs-poc` / `us-central1`. Read its execution logs and search for `[SpeakerLink]` and `Unique speakers`.
