@@ -74,6 +74,14 @@ class MediaStorage(Protocol):
 
     def delete_file(self, object_key: str) -> bool: ...
 
+    def delete_screenshots(self, user_id: str, video_hash: str) -> bool:
+        """Delete the owner's screenshot folder; True once nothing is left."""
+        ...
+
+
+# The GCS JSON API accepts at most 100 calls per batch request.
+GCS_BATCH_LIMIT = 100
+
 
 class GCSMediaStorage:
     """Adapter around the existing GCS implementation."""
@@ -210,6 +218,19 @@ class GCSMediaStorage:
 
     def delete_file(self, object_key: str) -> bool:
         return self._service().delete_file(object_key)
+
+    def delete_screenshots(self, user_id: str, video_hash: str) -> bool:
+        # One request per screenshot took ~58s for a 600-frame video; a batch
+        # sends up to 100 deletes in one request.
+        keys = self.list_screenshot_keys(user_id, video_hash)
+        service = self._service()
+        bucket = service._get_bucket()
+        for start in range(0, len(keys), GCS_BATCH_LIMIT):
+            # Per-object failures (including 404) do not raise; the re-list decides.
+            with service._get_client().batch(raise_exception=False):
+                for key in keys[start:start + GCS_BATCH_LIMIT]:
+                    bucket.blob(key).delete()
+        return not self.list_screenshot_keys(user_id, video_hash)
 
 
 _media_storage: Optional[MediaStorage] = None

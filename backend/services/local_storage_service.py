@@ -357,3 +357,7 @@ class LocalStorageService:
                 return True
         except FileNotFoundError:
             return True
+
+    def delete_screenshots(self, user_id: str, video_hash: str) -> bool:
+        results = [self.delete_file(key) for key in self.list_screenshot_keys(user_id, video_hash)]
+        return all(result is True for result in results)

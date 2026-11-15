@@ -194,12 +194,8 @@ class JobQueueService:
         if live.data:
             print(f"[JobQueue] Kept {media_key}: a newer job uses the same file")
             return None
-        failed = [
-            key for key in storage.list_screenshot_keys(user_id, video_hash)
-            if storage.delete_file(key) is not True
-        ]
-        if failed:
-            return f"delete_file returned False for {len(failed)} screenshots"
+        if storage.delete_screenshots(user_id, video_hash) is not True:
+            return "screenshots remain after delete"
         return None
 
     @staticmethod
