@@ -123,18 +123,16 @@ class ClientWithJobs(Client):
 
 
 class ScreenshotStorage(Storage):
-    def __init__(self, keys, result=True):
+    def __init__(self, result=True):
         super().__init__(result=result)
-        self.keys = keys
-        self.listed = []
+        self.folders = []
 
-    def list_screenshot_keys(self, user_id, video_hash, allow_legacy=False):
-        self.listed.append((user_id, video_hash, allow_legacy))
-        return list(self.keys)
+    def delete_screenshots(self, user_id, video_hash):
+        self.folders.append((user_id, video_hash))
+        return self.result
 
 
 SCREENSHOT_FOLDER = "screenshots/user-a/hash-a/"
-SCREENSHOT_KEYS = ["screenshots/user-a/hash-a/1.00.jpg", "screenshots/user-a/hash-a/2.00.jpg"]
 
 
 def _screenshot_claim(jobs=()):
@@ -144,38 +142,38 @@ def _screenshot_claim(jobs=()):
     }, jobs)
 
 
-def test_screenshot_folder_row_deletes_every_owned_screenshot(monkeypatch):
+def test_screenshot_folder_row_deletes_the_owners_folder(monkeypatch):
     client = _screenshot_claim(jobs=[{"user_id": "user-b", "video_hash": "hash-a"}])
-    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    storage = ScreenshotStorage()
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
     result = JobQueueService.process_media_delete_outbox(storage=storage)
 
     assert result == {"claimed": 1, "completed": 1, "pending": 0}
-    assert storage.listed == [("user-a", "hash-a", False)]
-    assert storage.deleted == SCREENSHOT_KEYS
+    assert storage.folders == [("user-a", "hash-a")]
+    assert storage.deleted == []
 
 
 def test_screenshot_folder_is_kept_when_the_file_was_uploaded_again(monkeypatch):
     client = _screenshot_claim(jobs=[{"user_id": "user-a", "video_hash": "hash-a"}])
-    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    storage = ScreenshotStorage()
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
     result = JobQueueService.process_media_delete_outbox(storage=storage)
 
     assert result == {"claimed": 1, "completed": 1, "pending": 0}
-    assert storage.deleted == []
+    assert storage.folders == []
 
 
-def test_screenshot_folder_stays_pending_when_a_delete_fails(monkeypatch):
+def test_screenshot_folder_stays_pending_when_screenshots_remain(monkeypatch):
     client = _screenshot_claim()
-    storage = ScreenshotStorage(SCREENSHOT_KEYS, result=False)
+    storage = ScreenshotStorage(result=False)
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
     result = JobQueueService.process_media_delete_outbox(storage=storage)
 
     assert result == {"claimed": 1, "completed": 0, "pending": 1}
-    assert "2 screenshots" in client.calls[-1][1]["p_error"]
+    assert client.calls[-1][1]["p_error"] == "screenshots remain after delete"
 
 
 def test_malformed_folder_row_is_never_deleted(monkeypatch):
@@ -183,13 +181,72 @@ def test_malformed_folder_row_is_never_deleted(monkeypatch):
         "claim_media_deletes": [{"id": "outbox-s", "media_key": "screenshots/user-a/"}],
         "finish_media_delete": True,
     })
-    storage = ScreenshotStorage(SCREENSHOT_KEYS)
+    storage = ScreenshotStorage()
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
     result = JobQueueService.process_media_delete_outbox(storage=storage)
 
     assert result["pending"] == 1
-    assert storage.listed == [] and storage.deleted == []
+    assert storage.folders == []
+
+
+class GcsFake:
+    """Bucket and client whose deletes are recorded per batch request."""
+
+    def __init__(self, keys, undeletable=()):
+        self.keys = set(keys)
+        self.undeletable = set(undeletable)
+        self.batches = []
+
+    def blob(self, key):
+        def delete():
+            self.batches[-1].append(key)
+            if key not in self.undeletable:
+                self.keys.discard(key)
+        return SimpleNamespace(delete=delete)
+
+    def list_blobs(self, prefix):
+        return [SimpleNamespace(name=key) for key in sorted(self.keys) if key.startswith(prefix)]
+
+    def batch(self, raise_exception=True):
+        assert raise_exception is False
+        fake = self
+
+        class Batch:
+            def __enter__(self):
+                fake.batches.append([])
+
+            def __exit__(self, *_exc):
+                return False
+
+        return Batch()
+
+
+def _gcs_storage(monkeypatch, fake):
+    from services.gcs_service import GCSService
+    from services.media_storage import GCSMediaStorage
+
+    monkeypatch.setattr(GCSService, "_get_bucket", classmethod(lambda cls: fake))
+    monkeypatch.setattr(GCSService, "_get_client", classmethod(lambda cls: fake))
+    # Skip __init__: it only checks production settings.
+    return GCSMediaStorage.__new__(GCSMediaStorage)
+
+
+def test_gcs_screenshot_delete_sends_batches_of_at_most_100(monkeypatch):
+    keys = [f"screenshots/user-a/hash-a/{n}.00.jpg" for n in range(250)]
+    other = "screenshots/user-a/hash-b/1.00.jpg"
+    fake = GcsFake(keys + [other])
+
+    assert _gcs_storage(monkeypatch, fake).delete_screenshots("user-a", "hash-a") is True
+    assert [len(batch) for batch in fake.batches] == [100, 100, 50]
+    assert fake.keys == {other}
+
+
+def test_gcs_screenshot_delete_reports_screenshots_left_behind(monkeypatch):
+    keys = [f"screenshots/user-a/hash-a/{n}.00.jpg" for n in range(3)]
+    fake = GcsFake(keys, undeletable=[keys[1]])
+
+    assert _gcs_storage(monkeypatch, fake).delete_screenshots("user-a", "hash-a") is False
 
 
 def test_local_screenshot_folder_delete_leaves_other_videos(monkeypatch, tmp_path):
