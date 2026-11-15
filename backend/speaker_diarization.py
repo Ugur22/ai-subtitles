@@ -26,6 +26,7 @@ from pyannote.audio.pipelines.utils import get_devices
 from pyannote.core import Segment
 from typing import List, Dict, Tuple, Optional
 import numpy as np
+from config import settings
 import tempfile
 import subprocess
 
@@ -214,18 +215,10 @@ def format_speaker_label(speaker: str, custom_names: Dict[str, str] = None) -> s
 # DIARIZATION_SIMILARITY_THRESHOLD; ascending, the lowest bounds the clustering.
 LINK_THRESHOLD_SWEEP = (0.3, 0.4, 0.5, 0.6, 0.7)
 
-# Must match the DIARIZATION_LINK_MODEL default in config.py (not imported here to keep torch-free config).
-DEFAULT_LINK_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
-DEFAULT_LINK_THRESHOLD = 0.5
-
-# Labels with less speech than this are dropped before linking. They have nothing to
-# embed and never own a transcript line; E04's 0.39 s g0 SPEAKER_11 showed up as an
-# extra speaker. Of 130 labels across 3 test sources, no real one was under 3 s.
 MIN_LINK_SPEECH_SECONDS = 1.0
 
 
 def linking_signature(link_model: str, similarity_threshold: float) -> str:
-    """Everything about cross-group linking that changes its output; part of the cache keys."""
     return f"{link_model}@{similarity_threshold}/min{MIN_LINK_SPEECH_SECONDS}"
 
 
@@ -242,22 +235,24 @@ class ChunkedSpeakerDiarizer:
     def __init__(
         self,
         chunk_duration: int = 900,
-        similarity_threshold: float = DEFAULT_LINK_THRESHOLD,
+        similarity_threshold: Optional[float] = None,
         use_auth_token: str = None,
-        link_model: str = DEFAULT_LINK_MODEL,
+        link_model: Optional[str] = None,
     ):
         """
         Initialize chunked diarization system.
 
         Args:
             chunk_duration: Target duration for each diarization chunk in seconds (default: 900 = 15 min)
-            similarity_threshold: Cosine similarity threshold for matching speakers across chunks
+            similarity_threshold: Cosine similarity threshold for matching speakers across chunks (default: settings)
             use_auth_token: Hugging Face authentication token for pyannote models
-            link_model: Embedding model used to link speakers across chunks
+            link_model: Embedding model used to link speakers across chunks (default: settings)
         """
         self.chunk_duration = chunk_duration
-        self.similarity_threshold = similarity_threshold
-        self.link_model = link_model
+        self.similarity_threshold = (
+            settings.DIARIZATION_SIMILARITY_THRESHOLD if similarity_threshold is None else similarity_threshold
+        )
+        self.link_model = link_model or settings.DIARIZATION_LINK_MODEL
         self.use_auth_token = use_auth_token
         self.pipeline = None
         self.embedding_model = None
@@ -529,6 +524,7 @@ class ChunkedSpeakerDiarizer:
 
         # PHASE 6: Match speakers across chunks (CPU only)
         print("\n=== PHASE 6: Matching speakers across chunks (CPU) ===")
+        chunk_results = self._drop_near_silent_labels(chunk_results)
         chunk_to_global_map, global_speaker_count = self._match_speakers(chunk_results)
 
         # Build unified segment list with global speaker labels
@@ -824,6 +820,15 @@ class ChunkedSpeakerDiarizer:
             except Exception:
                 pass
 
+    @staticmethod
+    def _embedding_segments(speaker_segments: List[Dict]) -> List[Dict]:
+        """The segments one speaker's embedding is averaged from: the 5 longest of at
+        least 0.5 s, or the single longest when none is that long."""
+        longest_first = sorted(speaker_segments, key=lambda s: s['local_end'] - s['local_start'], reverse=True)
+        # 5, not 10: GPU memory during embedding extraction.
+        chosen = [s for s in longest_first[:5] if s['local_end'] - s['local_start'] >= 0.5]
+        return chosen or longest_first[:1]
+
     def _extract_speaker_embeddings(self, audio_path: str, segments: List[Dict]) -> Dict[str, np.ndarray]:
         """
         Extract representative embeddings for each speaker.
@@ -850,26 +855,7 @@ class ChunkedSpeakerDiarizer:
 
         # Extract embeddings for each speaker
         for speaker, speaker_segments in speaker_to_segments.items():
-            # Sort by duration (longest first) to get best quality segments
-            speaker_segments_sorted = sorted(
-                speaker_segments,
-                key=lambda s: s['local_end'] - s['local_start'],
-                reverse=True
-            )
-
-            # Use up to 5 segments for robust embedding (or all if fewer)
-            # Reduced from 10 to 5 to save GPU memory during embedding extraction
-            segments_to_use = speaker_segments_sorted[:min(5, len(speaker_segments_sorted))]
-
-            # Skip very short segments (< 0.5 seconds)
-            segments_to_use = [
-                s for s in segments_to_use
-                if (s['local_end'] - s['local_start']) >= 0.5
-            ]
-
-            if not segments_to_use:
-                # Fall back to longest segment even if short
-                segments_to_use = [speaker_segments_sorted[0]]
+            segments_to_use = self._embedding_segments(speaker_segments)
 
             # Extract embeddings
             embeddings = []
@@ -892,8 +878,7 @@ class ChunkedSpeakerDiarizer:
                     if embedding.ndim == 2:
                         embedding = embedding.squeeze(0)
 
-                    # WeSpeaker returns NaN (instead of raising) for segments <= ~0.1 s;
-                    # NaN would also break the JSON checkpoint save.
+                    # WeSpeaker returns NaN (instead of raising) for segments <= ~0.1 s.
                     if not np.all(np.isfinite(embedding)):
                         print(f"  Warning: Non-finite embedding for {speaker} segment {seg['local_start']}-{seg['local_end']}")
                         continue
@@ -914,6 +899,28 @@ class ChunkedSpeakerDiarizer:
 
         return speaker_embeddings
 
+    @staticmethod
+    def _drop_near_silent_labels(chunk_results: List[Dict]) -> List[Dict]:
+        """Remove labels with under MIN_LINK_SPEECH_SECONDS of speech (segments and
+        embedding) from each group, so they are neither linked nor counted."""
+        kept_results = []
+        for chunk_idx, chunk_result in enumerate(chunk_results):
+            seconds = {}
+            for seg in chunk_result['segments']:
+                seconds[seg['speaker']] = seconds.get(seg['speaker'], 0.0) + max(0.0, seg['end'] - seg['start'])
+            dropped = {label for label, total in seconds.items() if total < MIN_LINK_SPEECH_SECONDS}
+            for label in sorted(dropped):
+                print(f"  [SpeakerLink] dropped g{chunk_idx} {label} ({seconds[label]:.1f} s of speech)")
+            kept_results.append({
+                **chunk_result,
+                'segments': [seg for seg in chunk_result['segments'] if seg['speaker'] not in dropped],
+                'speaker_embeddings': {
+                    label: vector for label, vector in chunk_result['speaker_embeddings'].items()
+                    if label not in dropped
+                },
+            })
+        return kept_results
+
     def _match_speakers(self, chunk_results: List[Dict]) -> Tuple[List[Dict[str, str]], int]:
         """
         Match speakers across chunks using embedding similarity.
@@ -926,22 +933,14 @@ class ChunkedSpeakerDiarizer:
             - chunk_to_global_map: List of dicts mapping local to global speaker labels for each chunk
             - global_speaker_count: Total number of unique speakers found
         """
-        # One entry per (group, local speaker) with enough speech, so every such label
-        # gets a global one, also when its embedding could not be extracted. Labels
-        # under MIN_LINK_SPEECH_SECONDS never own a transcript line and would only
-        # inflate the speaker count.
         speakers, vectors = [], []
         for chunk_idx, chunk_result in enumerate(chunk_results):
             first_start, seconds = {}, {}
             for seg in chunk_result['segments']:
                 label = seg['speaker']
                 first_start[label] = min(first_start.get(label, seg['start']), seg['start'])
-                # max(0, ...): a malformed negative segment must not cancel real speech.
                 seconds[label] = seconds.get(label, 0.0) + max(0.0, seg['end'] - seg['start'])
             for label in sorted(first_start):
-                if seconds[label] < MIN_LINK_SPEECH_SECONDS:
-                    print(f"  [SpeakerLink] dropped g{chunk_idx} {label} ({seconds[label]:.1f} s of speech)")
-                    continue
                 speakers.append({
                     "group": chunk_idx, "label": label,
                     "first_start": first_start[label], "seconds": seconds[label],
@@ -1081,8 +1080,6 @@ class ChunkedSpeakerDiarizer:
             mapping = chunk_to_global_map[chunk_idx]
 
             for seg in chunk_result['segments']:
-                if seg['speaker'] not in mapping:  # 0 s label dropped by _match_speakers
-                    continue
                 # Create unified segment (remove local timing)
                 unified_segment = {
                     "start": seg['start'],

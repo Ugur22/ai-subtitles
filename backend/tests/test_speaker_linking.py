@@ -1,6 +1,9 @@
 import numpy as np
 
-from speaker_diarization import DEFAULT_LINK_MODEL, ChunkedSpeakerDiarizer
+import os
+
+from config import settings
+from speaker_diarization import ChunkedSpeakerDiarizer
 
 
 def _voice(angle_degrees):
@@ -116,6 +119,7 @@ def test_speaker_with_no_speech_gets_no_label_and_no_segments():
     groups[0]["segments"].append({"start": 50.0, "end": 50.0, "speaker": "SPEAKER_11"})
 
     diarizer = ChunkedSpeakerDiarizer(chunk_duration=900)
+    groups = diarizer._drop_near_silent_labels(groups)
     mapping, count = diarizer._match_speakers(groups)
     unified = diarizer._unify_segments(groups, mapping)
 
@@ -124,11 +128,15 @@ def test_speaker_with_no_speech_gets_no_label_and_no_segments():
     assert {seg["speaker"] for seg in unified} == {"SPEAKER_00"}
 
 
-def test_defaults_link_with_wespeaker_at_the_measured_gap():
+def test_defaults_come_from_settings():
     diarizer = ChunkedSpeakerDiarizer()
 
-    assert diarizer.link_model == DEFAULT_LINK_MODEL == "pyannote/wespeaker-voxceleb-resnet34-LM"
-    assert diarizer.similarity_threshold == 0.5
+    assert diarizer.link_model == settings.DIARIZATION_LINK_MODEL
+    assert diarizer.similarity_threshold == settings.DIARIZATION_SIMILARITY_THRESHOLD
+    if "DIARIZATION_LINK_MODEL" not in os.environ:
+        assert diarizer.link_model == "pyannote/wespeaker-voxceleb-resnet34-LM"
+    if "DIARIZATION_SIMILARITY_THRESHOLD" not in os.environ:
+        assert diarizer.similarity_threshold == 0.5
 
 
 def test_negative_segment_does_not_cancel_real_speech():
@@ -138,6 +146,7 @@ def test_negative_segment_does_not_cancel_real_speech():
     ]
     groups[0]["segments"].append({"start": 10.0, "end": 4.0, "speaker": "SPEAKER_00"})
 
+    groups = ChunkedSpeakerDiarizer._drop_near_silent_labels(groups)
     mapping, count = _link(groups)
 
     assert count == 2
@@ -156,6 +165,7 @@ def test_near_silent_speaker_is_dropped_and_one_second_is_kept(capsys):
     groups[1]["segments"].append({"start": 950.0, "end": 951.0, "speaker": "SPEAKER_04"})
 
     diarizer = ChunkedSpeakerDiarizer(chunk_duration=900)
+    groups = diarizer._drop_near_silent_labels(groups)
     mapping, count = diarizer._match_speakers(groups)
     unified = diarizer._unify_segments(groups, mapping)
 
