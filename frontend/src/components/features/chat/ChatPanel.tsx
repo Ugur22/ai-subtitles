@@ -737,6 +737,7 @@ interface PhaseEntry {
 
 interface ChatPanelProps {
   videoHash: string | null;
+  transcriptSpeakers: string[];
   onTimestampClick?: (timeString: string) => void;
   jobId?: string | null;
   accessToken?: string;
@@ -1309,6 +1310,7 @@ const EvidenceDisclosure: React.FC<{
 
 const ChatPanelInner: React.FC<ChatPanelProps> = ({
   videoHash,
+  transcriptSpeakers,
   onTimestampClick,
   jobId,
   accessToken,
@@ -1940,10 +1942,13 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   }, [videoHash]);
 
   const filteredSpeakers = useMemo(() => {
-    if (!mentionFilter) return speakers;
+    const names = [...new Set([...transcriptSpeakers, ...speakers])]
+      .filter(Boolean)
+      .sort();
+    if (!mentionFilter) return names;
     const lower = mentionFilter.toLowerCase();
-    return speakers.filter((s) => s.toLowerCase().includes(lower));
-  }, [speakers, mentionFilter]);
+    return names.filter((s) => s.toLowerCase().includes(lower));
+  }, [transcriptSpeakers, speakers, mentionFilter]);
 
   const getMentionContext = (value: string, cursorPos: number) => {
     // Look backwards from cursor for @ not preceded by a non-space char

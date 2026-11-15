@@ -6,7 +6,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSpring, animated } from "react-spring";
-import { animationConfig } from "../../utils/animations";
 import { detectFaces, DetectedFace, getFaceTagSpeakers } from "../../services/api";
 import { FaceTagOverlay } from "../features/face-tagging/FaceTagOverlay";
 
@@ -225,28 +224,24 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
     }
   };
 
-  // Backdrop animation (less opaque to see video behind)
   const backdropAnimation = useSpring({
     opacity: 1,
-    config: animationConfig.smooth,
+    config: { duration: 120 },
     from: { opacity: 0 },
+    immediate: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   });
 
-  // Modal position animation (immediate during drag for responsiveness)
   const modalAnimation = useSpring({
-    x: position.x,
-    y: position.y,
-    scale: isInitialized ? 1 : 0.9,
     opacity: isInitialized ? 1 : 0,
-    immediate: isDragging,
-    config: animationConfig.smooth,
+    config: { duration: 120 },
+    immediate: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   });
 
   const totalTags = Object.values(tagCounts).reduce((a, b) => a + b, 0);
 
   return (
     <animated.div
-      className={`fixed inset-0 z-50 transition-all duration-300 ${
+      className={`fixed inset-0 z-50 ${
         isDimmed ? "bg-black/50 backdrop-blur-sm" : "bg-transparent"
       }`}
       style={backdropAnimation}
@@ -256,9 +251,8 @@ export const DraggableImageModal: React.FC<DraggableImageModalProps> = ({
         ref={modalRef}
         className="absolute bg-white rounded-2xl shadow-2xl max-w-4xl overflow-hidden"
         style={{
-          left: modalAnimation.x,
-          top: modalAnimation.y,
-          transform: modalAnimation.scale.to((s) => `scale(${s})`),
+          left: position.x,
+          top: position.y,
           opacity: modalAnimation.opacity,
         }}
         onClick={(e) => e.stopPropagation()}
