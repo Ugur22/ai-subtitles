@@ -6,6 +6,8 @@
 import { useCallback } from 'react';
 import { StoredJob } from '../types/job';
 
+export const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
+
 const STORAGE_KEY = 'ai-subs-jobs';
 
 export const useJobStorage = () => {
@@ -41,7 +43,7 @@ export const useJobStorage = () => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
       } catch {
         // If quota exceeded, clear the jobs cache and retry
-        localStorage.removeItem('ai-subs-jobs-cache');
+        localStorage.removeItem(JOBS_CACHE_KEY);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
       }
     } catch (error) {
