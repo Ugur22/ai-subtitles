@@ -54,14 +54,8 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   };
 
   const sectionChip = (variant: 'accent' | 'success' | 'error' | 'default', label: number) => {
-    const styleMap: Record<typeof variant, React.CSSProperties> = {
-      accent:  { background: 'var(--accent-dim)', color: 'var(--accent)', borderColor: 'var(--accent-border)' },
-      success: { background: 'oklch(70% 0.15 145 / 0.12)', color: 'var(--c-success)', borderColor: 'oklch(70% 0.15 145 / 0.30)' },
-      error:   { background: 'oklch(65% 0.20 25 / 0.10)', color: 'var(--c-error)', borderColor: 'oklch(65% 0.20 25 / 0.25)' },
-      default: { background: 'var(--bg-subtle)', color: 'var(--text-quaternary)', borderColor: 'var(--border-subtle)' },
-    };
     return (
-      <span className="chip mono" style={{ ...styleMap[variant], padding: '1px 7px' }}>{label}</span>
+      <span className="rounded-full px-2 py-0.5 text-xs tabular-nums" style={{ backgroundColor: variant === 'error' ? 'oklch(65% 0.20 25 / 0.10)' : 'var(--bg-subtle)', color: variant === 'error' ? 'var(--c-error)' : 'var(--text-secondary)' }}>{label}</span>
     );
   };
 
@@ -79,26 +73,28 @@ export const JobPanel: React.FC<JobPanelProps> = ({
 
       {/* Panel */}
       <div
-        className={`fixed right-0 top-0 h-full w-full sm:w-96 transform transition-transform duration-300 ease-in-out z-50 flex flex-col`}
+        className={`fixed right-0 top-0 h-full w-full sm:w-[420px] transform transition-transform duration-300 motion-reduce:transition-none ease-in-out z-50 flex flex-col`}
         style={{
           backgroundColor: 'var(--bg-app)',
           borderLeft: '1px solid var(--border-subtle)',
           boxShadow: 'var(--shadow-lg)',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
         }}
+        inert={!isOpen}
+        aria-hidden={!isOpen}
         onKeyDown={handleKeyDown}
         role="dialog"
         aria-modal="true"
         aria-labelledby="job-panel-title"
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px 14px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, background: 'var(--bg-surface)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '24px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, background: 'var(--bg-surface)' }}>
           <div style={{ minWidth: 0 }}>
-            <h2 id="job-panel-title" style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>
+            <h2 id="job-panel-title" style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>
               Library
             </h2>
             {!isLoading && jobs.length > 0 && (
-              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px', margin: 0 }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
                 {jobs.length} {jobs.length === 1 ? 'transcript' : 'transcripts'}{activeJobs.length > 0 ? ` · ${activeJobs.length} active` : ''}
               </p>
             )}
@@ -128,9 +124,15 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div style={{ padding: '48px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-              <div className="animate-spin rounded-full h-8 w-8" style={{ border: '2px solid var(--border-default)', borderTopColor: 'var(--accent)' }} />
-              <p style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>Loading jobs…</p>
+            <div className="space-y-4 p-5" role="status" aria-label="Loading jobs">
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Loading your library…</p>
+              {[0, 1, 2].map(item => (
+                <div key={item} aria-hidden="true" className="space-y-4 rounded-xl border p-4 motion-safe:animate-pulse" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-subtle)' }}>
+                  <div className="h-3 w-4/5 rounded" style={{ backgroundColor: 'var(--bg-subtle)' }} />
+                  <div className="h-3 w-1/2 rounded" style={{ backgroundColor: 'var(--bg-subtle)' }} />
+                  <div className="h-7 w-full rounded-lg" style={{ backgroundColor: 'var(--bg-base)' }} />
+                </div>
+              ))}
             </div>
           ) : jobs.length === 0 ? (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -143,9 +145,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({
           ) : (
             <>
               {activeJobs.length > 0 && (
-                <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
+                <section style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Active</span>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Active</span>
                     {sectionChip('accent', activeJobs.length)}
                   </div>
                   <JobList jobs={activeJobs} onViewTranscript={onViewTranscript} onCancel={handleCancelJob} />
@@ -153,9 +155,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               )}
 
               {completedJobs.length > 0 && (
-                <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
+                <section style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Completed</span>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Completed</span>
                     {sectionChip('success', completedJobs.length)}
                   </div>
                   <JobList jobs={completedJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
@@ -163,9 +165,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               )}
 
               {failedJobs.length > 0 && (
-                <section style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
+                <section style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Failed</span>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Failed</span>
                     {sectionChip('error', failedJobs.length)}
                   </div>
                   <JobList jobs={failedJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
@@ -173,9 +175,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               )}
 
               {cancelledJobs.length > 0 && (
-                <section style={{ padding: '16px' }}>
+                <section style={{ padding: '20px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cancelled</span>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Cancelled</span>
                     {sectionChip('default', cancelledJobs.length)}
                   </div>
                   <JobList jobs={cancelledJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />

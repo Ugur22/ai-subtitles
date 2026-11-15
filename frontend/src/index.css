@@ -1457,3 +1457,18 @@ button.badge-default:hover { color: var(--text-primary); }
   color: var(--text-tertiary);
   line-height: 1.2;
 }
+
+@keyframes job-progress-travel {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(386%); }
+}
+
+.job-progress-indeterminate {
+  animation: job-progress-travel 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .job-progress-indeterminate {
+    animation: none;
+  }
+}

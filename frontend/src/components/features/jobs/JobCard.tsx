@@ -19,9 +19,9 @@ interface JobCardProps {
 }
 
 const statusConfig: Record<JobStatus, { label: string; color: string; bg: string; border: string }> = {
-  pending:    { label: 'Pending',    color: 'var(--text-tertiary)', bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
-  processing: { label: 'Processing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'oklch(78% 0.17 75 / 0.3)' },
-  finalizing: { label: 'Finalizing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'oklch(78% 0.17 75 / 0.3)' },
+  pending:    { label: 'Queued',    color: 'var(--text-tertiary)', bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
+  processing: { label: 'Processing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'var(--accent-border)' },
+  finalizing: { label: 'Finalizing', color: 'var(--accent)',         bg: 'var(--accent-dim)',              border: 'var(--accent-border)' },
   completed:  { label: 'Completed',  color: 'var(--c-success)',      bg: 'oklch(70% 0.15 145 / 0.12)',    border: 'oklch(70% 0.15 145 / 0.3)' },
   failed:     { label: 'Failed',     color: 'var(--c-error)',        bg: 'oklch(65% 0.20 25 / 0.10)',     border: 'oklch(65% 0.20 25 / 0.25)' },
   cancelled:  { label: 'Cancelled',  color: 'var(--text-tertiary)',  bg: 'var(--bg-overlay)',             border: 'var(--border-subtle)' },
@@ -49,6 +49,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   const [isCancelling, setIsCancelling] = useState(false);
 
   const status = statusConfig[job.status];
+  const progress = Math.min(100, Math.max(0, job.progress || 0));
 
   const handleRetry = async () => {
     setIsRetrying(true);
@@ -83,13 +84,12 @@ export const JobCard: React.FC<JobCardProps> = ({
       <div style={{
         backgroundColor: 'var(--bg-surface)',
         border: '1px solid var(--border-subtle)',
-        borderRadius: '6px',
-        padding: '12px 14px',
-        marginBottom: '8px',
+        borderRadius: '12px',
+        padding: '16px',
       }}>
         {/* Title + badge */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={job.filename}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', lineHeight: 1.5 }} title={job.filename}>
             {job.filename}
           </span>
           <span style={{
@@ -113,26 +113,19 @@ export const JobCard: React.FC<JobCardProps> = ({
         {/* Processing */}
         {isActiveJobStatus(job.status) && job.status !== "pending" && (
           <>
-            <div style={{ width: '100%', height: '3px', backgroundColor: 'var(--border-subtle)', borderRadius: '2px', overflow: 'hidden', marginBottom: '8px' }}>
-              <div
-                style={{ height: '100%', backgroundColor: 'var(--accent)', borderRadius: '2px', transition: 'width 300ms ease', width: `${job.progress}%` }}
-                role="progressbar" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100}
-              />
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{job.status === 'finalizing' ? 'Saving transcript' : 'Transcribing'}</span>
+              <span className="text-sm font-medium tabular-nums" style={{ color: 'var(--accent)' }}>{progress > 0 ? `${Math.round(progress)}%` : 'Starting…'}</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <svg style={{ width: '12px', height: '12px', animation: 'spin 1s linear infinite' }} fill="none" viewBox="0 0 24 24">
-                  <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                {job.progress_message || (job.status === "finalizing" ? "Finalizing result…" : "Processing…")}
-              </span>
-              {estimatedRemaining && estimatedRemaining > 0 && (
-                <span style={{ fontSize: '12px', color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
-                  ~{formatDuration(estimatedRemaining)} left
-                </span>
-              )}
+            <div className="h-1.5 overflow-hidden rounded-full" style={{ backgroundColor: 'var(--bg-subtle)' }} role="progressbar" aria-label={`Transcription progress for ${job.filename}`} aria-valuenow={progress > 0 ? progress : undefined} aria-valuemin={0} aria-valuemax={100}>
+              <div className={progress > 0 ? 'h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none' : 'job-progress-indeterminate h-full rounded-full'} style={{ backgroundColor: 'var(--accent)', width: progress > 0 ? `${progress}%` : '35%' }} />
             </div>
+            <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
+              {job.progress_message || (job.status === 'finalizing' ? 'Saving your transcript and finishing up…' : 'Working through your file. You can close this panel.')}
+            </p>
+            {estimatedRemaining !== undefined && estimatedRemaining > 0 && (
+              <p className="mt-1 text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>About {formatDuration(estimatedRemaining)} remaining</p>
+            )}
           </>
         )}
 
@@ -162,8 +155,8 @@ export const JobCard: React.FC<JobCardProps> = ({
           <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
             <button
               onClick={() => onViewTranscript?.(job)}
-              className="btn-primary"
-              style={{ flex: 1, justifyContent: 'center', padding: '6px 12px', fontSize: '12px' }}
+              className="btn-ghost"
+              style={{ flex: 1, justifyContent: 'center', padding: '8px 10px', fontSize: '12px', color: 'var(--accent)', backgroundColor: 'var(--accent-dim)', borderRadius: '8px' }}
             >
               View transcript
             </button>
@@ -172,13 +165,14 @@ export const JobCard: React.FC<JobCardProps> = ({
               className="btn-ghost"
               style={{ padding: '6px 8px' }}
               title="Share"
+              aria-label="Share transcript"
             >
               <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
             </button>
             <Menu as="div" className="relative">
-              <Menu.Button className="btn-ghost" style={{ padding: '6px 8px' }} title="Download">
+              <Menu.Button className="btn-ghost" style={{ padding: '6px 8px' }} title="Download" aria-label="Download transcript">
                 <svg style={{ width: '14px', height: '14px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
@@ -250,6 +244,7 @@ export const JobCard: React.FC<JobCardProps> = ({
               className="btn-ghost"
               style={{ padding: '6px 8px' }}
               title="Delete"
+              aria-label="Delete transcript"
             >
               <svg style={{ width: '14px', height: '14px', color: 'var(--text-tertiary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -291,7 +286,7 @@ export const JobCard: React.FC<JobCardProps> = ({
         )}
 
         {/* Timestamp */}
-        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '4px' }}>
           <svg style={{ width: '11px', height: '11px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
