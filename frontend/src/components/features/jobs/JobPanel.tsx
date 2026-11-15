@@ -175,13 +175,16 @@ export const JobPanel: React.FC<JobPanelProps> = ({
               )}
 
               {cancelledJobs.length > 0 && (
-                <section style={{ padding: '20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Cancelled</span>
+                <details className="group mx-5 my-4 rounded-xl border" style={{ borderColor: 'var(--border-subtle)' }}>
+                  <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-4 py-3 text-xs font-medium transition-colors hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden" style={{ color: 'var(--text-secondary)' }}>
+                    <svg className="h-3.5 w-3.5 shrink-0 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
+                    Cancelled
                     {sectionChip('default', cancelledJobs.length)}
+                  </summary>
+                  <div className="px-3 pb-3 pt-1">
+                    <JobList jobs={cancelledJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
                   </div>
-                  <JobList jobs={cancelledJobs} onViewTranscript={onViewTranscript} onDelete={handleDeleteJob} />
-                </section>
+                </details>
               )}
             </>
           )}
