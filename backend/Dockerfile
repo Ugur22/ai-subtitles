@@ -9,9 +9,10 @@ FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
 # Set working directory
 WORKDIR /app
 
-# Set HuggingFace cache directory (persists models in image)
+# Set HuggingFace cache directory (persists models in image).
+# Don't set the transformers-specific cache variable: transformers 4.x would read it
+# instead of HF_HOME/hub, where snapshot_download bakes the models.
 ENV HF_HOME=/app/.cache/huggingface
-ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 
 # Set CUDA environment variables
 ENV CUDA_HOME=/usr/local/cuda

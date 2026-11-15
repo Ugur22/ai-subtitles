@@ -76,6 +76,13 @@ def test_download_models_imports_only_stdlib_and_huggingface_hub():
     assert imported - set(sys.stdlib_module_names) == {"huggingface_hub"}
 
 
+def test_transformers_reads_the_cache_snapshot_download_writes():
+    # TRANSFORMERS_CACHE overrides HF_HOME/hub in transformers 4.x, so the baked
+    # models would be invisible offline (build a27d789c failed this way).
+    for name in ("Dockerfile", "download_models.py", "verify_models.py", "deploy.sh"):
+        assert "TRANSFORMERS_CACHE" not in (BACKEND / name).read_text(encoding="utf-8"), name
+
+
 def test_models_are_fetched_before_requirements_and_verified_after():
     lines = (BACKEND / "Dockerfile").read_text().splitlines()
 
