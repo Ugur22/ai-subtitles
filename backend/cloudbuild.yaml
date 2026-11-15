@@ -4,9 +4,14 @@ steps:
     args: ['pull', 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest']
     allowFailure: true
   # Build using the previous image as layer cache
+  # BuildKit only reuses --cache-from layers when the cached image carries inline
+  # cache metadata; without BUILDKIT_INLINE_CACHE=1 every layer silently rebuilds.
   - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_BUILDKIT=1']
     args:
       - 'build'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
       - '--cache-from=us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
       - '-t'
       - 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
