@@ -316,10 +316,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       });
 
       if (result) {
+        // The submit callback already refetched the shared job list.
         setShowJobPanel(true);
-        if (result.cached) {
-          jobTracker.refetch();
-        }
       }
     } catch (error) {
       const message =
@@ -1571,6 +1569,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         isOpen={showJobPanel}
         onClose={() => setShowJobPanel(false)}
         onViewTranscript={handleViewTranscript}
+        tracker={jobTracker}
       />
 
       {/* Enroll Speaker Modal */}

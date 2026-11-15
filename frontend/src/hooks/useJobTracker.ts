@@ -3,12 +3,12 @@
  * Coordinates job fetching, pagination, real-time subscriptions, and notifications
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Job, isActiveJobStatus } from '../types/job';
 import { useJobStorage } from './useJobStorage';
 import { useJobNotifications } from './useJobNotifications';
 import { supabase } from '../lib/supabase';
-import { getJobs } from '../services/api';
+import { deleteJobPermanent, getJobs } from '../services/api';
 
 const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
 const JOBS_PER_PAGE = 10;
@@ -20,8 +20,10 @@ export const useJobTracker = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  // Jobs hidden from every view while their DELETE request runs.
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
-  const { getStoredJobs, removeInvalidJobs } = useJobStorage();
+  const { getStoredJobs, removeInvalidJobs, removeJob } = useJobStorage();
   const { notifyJobComplete, notifyJobFailed } = useJobNotifications();
 
   // Track previously completed jobs to avoid duplicate notifications
@@ -215,8 +217,38 @@ export const useJobTracker = () => {
     fetchJobs();
   }, [fetchJobs]);
 
+  /**
+   * Permanently delete a job. It disappears from every view at once; the
+   * request keeps running (up to a minute for a long video), and the job
+   * comes back if it fails. Rejects with the request's error.
+   */
+  const deleteJob = useCallback(async (job: Job) => {
+    setHiddenIds(prev => new Set(prev).add(job.job_id));
+    try {
+      await deleteJobPermanent(job.job_id, job.access_token);
+    } catch (error) {
+      setHiddenIds(prev => {
+        const next = new Set(prev);
+        next.delete(job.job_id);
+        return next;
+      });
+      throw error;
+    }
+    // The id stays hidden on success: the refetch is async, and un-hiding
+    // before it lands would flash the job back. Ids are unique, so the set
+    // only grows by one entry per deleted job.
+    removeJob(job.job_id);
+    fetchJobs();
+  }, [removeJob, fetchJobs]);
+
+  const visibleJobs = useMemo(
+    () => jobs.filter(j => !hiddenIds.has(j.job_id)),
+    [jobs, hiddenIds],
+  );
+
   return {
-    jobs,
+    jobs: visibleJobs,
+    deleteJob,
     isLoading,
     isOffline,
     page,
@@ -226,3 +258,5 @@ export const useJobTracker = () => {
     refetch,
   };
 };
+
+export type JobTracker = ReturnType<typeof useJobTracker>;
