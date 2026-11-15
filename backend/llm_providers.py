@@ -14,6 +14,7 @@ from typing import AsyncIterator, Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from PIL import Image
+from services.model_catalog import ReasoningEffort, reasoning_effort_options
 
 load_dotenv()
 
@@ -532,6 +533,10 @@ class GrokProvider(BaseLLMProvider):
         self.api_key = os.getenv("XAI_API_KEY")
         self.model = model_override or os.getenv("XAI_MODEL", "grok-beta")
         self.base_url = "https://api.x.ai/v1"
+        self.reasoning_effort: Optional[ReasoningEffort] = None
+
+    def _reasoning_parameters(self) -> Dict[str, str]:
+        return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
 
     async def generate(
         self,
@@ -553,6 +558,7 @@ class GrokProvider(BaseLLMProvider):
                     },
                     json={
                         "model": self.model,
+                        **self._reasoning_parameters(),
                         "messages": messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens
@@ -591,6 +597,7 @@ class GrokProvider(BaseLLMProvider):
                 },
                 json={
                     "model": self.model,
+                    **self._reasoning_parameters(),
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -680,9 +687,8 @@ class GrokProvider(BaseLLMProvider):
                 else:
                     formatted_messages.append(msg)
 
-            # Use non-reasoning model for vision (reasoning adds unnecessary latency for image analysis)
-            vision_model = self.model.replace("-reasoning", "-non-reasoning") if "reasoning" in self.model.lower() else self.model
-            print(f"Using vision model: {vision_model} (base model: {self.model})")
+            vision_model = self.model
+            print(f"Using vision model: {vision_model} (thinking effort: {self.reasoning_effort or 'provider-default'})")
 
             request_timeout = float(os.getenv("XAI_VISION_TIMEOUT_SECONDS", "45"))
             max_retries = int(os.getenv("XAI_VISION_MAX_RETRIES", "1"))
@@ -704,6 +710,7 @@ class GrokProvider(BaseLLMProvider):
                                 },
                                 json={
                                     "model": vision_model,
+                                    **self._reasoning_parameters(),
                                     "messages": formatted_messages,
                                     "temperature": temperature,
                                     "max_tokens": max_tokens
@@ -1028,6 +1035,7 @@ class LLMManager:
         provider_name: Optional[str] = None,
         api_key_override: Optional[str] = None,
         model_override: Optional[str] = None,
+        reasoning_effort: Optional[ReasoningEffort] = None,
     ) -> BaseLLMProvider:
         """Get a specific LLM provider or the default one"""
         name = provider_name or self.default_provider
@@ -1046,10 +1054,15 @@ class LLMManager:
 
         provider = self.providers[name]
 
+        if reasoning_effort is not None:
+            model = model_override or getattr(provider, "model", "")
+            if reasoning_effort not in reasoning_effort_options(name, model):
+                raise ValueError(f"Thinking effort '{reasoning_effort}' is not supported by {name}/{model}")
+
         # Copy once so per-request overrides never leak into the shared instance.
         overrides = {
             attr: value
-            for attr, value in (("api_key", api_key_override), ("model", model_override))
+            for attr, value in (("api_key", api_key_override), ("model", model_override), ("reasoning_effort", reasoning_effort))
             if value and hasattr(provider, attr)
         }
         if overrides:

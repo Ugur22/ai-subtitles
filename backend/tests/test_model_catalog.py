@@ -148,3 +148,119 @@ def test_model_override_does_not_mutate_shared_provider(monkeypatch):
     assert picked.model == "gpt-5.6-sol"
     assert shared.model == original
     assert default is shared
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("grok-4.5", ["low", "medium", "high"]),
+    ("grok-4.6", ["low", "medium", "high", "xhigh"]),
+    ("grok-4.7", ["low", "medium", "high", "xhigh"]),
+    ("grok-4.20-0309-reasoning", []),
+    ("grok-4.20-0309-non-reasoning", []),
+    ("grok-unknown", []),
+])
+def test_reasoning_capabilities_are_model_specific(model, expected):
+    assert model_catalog.reasoning_effort_options("xai", model) == expected
+    assert model_catalog.reasoning_effort_options("grok", model) == expected
+    assert model_catalog.reasoning_effort_options("openai", model) == []
+
+
+def test_reasoning_override_is_request_scoped_and_validated(monkeypatch):
+    from llm_providers import LLMManager
+
+    manager = LLMManager()
+    shared = manager.providers["grok"]
+    monkeypatch.setattr(shared, "api_key", "xai-test")
+    monkeypatch.setattr(shared, "model", "grok-4.7")
+    picked = manager.get_provider("xai", reasoning_effort="low")
+
+    assert picked.reasoning_effort == "low"
+    assert manager.get_provider("grok").reasoning_effort is None
+    assert shared.model == "grok-4.7"
+    with pytest.raises(ValueError, match="not supported"):
+        manager.get_provider("grok", model_override="grok-4.5", reasoning_effort="xhigh")
+    with pytest.raises(ValueError, match="not supported"):
+        manager.get_provider("openai", reasoning_effort="low")
+
+
+@pytest.mark.parametrize("model,effort", [
+    ("grok-4.7", "low"),
+    ("grok-4.6", "xhigh"),
+    ("grok-4.5", None),
+    ("grok-4.20-0309-reasoning", None),
+    ("grok-4.20-0309-non-reasoning", None),
+])
+def test_grok_sends_selected_model_and_effort_in_text_vision_and_stream(monkeypatch, tmp_path, model, effort):
+    import json
+    from PIL import Image
+    from llm_providers import LLMManager
+
+    payloads = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if payload.get("stream"):
+            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n')
+        return httpx.Response(200, json={"choices": [{"message": {"content": "answer"}}]})
+
+    _mock_client(monkeypatch, handler)
+    manager = LLMManager()
+    provider = manager.get_provider("grok", api_key_override="test-key", model_override=model, reasoning_effort=effort)
+    image = tmp_path / "frame.jpg"
+    Image.new("RGB", (16, 16)).save(image)
+    messages = [{"role": "user", "content": "Describe the frame"}]
+
+    async def run():
+        assert await provider.generate(messages) == "answer"
+        assert await provider.generate_with_images(messages, [str(image)]) == "answer"
+        assert "".join([chunk async for chunk in provider.generate_stream(messages)]) == "answer"
+
+    asyncio.run(run())
+
+    assert len(payloads) == 3
+    for payload in payloads:
+        assert payload["model"] == model
+        if effort:
+            assert payload["reasoning_effort"] == effort
+        else:
+            assert "reasoning_effort" not in payload
+
+
+def test_models_endpoint_advertises_only_supported_efforts(monkeypatch):
+    from types import SimpleNamespace
+    from llm_providers import LLMManager
+    from routers import chat
+
+    async def saved_key(*_args):
+        return "test-key"
+
+    async def listed_models(*_args):
+        return ["grok-4.5", "grok-4.7", "grok-4.20-0309-non-reasoning"]
+
+    monkeypatch.setattr(chat, "_get_saved_provider_key", saved_key)
+    monkeypatch.setattr(chat, "list_models", listed_models)
+    monkeypatch.setattr(chat, "llm_manager", LLMManager())
+    monkeypatch.setattr(chat, "LLM_AVAILABLE", True)
+    request = SimpleNamespace(state=SimpleNamespace(user={"id": "test-user"}))
+    result = asyncio.run(chat.list_provider_models.__wrapped__(request, "grok"))
+
+    assert result.reasoning_efforts == {
+        "grok-4.5": ["low", "medium", "high"],
+        "grok-4.7": ["low", "medium", "high", "xhigh"],
+    }
+    picked = asyncio.run(chat._get_chat_provider(request, "grok", "grok-4.7", "low"))
+    assert picked.model == "grok-4.7"
+    assert picked.reasoning_effort == "low"
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(chat._get_chat_provider(request, "grok", "grok-4.5", "xhigh"))
+    assert error.value.status_code == 400
+
+
+def test_chat_request_rejects_invalid_effort():
+    from models.chat import ChatRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ChatRequest(question="Describe the frame", reasoning_effort="turbo")

@@ -3,6 +3,7 @@ Chat and RAG Pydantic models
 """
 from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field
+from services.model_catalog import ReasoningEffort
 
 
 class IndexVideoRequest(BaseModel):
@@ -49,6 +50,7 @@ class ChatRequest(BaseModel):
         pattern=r"^[A-Za-z0-9._:/-]{1,100}$",
         description="Model ID for the chosen provider (defaults to the provider's configured model)",
     )
+    reasoning_effort: Optional[ReasoningEffort] = None
     n_results: Optional[int] = Field(8, description="Number of context chunks to retrieve")
     include_visuals: Optional[bool] = Field(False, description="Include visual analysis from video screenshots (requires vision-capable model)")
     n_images: Optional[int] = Field(6, description="Number of relevant images to include when include_visuals=True")
@@ -87,6 +89,8 @@ class ComparisonSwapRequest(BaseModel):
     question: str = Field(..., description="Original user question to keep prompt context consistent")
     custom_instructions: Optional[str] = Field(None, description="Optional user style/format instructions")
     provider: Optional[str] = Field(None, description="Override LLM provider (defaults to the chat default)")
+    model: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._:/-]{1,100}$")
+    reasoning_effort: Optional[ReasoningEffort] = None
 
     model_config = {
         "json_schema_extra": {
@@ -176,6 +180,7 @@ class TestLLMRequest(BaseModel):
 class ProviderModelsResponse(BaseModel):
     """Models a provider currently offers, with the configured default"""
     models: List[str]
+    reasoning_efforts: Dict[str, List[ReasoningEffort]] = Field(default_factory=dict)
     default: Optional[str] = None
     source: Literal["api", "fallback"] = Field(
         description="'api' when listed by the provider, 'fallback' when only the configured default is known"

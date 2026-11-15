@@ -33,6 +33,13 @@ const EVENT_CATEGORY_ICON: Record<string, IconType> = {
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
+type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+const EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  low: "Low · faster",
+  medium: "Medium",
+  high: "High · more thinking",
+  xhigh: "Extra high · most thinking",
+};
 const imagePlaceholderSrc =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='12'%3ENo Image%3C/text%3E%3C/svg%3E";
 
@@ -1315,6 +1322,14 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, ReasoningEffort[]>>({});
+  const [effortChoices, setEffortChoices] = useState<Record<string, ReasoningEffort>>({});
+  const effortKey = `${selectedProvider}:${selectedModel}`;
+  const effortOptions = reasoningEfforts[selectedModel] ?? [];
+  const chosenEffort = effortChoices[effortKey];
+  const selectedEffort = !modelsLoading && chosenEffort && effortOptions.includes(chosenEffort)
+    ? chosenEffort
+    : undefined;
   const [includeVisuals, setIncludeVisuals] = useState(true);
 
   // Models that support vision/scene search
@@ -1406,7 +1421,12 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   }, []);
 
   const providersLoaded = providers.length > 0;
-  type ProviderModels = { models: string[]; default: string | null; error?: string | null };
+  type ProviderModels = {
+    models: string[];
+    default: string | null;
+    error?: string | null;
+    reasoning_efforts?: Record<string, ReasoningEffort[]>;
+  };
   const modelsCache = useRef<Record<string, ProviderModels>>({});
   const [modelListError, setModelListError] = useState<string | null>(null);
 
@@ -1415,8 +1435,9 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     if (!selectedProvider || !providersLoaded) return;
     let cancelled = false;
 
-    const apply = ({ models, default: defaultModel, error }: ProviderModels) => {
+    const apply = ({ models, default: defaultModel, error, reasoning_efforts }: ProviderModels) => {
       setModelListError(error ?? null);
+      setReasoningEfforts(reasoning_efforts ?? {});
       let saved: string | null = null;
       try {
         saved = localStorage.getItem(`chat-model:${selectedProvider}`);
@@ -1436,6 +1457,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
 
     // Clear so a model from the previous provider is never sent to this one.
     setProviderModels([]);
+    setReasoningEfforts({});
     setSelectedModel("");
     setModelListError(null);
     setModelsLoading(true);
@@ -1628,6 +1650,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
             video_hash: videoHash,
             provider: selectedProvider,
             model: selectedModel || undefined,
+            reasoning_effort: selectedEffort,
             n_results: 8,
             include_visuals: includeVisuals,
             n_images: includeVisuals ? 6 : undefined,
@@ -1751,6 +1774,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           custom_instructions: customInstructions || undefined,
           provider: selectedProvider,
           model: selectedModel || undefined,
+          reasoning_effort: selectedEffort,
         },
         {
           signal: controller.signal,
@@ -2182,6 +2206,37 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
                     {selectedModel || "Default model"}
                   </div>
                 )}
+              </div>
+            )}
+
+            {!modelsLoading && effortOptions.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="chat-effort" className={FIELD_LABEL_CLASS} style={{ color: "var(--text-secondary)" }}>
+                  Thinking effort:
+                </label>
+                <div className="relative">
+                  <select
+                    id="chat-effort"
+                    value={selectedEffort ?? ""}
+                    onChange={(event) => {
+                      const effort = effortOptions.find((option) => option === event.target.value);
+                      setEffortChoices((previous) => {
+                        const next = { ...previous };
+                        if (effort) next[effortKey] = effort;
+                        else delete next[effortKey];
+                        return next;
+                      });
+                    }}
+                    className={`input-base appearance-none text-sm pl-4 pr-10 py-2 cursor-pointer font-medium ${FIELD_WIDTH_CLASS}`}
+                    title="Lower effort can answer faster; higher effort spends more time reasoning."
+                  >
+                    <option value="">Provider default</option>
+                    {effortOptions.map((effort) => (
+                      <option key={effort} value={effort}>{EFFORT_LABELS[effort]}</option>
+                    ))}
+                  </select>
+                  <SelectChevron />
+                </div>
               </div>
             )}
 
