@@ -32,7 +32,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from speaker_diarization import ChunkedSpeakerDiarizer  # noqa: E402  (patches torch.load for pyannote)
+from speaker_diarization import ChunkedSpeakerDiarizer  # noqa: E402
 
 INPUT_CHUNK_SECONDS = 300
 EMBEDDERS = ("pyannote/embedding", "pyannote/wespeaker-voxceleb-resnet34-LM")
@@ -42,25 +42,19 @@ T1_MIN_TALK_SECONDS = 30.0
 RANDOM_REPEATS = 5
 SWEEP = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
 
-# E04 prod run (job 3951f366): --prod-counts 12,11,8,7 --prod-sweep 0.4=21,0.5=26,0.6=30,0.7=35
-
-
 def log(line: str = "", report: list = None) -> None:
     print(line, flush=True)
     if report is not None:
         report.append(line)
 
 
-# --------------------------------------------------------------------------- audio + diarization
-
 def extract_chunks(video: Path, chunk_dir: Path) -> list:
     chunks = sorted(chunk_dir.glob("audio_*.wav"))
     if chunks:
         return [str(c) for c in chunks]
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    # Same parameters as services/audio_service.py; prod has no -map, so ffmpeg takes track 0 (Spanish).
     subprocess.run([
-        "ffmpeg", "-v", "error", "-y", "-i", str(video), "-map", "0:a:0", "-vn",
+        "ffmpeg", "-v", "error", "-y", "-i", str(video), "-vn",
         "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
         "-f", "segment", "-segment_time", str(INPUT_CHUNK_SECONDS), "-reset_timestamps", "1",
         str(chunk_dir / "audio_%03d.wav"),
@@ -87,10 +81,7 @@ def diarize_groups(work: Path, chunks: list, token: str, force: bool) -> list:
     return results
 
 
-# --------------------------------------------------------------------------- embeddings
-
 def embed_segments(work: Path, groups: list, embedder: str, token: str) -> list:
-    """Per group: {segment index: raw embedding}. Cached per embedder."""
     import torch
     from pyannote.audio import Inference, Model
     from pyannote.core import Segment
@@ -112,7 +103,6 @@ def embed_segments(work: Path, groups: list, embedder: str, token: str) -> list:
         for label, idx in by_speaker(group["segments"]).items():
             segs = group["segments"]
             longest = sorted(idx, key=lambda j: duration(segs[j]), reverse=True)
-            # Prod's exact pick (longest 5, fallback longest) must always be embedded for Gate 0.
             keep = set(prod_longest5(segs, idx))
             usable = [j for j in idx if duration(segs[j]) >= MIN_SEGMENT_SECONDS and j not in keep]
             room = MAX_SEGMENTS_PER_SPEAKER - len(keep)
@@ -141,8 +131,6 @@ def embed_segments(work: Path, groups: list, embedder: str, token: str) -> list:
     return out
 
 
-# --------------------------------------------------------------------------- helpers
-
 def duration(seg: dict) -> float:
     return seg["local_end"] - seg["local_start"]
 
@@ -155,10 +143,8 @@ def by_speaker(segments: list) -> dict:
 
 
 def prod_longest5(segs: list, idx: list) -> list:
-    """Mirror of _extract_speaker_embeddings' selection."""
-    longest = sorted(idx, key=lambda j: duration(segs[j]), reverse=True)
-    pick = [j for j in longest[:5] if duration(segs[j]) >= MIN_SEGMENT_SECONDS]
-    return pick or longest[:1]
+    chosen = {id(seg) for seg in ChunkedSpeakerDiarizer._embedding_segments([segs[j] for j in idx])}
+    return [j for j in idx if id(segs[j]) in chosen]
 
 
 def unit(v: np.ndarray) -> np.ndarray:
@@ -185,10 +171,7 @@ def stats(values) -> str:
     return f"median {np.median(v):.3f} [min {v.min():.3f}, max {v.max():.3f}]"
 
 
-# --------------------------------------------------------------------------- samplers (T3/T4)
-
 def make_samplers(segs: list, emb: dict) -> dict:
-    """name -> list of callables(idx) -> chosen segment indices (several for random samplers)."""
     def embedded(idx):
         return [j for j in idx if j in emb and duration(segs[j]) >= MIN_SEGMENT_SECONDS] or [j for j in idx if j in emb]
 
@@ -224,10 +207,7 @@ def make_samplers(segs: list, emb: dict) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- tests
-
 def t1_split_half(groups, embs, report):
-    """Per split: median self-sim, p95 within-group cross-sim, fraction whose own half wins."""
     per_split = []
     splits = ["odd/even"] + [f"random{s}" for s in range(RANDOM_REPEATS)]
     for split in splits:
@@ -266,7 +246,6 @@ def t1_split_half(groups, embs, report):
 
 
 def t2_purity(groups, embs, report):
-    """Mean pairwise segment similarity inside a label vs between labels of the same group."""
     rows, flagged = [], []
     for g, (group, emb) in enumerate(zip(groups, embs)):
         segs = group["segments"]
@@ -289,7 +268,6 @@ def t2_purity(groups, embs, report):
 
 
 def t3_sampling(groups, embs, report):
-    """Held-out margin: sampler's 5 segments vs the speaker's other segments, minus best other speaker."""
     results = {}
     for name in make_samplers(groups[0]["segments"], embs[0]):
         margins_per_repeat = []
@@ -373,15 +351,12 @@ def t4_link(groups, embs, embedder, report):
     return out
 
 
-# --------------------------------------------------------------------------- listen clips
-
 def write_clips(work: Path, groups: list, targets: list, report: list) -> None:
     clip_dir = work / "clips"
     clip_dir.mkdir(exist_ok=True)
     for g, label in targets:
         segs = groups[g]["segments"]
         idx = sorted(by_speaker(segs).get(label, []), key=lambda j: duration(segs[j]), reverse=True)
-        # Spread over the group, not just the 3 longest, so a mixed label is audible.
         picks = idx[:1] + idx[len(idx) // 3: len(idx) // 3 + 1] + idx[2 * len(idx) // 3: 2 * len(idx) // 3 + 1]
         for n, j in enumerate(dict.fromkeys(picks)):
             s = segs[j]
@@ -390,8 +365,6 @@ def write_clips(work: Path, groups: list, targets: list, report: list) -> None:
                             "-t", f"{min(duration(s), 8):.2f}", "-i", groups[g]["audio"], str(out)], check=True)
     log(f"  clips: {clip_dir}", report)
 
-
-# --------------------------------------------------------------------------- main
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

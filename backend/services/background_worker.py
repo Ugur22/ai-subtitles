@@ -144,8 +144,6 @@ class JobCancelled(Exception):
 
 
 def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
-    """Invalidates the cached diarization (and, via settings_key, its checkpoint) whenever
-    speaker settings or cross-group linking change; otherwise a re-run returns the old result."""
     link = linking_signature(settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD)
     return f"{num_speakers}_{min_speakers}_{max_speakers}|{link}"
 
@@ -721,6 +719,9 @@ class BackgroundWorker:
                             chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
                             total_chunks=len(audio_chunks),
                             pipeline="pyannote/speaker-diarization-3.1",
+                            linking=linking_signature(
+                                settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
+                            ),
                         )
                         diarization_checkpoint = BudgetedCheckpoint(
                             PipelineCacheService, user_id, video_hash,
