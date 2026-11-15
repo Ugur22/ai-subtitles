@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import HTTPException
 from services.supabase_service import SupabaseService
+from utils.time_utils import parse_db_timestamp
 
 
 async def check_upload_limit(user_id: str) -> bool:
@@ -62,7 +63,7 @@ async def get_upload_remaining(user_id: str) -> dict:
 
         if response.data and len(response.data) > 0:
             rate_limit = response.data[0]
-            window_start = datetime.fromisoformat(rate_limit["window_start"].replace('Z', '+00:00'))
+            window_start = parse_db_timestamp(rate_limit["window_start"])
 
             # Check if window expired
             if window_start.date() < today.date():
