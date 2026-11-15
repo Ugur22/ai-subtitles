@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "rea
 import { Dialog, Transition } from "@headlessui/react";
 import toast from "react-hot-toast";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
+import { ChevronLeftIcon } from "@heroicons/react/24/outline";
 import { useJobs } from "../../../hooks/useJobs";
 import {
   type TranscriptionResponse,
@@ -74,6 +76,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [translationMethod] = useState<TranslationMethod>("none");
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openJobId = searchParams.get("job");
   const [error, setError] = useState<string | null>(null);
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
   const [showScreenshots] = useState(false); // Unused but kept for future use
@@ -333,6 +337,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const handleViewTranscript = useCallback(async (job: Job) => {
     if (!job.result_json) return;
     setTranscription(job.result_json);
+    setSearchParams({ job: job.job_id }, { replace: searchParams.get("job") === job.job_id });
     setShowJobPanel(false);
     currentJobRef.current = { jobId: job.job_id, accessToken: job.access_token };
     setCurrentJobId(job.job_id);
@@ -351,23 +356,34 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       toast.error("Could not load video. It may have been removed.");
       setVideoUrl(null);
     }
-  }, [setTranscription, setVideoUrl, setShowJobPanel]);
+  }, [setTranscription, setVideoUrl, setShowJobPanel, searchParams, setSearchParams]);
 
-  const startNewTranscription = () => {
+  const resetJobSubmit = backgroundJobSubmit.reset;
+  const closeTranscription = useCallback(() => {
     setTranscription(null);
     setError(null);
-    backgroundJobSubmit.reset();
-
-    // Reset video URL (file is managed by the hook)
+    resetJobSubmit();
     setVideoUrl(null);
-
-    // Reset UI state
     setShowTranslation(false);
     setSelectedLanguage("");
     setFilteredSpeaker(null);
+  }, [resetJobSubmit, setVideoUrl]);
 
-    // Note: showSubtitles is managed by the useSubtitles hook
-  };
+  const previousJobIdRef = useRef(openJobId);
+  useEffect(() => {
+    if (previousJobIdRef.current && !openJobId) closeTranscription();
+    previousJobIdRef.current = openJobId;
+  }, [openJobId, closeTranscription]);
+
+  useEffect(() => {
+    if (!openJobId || transcription || jobTracker.isLoading) return;
+    const job = jobTracker.jobs.find((j) => j.job_id === openJobId && j.result_json);
+    if (job) {
+      handleViewTranscript(job);
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }, [openJobId, transcription, jobTracker.isLoading, jobTracker.jobs, handleViewTranscript, setSearchParams]);
 
   // Note: cleanupPreviousScreenshots removed - was unused
 
@@ -735,8 +751,17 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
             >
               {/* Always-visible row */}
               <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                {/* Left: file name + meta badges */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSearchParams({})}
+                    className="btn-ghost"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px', fontSize: '12.5px', fontWeight: 500, color: 'var(--text-secondary)', flexShrink: 0 }}
+                  >
+                    <ChevronLeftIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />
+                    All videos
+                  </button>
+                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)' }} />
                   <h2
                     style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '320px' }}
                     title={transcription.filename}
@@ -769,18 +794,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
-
-                  <button
-                    onClick={startNewTranscription}
-                    className="btn-ghost"
-                    style={{ padding: '6px', color: 'var(--text-secondary)' }}
-                    title="New transcription"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
                     </svg>
                   </button>
 
