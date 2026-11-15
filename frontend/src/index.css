@@ -452,12 +452,6 @@ body {
     0%, 100% { transform: scaleY(0.35); }
     50%      { transform: scaleY(1);    }
   }
-
-  /* ─── Pulsing dot (processing card) ─── */
-  @keyframes pulseDot {
-    0%, 100% { transform: scale(1);   opacity: 1;    }
-    50%      { transform: scale(1.4); opacity: 0.55; }
-  }
 }
 
 /* ─── Mono utility — timestamps, codes, durations ───────────────────────────── */
@@ -873,42 +867,14 @@ body {
   margin: 0 auto;
   padding: 56px 24px 32px;
 }
-.upload-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--accent-dim);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.upload-eyebrow .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: pulseDot 1.6s ease-in-out infinite;
-}
 .upload-headline {
-  font-size: 36px;
+  font-size: 28px;
   font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.025em;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
-  margin: 16px 0 12px;
-}
-.upload-headline em {
-  font-style: normal;
-  background: var(--accent-dim);
-  color: var(--accent);
-  padding: 0 6px;
-  border-radius: 4px;
-  margin: 0 -2px;
+  margin: 0 0 10px;
+  text-wrap: balance;
 }
 .upload-lede {
   font-size: 15px;
@@ -991,48 +957,6 @@ body {
 .wave i:nth-child(9) { height: 35%; animation-delay: 0.96s; }
 
 /* Tips grid */
-.tips {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-top: 24px;
-}
-@media (max-width: 640px) {
-  .tips { grid-template-columns: 1fr; }
-}
-.tip {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-.tip-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  color: var(--text-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.tip-icon svg { width: 14px; height: 14px; }
-.tip h4 {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-.tip p {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-tertiary);
-  margin: 0;
-}
 
 /* ─── Right panel (transcript / chat / summary / chapters) ─────────────────── */
 .rp {
