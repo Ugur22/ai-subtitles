@@ -110,7 +110,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
             className="mt-0.5 h-4 w-4 flex-shrink-0"
             fill="currentColor"
             viewBox="0 0 20 20"
-            style={{ color: "#ef4444" }}
+            style={{ color: "var(--c-error)" }}
           >
             <path
               fillRule="evenodd"
@@ -123,7 +123,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
             <button
               type="button"
               onClick={onDismissError}
-              className="rounded px-1 text-[11px] font-semibold uppercase tracking-wide hover:opacity-80"
+              className="rounded px-1 text-[11px] font-medium transition-opacity hover:opacity-80"
               aria-label="Dismiss error"
             >
               Dismiss
@@ -136,7 +136,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
         className="flex items-center justify-between gap-2 px-0.5 pb-1.5 text-[11px]"
         style={{ color: "var(--text-tertiary)" }}
       >
-        <span className="font-medium uppercase tracking-wider">
+        <span className="font-medium">
           Other moments of {person}
         </span>
         <div className="flex items-center gap-2">
@@ -150,7 +150,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
                 key={target}
                 type="button"
                 onClick={() => onReplaceTargetChange(target)}
-                className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase transition-colors"
+                className="rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors"
                 style={{
                   background: replaceTarget === target ? "var(--accent-dim)" : "transparent",
                   color: replaceTarget === target ? "var(--accent)" : "var(--text-tertiary)",
@@ -224,8 +224,8 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
                         : `Frame B (locked while replacing A) at ${frame.timestamp}`
                       : `Replace Frame ${replaceTarget.toUpperCase()} with ${frame.timestamp}`
                 }
-                className={`relative block aspect-video w-24 overflow-hidden rounded-md border outline-none transition-transform focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-                  inert ? "cursor-default" : disabledByLock ? "cursor-not-allowed" : "cursor-pointer hover:scale-[1.03]"
+                className={`relative block aspect-video w-24 overflow-hidden rounded-md border outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+                  inert ? "cursor-default" : disabledByLock ? "cursor-not-allowed" : "cursor-pointer hover:opacity-90"
                 }`}
                 style={{
                   borderColor: "var(--border-default)",
@@ -259,7 +259,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
 
                 {label && (
                   <span
-                    className="absolute left-1 top-1 rounded-full bg-black/70 px-1.5 py-0 text-[10px] font-semibold text-white"
+                    className="img-label absolute left-1 top-1"
                     aria-hidden
                   >
                     {label}
@@ -307,12 +307,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
 
                 {frame.low_confidence && !inert && !isPending && (
                   <span
-                    className="absolute right-1 top-1 rounded-full border px-1 py-0 text-[9px] font-semibold uppercase tracking-wide"
-                    style={{
-                      borderColor: "var(--border-subtle)",
-                      background: "rgba(0,0,0,0.55)",
-                      color: "var(--text-tertiary)",
-                    }}
+                    className="img-label absolute right-1 top-1"
                     title={
                       frame.similarity != null
                         ? `Faint match (${Math.round(frame.similarity * 100)}%) - face is dim, partial, or distant`
@@ -324,7 +319,7 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
                 )}
 
                 <span
-                  className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-center font-mono text-[10px] font-semibold tabular-nums text-white"
+                  className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-center font-mono text-[11px] font-medium tabular-nums text-white"
                   style={{ background: "linear-gradient(0deg, rgba(0,0,0,0.7), rgba(0,0,0,0))" }}
                 >
                   {frame.timestamp}

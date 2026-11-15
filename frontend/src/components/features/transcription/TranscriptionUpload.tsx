@@ -834,8 +834,8 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     { label: 'Language', value: transcription.transcription.language?.toUpperCase() },
                     { label: 'Processing', value: formatProcessingTime(transcription.transcription.processing_time) },
                   ].map(({ label, value, title, truncate }) => (
-                    <div key={label} style={{ backgroundColor: 'var(--bg-surface)', padding: '10px 12px' }}>
-                      <div style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
+                    <div key={label} style={{ backgroundColor: 'var(--bg-surface)', padding: '12px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-tertiary)', marginBottom: '4px' }}>
                         {label}
                       </div>
                       <div
@@ -951,7 +951,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           <button
                             onClick={handlePlayPause}
                             aria-label={isPlaying ? "Pause" : "Play"}
-                            className="group flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                            className="group flex items-center justify-center w-9 h-9 rounded-full transition-[background-color,transform] duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                           >
                             {isPlaying ? (
                               <svg
@@ -985,7 +985,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                                 }
                               }}
                               aria-label={volume === 0 ? "Unmute" : "Mute"}
-                              className="group flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                              className="group flex items-center justify-center w-8 h-8 rounded-full transition-[background-color,transform] duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                             >
                               <svg
                                 className="w-5 h-5 transition-colors duration-150"
@@ -1244,7 +1244,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
                                   {/* Speaker tools section */}
                                   <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                                    <p style={{ padding: '6px 12px 4px', fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                    <p style={{ padding: '8px 12px 4px', fontSize: '11px', fontWeight: 500, color: 'var(--text-tertiary)' }}>
                                       Speaker tools
                                     </p>
 
@@ -1573,7 +1573,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               {backgroundJobSubmit.progress?.stage === "hashing" && "Calculating file fingerprint…"}
               {backgroundJobSubmit.progress?.stage === "uploading" && "Uploading to cloud storage…"}
               {backgroundJobSubmit.progress?.stage === "submitting" && "Queuing for processing…"}
-              {backgroundJobSubmit.progress?.stage === "complete" && "Done!"}
+              {backgroundJobSubmit.progress?.stage === "complete" && "Queued"}
             </p>
           </div>
         </div>

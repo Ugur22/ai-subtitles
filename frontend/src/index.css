@@ -60,6 +60,12 @@
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.08), 0 1px 3px oklch(0% 0 0 / 0.05);
   --shadow-lg: 0 16px 40px oklch(0% 0 0 / 0.14), 0 2px 6px oklch(0% 0 0 / 0.05);
   --shadow-accent: 0 8px 24px oklch(42% 0.18 145 / 0.20);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --scrim: oklch(0% 0 0 / 0.62);
+  --scrim-strong: oklch(0% 0 0 / 0.78);
+  --on-scrim: oklch(98% 0 0);
 }
 
 /* ─── Dark Mode ─────────────────────────────────────────────────────────────── */
@@ -408,25 +414,6 @@ body {
     100% { background-position:  150% 0; }
   }
 
-  @keyframes phaseShimmer {
-    0%   { background-position: -200% 0; }
-    100% { background-position:  200% 0; }
-  }
-  .phase-shimmer {
-    background: linear-gradient(
-      90deg,
-      var(--text-primary) 0%,
-      var(--accent) 50%,
-      var(--text-primary) 100%
-    );
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: transparent;
-    animation: phaseShimmer 2.2s ease-in-out infinite;
-  }
-
   /* ─── Caption-line motif (brand DNA) ─── */
   @keyframes captionSweep {
     0%   { width: 0%;   opacity: 0; }
@@ -456,10 +443,72 @@ body {
 
 /* ─── Mono utility — timestamps, codes, durations ───────────────────────────── */
 .mono {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-feature-settings: 'ss01', 'cv01';
   font-variant-numeric: tabular-nums;
 }
+
+.tc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-feature-settings: 'ss01', 'cv01';
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition:
+    color 150ms var(--ease-out),
+    background-color 150ms var(--ease-out),
+    border-color 150ms var(--ease-out);
+}
+.tc::before {
+  content: "";
+  flex-shrink: 0;
+  border-left: 5px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+.tc:hover,
+.tc[data-active="true"] {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+.tc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.tc:disabled { cursor: default; }
+.tc-on-image {
+  border-color: transparent;
+  background: var(--scrim);
+  color: var(--on-scrim);
+}
+.tc-on-image:hover {
+  background: var(--scrim-strong);
+  color: var(--on-scrim);
+  border-color: transparent;
+}
+.img-label {
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  background: var(--scrim);
+  color: var(--on-scrim);
+}
+button.badge-default:hover { color: var(--text-primary); }
 
 /* ─── Sidebar (persistent left nav) ─────────────────────────────────────────── */
 .sidebar {
@@ -478,8 +527,8 @@ body {
   overflow: visible;
   z-index: 20;
   transition:
-    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    padding 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    width 260ms var(--ease-out),
+    padding 260ms var(--ease-out);
 }
 
 .sidebar.is-collapsed {
@@ -506,14 +555,11 @@ body {
 }
 
 .brand-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--text-primary);
-  color: var(--bg-surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: oklch(20% 0.012 250);
+  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.08);
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
@@ -522,16 +568,17 @@ body {
 .brand-mark::after {
   content: '';
   position: absolute;
+  left: 50%;
   height: 2px;
   border-radius: 1px;
-  background: var(--accent);
+  transform: translateX(-50%);
 }
-.brand-mark::before { left: 6px; bottom: 11px; width: 12px; }
-.brand-mark::after  { left: 6px; right: 13px; bottom: 7px; }
+.brand-mark::before { bottom: 12px; width: 16px; background: oklch(96% 0.004 250); }
+.brand-mark::after  { bottom: 7px;  width: 10px; background: var(--accent); }
 
 .brand-word {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.015em;
   color: var(--text-primary);
   white-space: nowrap;
@@ -539,7 +586,7 @@ body {
   transform: translateX(0);
   transition:
     opacity 180ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 220ms var(--ease-out);
 }
 .brand-word span {
   color: var(--text-quaternary);
@@ -562,7 +609,7 @@ body {
     color 140ms ease,
     border-color 140ms ease,
     background 140ms ease,
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 180ms var(--ease-out);
 }
 .sidebar-collapse:hover {
   color: var(--text-primary);
@@ -572,7 +619,7 @@ body {
 .sidebar-collapse svg {
   width: 15px;
   height: 15px;
-  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 220ms var(--ease-out);
 }
 .sidebar-collapse svg.is-collapsed {
   transform: rotate(180deg);
@@ -640,7 +687,7 @@ body {
 .user-caret {
   transition:
     opacity 160ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 220ms var(--ease-out);
 }
 .nav-item-count {
   margin-left: auto;
@@ -677,8 +724,8 @@ body {
 }
 
 .sidebar.is-collapsed .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
 }
 
 .sidebar.is-collapsed .brand-word {
@@ -794,11 +841,11 @@ body {
 .user-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background-color 150ms var(--ease-out);
   width: 100%;
   background: transparent;
   border: 0;
@@ -810,10 +857,12 @@ body {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--warm) 120%);
-  color: var(--accent-text);
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-secondary);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -827,7 +876,7 @@ body {
   flex: 1;
 }
 .user-who strong {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
@@ -854,7 +903,7 @@ body {
   grid-template-columns: 240px 1fr;
   min-height: 100vh;
   background: var(--bg-base);
-  transition: grid-template-columns 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: grid-template-columns 260ms var(--ease-out);
 }
 .app-shell.sidebar-collapsed {
   grid-template-columns: 72px 1fr;
@@ -942,7 +991,7 @@ body {
   cursor: pointer;
 }
 .dropzone .dz-formats {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-quaternary);
   letter-spacing: 0.04em;
@@ -1055,7 +1104,7 @@ body {
   border-radius: 0 2px 2px 0;
 }
 .seg-time {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-quaternary);
   font-variant-numeric: tabular-nums;
@@ -1070,11 +1119,11 @@ body {
 .sp-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid;
   font-family: inherit;
   cursor: pointer;
@@ -1223,10 +1272,8 @@ body {
   gap: 6px;
 }
 .sug-list-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-quaternary);
   margin-bottom: 4px;
 }
@@ -1394,7 +1441,7 @@ body {
   color: var(--accent);
 }
 .cite .cite-t {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-quaternary);
@@ -1409,7 +1456,7 @@ body {
 
 /* Kbd */
 .kbd {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   padding: 1px 5px;
   border-radius: 4px;
