@@ -77,7 +77,13 @@ class Settings(BaseSettings):
     # Chunked Diarization Configuration
     # For long videos, process diarization in chunks to reduce memory usage
     DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "900"))  # 15 minutes in seconds
-    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.7"))  # Speaker embedding similarity threshold
+    # Links speakers across diarization groups. pyannote/embedding left no gap between
+    # same-person and different-person scores on long episodes; WeSpeaker (the model
+    # diarization-3.1 uses inside a group) did. See docs/SPEAKER_LINKING_HANDOFF.md.
+    DIARIZATION_LINK_MODEL: str = os.getenv("DIARIZATION_LINK_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
+    # Not a natural gap (only 1 of 3 test sources had one at 0.5): a middle value whose
+    # speaker counts matched the outside evidence on all three sources.
+    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.5"))
     USE_CHUNKED_DIARIZATION_ABOVE: int = int(os.getenv("USE_CHUNKED_DIARIZATION_ABOVE", "1800"))  # 30 minutes - use chunked processing for videos longer than this
 
     # Memory Management Configuration

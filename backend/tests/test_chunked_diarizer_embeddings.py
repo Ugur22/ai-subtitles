@@ -38,6 +38,22 @@ def test_embedding_model_is_wrapped_in_whole_window_inference(monkeypatch):
     assert diarizer.embedding_inference is None
 
 
+def test_embedding_model_is_the_configured_link_model(monkeypatch):
+    model = type("Model", (), {"to": lambda self, device: self})()
+    requested = []
+
+    def fake_from_pretrained(name, **_kwargs):
+        requested.append(name)
+        return model
+
+    monkeypatch.setattr(speaker_diarization.Model, "from_pretrained", fake_from_pretrained)
+    monkeypatch.setattr(speaker_diarization, "Inference", lambda *_a, **_k: object())
+
+    ChunkedSpeakerDiarizer(link_model="some/linker").load_embedding_model()
+
+    assert requested == ["some/linker"]
+
+
 def test_speaker_embedding_is_unit_norm_average_of_cropped_segments():
     diarizer = ChunkedSpeakerDiarizer()
     inference = _FakeInference([np.array([3.0, 0.0]), np.array([1.0, 0.0])])
@@ -70,3 +86,19 @@ def test_failed_crop_leaves_speaker_without_embedding():
     )
 
     assert result == {}
+
+
+def test_non_finite_embedding_is_treated_as_missing():
+    diarizer = ChunkedSpeakerDiarizer()
+    diarizer.embedding_inference = _FakeInference([np.array([np.nan, np.nan]), np.array([0.0, 2.0])])
+
+    result = diarizer._extract_speaker_embeddings(
+        "chunk.wav",
+        [
+            {"speaker": "SPEAKER_00", "local_start": 0.0, "local_end": 0.08},
+            {"speaker": "SPEAKER_01", "local_start": 1.0, "local_end": 3.0},
+        ],
+    )
+
+    assert "SPEAKER_00" not in result
+    assert np.allclose(result["SPEAKER_01"], [0.0, 1.0], atol=1e-6)
