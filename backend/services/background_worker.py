@@ -49,7 +49,7 @@ from utils.time_utils import format_timestamp
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
-from speaker_diarization import ChunkedSpeakerDiarizer
+from speaker_diarization import ChunkedSpeakerDiarizer, linking_signature
 from services.audio_analysis_service import AudioAnalysisService
 from services.pipeline_cache_service import PipelineCacheService
 from services.transcription_checkpoint import (
@@ -141,6 +141,11 @@ HEARTBEAT_INTERVAL = 30  # seconds
 
 class JobCancelled(Exception):
     """Raised when a job is cancelled mid-pipeline so finally/except handlers can distinguish it from real failures."""
+
+
+def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
+    link = linking_signature(settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD)
+    return f"{num_speakers}_{min_speakers}_{max_speakers}|{link}"
 
 
 def _check_cancelled(job_id: str) -> None:
@@ -373,8 +378,7 @@ class BackgroundWorker:
             cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, "transcription")
             cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
 
-            # Build a diarization param hash so cache is invalidated when speaker settings change
-            diarization_param_key = f"{num_speakers}_{min_speakers}_{max_speakers}"
+            diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
                 print(f"[Worker] Diarization cache param mismatch, invalidating")
                 cached_diarization = None
@@ -705,7 +709,8 @@ class BackgroundWorker:
                         chunked_diarizer = ChunkedSpeakerDiarizer(
                             chunk_duration=settings.DIARIZATION_CHUNK_DURATION,
                             similarity_threshold=settings.DIARIZATION_SIMILARITY_THRESHOLD,
-                            use_auth_token=settings.HUGGINGFACE_TOKEN
+                            use_auth_token=settings.HUGGINGFACE_TOKEN,
+                            link_model=settings.DIARIZATION_LINK_MODEL,
                         )
 
                         diarization_key = settings_key(
@@ -714,6 +719,9 @@ class BackgroundWorker:
                             chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
                             total_chunks=len(audio_chunks),
                             pipeline="pyannote/speaker-diarization-3.1",
+                            linking=linking_signature(
+                                settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
+                            ),
                         )
                         diarization_checkpoint = BudgetedCheckpoint(
                             PipelineCacheService, user_id, video_hash,

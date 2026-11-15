@@ -1,5 +1,8 @@
 import numpy as np
 
+import os
+
+from config import settings
 from speaker_diarization import ChunkedSpeakerDiarizer
 
 
@@ -104,5 +107,70 @@ def test_calibration_log_reports_best_scores_and_threshold_sweep(capsys):
     _link(groups)
     out = capsys.readouterr().out
 
-    assert "[SpeakerLink] g0 SPEAKER_00 5s best: g1=0.643" in out
-    assert "speakers per threshold: 0.4=1 0.5=1 0.6=1 0.7=2 (using 0.7)" in out
+    assert "[SpeakerLink] g0 SPEAKER_00 5.0s best: g1=0.643" in out
+    assert "speakers per threshold: 0.3=1 0.4=1 0.5=1 0.6=1 0.7=2 (using 0.7)" in out
+
+
+def test_speaker_with_no_speech_gets_no_label_and_no_segments():
+    groups = [
+        _group(0, {"SPEAKER_00": (_voice(0), 0)}),
+        _group(1, {"SPEAKER_00": (_voice(10), 0)}),
+    ]
+    groups[0]["segments"].append({"start": 50.0, "end": 50.0, "speaker": "SPEAKER_11"})
+
+    diarizer = ChunkedSpeakerDiarizer(chunk_duration=900)
+    groups = diarizer._drop_near_silent_labels(groups)
+    mapping, count = diarizer._match_speakers(groups)
+    unified = diarizer._unify_segments(groups, mapping)
+
+    assert count == 1
+    assert "SPEAKER_11" not in mapping[0]
+    assert {seg["speaker"] for seg in unified} == {"SPEAKER_00"}
+
+
+def test_defaults_come_from_settings():
+    diarizer = ChunkedSpeakerDiarizer()
+
+    assert diarizer.link_model == settings.DIARIZATION_LINK_MODEL
+    assert diarizer.similarity_threshold == settings.DIARIZATION_SIMILARITY_THRESHOLD
+    if "DIARIZATION_LINK_MODEL" not in os.environ:
+        assert diarizer.link_model == "pyannote/wespeaker-voxceleb-resnet34-LM"
+    if "DIARIZATION_SIMILARITY_THRESHOLD" not in os.environ:
+        assert diarizer.similarity_threshold == 0.5
+
+
+def test_negative_segment_does_not_cancel_real_speech():
+    groups = [
+        _group(0, {"SPEAKER_00": (_voice(0), 0)}),
+        _group(1, {"SPEAKER_00": (_voice(90), 0)}),
+    ]
+    groups[0]["segments"].append({"start": 10.0, "end": 4.0, "speaker": "SPEAKER_00"})
+
+    groups = ChunkedSpeakerDiarizer._drop_near_silent_labels(groups)
+    mapping, count = _link(groups)
+
+    assert count == 2
+    assert "SPEAKER_00" in mapping[0]
+
+
+def test_near_silent_speaker_is_dropped_and_one_second_is_kept(capsys):
+    groups = [
+        _group(0, {"SPEAKER_00": (_voice(0), 0)}),
+        _group(1, {"SPEAKER_00": (_voice(90), 0)}),
+    ]
+    groups[0]["segments"] += [
+        {"start": 40.0, "end": 40.37, "speaker": "SPEAKER_11"},
+        {"start": 60.0, "end": 60.02, "speaker": "SPEAKER_11"},
+    ]
+    groups[1]["segments"].append({"start": 950.0, "end": 951.0, "speaker": "SPEAKER_04"})
+
+    diarizer = ChunkedSpeakerDiarizer(chunk_duration=900)
+    groups = diarizer._drop_near_silent_labels(groups)
+    mapping, count = diarizer._match_speakers(groups)
+    unified = diarizer._unify_segments(groups, mapping)
+
+    assert "SPEAKER_11" not in mapping[0]
+    assert "SPEAKER_04" in mapping[1]
+    assert count == 3
+    assert len({seg["speaker"] for seg in unified}) == count
+    assert "[SpeakerLink] dropped g0 SPEAKER_11 (0.4 s of speech)" in capsys.readouterr().out
