@@ -3,8 +3,7 @@ import toast from 'react-hot-toast';
 import type { User } from '../../services/auth';
 import * as authService from '../../services/auth';
 import { AuthContext } from '../../hooks/useAuth';
-
-const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
+import { JOBS_CACHE_KEY } from '../../hooks/useJobStorage';
 
 const clearJobsCache = () => {
   try {

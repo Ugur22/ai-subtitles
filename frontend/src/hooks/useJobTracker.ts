@@ -5,34 +5,36 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Job, isActiveJobStatus } from '../types/job';
-import { useJobStorage } from './useJobStorage';
+import { JOBS_CACHE_KEY, useJobStorage } from './useJobStorage';
 import { useJobNotifications } from './useJobNotifications';
 import { supabase } from '../lib/supabase';
 import { deleteJobPermanent, getJobs } from '../services/api';
 
-const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
 const JOBS_PER_PAGE = 10;
 
-// Page 1 as last seen, without result_json. AuthProvider clears it on login/logout.
-const readCachedJobs = (): Job[] => {
+const pagesFor = (count: number) => Math.max(1, Math.ceil(count / JOBS_PER_PAGE));
+
+// result_json: null marks a row whose transcript must be fetched before opening.
+const toCachedJob = (job: Job): Job => ({ ...job, result_json: null });
+
+const readCachedFirstPage = (): Job[] => {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(JOBS_CACHE_KEY) ?? '[]');
-    return Array.isArray(parsed) ? (parsed as Job[]) : [];
+    return Array.isArray(parsed) ? (parsed as Job[]).map(toCachedJob) : [];
   } catch {
     return [];
   }
 };
 
 export const useJobTracker = () => {
-  const [jobs, setJobs] = useState<Job[]>(readCachedJobs);
+  const [jobs, setJobs] = useState<Job[]>(readCachedFirstPage);
   const [isLoading, setIsLoading] = useState(jobs.length === 0);
   const [isFresh, setIsFresh] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE)));
+  const [totalPages, setTotalPages] = useState(pagesFor(jobs.length));
   const [total, setTotal] = useState(jobs.length);
-  // Page whose jobs are on screen; only a different page warrants a skeleton.
-  const displayedPageRef = useRef<number | null>(jobs.length > 0 ? 1 : null);
+  const pageOnScreenRef = useRef<number | null>(jobs.length > 0 ? 1 : null);
   // Jobs hidden from every view while their DELETE request runs.
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
@@ -49,7 +51,8 @@ export const useJobTracker = () => {
     const storedJobs = getStoredJobs();
 
     try {
-      if (displayedPageRef.current !== page) setIsLoading(true);
+      const needsSkeleton = pageOnScreenRef.current !== page;
+      if (needsSkeleton) setIsLoading(true);
       setIsOffline(false);
 
       // Authenticated job lists are scoped by server-side user_id. Stored
@@ -66,18 +69,12 @@ export const useJobTracker = () => {
       }));
 
       setJobs(jobsWithTokens);
-      displayedPageRef.current = page;
+      pageOnScreenRef.current = page;
       setTotal(response.total);
-      setTotalPages(Math.ceil(response.total / JOBS_PER_PAGE));
+      setTotalPages(pagesFor(response.total));
 
-      // Cache jobs for offline fallback (strip result_json to avoid quota issues)
       try {
-        const cacheableJobs = jobsWithTokens.map(job => {
-          const { result_json, ...cacheableJob } = job;
-          void result_json;
-          return cacheableJob;
-        });
-        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(cacheableJobs));
+        localStorage.setItem(JOBS_CACHE_KEY, JSON.stringify(jobsWithTokens.map(toCachedJob)));
       } catch (e) {
         console.warn('Failed to cache jobs:', e);
       }
@@ -99,13 +96,12 @@ export const useJobTracker = () => {
     } catch (error) {
       console.error('Failed to fetch jobs:', error);
 
-      // Fallback to cached data if available
       setIsOffline(true);
-      const cachedJobs = readCachedJobs();
+      const cachedJobs = readCachedFirstPage();
       if (cachedJobs.length > 0) {
         setJobs(cachedJobs);
         setTotal(cachedJobs.length);
-        setTotalPages(Math.ceil(cachedJobs.length / JOBS_PER_PAGE));
+        setTotalPages(pagesFor(cachedJobs.length));
       }
     } finally {
       setIsLoading(false);

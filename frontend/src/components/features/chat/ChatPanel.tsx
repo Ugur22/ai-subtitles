@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import axios from "axios";
 import ReactMarkdown, { Components } from "react-markdown";
 import { useTransition, animated } from "react-spring";
@@ -700,9 +700,16 @@ type PhaseId =
   | "analyzing_audio"
   | "generating";
 
-// The orb's color prop takes hex/rgb only, so these mirror --accent per theme.
-const ORB_INK_LIGHT = "#1f7a37";
-const ORB_INK_DARK = "#3cc069";
+// The orb's color prop takes hex/rgb only, so resolve the oklch --accent token to rgb.
+function readAccentRgb(): string | undefined {
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!accent || !ctx) return undefined;
+  ctx.fillStyle = accent;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 const ORB_STATE: Record<PhaseId, OrbState> = {
   searching: "searching",
@@ -1171,6 +1178,8 @@ const PhaseIndicator: React.FC<{
   screenshotCount?: number;
 }> = ({ phases, screenshotCount }) => {
   const { theme } = useTheme();
+  // theme toggles the .dark class, which changes --accent.
+  const orbInk = useMemo(readAccentRgb, [theme]);
   const hasActive = phases.some((p) => p.status === "active");
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -1219,7 +1228,7 @@ const PhaseIndicator: React.FC<{
               <ThinkingOrb
                 size={32}
                 state={ORB_STATE[phase.id]}
-                color={theme === "dark" ? ORB_INK_DARK : ORB_INK_LIGHT}
+                color={orbInk}
                 aria-hidden="true"
               />
             )}
@@ -1291,7 +1300,7 @@ const EvidenceDisclosure: React.FC<{
   </Disclosure>
 );
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({
+const ChatPanelInner: React.FC<ChatPanelProps> = ({
   videoHash,
   onTimestampClick,
   jobId,
@@ -1310,7 +1319,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   // Models that support vision/scene search
   const VISION_SUPPORTED_PROVIDERS = ["grok", "openai", "anthropic", "deepseek"];
-  const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
+  const [indexingStatus, setIndexingStatus] = useState<{
+    kind: "indexing" | "done" | "failed";
+    message: string;
+  } | null>(null);
   const [screenshotModal, setScreenshotModal] = useState<{
     screenshots: string[];
     currentIndex: number;
@@ -1492,7 +1504,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const indexVideo = useCallback(async () => {
     if (!videoHash) return;
 
-    setIndexingStatus("Indexing video for chat...");
+    setIndexingStatus({ kind: "indexing", message: "Indexing video for chat…" });
     try {
       // Index text transcription
       await axios.post(`${API_BASE_URL}/api/index_video/`, null, {
@@ -1506,16 +1518,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           params: { video_hash: videoHash },
           withCredentials: true,
         });
-        setIndexingStatus("Video and images indexed");
+        setIndexingStatus({ kind: "done", message: "Video and images indexed" });
       } catch (imageError) {
         console.warn("Failed to index images:", imageError);
-        setIndexingStatus("Video indexed (images indexing skipped)");
+        setIndexingStatus({ kind: "done", message: "Video indexed, images skipped" });
       }
 
       setTimeout(() => setIndexingStatus(null), 3000);
     } catch (error) {
       console.error("Failed to index video:", error);
-      setIndexingStatus("Indexing failed (video may already be indexed)");
+      setIndexingStatus({ kind: "failed", message: "Indexing failed" });
       setTimeout(() => setIndexingStatus(null), 3000);
     }
   }, [videoHash]);
@@ -2299,7 +2311,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {/* Indexing Status */}
         {indexingStatus && (
           <div className="mt-3 px-3 py-2 rounded-lg flex items-center gap-2 border" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)" }}>
-            {indexingStatus.includes("Indexing") && (
+            {indexingStatus.kind === "indexing" && (
               <svg
                 className="w-4 h-4 animate-spin"
                 style={{ color: "var(--text-secondary)" }}
@@ -2321,7 +2333,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 />
               </svg>
             )}
-            {indexingStatus.endsWith("indexed") && (
+            {indexingStatus.kind === "done" && (
               <svg
                 className="w-4 h-4"
                 style={{ color: "var(--c-success)" }}
@@ -2337,7 +2349,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 />
               </svg>
             )}
-            {indexingStatus.includes("failed") && (
+            {indexingStatus.kind === "failed" && (
               <svg
                 className="w-4 h-4"
                 style={{ color: "var(--c-error)" }}
@@ -2356,14 +2368,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <p
               className="text-sm"
               style={{
-                color: indexingStatus.endsWith("indexed")
+                color: indexingStatus.kind === "done"
                   ? "var(--c-success)"
-                  : indexingStatus.includes("failed")
+                  : indexingStatus.kind === "failed"
                     ? "var(--c-error)"
                     : "var(--text-secondary)",
               }}
             >
-              {indexingStatus}
+              {indexingStatus.message}
             </p>
           </div>
         )}
@@ -3085,3 +3097,5 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     </div>
   );
 };
+
+export const ChatPanel = memo(ChatPanelInner);
