@@ -21,6 +21,15 @@ import {
 import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
 import { useAuth } from "../../../hooks/useAuth";
 import { ComparisonTimelineStrip } from "./ComparisonTimelineStrip";
+import type { IconType } from "react-icons";
+import { LuSmile, LuSpeech, LuAudioWaveform, LuFileText, LuImage, LuAudioLines } from "react-icons/lu";
+
+const EVENT_CATEGORY_ICON: Record<string, IconType> = {
+  emotion: LuSmile,
+  speech: LuSpeech,
+  sound: LuAudioWaveform,
+  other: LuAudioWaveform,
+};
 
 // Alias for backward compatibility within this file
 const formatScreenshotUrl = formatScreenshotUrlSafe;
@@ -45,7 +54,6 @@ const formatSecondsToTimestamp = (seconds: number): string => {
 
 // Section icon map for h2 headings
 const SECTION_ICONS: Record<string, string> = {
-  "direct answer": "sparkles",
   "person comparison": "user",
   "key analysis": "magnifying-glass",
   analysis: "magnifying-glass",
@@ -63,26 +71,10 @@ function getSectionIcon(heading: string): React.ReactNode {
   for (const [key, icon] of Object.entries(SECTION_ICONS)) {
     if (lower.includes(key)) {
       const iconMap: Record<string, React.ReactNode> = {
-        sparkles: (
-          <svg
-            className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-            />
-          </svg>
-        ),
         "magnifying-glass": (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -90,7 +82,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
             />
           </svg>
@@ -98,7 +90,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         eye: (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -106,13 +98,13 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
             />
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
             />
           </svg>
@@ -120,7 +112,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         "document-text": (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -128,7 +120,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
             />
           </svg>
@@ -136,7 +128,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         "information-circle": (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -144,7 +136,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
@@ -152,7 +144,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         user: (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -160,7 +152,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
             />
           </svg>
@@ -168,7 +160,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         clock: (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -176,7 +168,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
@@ -184,7 +176,7 @@ function getSectionIcon(heading: string): React.ReactNode {
         "speaker-wave": (
           <svg
             className="w-4 h-4"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--text-tertiary)" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -192,7 +184,7 @@ function getSectionIcon(heading: string): React.ReactNode {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
             />
           </svg>
@@ -227,28 +219,8 @@ function renderWithTimestamps(
       <button
         key={`ts-${match.index}`}
         onClick={() => onTimestampClick?.(startTs)}
-        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 text-xs font-mono font-semibold rounded-md transition-colors cursor-pointer align-baseline"
-        style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+        className="tc mx-0.5"
       >
-        <svg
-          className="w-3 h-3"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-          />
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
         {label}
       </button>,
     );
@@ -442,8 +414,8 @@ const PersonComparisonSection: React.FC<{
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {getSectionIcon("Person Comparison")}
-          <h2 className="truncate text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-            Person Comparison{metadata?.person ? `: ${metadata.person}` : ""}
+          <h2 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+            Person comparison{metadata?.person ? `: ${metadata.person}` : ""}
           </h2>
         </div>
       </div>
@@ -486,14 +458,14 @@ const PersonComparisonSection: React.FC<{
                 <button
                   type="button"
                   onClick={() => onOpenScreenshots?.(sources, idx)}
-                  className="relative block aspect-video w-full overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  className="relative block aspect-video w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   title={`Open ${idx === 0 ? "first" : "second"} comparison frame at ${timestamp}`}
                   aria-label={`Open ${idx === 0 ? "first" : "second"} comparison frame at ${timestamp}`}
                 >
                   <img
                     src={formatScreenshotUrl(frame.url)}
                     alt={`${metadata?.person || "Person"} comparison frame at ${timestamp}`}
-                    className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-[1.015]"
+                    className="h-full w-full object-cover transition-opacity duration-150 group-hover:opacity-90"
                     loading="lazy"
                     onError={(e) => {
                       e.currentTarget.src = imagePlaceholderSrc;
@@ -515,22 +487,18 @@ const PersonComparisonSection: React.FC<{
                       }}
                     />
                   ))}
-                  <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white">
+                  <span className="img-label absolute left-2 top-2">
                     {idx === 0 ? "Frame A" : "Frame B"}
                   </span>
                 </button>
-                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2 px-2 py-2">
                   <button
                     type="button"
                     onClick={() => onTimestampClick?.(timestamp)}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-mono font-bold tabular-nums transition-colors"
-                    style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+                    className="tc"
                     title={`Jump to ${timestamp}`}
                     aria-label={`Jump video to ${timestamp}`}
                   >
-                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M6.3 3.8A1 1 0 005 4.7v10.6a1 1 0 001.5.9l8.8-5.3a1 1 0 000-1.8L6.5 3.8a1 1 0 00-.2 0z" />
-                    </svg>
                     {timestamp}
                   </button>
                   <span className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
@@ -602,7 +570,7 @@ const ComparisonModalFrame: React.FC<{
           }}
         />
       ))}
-      <div className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+      <div className="img-label absolute left-3 top-3">
         {source.evidence_label || "Comparison frame"}
       </div>
     </div>
@@ -610,13 +578,9 @@ const ComparisonModalFrame: React.FC<{
       <button
         type="button"
         onClick={() => onTimestampClick?.(source.start_time)}
-        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-mono font-bold tabular-nums"
-        style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+        className="tc"
         title={`Jump to ${source.start_time}`}
       >
-        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M6.3 3.8A1 1 0 005 4.7v10.6a1 1 0 001.5.9l8.8-5.3a1 1 0 000-1.8L6.5 3.8a1 1 0 00-.2 0z" />
-        </svg>
         {source.start_time}
       </button>
       <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -636,7 +600,7 @@ function buildMarkdownComponents(
       const icon = getSectionIcon(text);
       return (
         <h2
-          className="flex items-center gap-2 text-base font-bold mt-5 mb-2 pb-1.5 border-b"
+          className="flex items-center gap-2 text-base font-medium mt-5 mb-2 pb-2 border-b"
           style={{ color: "var(--text-primary)", borderColor: "var(--border-subtle)" }}
         >
           {icon}
@@ -646,7 +610,7 @@ function buildMarkdownComponents(
     },
     h3({ children }) {
       return (
-        <h3 className="text-sm font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>
+        <h3 className="text-sm font-medium mt-3 mb-1" style={{ color: "var(--text-primary)" }}>
           {children}
         </h3>
       );
@@ -668,8 +632,8 @@ function buildMarkdownComponents(
     blockquote({ children }) {
       return (
         <blockquote
-          className="border-l-4 rounded-r-lg px-4 py-2 my-3 not-italic"
-          style={{ borderLeftColor: "var(--accent)", background: "var(--accent-dim)" }}
+          className="border-l-2 px-4 py-2 my-3 not-italic"
+          style={{ borderLeftColor: "var(--accent)", background: "var(--bg-subtle)" }}
         >
           {children}
         </blockquote>
@@ -677,7 +641,7 @@ function buildMarkdownComponents(
     },
     strong({ children }) {
       return (
-        <strong className="font-semibold" style={{ color: "var(--text-primary)" }}>{children}</strong>
+        <strong className="font-medium" style={{ color: "var(--text-primary)" }}>{children}</strong>
       );
     },
   };
@@ -794,156 +758,148 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama (local)",
 };
 
-// Helper function to get emoji, label, and category for audio event types
 const getEventDetails = (eventType: string) => {
   const type = eventType.toLowerCase();
 
-  // Emotions - Purple category
   if (type.includes("happy") || type.includes("joy")) {
-    return { emoji: "😊", label: "Happy", category: "emotion" };
+    return { label: "Happy", category: "emotion" };
   }
   if (type.includes("sad") || type.includes("sadness")) {
-    return { emoji: "😢", label: "Sad", category: "emotion" };
+    return { label: "Sad", category: "emotion" };
   }
   if (type.includes("angry") || type.includes("anger")) {
-    return { emoji: "😠", label: "Angry", category: "emotion" };
+    return { label: "Angry", category: "emotion" };
   }
   if (type.includes("fear") || type.includes("scared")) {
-    return { emoji: "😨", label: "Fearful", category: "emotion" };
+    return { label: "Fearful", category: "emotion" };
   }
   if (type.includes("neutral") || type.includes("calm")) {
-    return { emoji: "😐", label: "Neutral", category: "emotion" };
+    return { label: "Neutral", category: "emotion" };
   }
   if (type.includes("surprise")) {
-    return { emoji: "😲", label: "Surprised", category: "emotion" };
+    return { label: "Surprised", category: "emotion" };
   }
   if (type.includes("disgust")) {
-    return { emoji: "🤢", label: "Disgust", category: "emotion" };
+    return { label: "Disgust", category: "emotion" };
   }
 
-  // Vocal expressions and reactions - Speech category
   if (type.includes("sigh")) {
-    return { emoji: "😮‍💨", label: "Sigh", category: "speech" };
+    return { label: "Sigh", category: "speech" };
   }
   if (type.includes("gasp")) {
-    return { emoji: "😮", label: "Gasp", category: "speech" };
+    return { label: "Gasp", category: "speech" };
   }
   if (type.includes("moan")) {
-    return { emoji: "😩", label: "Moan", category: "speech" };
+    return { label: "Moan", category: "speech" };
   }
   if (type.includes("groan")) {
-    return { emoji: "😫", label: "Groan", category: "speech" };
+    return { label: "Groan", category: "speech" };
   }
   if (type.includes("panting")) {
-    return { emoji: "😤", label: "Panting", category: "speech" };
+    return { label: "Panting", category: "speech" };
   }
   if (type.includes("huff") || type.includes("huffing")) {
-    return { emoji: "😤", label: "Huffing", category: "speech" };
+    return { label: "Huffing", category: "speech" };
   }
   if (type.includes("scream")) {
-    return { emoji: "😱", label: "Scream", category: "speech" };
+    return { label: "Scream", category: "speech" };
   }
   if (type.includes("whimper")) {
-    return { emoji: "🥺", label: "Whimper", category: "speech" };
+    return { label: "Whimper", category: "speech" };
   }
   if (type.includes("sniff") || type.includes("sniffle")) {
-    return { emoji: "🤧", label: "Sniffling", category: "speech" };
+    return { label: "Sniffling", category: "speech" };
   }
   if (type.includes("yawn")) {
-    return { emoji: "🥱", label: "Yawn", category: "speech" };
+    return { label: "Yawn", category: "speech" };
   }
   if (type.includes("sneeze")) {
-    return { emoji: "🤧", label: "Sneeze", category: "speech" };
+    return { label: "Sneeze", category: "speech" };
   }
   if (type.includes("cough")) {
-    return { emoji: "🤒", label: "Cough", category: "speech" };
+    return { label: "Cough", category: "speech" };
   }
   if (type.includes("hiccup")) {
-    return { emoji: "😯", label: "Hiccup", category: "speech" };
+    return { label: "Hiccup", category: "speech" };
   }
 
-  // Breathing sounds - Speech category
   if (type.includes("breath") || type.includes("breathing")) {
-    return { emoji: "💨", label: "Breathing", category: "speech" };
+    return { label: "Breathing", category: "speech" };
   }
   if (type.includes("exhale")) {
-    return { emoji: "😮‍💨", label: "Exhale", category: "speech" };
+    return { label: "Exhale", category: "speech" };
   }
   if (type.includes("inhale")) {
-    return { emoji: "😤", label: "Inhale", category: "speech" };
+    return { label: "Inhale", category: "speech" };
   }
 
-  // Speech and vocalizations - Speech category
   if (
     type.includes("speech") ||
     type.includes("speaking") ||
     type.includes("narration")
   ) {
-    return { emoji: "🗣️", label: "Speech", category: "speech" };
+    return { label: "Speech", category: "speech" };
   }
   if (type.includes("laugh")) {
-    return { emoji: "😂", label: "Laughter", category: "speech" };
+    return { label: "Laughter", category: "speech" };
   }
   if (type.includes("giggle") || type.includes("chuckle")) {
-    return { emoji: "😄", label: "Giggling", category: "speech" };
+    return { label: "Giggling", category: "speech" };
   }
   if (type.includes("cry") || type.includes("sobbing")) {
-    return { emoji: "😭", label: "Crying", category: "speech" };
+    return { label: "Crying", category: "speech" };
   }
   if (type.includes("shout") || type.includes("yell")) {
-    return { emoji: "📢", label: "Shouting", category: "speech" };
+    return { label: "Shouting", category: "speech" };
   }
   if (type.includes("whisper")) {
-    return { emoji: "🤫", label: "Whisper", category: "speech" };
+    return { label: "Whisper", category: "speech" };
   }
   if (type.includes("cheer")) {
-    return { emoji: "🎉", label: "Cheering", category: "speech" };
+    return { label: "Cheering", category: "speech" };
   }
   if (type.includes("hum") || type.includes("humming")) {
-    return { emoji: "🎵", label: "Humming", category: "speech" };
+    return { label: "Humming", category: "speech" };
   }
   if (type.includes("sing")) {
-    return { emoji: "🎤", label: "Singing", category: "speech" };
+    return { label: "Singing", category: "speech" };
   }
 
-  // Body sounds - Sound category
   if (type.includes("clap") || type.includes("applause")) {
-    return { emoji: "👏", label: "Applause", category: "sound" };
+    return { label: "Applause", category: "sound" };
   }
   if (type.includes("snap") || type.includes("finger snap")) {
-    return { emoji: "👆", label: "Snap", category: "sound" };
+    return { label: "Snap", category: "sound" };
   }
   if (type.includes("footstep") || type.includes("step")) {
-    return { emoji: "👣", label: "Footsteps", category: "sound" };
+    return { label: "Footsteps", category: "sound" };
   }
   if (type.includes("knock")) {
-    return { emoji: "🚪", label: "Knocking", category: "sound" };
+    return { label: "Knocking", category: "sound" };
   }
   if (type.includes("tap") || type.includes("tapping")) {
-    return { emoji: "👆", label: "Tapping", category: "sound" };
+    return { label: "Tapping", category: "sound" };
   }
   if (type.includes("stomp")) {
-    return { emoji: "🦶", label: "Stomping", category: "sound" };
+    return { label: "Stomping", category: "sound" };
   }
 
-  // Music and audio - Sound category
   if (type.includes("music") || type.includes("melody")) {
-    return { emoji: "🎵", label: "Music", category: "sound" };
+    return { label: "Music", category: "sound" };
   }
   if (
     type.includes("silence") ||
     type.includes("ambient") ||
     type.includes("quiet")
   ) {
-    return { emoji: "🔇", label: "Silence", category: "sound" };
+    return { label: "Silence", category: "sound" };
   }
   if (type.includes("noise")) {
-    return { emoji: "🔊", label: "Noise", category: "sound" };
+    return { label: "Noise", category: "sound" };
   }
 
-  // Default - other category
   const label = eventType.charAt(0).toUpperCase() + eventType.slice(1);
-  return { emoji: "🔊", label, category: "other" };
+  return { label, category: "other" };
 };
 
 
@@ -987,7 +943,7 @@ const AssistantMessageContent: React.FC<{
     );
     if (firstProseIdx === -1) return raw;
     return raw.map((s, i) =>
-      i === firstProseIdx ? { ...s, heading: "Direct Answer" } : s,
+      i === firstProseIdx ? { ...s, heading: "Direct answer" } : s,
     );
   }, [content]);
 
@@ -1037,32 +993,11 @@ const AssistantMessageContent: React.FC<{
           );
         }
 
-        // Direct Answer gets a highlight card
         if (isDirectAnswer) {
           return (
-            <div
-              key={idx}
-              className="rounded-lg px-4 py-3 my-2 border"
-              style={{ background: "var(--bg-surface)", borderColor: "var(--accent)" }}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <svg
-                  className="w-4 h-4"
-                  style={{ color: "var(--accent)" }}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-                  />
-                </svg>
-                <span className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                  {section.heading}
-                </span>
+            <div key={idx} className="my-2">
+              <div className="mb-1 text-xs font-medium" style={{ color: "var(--accent)" }}>
+                Direct answer
               </div>
               <div className="prose prose-sm max-w-none">
                 <ReactMarkdown components={components}>
@@ -1108,7 +1043,7 @@ const AssistantMessageContent: React.FC<{
                     </svg>
                     {getSectionIcon(section.heading)}
                     <span
-                      className="text-sm font-bold transition-colors"
+                      className="text-sm font-medium transition-colors"
                       style={{ color: "var(--text-secondary)" }}
                     >
                       {section.heading}
@@ -1280,9 +1215,8 @@ const PhaseIndicator: React.FC<{
               </span>
             )}
             <span
-              className={isActive ? "phase-shimmer" : ""}
               style={{
-                fontWeight: isActive ? 500 : 400,
+                color: isActive ? "var(--text-primary)" : undefined,
               }}
             >
               {displayLabel}
@@ -1319,21 +1253,18 @@ const EvidenceDisclosure: React.FC<{
         }}
       >
         <DisclosureButton
-          className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors"
+          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
           style={{ color: "var(--text-secondary)" }}
         >
           <span className="flex min-w-0 items-center gap-2">
             <span className="flex-shrink-0">{icon}</span>
-            <span className="truncate text-xs font-bold uppercase tracking-wide">
+            <span className="truncate text-sm font-medium">
               {title}
             </span>
             {typeof count === "number" && (
               <span
-                className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                style={{
-                  background: "var(--bg-overlay)",
-                  color: "var(--text-tertiary)",
-                }}
+                className="mono text-[11px]"
+                style={{ color: "var(--text-tertiary)" }}
               >
                 {count}
               </span>
@@ -1585,7 +1516,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           params: { video_hash: videoHash },
           withCredentials: true,
         });
-        setIndexingStatus("Video and images indexed successfully!");
+        setIndexingStatus("Video and images indexed");
       } catch (imageError) {
         console.warn("Failed to index images:", imageError);
         setIndexingStatus("Video indexed (images indexing skipped)");
@@ -2169,7 +2100,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 {loadingProviders ? (
                   <div className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg ${FIELD_WIDTH_CLASS} input-base`} style={{ color: "var(--text-secondary)" }}>
                     <Spinner />
-                    <span>Loading providers...</span>
+                    <span>Loading providers…</span>
                   </div>
                 ) : (
                   <select
@@ -2182,7 +2113,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         setIncludeVisuals(false);
                       }
                     }}
-                    className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium ${FIELD_WIDTH_CLASS}`}
+                    className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-colors cursor-pointer font-medium ${FIELD_WIDTH_CLASS}`}
                     title="Select LLM Provider"
                   >
                     {providers.map((provider) => (
@@ -2214,7 +2145,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     aria-busy="true"
                   >
                     <Spinner />
-                    <span>Loading models...</span>
+                    <span>Loading models…</span>
                   </div>
                 ) : providerModels.length > 1 ? (
                   <div className="relative">
@@ -2229,7 +2160,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           /* storage unavailable: the choice just won't persist */
                         }
                       }}
-                      className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-all cursor-pointer font-medium ${FIELD_WIDTH_CLASS} truncate`}
+                      className={`input-base appearance-none text-sm pl-4 pr-10 py-2 transition-colors cursor-pointer font-medium ${FIELD_WIDTH_CLASS} truncate`}
                       title="Select model"
                     >
                       {providerModels.map((id) => (
@@ -2293,10 +2224,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       />
                     )}
                   </svg>
-                  <span>Scene Search</span>
+                  <span>Scene search</span>
                   {includeVisuals && (
-                    <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full font-semibold" style={{ background: "var(--accent)", color: "var(--accent-text)" }}>
-                      ON
+                    <span className="badge badge-accent ml-1">
+                      On
                     </span>
                   )}
                 </button>
@@ -2304,7 +2235,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 {/* Info tooltip */}
                 <div className="relative">
                   <button
-                    className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                    className="w-4 h-4 rounded-full flex items-center justify-center text-[11px] font-medium transition-colors"
                     style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}
                     title="Scene Search finds visual moments (actions, objects, settings). Cannot identify specific people by name - use transcript for speaker queries."
                     aria-label="Scene search information"
@@ -2313,7 +2244,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   </button>
                   {/* Tooltip on hover */}
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 shadow-lg" style={{ background: "var(--bg-overlay)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}>
-                    <div className="font-medium mb-1.5" style={{ color: "var(--text-primary)" }}>Scene Search</div>
+                    <div className="font-medium mb-1.5" style={{ color: "var(--text-primary)" }}>Scene search</div>
                     <div className="mb-1" style={{ color: "var(--text-secondary)" }}>
                       Finds visual moments (actions, objects, settings).
                     </div>
@@ -2621,16 +2552,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Visual Sources (Screenshots) */}
                   {message.sources.filter((s) => s.screenshot_url).length > 0 && (
                     <EvidenceDisclosure
-                      title="Scene Matches"
+                      title="Scene matches"
                       count={message.sources.filter((s) => s.screenshot_url).length}
                       defaultOpen
-                      icon={
-                        <svg className="w-4 h-4" style={{ color: "var(--accent)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                      }
+                      icon={<span className="inline-flex" style={{ color: "var(--text-tertiary)" }}><LuImage size={16} strokeWidth={1.5} /></span>}
                     >
-                      <div className="grid grid-cols-2 gap-2.5">
+                      <div className="flex flex-col divide-y divide-[var(--border-subtle)]">
                         {message.sources
                           .filter((s) => s.screenshot_url)
                           .map((source, idx) => {
@@ -2658,7 +2585,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               ? `Matched: ${source.visual_query_variant}`
                               : source.source_kind === "face_tag"
                                 ? "Matched by face tag"
-                                : evidenceLabel;
+                                : undefined;
 
                             return (
                               <div
@@ -2672,15 +2599,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     openScreenshot();
                                   }
                                 }}
-                                className="group relative aspect-video rounded-lg overflow-hidden border transition-all hover:shadow-md cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                                style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
-                                title={`Open screenshot at ${source.start_time}. ${evidenceDetail}`}
-                                aria-label={`Open screenshot at ${source.start_time}. ${evidenceDetail}`}
+                                className="group flex items-start gap-3 py-2 first:pt-0 last:pb-0 cursor-zoom-in rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                                title={`Open screenshot at ${source.start_time}. ${evidenceDetail ?? evidenceLabel}`}
+                                aria-label={`Open screenshot at ${source.start_time}. ${evidenceDetail ?? evidenceLabel}`}
                               >
-                                <img
+                                <div
+                                  className="relative w-28 shrink-0 aspect-video overflow-hidden rounded-md border"
+                                  style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)" }}
+                                >
+                                  <img
                                   src={formatScreenshotUrl(source.screenshot_url)}
                                   alt={`Screenshot at ${source.start_time}`}
-                                  className="w-full h-full object-cover"
+                                  className="h-full w-full object-cover transition-opacity duration-150 group-hover:opacity-90"
                                   onError={async (e) => {
                                     const img = e.currentTarget;
                                     if (img.dataset.retry === "1" || !jobId) {
@@ -2711,50 +2641,29 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     }
                                   }}
                                 />
-                              <div className="absolute inset-0 pointer-events-none bg-black/0 transition-colors group-hover:bg-black/10" />
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openScreenshot();
-                                }}
-                                className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white shadow-sm transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-white/80"
-                                title={`Open screenshot at ${source.start_time}`}
-                                aria-label={`Open screenshot at ${source.start_time}`}
-                              >
-                                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"
-                                  />
-                                </svg>
-                              </button>
-                              {/* Timestamp and speaker info badge */}
-                              <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-1.5 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-1.5 pb-1.5 pt-6">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onTimestampClick?.(source.start_time);
-                                  }}
-                                  className="inline-flex min-w-0 items-center gap-1 rounded-full bg-emerald-700/90 px-1.5 py-0.5 text-[11px] font-mono font-bold text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-white/80"
-                                  title={`Jump to ${source.start_time}`}
-                                  aria-label={`Jump video to ${source.start_time}`}
-                                >
-                                  <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M6.3 3.8A1 1 0 005 4.7v10.6a1 1 0 001.5.9l8.8-5.3a1 1 0 000-1.8L6.5 3.8a1 1 0 00-.2 0z" />
-                                  </svg>
-                                  {source.start_time}
-                                </button>
-                                <p
-                                  className="min-w-0 truncate rounded-full bg-black/50 px-1.5 py-0.5 text-[11px] text-white/90"
-                                  title={evidenceDetail}
-                                >
-                                  {evidenceLabel}
-                                </p>
-                              </div>
+                                </div>
+                                <div className="min-w-0 flex-1 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onTimestampClick?.(source.start_time);
+                                    }}
+                                    className="tc"
+                                    title={`Jump to ${source.start_time}`}
+                                    aria-label={`Jump video to ${source.start_time}`}
+                                  >
+                                    {source.start_time}
+                                  </button>
+                                  <p className="mt-1.5 text-sm leading-snug line-clamp-2" style={{ color: "var(--text-secondary)" }}>
+                                    {evidenceLabel}
+                                  </p>
+                                  {evidenceDetail && (
+                                    <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+                                      {evidenceDetail}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             );
                           })}
@@ -2767,13 +2676,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     (s) => !s.screenshot_url && s.type !== "audio",
                   ).length > 0 && (
                     <EvidenceDisclosure
-                      title="From Transcript"
+                      title="From transcript"
                       count={
                         message.sources.filter(
                           (s) => !s.screenshot_url && s.type !== "audio",
                         ).length
                       }
-                      icon={<span className="text-base">📝</span>}
+                      icon={<span className="inline-flex" style={{ color: "var(--text-tertiary)" }}><LuFileText size={16} strokeWidth={1.5} /></span>}
                     >
                       <div className="space-y-1.5">
                         {message.sources
@@ -2786,12 +2695,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                               onClick={() =>
                                 onTimestampClick?.(source.start_time)
                               }
-                              className="block w-full text-left text-xs px-3 py-2 rounded-lg border transition-all hover:shadow-sm group"
+                              className="block w-full text-left text-xs px-3 py-2 rounded-lg border transition-colors hover:border-[var(--border-default)] group"
                               style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
                             >
                               <div className="flex items-center justify-between mb-1">
-                                <span className="font-mono font-bold" style={{ color: "var(--accent)" }}>
-                                  {source.start_time} - {source.end_time}
+                                <span className="tc group-hover:text-[var(--accent)]">
+                                  {source.start_time} – {source.end_time}
                                 </span>
                                 <span className="font-medium" style={{ color: "var(--text-secondary)" }}>
                                   {source.speaker}
@@ -2811,24 +2720,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Audio Events */}
                   {message.sources.filter((s) => s.type === "audio").length > 0 && (
                     <EvidenceDisclosure
-                      title="Audio Events"
+                      title="Audio events"
                       count={message.sources.filter((s) => s.type === "audio").length}
-                      icon={
-                        <svg
-                          className="w-4 h-4"
-                          style={{ color: "var(--text-tertiary)" }}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                          />
-                        </svg>
-                      }
+                      icon={<span className="inline-flex" style={{ color: "var(--text-tertiary)" }}><LuAudioLines size={16} strokeWidth={1.5} /></span>}
                     >
                       <div className="space-y-1">
                         {message.sources
@@ -2837,6 +2731,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             const eventDetails = getEventDetails(
                               source.event_type || "unknown",
                             );
+                            const EventIcon = EVENT_CATEGORY_ICON[eventDetails.category];
                             const confidence = source.confidence || 0;
                             const duration =
                               source.end && source.start
@@ -2855,9 +2750,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                 aria-label={`Jump to ${eventDetails.label} event at ${source.start_time}`}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                                  {/* Left: emoji + label */}
+                                  
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                                    <span style={{ fontSize: '16px', lineHeight: 1, flexShrink: 0 }}>{eventDetails.emoji}</span>
+                                    <span style={{ display: 'inline-flex', flexShrink: 0, color: 'var(--text-tertiary)' }} aria-hidden="true">
+                                      <EventIcon size={16} strokeWidth={1.5} />
+                                    </span>
                                     <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                       {eventDetails.label}
                                     </span>
@@ -2867,21 +2764,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                       </span>
                                     )}
                                   </div>
-                                  {/* Right: timestamp + meta */}
+                                  
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                                     {confidence > 0 && (
-                                      <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                                      <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
                                         {Math.round(confidence * 100)}%
                                       </span>
                                     )}
                                     {duration && (
-                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                                      <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
                                         {duration}
                                       </span>
                                     )}
                                     <span
-                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs font-mono font-semibold rounded"
-                                      style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+                                      className="tc"
                                     >
                                       {source.start_time}
                                     </span>
@@ -2958,9 +2854,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
               />
             </svg>
-            <span>Custom Instructions</span>
+            <span>Custom instructions</span>
             {customInstructions && (
-              <span className="ml-1 px-2 py-0.5 text-xs rounded-full font-semibold" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>
+              <span className="badge badge-accent ml-1">
                 Active
               </span>
             )}
@@ -2976,7 +2872,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 }}
                 onKeyUp={(e) => e.stopPropagation()}
                 onKeyPress={(e) => e.stopPropagation()}
-                placeholder="Add custom instructions for the AI (e.g., 'Respond in Spanish', 'Be brief and casual', 'Focus on technical details')..."
+                placeholder="For example: respond in Spanish, keep it brief, focus on technical details"
                 className="input-base w-full px-3 py-2 resize-none text-sm"
                 rows={3}
                 disabled={loading}
@@ -3168,7 +3064,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {!isComparisonModal && screenshotModal.currentIndex > 0 && (
               <button
                 onClick={handlePreviousScreenshot}
-                className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center transition-all opacity-60 hover:opacity-100 border"
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center transition-opacity opacity-60 hover:opacity-100 border"
                 style={{
                   background: 'var(--bg-overlay)',
                   color: 'var(--text-primary)',
@@ -3185,7 +3081,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2.5}
+                    strokeWidth={1.5}
                     d="M15 19l-7-7 7-7"
                   />
                 </svg>
@@ -3197,7 +3093,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               screenshotModal.screenshots.length - 1 && (
               <button
                 onClick={handleNextScreenshot}
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center transition-all opacity-60 hover:opacity-100 border"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center transition-opacity opacity-60 hover:opacity-100 border"
                 style={{
                   background: 'var(--bg-overlay)',
                   color: 'var(--text-primary)',
@@ -3214,7 +3110,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2.5}
+                    strokeWidth={1.5}
                     d="M9 5l7 7-7 7"
                   />
                 </svg>
@@ -3231,7 +3127,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         .start_time,
                     )
                   }
-                  className="text-sm font-mono font-bold transition-colors" style={{ color: 'var(--accent)' }}
+                  className="tc tc-on-image"
                   title="Click to jump to this timestamp"
                 >
                   {
