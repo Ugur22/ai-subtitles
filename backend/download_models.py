@@ -13,7 +13,6 @@ from huggingface_hub import HfApi, snapshot_download
 
 HF_HOME = '/app/.cache/huggingface'
 os.environ['HF_HOME'] = HF_HOME
-os.environ['TRANSFORMERS_CACHE'] = HF_HOME
 os.environ['XDG_CACHE_HOME'] = '/app/.cache'
 
 # Must match FASTWHISPER_MODEL at runtime (e.g. "large-v3" resolves to this repo)
