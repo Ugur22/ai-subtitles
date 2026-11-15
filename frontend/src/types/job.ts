@@ -25,6 +25,7 @@ export interface Job {
   access_token: string;
   status: JobStatus;
   filename: string;
+  display_title?: string | null;
   file_size_bytes: number;
   video_hash: string | null;
   gcs_path: string | null;
