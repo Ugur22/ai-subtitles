@@ -578,17 +578,10 @@ body {
   transform: rotate(180deg);
 }
 
-.side-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-quaternary);
-  padding: 14px 10px 6px;
-  white-space: nowrap;
-  transition:
-    opacity 160ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .nav-item {
@@ -657,7 +650,6 @@ body {
 }
 
 .sidebar.is-collapsed .brand-word,
-.sidebar.is-collapsed .side-label,
 .sidebar.is-collapsed .nav-item-label,
 .sidebar.is-collapsed .nav-item-count,
 .sidebar.is-collapsed .user-who,
@@ -707,11 +699,6 @@ body {
   transform: none;
 }
 
-.sidebar.is-collapsed .side-label {
-  height: 8px;
-  padding: 8px 0 0;
-}
-
 .sidebar.is-collapsed .nav-item {
   justify-content: center;
   padding-left: 0;
@@ -750,8 +737,40 @@ body {
   padding-top: 14px;
   border-top: 1px solid var(--border-subtle);
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.user-menu { position: relative; }
+.user-menu { position: relative; flex: 1; min-width: 0; }
+.sidebar-foot-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.sidebar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sidebar-icon-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+.sidebar-icon-btn svg { width: 16px; height: 16px; }
+.sidebar.is-collapsed .sidebar-foot {
+  flex-direction: column-reverse;
+  gap: 8px;
+}
+.sidebar.is-collapsed .user-menu { width: 100%; }
+.sidebar.is-collapsed .sidebar-foot-actions { flex-direction: column; }
 .sidebar-user-menu-items {
   position: absolute;
   right: 0;
@@ -850,7 +869,6 @@ body {
   .app-shell,
   .sidebar,
   .brand-word,
-  .side-label,
   .nav-item-label,
   .nav-item-count,
   .user-who,
