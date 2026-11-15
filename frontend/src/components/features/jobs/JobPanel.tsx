@@ -3,7 +3,7 @@
  * Features: Active jobs, Completed jobs, Failed jobs, Pagination, Offline warning
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useJobTracker } from "../../../hooks/useJobTracker";
 import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
@@ -22,26 +22,45 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   onClose,
   onViewTranscript,
 }) => {
-  const { jobs, isLoading, isOffline, page, totalPages, setPage, refetch } =
+  const { jobs: allJobs, isLoading, isOffline, page, totalPages, setPage, refetch } =
     useJobTracker();
   const { removeJob } = useJobStorage();
+  // Jobs hidden while their DELETE request runs. Deleting a long video takes
+  // up to a minute (screenshots), so the list does not wait for it.
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const jobs = allJobs.filter(j => !deletingIds.has(j.job_id));
 
   const handleCancelJob = useCallback((jobId: string) => {
     removeJob(jobId);
     refetch();
   }, [removeJob, refetch]);
 
-  const handleDeleteJob = useCallback(async (jobId: string, token: string) => {
-    try {
-      await deleteJobPermanent(jobId, token);
-      removeJob(jobId);
-      refetch();
-      toast.success("Job deleted successfully");
-    } catch (error) {
-      console.error("Failed to delete job:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to delete job");
-    }
-  }, [removeJob, refetch]);
+  const handleDeleteJob = useCallback((jobId: string, token: string) => {
+    const filename = allJobs.find(j => j.job_id === jobId)?.filename ?? "this job";
+    const unhide = () => setDeletingIds(prev => {
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
+
+    setDeletingIds(prev => new Set(prev).add(jobId));
+    toast.success(`Deleted ${filename}`);
+
+    // Not awaited by the card. The request stays open while the server
+    // deletes; Cloud Run only gives it CPU during a request.
+    // On success the id stays hidden: refetch is async, and un-hiding before
+    // the new list arrives would flash the deleted job back in.
+    deleteJobPermanent(jobId, token)
+      .then(() => {
+        removeJob(jobId);
+        refetch();
+      })
+      .catch((error) => {
+        console.error("Failed to delete job:", error);
+        unhide();
+        toast.error(`Couldn't delete ${filename}. It's back in your library.`);
+      });
+  }, [allJobs, removeJob, refetch]);
 
   const activeJobs = jobs.filter(j => isActiveJobStatus(j.status));
   const completedJobs = jobs.filter(j => j.status === "completed");
