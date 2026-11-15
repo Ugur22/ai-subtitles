@@ -67,7 +67,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   onTranscriptionChange,
 }) => {
   // UI-specific state (keep these)
-  const [showTranslation, setShowTranslation] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(true);
   const [showSummary, setShowSummary] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
@@ -354,6 +354,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       if (!job.result_json) return;
     }
     setTranscription(job.result_json);
+    setShowTranslation(true);
     setSearchParams({ job: job.job_id }, { replace: searchParams.get("job") === job.job_id });
     setShowJobPanel(false);
     currentJobRef.current = { jobId: job.job_id, accessToken: job.access_token };
@@ -381,7 +382,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setError(null);
     resetJobSubmit();
     setVideoUrl(null);
-    setShowTranslation(false);
+    setShowTranslation(true);
     setSelectedLanguage("");
     setFilteredSpeaker(null);
   }, [resetJobSubmit, setVideoUrl]);
@@ -1438,6 +1439,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       <div style={{ position: 'absolute', inset: 0 }} hidden={!showChat}>
                         <ChatPanel
                           videoHash={chatMountedFor}
+                          transcriptSpeakers={uniqueSpeakers}
                           onTimestampClick={seekToTimestamp}
                           jobId={currentJobId}
                           accessToken={currentAccessToken}

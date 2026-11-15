@@ -6,9 +6,6 @@ console.log('[API] Creating axios instance with baseURL:', API_BASE_URL);
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
   withCredentials: true, // Enable cookies for auth
 });
 
