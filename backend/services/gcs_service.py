@@ -9,8 +9,9 @@ import os
 import re
 import tempfile
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict
+from urllib.parse import parse_qs, urlsplit
 from google.cloud import storage
 from google.cloud.storage import Blob
 from google.api_core.exceptions import NotFound
@@ -557,11 +558,10 @@ class GCSService:
     @classmethod
     def refresh_screenshot_urls_in_segments(cls, segments: list) -> list:
         """
-        Regenerate signed screenshot URLs in a list of transcript segments.
+        Refresh screenshot URLs that expire within two days.
 
-        Call this before returning segments to the frontend to ensure screenshot
-        URLs are fresh. Segments with local (/static/...) or non-GCS URLs are
-        left unchanged.
+        The two-day margin lets the daily refresh cron renew links before they
+        expire, while reads reuse valid links without making IAM signing calls.
 
         Args:
             segments: List of transcript segment dicts (each may have screenshot_url)
@@ -569,6 +569,7 @@ class GCSService:
         Returns:
             The same list with refreshed screenshot_url values
         """
+        refresh_before = datetime.now(timezone.utc) + timedelta(days=2)
         for seg in segments:
             url = seg.get('screenshot_url')
             if not url or not url.startswith('https://storage.googleapis.com'):
@@ -576,6 +577,14 @@ class GCSService:
             gcs_path = cls.extract_gcs_path_from_signed_url(url)
             if not gcs_path:
                 continue
+            try:
+                query = parse_qs(urlsplit(url).query)
+                issued = datetime.strptime(query['X-Goog-Date'][0], '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc)
+                expires = issued + timedelta(seconds=min(int(query['X-Goog-Expires'][0]), 604800))
+                if expires > refresh_before:
+                    continue
+            except (KeyError, ValueError, OverflowError):
+                pass
             try:
                 new_url = cls.generate_download_signed_url_resilient(
                     gcs_path,
@@ -692,8 +701,8 @@ def maybe_refresh_segment_urls(result_json: Optional[dict]) -> None:
     """Refresh GCS screenshot URLs in result_json.transcription.segments, in place.
 
     IAM-signed URLs cap at 7 days, so any cached URL older than that 403s. Call this
-    on every endpoint that returns segments to clients (or to downstream consumers
-    like the chat vision pipeline) so the URLs are always within expiry.
+    on endpoints returning segments to repair expired or soon-expiring links;
+    links with more than two days remaining are reused without signing.
     No-ops when GCS is disabled or there are no segments.
     """
     if not result_json or not settings.ENABLE_GCS_UPLOADS:

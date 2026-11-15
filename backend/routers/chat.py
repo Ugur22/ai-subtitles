@@ -24,7 +24,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(_chat_executor, func, *args)
 
 from middleware.auth import require_auth
-from services.model_catalog import list_models
+from services.model_catalog import ReasoningEffort, list_models, reasoning_effort_options
 from services.provider_http import is_credit_exhausted
 from services.transcription_access import (
     authenticated_user_id,
@@ -164,13 +164,24 @@ def _request_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
-async def _get_chat_provider(request: Request, provider_name: Optional[str], model: Optional[str] = None):
+async def _get_chat_provider(
+    request: Request,
+    provider_name: Optional[str],
+    model: Optional[str] = None,
+    reasoning_effort: Optional[ReasoningEffort] = None,
+):
     """Resolve an LLM provider, preferring a validated user-saved key over env keys.
 
     `model` overrides the provider's default for this request only.
     """
     saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
-    return llm_manager.get_provider(provider_name, api_key_override=saved_key, model_override=model)
+    try:
+        return llm_manager.get_provider(
+            provider_name, api_key_override=saved_key,
+            model_override=model, reasoning_effort=reasoning_effort,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 async def _generate_visual_observations_with_fallback(
@@ -2352,6 +2363,7 @@ async def _run_person_comparison_llm(
     video_hash: str,
     timeline_appearances: Optional[list[dict]] = None,
     model: Optional[str] = None,
+    reasoning_effort: Optional[ReasoningEffort] = None,
 ) -> Dict:
     """
     Build the comparison prompt for the resolved pair, run the vision LLM, and return
@@ -2377,7 +2389,7 @@ async def _run_person_comparison_llm(
         ]
         intermediates.sort(key=lambda row: float(row.get("start_time") or 0.0))
 
-    provider = await _get_chat_provider(request, provider_name, model)
+    provider = await _get_chat_provider(request, provider_name, model, reasoning_effort)
     if not provider.supports_vision():
         provider = await _get_chat_provider(request, "grok")
         provider_name = "grok"
@@ -2569,6 +2581,7 @@ async def _handle_person_comparison(
         video_hash=video_hash,
         timeline_appearances=timeline_appearances,
         model=chat_request.model,
+        reasoning_effort=chat_request.reasoning_effort,
     )
 
 
@@ -3728,7 +3741,7 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
 
         # Get LLM provider and generate response
         try:
-            provider = await _get_chat_provider(request, provider_name, chat_request.model)
+            provider = await _get_chat_provider(request, provider_name, chat_request.model, chat_request.reasoning_effort)
             provider_supports_vision = provider.supports_vision()
 
             if include_visuals and image_paths and not provider_supports_vision:
@@ -3767,6 +3780,8 @@ async def chat_with_video(request: Request, chat_request: ChatRequest) -> Dict:
                 if include_visuals and image_paths and not provider_supports_vision:
                     print(f"Provider {provider_name} is text-only; using text prompt with vision fallback observations when available.")
                 answer = await provider.generate(messages, temperature=0.7, max_tokens=2000)
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"[chat] provider generation failed: {type(e).__name__}: {e}")
             raise HTTPException(
@@ -3961,7 +3976,11 @@ async def swap_comparison_frame(
                 provider_name=swap_request.provider,
                 video_hash=video_hash,
                 timeline_appearances=timeline_appearances,
+                model=swap_request.model,
+                reasoning_effort=swap_request.reasoning_effort,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"[chat] comparison swap provider generation failed: {type(e).__name__}: {e}")
             raise HTTPException(
@@ -4167,7 +4186,7 @@ async def chat_with_video_stream(request: Request, chat_request: ChatRequest) ->
                 yield _sse({"type": "done", "provider_used": provider_name or "none", "video_hash": video_hash})
                 return
 
-            provider = await _get_chat_provider(request, provider_name, chat_request.model)
+            provider = await _get_chat_provider(request, provider_name, chat_request.model, chat_request.reasoning_effort)
             provider_supports_vision = provider.supports_vision()
 
             if include_visuals and image_paths and not provider_supports_vision:
@@ -4454,7 +4473,13 @@ async def list_provider_models(request: Request, provider_name: str) -> Provider
     # Always offer the default so the UI never has to merge it in.
     if default_model and default_model not in models:
         models = [default_model, *models]
-    return ProviderModelsResponse(models=models, default=default_model, source=source, error=error)
+    return ProviderModelsResponse(
+        models=models, default=default_model, source=source, error=error,
+        reasoning_efforts={
+            model: options for model in models
+            if (options := reasoning_effort_options(catalog_name or provider_name, model))
+        },
+    )
 
 
 @router.post(

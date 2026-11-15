@@ -3,7 +3,7 @@
 import hashlib
 import os
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import httpx
 
@@ -11,6 +11,20 @@ from services.provider_http import provider_error_detail
 
 CACHE_TTL_SECONDS = 300
 FAILURE_TTL_SECONDS = 60
+
+ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+
+
+def reasoning_effort_options(provider: str, model: str) -> List[ReasoningEffort]:
+    # Only advertise documented model capabilities; newer IDs need verification.
+    if provider not in {"grok", "xai"}:
+        return []
+    if model in {"grok-4.6", "grok-4.7"}:
+        return ["low", "medium", "high", "xhigh"]
+    if model == "grok-4.5":
+        return ["low", "medium", "high"]
+    return []
+
 # Key-level errors: another endpoint with the same key cannot succeed.
 _KEY_ERROR_STATUSES = (401, 402, 403, 429)
 
