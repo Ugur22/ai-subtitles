@@ -43,17 +43,12 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
     return (
       <div className="upload-hero">
-        {/* Eyebrow + headline */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <span className="upload-eyebrow">
-            <span className="dot" />
-            Beta · Speaker diarization
-          </span>
+        <div style={{ marginBottom: '24px' }}>
           <h1 className="upload-headline">
-            Turn any video into <em>clean subtitles</em> in about a minute.
+            Subtitles with speaker names, from any video or audio file.
           </h1>
           <p className="upload-lede">
-            Drop a file, walk away if you want — we'll transcribe, separate speakers, and find scenes for you.
+            Upload a file and come back later if you like. We transcribe it, mark who says what, and translate it. A 50-minute episode takes about half an hour.
           </p>
         </div>
 
@@ -209,38 +204,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
             </svg>
           </button>
         )}
-
-        {/* Tips */}
-        <div className="tips">
-          <div className="tip">
-            <div className="tip-icon">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            </div>
-            <h4>Paste a URL</h4>
-            <p>Press <span className="kbd">⌘V</span> on the dropzone to ingest from YouTube or a direct link.</p>
-          </div>
-          <div className="tip">
-            <div className="tip-icon">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <h4>Multiple speakers</h4>
-            <p>Auto-detected and color-coded. Click any pill to rename.</p>
-          </div>
-          <div className="tip">
-            <div className="tip-icon">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <h4>Search inside the video</h4>
-            <p>Ask the chat panel anything — every answer cites the moment.</p>
-          </div>
-        </div>
       </div>
     );
   }
