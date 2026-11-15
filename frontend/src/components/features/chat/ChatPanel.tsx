@@ -679,6 +679,33 @@ interface Source {
   }>;
 }
 
+function isChatSource(value: unknown): value is Source {
+  if (!value || typeof value !== "object") return false;
+  const required = ["start_time", "end_time", "speaker"];
+  const strings = ["text", "screenshot_url", "event_type", "visual_query_variant", "source_kind", "evidence_label"];
+  const numbers = ["confidence", "overlap_score", "visual_similarity", "hybrid_score", "face_score"];
+  const fields = Object.fromEntries(Object.entries(value));
+  return required.every((key) => typeof fields[key] === "string")
+    && typeof fields.start === "number" && typeof fields.end === "number"
+    && strings.every((key) => fields[key] === undefined || typeof fields[key] === "string")
+    && numbers.every((key) => fields[key] === undefined || typeof fields[key] === "number")
+    && (fields.type === undefined || fields.type === "text" || fields.type === "visual" || fields.type === "audio")
+    && (fields.likely_speakers === undefined || (Array.isArray(fields.likely_speakers) && fields.likely_speakers.every((speaker: unknown) => typeof speaker === "string")))
+    && (fields.bboxes === undefined || (Array.isArray(fields.bboxes) && fields.bboxes.every((item: unknown) => {
+      if (!item || typeof item !== "object") return false;
+      if ("person" in item && item.person !== undefined && typeof item.person !== "string") return false;
+      if (!("bbox" in item) || item.bbox == null) return true;
+      const box = item.bbox;
+      return typeof box === "object" && "x" in box && typeof box.x === "number"
+        && "y" in box && typeof box.y === "number" && "w" in box && typeof box.w === "number"
+        && "h" in box && typeof box.h === "number";
+    })));
+}
+
+function isPhaseId(value: unknown): value is PhaseId {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(ORB_STATE, value);
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -1500,7 +1527,11 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
       );
     };
     reserveAnswerSpace();
-    container.scrollTo({ top: question.offsetTop - 18, behavior: "instant" });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    container.scrollTo({
+      top: question.offsetTop - 18,
+      behavior: reduceMotion ? "instant" : "smooth",
+    });
 
     const observer = new ResizeObserver(reserveAnswerSpace);
     observer.observe(container);
@@ -1627,13 +1658,6 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     return { message: "Something went wrong. Please try again.", errorType: "unknown" };
   };
 
-  const isRetryableError = (error: unknown): boolean => {
-    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-    const code = axios.isAxiosError(error) ? error.code : undefined;
-    const message = error instanceof Error ? error.message : "";
-    return status === 502 || status === 503 || status === 504 || code === "ECONNABORTED" || message.includes("timeout");
-  };
-
   const PHASE_LABELS: Record<PhaseId, string> = {
     searching: "Searching transcript",
     analyzing_scenes: "Analyzing scenes",
@@ -1644,103 +1668,136 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     generating: "Writing answer",
   };
 
-  const sendViaLegacy = async (
+  const sendViaStream = async (
     textToSend: string,
     history: Array<{ role: string; content: string }>
   ) => {
-    const MAX_RETRIES = 0;
-    const RETRY_DELAY = 3000;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        if (attempt > 0) {
-          setRetryCount(attempt);
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+    const updateAssistant = (update: (message: Message) => Message) => {
+      setMessages((previous) => {
+        let index = previous.length - 1;
+        while (index >= 0 && !(previous[index].role === "assistant" && previous[index].isStreaming)) index--;
+        return previous.map((message, i) => i === index ? update(message) : message);
+      });
+    };
+    try {
+      const response = await axios.post<ReadableStream<Uint8Array>>(
+        `${API_BASE_URL}/api/chat/stream`,
+        {
+          question: textToSend,
+          video_hash: videoHash,
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          reasoning_effort: selectedEffort,
+          n_results: 8,
+          include_visuals: includeVisuals,
+          n_images: includeVisuals ? 6 : undefined,
+          custom_instructions: customInstructions || undefined,
+          conversation_history: history.length > 0 ? history : undefined,
+        },
+        {
+          adapter: "fetch",
+          responseType: "stream",
+          headers: { Accept: "text/event-stream" },
+          timeout: 300000,
+          withCredentials: true,
         }
-
-        const response = await axios.post(
-          `${API_BASE_URL}/api/chat/`,
-          {
-            question: textToSend,
-            video_hash: videoHash,
-            provider: selectedProvider,
-            model: selectedModel || undefined,
-            reasoning_effort: selectedEffort,
-            n_results: 8,
-            include_visuals: includeVisuals,
-            n_images: includeVisuals ? 6 : undefined,
-            custom_instructions: customInstructions || undefined,
-            conversation_history: history.length > 0 ? history : undefined,
-          },
-          {
-            timeout: 180000,
-            withCredentials: true,
-          }
-        );
-
-        setMessages((prev) => {
-          const next = [...prev];
-          for (let i = next.length - 1; i >= 0; i--) {
-            if (next[i].role === "assistant" && next[i].isStreaming) {
-              next[i] = {
-                ...next[i],
-                content: response.data.answer,
-                sources: response.data.sources,
-                visual_query_used: response.data.visual_query_used,
-                visual_query_variants: response.data.visual_query_variants,
-                isStreaming: false,
-              };
-              return next;
-            }
-          }
-          return [
-            ...next,
-            {
-              role: "assistant",
-              content: response.data.answer,
-              sources: response.data.sources,
-              visual_query_used: response.data.visual_query_used,
-              visual_query_variants: response.data.visual_query_variants,
-              original_question: textToSend,
-            },
-          ];
-        });
-        return true;
-      } catch (error: unknown) {
-        console.error(`Chat error (attempt ${attempt + 1}):`, error);
-        if (attempt < MAX_RETRIES && isRetryableError(error)) continue;
-
-        const { message, errorType } = getFriendlyErrorMessage(error);
-        setMessages((prev) => {
-          const next = [...prev];
-          for (let i = next.length - 1; i >= 0; i--) {
-            if (next[i].role === "assistant" && next[i].isStreaming) {
-              next[i] = {
-                ...next[i],
-                content: message,
-                isError: true,
-                errorType,
-                retryQuestion: textToSend,
-                isStreaming: false,
-              };
-              return next;
-            }
-          }
-          return [
-            ...next,
-            {
-              role: "assistant",
-              content: message,
-              isError: true,
-              errorType,
-              retryQuestion: textToSend,
-            },
-          ];
-        });
-        return false;
+      );
+      if (!response.headers["content-type"]?.includes("text/event-stream")) {
+        throw new Error("The server did not return a chat stream.");
       }
+      const reader = response.data.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let completed = false;
+      try {
+        while (!completed) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value, { stream: !done });
+          let newline: number;
+          while ((newline = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newline).replace(/\r$/, "");
+            buffer = buffer.slice(newline + 1);
+            if (!line.startsWith("data:")) continue;
+            const event: unknown = JSON.parse(line.slice(5).trim());
+            if (!event || typeof event !== "object" || !("type" in event)) {
+              throw new Error("Invalid chat stream event.");
+            }
+            switch (event.type) {
+              case "token": {
+                if (!("content" in event) || typeof event.content !== "string") {
+                  throw new Error("Invalid chat token.");
+                }
+                const content = event.content;
+                updateAssistant((message) => ({ ...message, content: message.content + content }));
+                break;
+              }
+              case "reset":
+                updateAssistant((message) => ({ ...message, content: "" }));
+                break;
+              case "sources": {
+                if (!("sources" in event) || !Array.isArray(event.sources)) {
+                  throw new Error("Invalid chat sources.");
+                }
+                const sources = event.sources.map((source: unknown) => {
+                  const normalized: unknown = source && typeof source === "object"
+                    ? Object.fromEntries(Object.entries(source).filter(([, value]) => value !== null)) : source;
+                  if (!isChatSource(normalized)) throw new Error("Invalid chat source.");
+                  return normalized;
+                });
+                const visualQuery = "visual_query_used" in event && typeof event.visual_query_used === "string" ? event.visual_query_used : undefined;
+                const variants = "visual_query_variants" in event && Array.isArray(event.visual_query_variants)
+                  ? event.visual_query_variants.filter((value): value is string => typeof value === "string") : [];
+                updateAssistant((message) => ({ ...message, sources, visual_query_used: visualQuery, visual_query_variants: variants }));
+                setScreenshotCount(sources.filter((source) => source.screenshot_url).length);
+                break;
+              }
+              case "phase": {
+                if (!("phase" in event) || !isPhaseId(event.phase)) break;
+                const id = event.phase;
+                const label = "label" in event && typeof event.label === "string" ? event.label : PHASE_LABELS[id];
+                setPhases((previous) => {
+                  if (previous.at(-1)?.id === id) return previous;
+                  return [...previous.map((phase): PhaseEntry => ({ ...phase, status: "done" })),
+                    { id, label, status: "active", startedAt: Date.now() }];
+                });
+                break;
+              }
+              case "error":
+                throw new Error("message" in event && typeof event.message === "string" ? event.message : "Chat generation failed.");
+              case "done":
+                completed = true;
+                break;
+            }
+            if (completed) break;
+          }
+          if (done) break;
+        }
+        if (!completed) throw new Error("The connection closed before the answer finished. Please retry.");
+        updateAssistant((message) => ({ ...message, isStreaming: false }));
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+    } catch (error: unknown) {
+      if (axios.isAxiosError<unknown>(error) && error.response?.data instanceof ReadableStream) {
+        try {
+          const body: unknown = await new Response(error.response.data).json();
+          error.response.data = body;
+        } catch {
+          // Proxies can return HTML or an incomplete body; retain the HTTP status fallback.
+        }
+      }
+      const friendly = getFriendlyErrorMessage(error);
+      const message = error instanceof Error && !axios.isAxiosError(error) ? error.message : friendly.message;
+      updateAssistant((previous) => ({
+        ...previous,
+        content: previous.content ? `${previous.content}\n\n${message}` : message,
+        isError: true,
+        errorType: friendly.errorType,
+        retryQuestion: textToSend,
+        isStreaming: false,
+      }));
     }
-    return false;
   };
 
   const swapControllerRef = useRef<AbortController | null>(null);
@@ -1848,7 +1905,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     options?: { retry?: boolean }
   ) => {
     const textToSend = typeof messageText === "string" ? messageText : input;
-    if (!textToSend.trim() || !videoHash) return;
+    if (!textToSend.trim() || !videoHash || loading) return;
     const isRetry = Boolean(options?.retry && typeof messageText === "string");
 
     const userMessage: Message = {
@@ -1922,7 +1979,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
       .map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      await sendViaLegacy(textToSend, history);
+      await sendViaStream(textToSend, history);
     } finally {
       setRetryCount(0);
       setLoading(false);
