@@ -576,32 +576,28 @@ button.badge-default:hover { color: var(--text-primary); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background: var(--bg-surface);
-  color: var(--text-tertiary);
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
-  transition:
-    color 140ms ease,
-    border-color 140ms ease,
-    background 140ms ease,
-    transform 180ms var(--ease-out);
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 .sidebar-collapse:hover {
   color: var(--text-primary);
-  border-color: var(--border-default);
-  transform: translateX(-1px);
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+.sidebar-collapse:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .sidebar-collapse svg {
-  width: 15px;
-  height: 15px;
-  transition: transform 220ms var(--ease-out);
-}
-.sidebar-collapse svg.is-collapsed {
-  transform: rotate(180deg);
+  width: 20px;
+  height: 20px;
 }
 
 .sidebar-nav {
@@ -715,8 +711,8 @@ button.badge-default:hover { color: var(--text-primary); }
 
 .sidebar.is-collapsed .sidebar-collapse {
   position: static;
-  width: 34px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   box-shadow: none;
   transform: none;
 }

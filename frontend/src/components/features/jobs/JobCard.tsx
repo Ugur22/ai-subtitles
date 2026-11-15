@@ -273,11 +273,11 @@ export const JobCard: React.FC<JobCardProps> = ({
         )}
 
         {/* Timestamp */}
-        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <svg style={{ width: '11px', height: '11px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div style={{ fontSize: '12px', lineHeight: '20px', color: 'var(--text-secondary)', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '7px', fontVariantNumeric: 'tabular-nums' }}>
+          <svg style={{ width: '14px', height: '14px', flexShrink: 0 }} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {formatRelativeTime(job.created_at)}
+          <time dateTime={job.created_at} title={new Date(job.created_at).toLocaleString()}>{formatRelativeTime(job.created_at)}</time>
         </div>
       </div>
 
