@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { memo, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import axios from "axios";
 import ReactMarkdown, { Components } from "react-markdown";
 import { useTransition, animated } from "react-spring";
@@ -1353,6 +1353,8 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const [screenshotCount, setScreenshotCount] = useState(0);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const latestQuestionRef = useRef<HTMLDivElement>(null);
+  const latestQuestion = [...messages].reverse().find((message) => message.role === "user");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [citeOn, setCiteOn] = useState(true);
 
@@ -1484,16 +1486,27 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     };
   }, [selectedProvider, providersLoaded]);
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container) return;
+    const question = latestQuestionRef.current;
+    if (!container || !question) return;
 
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
+    const reserveAnswerSpace = () => {
+      const padding = 30;
+      const gap = 18;
+      container.style.setProperty(
+        "--current-answer-min-height",
+        `${Math.max(0, container.clientHeight - question.offsetHeight - padding - gap)}px`,
+      );
+    };
+    reserveAnswerSpace();
+    container.scrollTo({ top: question.offsetTop - 18, behavior: "instant" });
+
+    const observer = new ResizeObserver(reserveAnswerSpace);
+    observer.observe(container);
+    observer.observe(question);
+    return () => observer.disconnect();
+  }, [latestQuestion]);
 
   const loadProviders = async () => {
     setLoadingProviders(true);
@@ -2445,7 +2458,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
       <div
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto"
-        style={{ padding: "18px 16px 12px", display: "flex", flexDirection: "column", gap: "18px" }}
+        style={{ padding: "18px 16px 12px", display: "flex", flexDirection: "column", gap: "18px", position: "relative", overflowAnchor: "none" }}
       >
         {messages.length === 0 && (
           <div className="sug-list">
@@ -2475,7 +2488,14 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
 
         {messageTransitions((style, message) => (
           <animated.div
-            style={style}
+            ref={message === latestQuestion ? latestQuestionRef : undefined}
+            style={{
+              ...style,
+              flexShrink: 0,
+              minHeight: message.role === "assistant" && message === messages[messages.length - 1]
+                ? "var(--current-answer-min-height, 0px)"
+                : undefined,
+            }}
             className={`msg ${message.role === "user" ? "user" : "ai"}`}
           >
             <div className="msg-col">
