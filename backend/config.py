@@ -77,7 +77,8 @@ class Settings(BaseSettings):
     # Chunked Diarization Configuration
     # For long videos, process diarization in chunks to reduce memory usage
     DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "900"))  # 15 minutes in seconds
-    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.7"))  # Speaker embedding similarity threshold
+    DIARIZATION_LINK_MODEL: str = os.getenv("DIARIZATION_LINK_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
+    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.5"))
     USE_CHUNKED_DIARIZATION_ABOVE: int = int(os.getenv("USE_CHUNKED_DIARIZATION_ABOVE", "1800"))  # 30 minutes - use chunked processing for videos longer than this
 
     # Memory Management Configuration
