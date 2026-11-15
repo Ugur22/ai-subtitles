@@ -104,7 +104,7 @@ def test_calibration_log_reports_best_scores_and_threshold_sweep(capsys):
     _link(groups)
     out = capsys.readouterr().out
 
-    assert "[SpeakerLink] g0 SPEAKER_00 5s best: g1=0.643" in out
+    assert "[SpeakerLink] g0 SPEAKER_00 5.0s best: g1=0.643" in out
     assert "speakers per threshold: 0.3=1 0.4=1 0.5=1 0.6=1 0.7=2 (using 0.7)" in out
 
 
@@ -142,3 +142,25 @@ def test_negative_segment_does_not_cancel_real_speech():
 
     assert count == 2
     assert "SPEAKER_00" in mapping[0]
+
+
+def test_near_silent_speaker_is_dropped_and_one_second_is_kept(capsys):
+    groups = [
+        _group(0, {"SPEAKER_00": (_voice(0), 0)}),
+        _group(1, {"SPEAKER_00": (_voice(90), 0)}),
+    ]
+    groups[0]["segments"] += [
+        {"start": 40.0, "end": 40.37, "speaker": "SPEAKER_11"},
+        {"start": 60.0, "end": 60.02, "speaker": "SPEAKER_11"},
+    ]
+    groups[1]["segments"].append({"start": 950.0, "end": 951.0, "speaker": "SPEAKER_04"})
+
+    diarizer = ChunkedSpeakerDiarizer(chunk_duration=900)
+    mapping, count = diarizer._match_speakers(groups)
+    unified = diarizer._unify_segments(groups, mapping)
+
+    assert "SPEAKER_11" not in mapping[0]
+    assert "SPEAKER_04" in mapping[1]
+    assert count == 3
+    assert len({seg["speaker"] for seg in unified}) == count
+    assert "[SpeakerLink] dropped g0 SPEAKER_11 (0.4 s of speech)" in capsys.readouterr().out
