@@ -3,8 +3,8 @@
  * Features: Active jobs, Completed jobs, Failed jobs, Pagination, Offline warning
  */
 
-import { useCallback, useState } from "react";
-import { useJobTracker } from "../../../hooks/useJobTracker";
+import { useCallback } from "react";
+import type { useJobTracker } from "../../../hooks/useJobTracker";
 import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
 import { Job, isActiveJobStatus } from "../../../types/job";
@@ -15,35 +15,31 @@ interface JobPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onViewTranscript?: (job: Job) => void;
+  /** The page's job list, shared so uploads and deletes show everywhere at once. */
+  tracker: ReturnType<typeof useJobTracker>;
 }
 
 export const JobPanel: React.FC<JobPanelProps> = ({
   isOpen,
   onClose,
   onViewTranscript,
+  tracker,
 }) => {
-  const { jobs: allJobs, isLoading, isOffline, page, totalPages, setPage, refetch } =
-    useJobTracker();
+  const {
+    jobs, isLoading, isOffline, page, totalPages, setPage, refetch, hideJob, unhideJob,
+  } = tracker;
   const { removeJob } = useJobStorage();
-  // Jobs hidden while their DELETE request runs. Deleting a long video takes
-  // up to a minute (screenshots), so the list does not wait for it.
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-  const jobs = allJobs.filter(j => !deletingIds.has(j.job_id));
 
   const handleCancelJob = useCallback((jobId: string) => {
     removeJob(jobId);
     refetch();
   }, [removeJob, refetch]);
 
+  // Deleting a long video takes up to a minute (screenshots), so the job is
+  // hidden from every list right away instead of waiting for the server.
   const handleDeleteJob = useCallback((jobId: string, token: string) => {
-    const filename = allJobs.find(j => j.job_id === jobId)?.filename ?? "this job";
-    const unhide = () => setDeletingIds(prev => {
-      const next = new Set(prev);
-      next.delete(jobId);
-      return next;
-    });
-
-    setDeletingIds(prev => new Set(prev).add(jobId));
+    const filename = jobs.find(j => j.job_id === jobId)?.filename ?? "this job";
+    hideJob(jobId);
     toast.success(`Deleted ${filename}`);
 
     // Not awaited by the card. The request stays open while the server
@@ -57,10 +53,10 @@ export const JobPanel: React.FC<JobPanelProps> = ({
       })
       .catch((error) => {
         console.error("Failed to delete job:", error);
-        unhide();
+        unhideJob(jobId);
         toast.error(`Couldn't delete ${filename}. It's back in your library.`);
       });
-  }, [allJobs, removeJob, refetch]);
+  }, [jobs, hideJob, unhideJob, removeJob, refetch]);
 
   const activeJobs = jobs.filter(j => isActiveJobStatus(j.status));
   const completedJobs = jobs.filter(j => j.status === "completed");
