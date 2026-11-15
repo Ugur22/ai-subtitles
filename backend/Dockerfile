@@ -42,12 +42,20 @@ RUN mkdir -p /data/static/videos \
     /app/.cache/huggingface \
     /root/panns_data
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+# Fetch every baked model BEFORE requirements.txt, so dependency bumps don't
+# re-download several GB. This layer only changes when download_models.py does.
+# huggingface-hub must match requirements.txt (cache layout; enforced by tests).
+RUN pip install --no-cache-dir huggingface-hub==0.36.2
+# WHISPER_MODEL_REPO must match the FASTWHISPER_MODEL set at runtime (large-v3 -> this repo)
+ARG WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
+COPY download_models.py /tmp/models/download_models.py
+RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/download_models.py
 
-# Install PyTorch with CUDA support first (before other requirements)
+# Install PyTorch with CUDA support (pinned here, independent of requirements.txt)
 # Using CUDA 12.6 wheels (match the CUDA 12.6 / cuDNN 9 base image)
 RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+
+COPY requirements.txt .
 
 # Install remaining Python dependencies
 # Use --no-cache-dir to reduce image size
@@ -56,13 +64,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Cheap build-time check (no GPU needed): the GPU libraries import cleanly
 RUN python -c "import ctranslate2, torch; print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda)"
 
-# Pre-download MarianMT translation models during build
-# This prevents runtime download failures in Cloud Run/Railway
-# Models: Spanish, Italian, French, German, Portuguese, Dutch, Russian, Chinese, Japanese, Arabic, Polish, Turkish, Korean, Czech
-# WHISPER_MODEL_REPO must match the FASTWHISPER_MODEL set at runtime (large-v3 -> this repo)
-ARG WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
-COPY download_models.py /tmp/download_models.py
-RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/download_models.py && rm /tmp/download_models.py
+# Load every fetched model fully offline: an incomplete cache or a library bump
+# that can't read it fails the build here, not as a runtime download on Cloud Run.
+COPY verify_models.py /tmp/models/verify_models.py
+RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/verify_models.py && rm -rf /tmp/models
 
 # Verify critical pre-downloaded artifacts are baked into the image so failures
 # surface at build time, not as silent runtime re-downloads on Cloud Run.

@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
-"""Download all required models during Docker build."""
+"""Fetch every model baked into the Docker image (source of truth for what is baked).
 
-from transformers import MarianMTModel, MarianTokenizer
-from huggingface_hub import snapshot_download
+Runs BEFORE `pip install -r requirements.txt` so dependency bumps don't invalidate this
+multi-GB layer: only huggingface_hub and the stdlib may be imported here
+(enforced by tests/test_deployment_contract.py). Load checks live in verify_models.py.
+"""
 import os
+import urllib.request
+import zipfile
 
-# Set cache directory explicitly (matches Dockerfile ENV vars)
-os.environ['HF_HOME'] = '/app/.cache/huggingface'
-os.environ['TRANSFORMERS_CACHE'] = '/app/.cache/huggingface'
+from huggingface_hub import HfApi, snapshot_download
+
+HF_HOME = '/app/.cache/huggingface'
+os.environ['HF_HOME'] = HF_HOME
+os.environ['TRANSFORMERS_CACHE'] = HF_HOME
 os.environ['XDG_CACHE_HOME'] = '/app/.cache'
 
-# Common language models (source -> English)
-# Each model is ~300MB, total ~3GB for all languages
+# Must match FASTWHISPER_MODEL at runtime (e.g. "large-v3" resolves to this repo)
+WHISPER_MODEL_REPO = os.environ.get('WHISPER_MODEL_REPO', 'Systran/faster-whisper-large-v3')
+
+# Active chat embedding model + offline MiniLM comparison/rollback (both 384-dim)
+SENTENCE_TRANSFORMER_REPOS = ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2")
+CLIP_REPO = "sentence-transformers/clip-ViT-B-32"
+BART_REPO = "facebook/bart-large-cnn"
+EMOTION_REPO = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
+
+# Common language models (source -> English), ~300MB each
 LANGUAGES = [
     'es',  # Spanish
     'it',  # Italian
@@ -29,285 +43,103 @@ LANGUAGES = [
     'cs',  # Czech
 ]
 
-def download_whisper_model():
-    """Download faster-whisper model to prevent runtime downloads."""
-    print("="*50)
-    print("Downloading Faster-Whisper model...")
-    print("="*50)
 
-    # Must match FASTWHISPER_MODEL at runtime (e.g. "large-v3" resolves to this repo)
-    whisper_model = os.environ.get('WHISPER_MODEL_REPO', 'Systran/faster-whisper-large-v3')
-    cache_dir = os.environ.get('HF_HOME', '/app/.cache/huggingface')
-
-    print(f"Cache directory: {cache_dir}")
-    print(f"Cache exists: {os.path.exists(cache_dir)}")
-
-    try:
-        print(f"Downloading {whisper_model}...")
-        # Download to HuggingFace cache with explicit cache_dir
-        model_path = snapshot_download(
-            repo_id=whisper_model,
-            local_files_only=False,
-            cache_dir=cache_dir,
-        )
-        print(f"  OK: Whisper model downloaded to: {model_path}")
-
-        # Verify the model files exist
-        if os.path.exists(model_path):
-            files = os.listdir(model_path)
-            print(f"  Model files: {files}")
-
-        # Also try to load with faster_whisper to ensure it works
-        from faster_whisper import WhisperModel
-        print("  Verifying model loads correctly...")
-        # CPU is fine here: no GPU at build time. local_files_only proves the cache is complete.
-        model = WhisperModel(
-            whisper_model,
-            device="cpu",
-            compute_type="int8",
-            download_root=cache_dir,
-            local_files_only=True
-        )
-        print("  OK: Model verified successfully")
-        del model  # Free memory
-
-    except Exception as e:
-        print(f"  ERROR: Whisper model failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise  # Whisper is critical, fail the build if it can't be downloaded
+def translation_repo(lang):
+    return f'Helsinki-NLP/opus-mt-{lang}-en'
 
 
-def download_panns_model():
-    """Download PANNs model and label file to prevent runtime downloads."""
-    print("="*50)
-    print("Downloading PANNs model...")
-    print("="*50)
+PANNS_DIR = "/root/panns_data"
+# The original storage.googleapis.com/panns_data bucket returns 404 (taken down);
+# GitHub raw is the surviving canonical source for the labels.
+PANNS_LABELS_URL = "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/metadata/class_labels_indices.csv"
+PANNS_CHECKPOINT_URL = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth"
+PANNS_CHECKPOINT = os.path.join(PANNS_DIR, "Cnn14_mAP=0.431.pth")
+PANNS_LABELS = os.path.join(PANNS_DIR, "class_labels_indices.csv")
 
-    import urllib.request
-
-    # Create PANNs data directory
-    panns_dir = "/root/panns_data"
-    os.makedirs(panns_dir, exist_ok=True)
-    print(f"PANNs directory: {panns_dir}")
-
-    try:
-        # Download class labels CSV
-        # NOTE: original storage.googleapis.com/panns_data bucket returns 404 (taken
-        # down). GitHub raw is the surviving canonical source for these labels.
-        labels_url = "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/metadata/class_labels_indices.csv"
-        labels_path = os.path.join(panns_dir, "class_labels_indices.csv")
-        print(f"Downloading class labels from {labels_url}...")
-        urllib.request.urlretrieve(labels_url, labels_path)
-        print(f"  OK: Labels downloaded to: {labels_path}")
-
-        # Download PANNs checkpoint
-        checkpoint_url = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth"
-        checkpoint_path = os.path.join(panns_dir, "Cnn14_mAP=0.431.pth")
-        print(f"Downloading checkpoint from {checkpoint_url}...")
-        urllib.request.urlretrieve(checkpoint_url, checkpoint_path)
-
-        # Verify checkpoint was downloaded
-        if os.path.exists(checkpoint_path):
-            checkpoint_size = os.path.getsize(checkpoint_path) / (1024 * 1024)  # MB
-            print(f"  OK: Checkpoint downloaded to: {checkpoint_path} ({checkpoint_size:.1f} MB)")
-        else:
-            raise Exception("Checkpoint file not found after download")
-
-        # Verify the model loads correctly
-        print("  Verifying PANNs model loads correctly...")
-        import torch
-        import panns_inference
-        from panns_inference import AudioTagging
-
-        # Try to load the model
-        model = AudioTagging(
-            checkpoint_path=checkpoint_path,
-            device='cpu'
-        )
-        print("  OK: PANNs model verified successfully")
-        del model  # Free memory
-
-    except Exception as e:
-        print(f"  ERROR: PANNs model download failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+# Same BASE_REPO_URL and layout insightface.utils.storage uses, so FaceAnalysis finds it offline.
+INSIGHTFACE_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+INSIGHTFACE_DIR = "/root/.insightface/models/buffalo_l"
 
 
-def download_sentence_transformers_model():
-    from sentence_transformers import SentenceTransformer
+def _banner(title):
+    print("=" * 50)
+    print(title)
+    print("=" * 50)
 
-    # Cache complete repos for the active model and an offline MiniLM comparison/rollback.
-    for repo_id in ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2"):
-        print(f"Snapshot-downloading {repo_id} (all files)...")
+
+def _transformers_snapshot(repo_id):
+    """Fetch only what transformers' from_pretrained loads: config/tokenizer files plus
+    safetensors when the repo has them, else pytorch_model.bin (skips TF/Flax/Rust/ONNX)."""
+    files = HfApi().list_repo_files(repo_id)
+    has_safetensors = any(f.endswith('.safetensors') for f in files)
+    patterns = ['*.json', '*.txt', '*.model', '*.spm']
+    patterns += ['*.safetensors'] if has_safetensors else ['pytorch_model*.bin']
+    return snapshot_download(repo_id, allow_patterns=patterns)
+
+
+def fetch_whisper():
+    _banner(f"Fetching Faster-Whisper {WHISPER_MODEL_REPO}...")
+    # cache_dir=HF_HOME (not HF_HOME/hub) is where faster_whisper's download_root looks.
+    path = snapshot_download(repo_id=WHISPER_MODEL_REPO, cache_dir=HF_HOME)
+    print(f"  OK: {path}: {os.listdir(path)}")
+
+
+def fetch_sentence_transformers():
+    _banner("Fetching sentence-transformers models...")
+    for repo_id in (*SENTENCE_TRANSFORMER_REPOS, CLIP_REPO):
+        # Full snapshot: module subfolders (1_Pooling/config.json) must be present.
         snapshot_download(repo_id)
-        model = SentenceTransformer(repo_id)
-        embedding = model.encode(["Test sentence"])
-        if len(embedding[0]) != 384:
-            raise RuntimeError(f"{repo_id} must produce 384-dimensional embeddings")
-        print(f"OK: {repo_id} cache and embedding dimension verified")
-        del model
+        print(f"  OK: {repo_id}")
 
 
-def download_clip_model():
-    """Download CLIP model for image embeddings (visual search)."""
-    print("="*50)
-    print("Downloading CLIP model for visual search...")
-    print("="*50)
-
-    model_name = "clip-ViT-B-32"
-
-    try:
-        from sentence_transformers import SentenceTransformer
-
-        print(f"Downloading sentence-transformers/{model_name}...")
-        model = SentenceTransformer(model_name)
-        print(f"  OK: CLIP model downloaded successfully")
-
-        # Test that it works with text
-        print("  Verifying model works with text...")
-        test_embedding = model.encode(["A photo of a cat"])
-        print(f"  OK: Text embedding dimension: {len(test_embedding[0])}")
-        del model  # Free memory
-
-    except Exception as e:
-        print(f"  ERROR: CLIP model download failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+def fetch_transformers_models():
+    _banner("Fetching BART + emotion models...")
+    for repo_id in (BART_REPO, EMOTION_REPO):
+        _transformers_snapshot(repo_id)
+        print(f"  OK: {repo_id}")
 
 
-def download_bart_model():
-    """Download BART model for summarization to prevent runtime downloads."""
-    print("="*50)
-    print("Downloading BART Summarization model...")
-    print("="*50)
-
-    model_name = "facebook/bart-large-cnn"
-
-    try:
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-
-        print(f"Downloading {model_name}...")
-        print("  Downloading tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        print("  Downloading model weights...")
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-        print(f"  OK: BART model downloaded successfully")
-
-        # Verify it works
-        print("  Verifying model...")
-        inputs = tokenizer("Test summarization.", return_tensors="pt", max_length=1024, truncation=True)
-        outputs = model.generate(inputs["input_ids"], max_length=50, min_length=10, num_beams=4)
-        tokenizer.decode(outputs[0], skip_special_tokens=True)
-        print("  OK: Model verified")
-        del model, tokenizer  # Free memory
-
-    except Exception as e:
-        print(f"  ERROR: BART model failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise  # BART is critical for summaries, fail the build
-
-
-def download_emotion_model():
-    """Download wav2vec2 emotion recognition model to prevent runtime downloads."""
-    print("="*50)
-    print("Downloading Emotion Recognition model...")
-    print("="*50)
-
-    model_name = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
-
-    try:
-        from transformers import AutoModelForAudioClassification, AutoFeatureExtractor
-
-        print(f"Downloading {model_name}...")
-        print("  Downloading feature extractor...")
-        AutoFeatureExtractor.from_pretrained(model_name)
-        print("  Downloading model weights...")
-        AutoModelForAudioClassification.from_pretrained(model_name)
-        print(f"  OK: Emotion model downloaded successfully")
-
-    except Exception as e:
-        print(f"  ERROR: Emotion model download failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-
-
-def download_translation_models():
-    """Download MarianMT translation models."""
-    print("="*50)
-    print("Downloading Translation models...")
-    print("="*50)
-
+def fetch_translation_models():
+    _banner("Fetching translation models...")
     for lang in LANGUAGES:
-        model_name = f'Helsinki-NLP/opus-mt-{lang}-en'
+        repo_id = translation_repo(lang)
         try:
-            print(f'Downloading {model_name}...')
-            MarianTokenizer.from_pretrained(model_name)
-            MarianMTModel.from_pretrained(model_name)
-            print(f'  OK: {lang} model downloaded successfully')
+            _transformers_snapshot(repo_id)
+            print(f'  OK: {lang} model fetched')
         except Exception as e:
+            # Non-critical: verify_models.py skips languages that aren't cached.
             print(f'  SKIP: {lang} model failed: {e}')
-            # Continue with other languages even if one fails
 
 
-def download_insightface_model():
-    """Download InsightFace buffalo_l model for face detection and embedding."""
-    print("="*50)
-    print("Downloading InsightFace buffalo_l model...")
-    print("="*50)
+def fetch_panns():
+    _banner("Fetching PANNs model...")
+    os.makedirs(PANNS_DIR, exist_ok=True)
+    urllib.request.urlretrieve(PANNS_LABELS_URL, PANNS_LABELS)
+    urllib.request.urlretrieve(PANNS_CHECKPOINT_URL, PANNS_CHECKPOINT)
+    size_mb = os.path.getsize(PANNS_CHECKPOINT) / (1024 * 1024)
+    print(f"  OK: {PANNS_CHECKPOINT} ({size_mb:.1f} MB)")
 
-    try:
-        import insightface
-        from insightface.app import FaceAnalysis
 
-        print("Initializing FaceAnalysis with buffalo_l...")
-        app = FaceAnalysis(
-            name='buffalo_l',
-            providers=['CPUExecutionProvider']
-        )
-        app.prepare(ctx_id=-1, det_size=(640, 640))
-        print("  OK: InsightFace buffalo_l model downloaded and verified")
-        del app
-
-    except Exception as e:
-        print(f"  ERROR: InsightFace model download failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+def fetch_insightface():
+    _banner("Fetching InsightFace buffalo_l...")
+    models_dir = os.path.dirname(INSIGHTFACE_DIR)
+    os.makedirs(INSIGHTFACE_DIR, exist_ok=True)
+    zip_path = os.path.join(models_dir, "buffalo_l.zip")
+    urllib.request.urlretrieve(INSIGHTFACE_URL, zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(INSIGHTFACE_DIR)
+    os.remove(zip_path)
+    print(f"  OK: {INSIGHTFACE_DIR}: {os.listdir(INSIGHTFACE_DIR)}")
 
 
 def main():
-    # Download Whisper model first (critical)
-    download_whisper_model()
-
-    # Download sentence-transformers model (critical for chat)
-    download_sentence_transformers_model()
-
-    # Download CLIP model for visual search
-    download_clip_model()
-
-    # Download BART model for summarization (critical for summaries)
-    download_bart_model()
-
-    # Download PANNs model (optional)
-    download_panns_model()
-
-    # Download emotion recognition model (optional)
-    download_emotion_model()
-
-    # Download translation models
-    download_translation_models()
-
-    # Download InsightFace buffalo_l model (face detection + embedding)
-    download_insightface_model()
-
-    print("="*50)
-    print("All model downloads complete!")
-    print("="*50)
+    fetch_whisper()
+    fetch_sentence_transformers()
+    fetch_transformers_models()
+    fetch_panns()
+    fetch_translation_models()
+    fetch_insightface()
+    _banner("All model fetches complete!")
 
 
 if __name__ == '__main__':
