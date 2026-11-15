@@ -47,3 +47,51 @@ def test_docs_do_not_reference_removed_deployment_files():
         assert "redeploy-only.sh" not in text
         assert "docs/SCALABILITY_PLAN.md" not in text
     assert "Why not Kubernetes" in (REPO / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
+
+
+def _hub_pin(text):
+    import re
+    match = re.search(r"huggingface-hub==([\w.]+)", text)
+    assert match, "huggingface-hub must be pinned"
+    return match.group(1)
+
+
+def test_model_fetch_layer_uses_the_runtime_huggingface_hub_version():
+    # Fetch runs before requirements.txt; a different hub version could write a cache layout the runtime can't read.
+    dockerfile = (BACKEND / "Dockerfile").read_text()
+    assert _hub_pin(dockerfile) == _hub_pin((BACKEND / "requirements.txt").read_text())
+
+
+def test_download_models_imports_only_stdlib_and_huggingface_hub():
+    import ast
+    import sys
+
+    tree = ast.parse((BACKEND / "download_models.py").read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(node.module.split(".")[0])
+    assert imported - set(sys.stdlib_module_names) == {"huggingface_hub"}
+
+
+def test_models_are_fetched_before_requirements_and_verified_after():
+    lines = (BACKEND / "Dockerfile").read_text().splitlines()
+
+    def index_of(fragment):
+        return next(i for i, line in enumerate(lines) if fragment in line)
+
+    fetch = index_of("python /tmp/models/download_models.py")
+    torch = index_of("pip install --no-cache-dir torch==")
+    requirements = index_of("COPY requirements.txt")
+    verify = index_of("python /tmp/models/verify_models.py")
+    app_copy = index_of("COPY . .")
+    assert fetch < torch < requirements < verify < app_copy
+
+
+def test_cloud_build_enables_inline_layer_cache():
+    cloudbuild = (BACKEND / "cloudbuild.yaml").read_text()
+    assert "BUILDKIT_INLINE_CACHE=1" in cloudbuild
+    assert "DOCKER_BUILDKIT=1" in cloudbuild
+    assert "--cache-from=" in cloudbuild
