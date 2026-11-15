@@ -27,6 +27,7 @@ from pyannote.core import Segment
 from typing import List, Dict, Tuple, Optional
 import numpy as np
 from config import settings
+from services.word_speakers import assign_speakers
 import tempfile
 import subprocess
 
@@ -135,55 +136,10 @@ class SpeakerDiarizer:
         transcription_segments: List[Dict],
         speaker_segments: List[Dict]
     ) -> List[Dict]:
-        """
-        Assign speaker labels to transcription segments based on time overlap
-
-        Args:
-            transcription_segments: List of transcription segments with 'start' and 'end' times
-            speaker_segments: List of speaker diarization segments with 'start', 'end', and 'speaker'
-
-        Returns:
-            Transcription segments with added 'speaker' field
-        """
-        print(f"Assigning speakers to {len(transcription_segments)} transcription segments...")
-
-        for trans_seg in transcription_segments:
-            # Get the start and end times of the transcription segment
-            trans_start = trans_seg.get('start', 0.0)
-            trans_end = trans_seg.get('end', 0.0)
-            trans_mid = (trans_start + trans_end) / 2
-
-            # Find the speaker segment with maximum overlap
-            best_speaker = "UNKNOWN"
-            max_overlap = 0
-
-            for spk_seg in speaker_segments:
-                spk_start = spk_seg['start']
-                spk_end = spk_seg['end']
-
-                # Calculate overlap
-                overlap_start = max(trans_start, spk_start)
-                overlap_end = min(trans_end, spk_end)
-                overlap = max(0, overlap_end - overlap_start)
-
-                if overlap > max_overlap:
-                    max_overlap = overlap
-                    best_speaker = spk_seg['speaker']
-
-                # Alternative: Check if midpoint falls within speaker segment
-                # This can be faster and often more accurate
-                if spk_start <= trans_mid <= spk_end:
-                    best_speaker = spk_seg['speaker']
-                    break
-
-            # Assign the speaker to the transcription segment
-            trans_seg['speaker'] = best_speaker
-
-        # Count speakers
-        unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
+        segments = assign_speakers(transcription_segments, speaker_segments)
+        unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in segments)
         print(f"Speaker assignment complete. Identified {len(unique_speakers)} unique speakers")
-
-        return transcription_segments
+        return segments
 
 
 def format_speaker_label(speaker: str, custom_names: Dict[str, str] = None) -> str:
@@ -1098,55 +1054,7 @@ class ChunkedSpeakerDiarizer:
         transcription_segments: List[Dict],
         speaker_segments: List[Dict]
     ) -> List[Dict]:
-        """
-        Assign speaker labels to transcription segments based on time overlap.
-
-        This method reuses the same algorithm as SpeakerDiarizer for consistency.
-        Can be called after diarize_chunked() to assign speakers to transcription.
-
-        Args:
-            transcription_segments: List of transcription segments with 'start' and 'end' times
-            speaker_segments: List of speaker diarization segments with 'start', 'end', and 'speaker'
-
-        Returns:
-            Transcription segments with added 'speaker' field
-        """
-        print(f"Assigning speakers to {len(transcription_segments)} transcription segments...")
-
-        for trans_seg in transcription_segments:
-            # Get the start and end times of the transcription segment
-            trans_start = trans_seg.get('start', 0.0)
-            trans_end = trans_seg.get('end', 0.0)
-            trans_mid = (trans_start + trans_end) / 2
-
-            # Find the speaker segment with maximum overlap
-            best_speaker = "UNKNOWN"
-            max_overlap = 0
-
-            for spk_seg in speaker_segments:
-                spk_start = spk_seg['start']
-                spk_end = spk_seg['end']
-
-                # Calculate overlap
-                overlap_start = max(trans_start, spk_start)
-                overlap_end = min(trans_end, spk_end)
-                overlap = max(0, overlap_end - overlap_start)
-
-                if overlap > max_overlap:
-                    max_overlap = overlap
-                    best_speaker = spk_seg['speaker']
-
-                # Alternative: Check if midpoint falls within speaker segment
-                # This can be faster and often more accurate
-                if spk_start <= trans_mid <= spk_end:
-                    best_speaker = spk_seg['speaker']
-                    break
-
-            # Assign the speaker to the transcription segment
-            trans_seg['speaker'] = best_speaker
-
-        # Count speakers
-        unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
+        segments = assign_speakers(transcription_segments, speaker_segments)
+        unique_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in segments)
         print(f"Speaker assignment complete. Identified {len(unique_speakers)} unique speakers")
-
-        return transcription_segments
+        return segments
