@@ -4,11 +4,10 @@
  */
 
 import { useCallback } from "react";
-import type { useJobTracker } from "../../../hooks/useJobTracker";
+import type { JobTracker } from "../../../hooks/useJobTracker";
 import { useJobStorage } from "../../../hooks/useJobStorage";
 import { JobList } from "./JobList";
 import { Job, isActiveJobStatus } from "../../../types/job";
-import { deleteJobPermanent } from "../../../services/api";
 import toast from "react-hot-toast";
 
 interface JobPanelProps {
@@ -16,7 +15,7 @@ interface JobPanelProps {
   onClose: () => void;
   onViewTranscript?: (job: Job) => void;
   /** The page's job list, shared so uploads and deletes show everywhere at once. */
-  tracker: ReturnType<typeof useJobTracker>;
+  tracker: JobTracker;
 }
 
 export const JobPanel: React.FC<JobPanelProps> = ({
@@ -26,7 +25,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   tracker,
 }) => {
   const {
-    jobs, isLoading, isOffline, page, totalPages, setPage, refetch, hideJob, unhideJob,
+    jobs, isLoading, isOffline, page, totalPages, setPage, refetch, deleteJob,
   } = tracker;
   const { removeJob } = useJobStorage();
 
@@ -35,28 +34,15 @@ export const JobPanel: React.FC<JobPanelProps> = ({
     refetch();
   }, [removeJob, refetch]);
 
-  // Deleting a long video takes up to a minute (screenshots), so the job is
-  // hidden from every list right away instead of waiting for the server.
-  const handleDeleteJob = useCallback((jobId: string, token: string) => {
-    const filename = jobs.find(j => j.job_id === jobId)?.filename ?? "this job";
-    hideJob(jobId);
-    toast.success(`Deleted ${filename}`);
-
-    // Not awaited by the card. The request stays open while the server
-    // deletes; Cloud Run only gives it CPU during a request.
-    // On success the id stays hidden: refetch is async, and un-hiding before
-    // the new list arrives would flash the deleted job back in.
-    deleteJobPermanent(jobId, token)
-      .then(() => {
-        removeJob(jobId);
-        refetch();
-      })
-      .catch((error) => {
-        console.error("Failed to delete job:", error);
-        unhideJob(jobId);
-        toast.error(`Couldn't delete ${filename}. It's back in your library.`);
-      });
-  }, [jobs, hideJob, unhideJob, removeJob, refetch]);
+  // Not awaited: the job is already gone from every list, and the request
+  // stays open while the server deletes (Cloud Run only gives it CPU then).
+  const handleDeleteJob = useCallback((job: Job) => {
+    toast.success(`Deleted ${job.filename}`);
+    deleteJob(job).catch((error) => {
+      console.error("Failed to delete job:", error);
+      toast.error(`Couldn't delete ${job.filename}. It's back in your library.`);
+    });
+  }, [deleteJob]);
 
   const activeJobs = jobs.filter(j => isActiveJobStatus(j.status));
   const completedJobs = jobs.filter(j => j.status === "completed");

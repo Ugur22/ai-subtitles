@@ -14,7 +14,7 @@ interface JobCardProps {
   job: Job;
   onViewTranscript?: (job: Job) => void;
   onCancel?: (jobId: string) => void;
-  onDelete?: (jobId: string, token: string) => void;
+  onDelete?: (job: Job) => void;
   estimatedRemaining?: number;
 }
 
@@ -47,7 +47,6 @@ export const JobCard: React.FC<JobCardProps> = ({
   const [showShare, setShowShare] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const status = statusConfig[job.status];
 
@@ -75,11 +74,9 @@ export const JobCard: React.FC<JobCardProps> = ({
     }
   };
 
-  // The panel hides the card immediately and reports failures itself.
-  const handleDelete = () => {
-    setIsDeleting(true);
-    onDelete?.(job.job_id, job.access_token);
-  };
+  // The card disappears on click (the tracker hides the job), so it keeps
+  // no "deleting" state of its own.
+  const handleDelete = () => onDelete?.(job);
 
   return (
     <>
@@ -250,9 +247,8 @@ export const JobCard: React.FC<JobCardProps> = ({
             </Menu>
             <button
               onClick={handleDelete}
-              disabled={isDeleting}
               className="btn-ghost"
-              style={{ padding: '6px 8px', opacity: isDeleting ? 0.5 : 1 }}
+              style={{ padding: '6px 8px' }}
               title="Delete"
             >
               <svg style={{ width: '14px', height: '14px', color: 'var(--text-tertiary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -286,10 +282,9 @@ export const JobCard: React.FC<JobCardProps> = ({
               </button>
               <button
                 onClick={handleDelete}
-                disabled={isDeleting}
-                style={{ fontSize: '12px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', opacity: isDeleting ? 0.5 : 1 }}
+                style={{ fontSize: '12px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer' }}
               >
-                {isDeleting ? "Deleting…" : "Delete"}
+                Delete
               </button>
             </div>
           </div>
