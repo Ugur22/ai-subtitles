@@ -75,14 +75,10 @@ export const JobCard: React.FC<JobCardProps> = ({
     }
   };
 
-  const handleDelete = async () => {
+  // The panel hides the card immediately and reports failures itself.
+  const handleDelete = () => {
     setIsDeleting(true);
-    try {
-      await onDelete?.(job.job_id, job.access_token);
-    } catch (error) {
-      console.error("Failed to delete job:", error);
-      setIsDeleting(false);
-    }
+    onDelete?.(job.job_id, job.access_token);
   };
 
   return (
