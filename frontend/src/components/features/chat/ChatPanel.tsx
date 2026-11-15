@@ -21,6 +21,7 @@ import {
 import { ComparisonTimelineStrip } from "./ComparisonTimelineStrip";
 import type { IconType } from "react-icons";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
+import { useTheme } from "../../../hooks/useTheme";
 import { LuSmile, LuSpeech, LuAudioWaveform, LuFileText, LuImage, LuAudioLines } from "react-icons/lu";
 
 const EVENT_CATEGORY_ICON: Record<string, IconType> = {
@@ -699,6 +700,10 @@ type PhaseId =
   | "analyzing_audio"
   | "generating";
 
+// The orb's color prop takes hex/rgb only, so these mirror --accent per theme.
+const ORB_INK_LIGHT = "#1f7a37";
+const ORB_INK_DARK = "#3cc069";
+
 const ORB_STATE: Record<PhaseId, OrbState> = {
   searching: "searching",
   analyzing_scenes: "shaping",
@@ -1165,6 +1170,7 @@ const PhaseIndicator: React.FC<{
   phases: PhaseEntry[];
   screenshotCount?: number;
 }> = ({ phases, screenshotCount }) => {
+  const { theme } = useTheme();
   const hasActive = phases.some((p) => p.status === "active");
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -1188,7 +1194,7 @@ const PhaseIndicator: React.FC<{
         return (
           <div
             key={phase.id}
-            className="flex items-center gap-2 whitespace-nowrap text-xs"
+            className={`flex items-center gap-2 whitespace-nowrap ${isActive ? "text-sm" : "text-xs"}`}
             style={{
               color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
             }}
@@ -1210,7 +1216,12 @@ const PhaseIndicator: React.FC<{
                 />
               </svg>
             ) : (
-              <ThinkingOrb size={20} state={ORB_STATE[phase.id]} aria-hidden="true" />
+              <ThinkingOrb
+                size={32}
+                state={ORB_STATE[phase.id]}
+                color={theme === "dark" ? ORB_INK_DARK : ORB_INK_LIGHT}
+                aria-hidden="true"
+              />
             )}
             </span>
             <span
@@ -2310,7 +2321,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 />
               </svg>
             )}
-            {indexingStatus.includes("successfully") && (
+            {indexingStatus.endsWith("indexed") && (
               <svg
                 className="w-4 h-4"
                 style={{ color: "var(--c-success)" }}
@@ -2345,7 +2356,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <p
               className="text-sm"
               style={{
-                color: indexingStatus.includes("successfully")
+                color: indexingStatus.endsWith("indexed")
                   ? "var(--c-success)"
                   : indexingStatus.includes("failed")
                     ? "var(--c-error)"

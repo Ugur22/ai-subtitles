@@ -12,6 +12,7 @@ import {
   enrollSpeaker,
   autoIdentifySpeakers,
   getJobVideoUrl,
+  getJob,
 } from "../../../services/api";
 import { API_BASE_URL } from "../../../config";
 import {
@@ -69,6 +70,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showTranslation, setShowTranslation] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  // Chat stays mounted after its first open for this video, so switching tabs keeps
+  // the conversation and doesn't re-run indexing.
+  const [chatVideoHash, setChatVideoHash] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
@@ -334,8 +338,19 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     }
   };
 
-  const handleViewTranscript = useCallback(async (job: Job) => {
-    if (!job.result_json) return;
+  const handleViewTranscript = useCallback(async (listedJob: Job) => {
+    let job = listedJob;
+    if (!job.result_json) {
+      // Rows from the cached job list carry no result_json until the refresh lands.
+      try {
+        job = { ...(await getJob(job.job_id, job.access_token)), access_token: job.access_token };
+      } catch (err) {
+        console.error("Failed to load job", job.job_id, err);
+        toast.error("Could not open this transcript.");
+        return;
+      }
+      if (!job.result_json) return;
+    }
     setTranscription(job.result_json);
     setSearchParams({ job: job.job_id }, { replace: searchParams.get("job") === job.job_id });
     setShowJobPanel(false);
@@ -376,14 +391,14 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   }, [openJobId, closeTranscription]);
 
   useEffect(() => {
-    if (!openJobId || transcription || jobTracker.isLoading) return;
+    if (!openJobId || transcription || !jobTracker.isFresh) return;
     const job = jobTracker.jobs.find((j) => j.job_id === openJobId && j.result_json);
     if (job) {
       handleViewTranscript(job);
     } else {
       setSearchParams({}, { replace: true });
     }
-  }, [openJobId, transcription, jobTracker.isLoading, jobTracker.jobs, handleViewTranscript, setSearchParams]);
+  }, [openJobId, transcription, jobTracker.isFresh, jobTracker.jobs, handleViewTranscript, setSearchParams]);
 
   // Note: cleanupPreviousScreenshots removed - was unused
 
@@ -1091,7 +1106,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   <div className="rp-tabs">
                     {[
                       { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length, active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
-                      { key: 'chat',       label: 'Chat',                                                            active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); } },
+                      { key: 'chat',       label: 'Chat',                                                            active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); setChatVideoHash(transcription?.video_hash ?? null); } },
                       { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length,                  active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
                       { key: 'summary',    label: 'Summary',                                                         active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
                     ].filter(({ key }) => (key !== 'chapters' || featureFlags.chapters) && (key !== 'summary' || featureFlags.summary)).map(({ key, label, count, active, onClick }) => (
@@ -1391,10 +1406,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     )}
 
                     {/* Chat Panel */}
-                    {showChat && (
-                      <div style={{ position: 'absolute', inset: 0 }}>
+                    {chatVideoHash && chatVideoHash === transcription?.video_hash && (
+                      <div style={{ position: 'absolute', inset: 0 }} hidden={!showChat}>
                         <ChatPanel
-                          videoHash={transcription?.video_hash || null}
+                          key={chatVideoHash}
+                          videoHash={chatVideoHash}
                           onTimestampClick={seekToTimestamp}
                           jobId={currentJobId}
                           accessToken={currentAccessToken}

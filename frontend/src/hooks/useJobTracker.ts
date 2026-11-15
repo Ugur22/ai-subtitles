@@ -13,13 +13,26 @@ import { deleteJobPermanent, getJobs } from '../services/api';
 const JOBS_CACHE_KEY = 'ai-subs-jobs-cache';
 const JOBS_PER_PAGE = 10;
 
+// Page 1 as last seen, without result_json. AuthProvider clears it on login/logout.
+const readCachedJobs = (): Job[] => {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(JOBS_CACHE_KEY) ?? '[]');
+    return Array.isArray(parsed) ? (parsed as Job[]) : [];
+  } catch {
+    return [];
+  }
+};
+
 export const useJobTracker = () => {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [jobs, setJobs] = useState<Job[]>(readCachedJobs);
+  const [isLoading, setIsLoading] = useState(jobs.length === 0);
+  const [isFresh, setIsFresh] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE)));
+  const [total, setTotal] = useState(jobs.length);
+  // Page whose jobs are on screen; only a different page warrants a skeleton.
+  const displayedPageRef = useRef<number | null>(jobs.length > 0 ? 1 : null);
   // Jobs hidden from every view while their DELETE request runs.
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
@@ -36,7 +49,7 @@ export const useJobTracker = () => {
     const storedJobs = getStoredJobs();
 
     try {
-      setIsLoading(true);
+      if (displayedPageRef.current !== page) setIsLoading(true);
       setIsOffline(false);
 
       // Authenticated job lists are scoped by server-side user_id. Stored
@@ -53,6 +66,7 @@ export const useJobTracker = () => {
       }));
 
       setJobs(jobsWithTokens);
+      displayedPageRef.current = page;
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / JOBS_PER_PAGE));
 
@@ -87,19 +101,15 @@ export const useJobTracker = () => {
 
       // Fallback to cached data if available
       setIsOffline(true);
-      try {
-        const cached = localStorage.getItem(JOBS_CACHE_KEY);
-        if (cached) {
-          const cachedJobs = JSON.parse(cached);
-          setJobs(cachedJobs);
-          setTotal(cachedJobs.length);
-          setTotalPages(Math.ceil(cachedJobs.length / JOBS_PER_PAGE));
-        }
-      } catch (e) {
-        console.error('Failed to load cached jobs:', e);
+      const cachedJobs = readCachedJobs();
+      if (cachedJobs.length > 0) {
+        setJobs(cachedJobs);
+        setTotal(cachedJobs.length);
+        setTotalPages(Math.ceil(cachedJobs.length / JOBS_PER_PAGE));
       }
     } finally {
       setIsLoading(false);
+      setIsFresh(true);
     }
   }, [page, getStoredJobs, removeInvalidJobs]);
 
@@ -250,6 +260,7 @@ export const useJobTracker = () => {
     jobs: visibleJobs,
     deleteJob,
     isLoading,
+    isFresh,
     isOffline,
     page,
     totalPages,

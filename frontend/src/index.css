@@ -1235,8 +1235,8 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 .scene-item:hover .scene-frame img { opacity: 0.9; }
 .phase-icon {
-  width: 20px;
-  height: 20px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
