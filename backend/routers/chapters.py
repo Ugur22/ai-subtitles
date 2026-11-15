@@ -12,11 +12,12 @@ from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 
 from config import settings
 from middleware.auth import require_auth
+from services.feature_flags import require_feature
 from services.transcription_access import authenticated_user_id
 from services.transcription_repository import transcription_repository
 
@@ -81,7 +82,7 @@ class ChaptersResponse(BaseModel):
 # Router
 # ---------------------------------------------------------------------------
 
-router = APIRouter(tags=["chapters"])
+router = APIRouter(tags=["chapters"], dependencies=[Depends(require_feature("chapters"))])
 
 
 # ---------------------------------------------------------------------------
