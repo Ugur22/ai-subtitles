@@ -18,10 +18,9 @@ import {
   listSpeakers,
   getFaceTagSpeakers,
 } from "../../../services/api";
-import { useSpeechRecognition } from "../../../hooks/useSpeechRecognition";
-import { useAuth } from "../../../hooks/useAuth";
 import { ComparisonTimelineStrip } from "./ComparisonTimelineStrip";
 import type { IconType } from "react-icons";
+import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { LuSmile, LuSpeech, LuAudioWaveform, LuFileText, LuImage, LuAudioLines } from "react-icons/lu";
 
 const EVENT_CATEGORY_ICON: Record<string, IconType> = {
@@ -700,6 +699,16 @@ type PhaseId =
   | "analyzing_audio"
   | "generating";
 
+const ORB_STATE: Record<PhaseId, OrbState> = {
+  searching: "searching",
+  analyzing_scenes: "shaping",
+  analyzing_visuals: "shaping",
+  matching_faces: "connecting",
+  comparing: "solving",
+  analyzing_audio: "listening",
+  generating: "composing",
+};
+
 interface PhaseEntry {
   id: PhaseId;
   label: string;
@@ -901,7 +910,6 @@ const getEventDetails = (eventType: string) => {
   const label = eventType.charAt(0).toUpperCase() + eventType.slice(1);
   return { label, category: "other" };
 };
-
 
 /** Renders assistant message content with Direct Answer highlight and collapsible sections */
 const AssistantMessageContent: React.FC<{
@@ -1180,15 +1188,16 @@ const PhaseIndicator: React.FC<{
         return (
           <div
             key={phase.id}
-            className="flex items-center gap-2 text-xs"
+            className="flex items-center gap-2 whitespace-nowrap text-xs"
             style={{
               color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
             }}
           >
+            <span className="phase-icon">
             {phase.status === "done" ? (
               <svg
-                className="w-3.5 h-3.5 flex-shrink-0"
-                style={{ color: "var(--c-success, oklch(70% 0.15 150))" }}
+                className="w-3.5 h-3.5"
+                style={{ color: "var(--text-tertiary)" }}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1196,24 +1205,14 @@ const PhaseIndicator: React.FC<{
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2.5}
+                  strokeWidth={1.5}
                   d="M5 13l4 4L19 7"
                 />
               </svg>
             ) : (
-              <span
-                className="relative flex h-3.5 w-3.5 items-center justify-center flex-shrink-0"
-              >
-                <span
-                  className="absolute inline-flex h-full w-full rounded-full animate-ping opacity-60"
-                  style={{ background: "var(--accent)" }}
-                />
-                <span
-                  className="relative inline-flex rounded-full h-2 w-2"
-                  style={{ background: "var(--accent)" }}
-                />
-              </span>
+              <ThinkingOrb size={20} state={ORB_STATE[phase.id]} aria-hidden="true" />
             )}
+            </span>
             <span
               style={{
                 color: isActive ? "var(--text-primary)" : undefined,
@@ -1222,11 +1221,8 @@ const PhaseIndicator: React.FC<{
               {displayLabel}
             </span>
             {isActive && elapsedSec >= 2 && (
-              <span
-                className="tabular-nums"
-                style={{ color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}
-              >
-                · {elapsedSec}s
+              <span className="mono" style={{ color: "var(--text-tertiary)" }}>
+                {elapsedSec}s
               </span>
             )}
           </div>
@@ -1245,15 +1241,9 @@ const EvidenceDisclosure: React.FC<{
 }> = ({ title, count, defaultOpen = false, icon, children }) => (
   <Disclosure defaultOpen={defaultOpen}>
     {({ open }) => (
-      <div
-        className="rounded-lg border overflow-hidden"
-        style={{
-          background: "var(--bg-surface)",
-          borderColor: "var(--border-subtle)",
-        }}
-      >
+      <div className="border-b" style={{ borderColor: "var(--border-subtle)" }}>
         <DisclosureButton
-          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
+          className="flex w-full items-center justify-between gap-3 py-2 text-left transition-colors"
           style={{ color: "var(--text-secondary)" }}
         >
           <span className="flex min-w-0 items-center gap-2">
@@ -1279,12 +1269,12 @@ const EvidenceDisclosure: React.FC<{
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
               d="M9 5l7 7-7 7"
             />
           </svg>
         </DisclosureButton>
-        <DisclosurePanel className="px-3 pb-3">{children}</DisclosurePanel>
+        <DisclosurePanel className="pb-3">{children}</DisclosurePanel>
       </div>
     )}
   </Disclosure>
@@ -1326,17 +1316,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [citeOn, setCiteOn] = useState(true);
 
-  const speech = useSpeechRecognition({
-    onFinalTranscript: (text) => {
-      if (!text) return;
-      setInput(prev => (prev ? prev.trimEnd() + ' ' : '') + text);
-    },
-  });
-
-  const { user } = useAuth();
-
-
-  // @mention autocomplete state
   const [speakers, setSpeakers] = useState<string[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
@@ -2416,21 +2395,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             style={style}
             className={`msg ${message.role === "user" ? "user" : "ai"}`}
           >
-            <div className="msg-av" aria-hidden="true">
-              {message.role === "user"
-                ? (user?.email?.charAt(0).toUpperCase() || "U")
-                : ""}
-            </div>
-            <div
-              className="flex flex-col"
-              style={{
-                maxWidth: "85%",
-                minWidth: 0,
-                gap: "8px",
-                alignItems: message.role === "user" ? "flex-end" : "flex-start",
-              }}
-            >
-            {/* Show query transformation notification for assistant messages */}
+            <div className="msg-col">
             {message.role === "assistant" &&
               ((message.visual_query_variants &&
                 message.visual_query_variants.length > 0) ||
@@ -2472,11 +2437,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               )}
 
             <div
-              className="msg-bubble"
-              style={
-                message.isError && (!message.sources || message.sources.length === 0)
-                  ? { background: "oklch(65% 0.20 25 / 0.08)", border: "1px solid oklch(65% 0.20 25 / 0.25)", padding: "12px 14px" }
-                  : undefined
+              className={
+                message.isError && !message.sources?.length
+                  ? "msg-bubble is-error"
+                  : "msg-bubble"
               }
             >
               {message.isError ? (
@@ -2546,10 +2510,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 </>
               )}
 
-              {/* Sources */}
               {message.sources && message.sources.length > 0 && (
-                <div className="mt-4 space-y-3">
-                  {/* Visual Sources (Screenshots) */}
+                <div className="mt-4">
                   {message.sources.filter((s) => s.screenshot_url).length > 0 && (
                     <EvidenceDisclosure
                       title="Scene matches"
@@ -2557,7 +2519,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       defaultOpen
                       icon={<span className="inline-flex" style={{ color: "var(--text-tertiary)" }}><LuImage size={16} strokeWidth={1.5} /></span>}
                     >
-                      <div className="flex flex-col divide-y divide-[var(--border-subtle)]">
+                      <div className="scene-grid">
                         {message.sources
                           .filter((s) => s.screenshot_url)
                           .map((source, idx) => {
@@ -2578,14 +2540,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             };
                             const evidenceLabel =
                               source.evidence_label ||
+                              source.visual_query_variant ||
                               (source.likely_speakers?.length
                                 ? "Scene + identity"
                                 : "Scene match");
-                            const evidenceDetail = source.visual_query_variant
-                              ? `Matched: ${source.visual_query_variant}`
-                              : source.source_kind === "face_tag"
-                                ? "Matched by face tag"
-                                : undefined;
+                            const evidenceTitle =
+                              source.source_kind === "face_tag"
+                                ? `${evidenceLabel} · matched by face tag`
+                                : evidenceLabel;
 
                             return (
                               <div
@@ -2599,18 +2561,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     openScreenshot();
                                   }
                                 }}
-                                className="group flex items-start gap-3 py-2 first:pt-0 last:pb-0 cursor-zoom-in rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                                title={`Open screenshot at ${source.start_time}. ${evidenceDetail ?? evidenceLabel}`}
-                                aria-label={`Open screenshot at ${source.start_time}. ${evidenceDetail ?? evidenceLabel}`}
+                                className="scene-item"
+                                title={`Open screenshot at ${source.start_time}. ${evidenceTitle}`}
+                                aria-label={`Open screenshot at ${source.start_time}. ${evidenceTitle}`}
                               >
-                                <div
-                                  className="relative w-28 shrink-0 aspect-video overflow-hidden rounded-md border"
-                                  style={{ background: "var(--bg-overlay)", borderColor: "var(--border-subtle)" }}
-                                >
+                                <div className="scene-frame">
                                   <img
                                   src={formatScreenshotUrl(source.screenshot_url)}
                                   alt={`Screenshot at ${source.start_time}`}
-                                  className="h-full w-full object-cover transition-opacity duration-150 group-hover:opacity-90"
+                                  loading="lazy"
+                                  decoding="async"
                                   onError={async (e) => {
                                     const img = e.currentTarget;
                                     if (img.dataset.retry === "1" || !jobId) {
@@ -2641,29 +2601,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                     }
                                   }}
                                 />
-                                </div>
-                                <div className="min-w-0 flex-1 pt-0.5">
                                   <button
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       onTimestampClick?.(source.start_time);
                                     }}
-                                    className="tc"
+                                    className="tc tc-on-image scene-tc"
                                     title={`Jump to ${source.start_time}`}
                                     aria-label={`Jump video to ${source.start_time}`}
                                   >
                                     {source.start_time}
                                   </button>
-                                  <p className="mt-1.5 text-sm leading-snug line-clamp-2" style={{ color: "var(--text-secondary)" }}>
-                                    {evidenceLabel}
-                                  </p>
-                                  {evidenceDetail && (
-                                    <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-                                      {evidenceDetail}
-                                    </p>
-                                  )}
                                 </div>
+                                <p className="scene-cap">{evidenceLabel}</p>
                               </div>
                             );
                           })}
@@ -2918,29 +2869,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               onKeyDown={handleKeyPress}
               onKeyUp={(e) => e.stopPropagation()}
               onKeyPress={(e) => e.stopPropagation()}
-              placeholder="Ask about this transcript… (type @ to mention a speaker)"
+              placeholder="Ask about this video"
               disabled={loading}
             />
             <div className="composer-row">
-              {speech.isSupported && (
-                <button
-                  type="button"
-                  onClick={() => (speech.status === 'listening' ? speech.stop() : speech.start())}
-                  disabled={loading}
-                  aria-label={speech.status === 'listening' ? 'Stop dictation' : 'Start dictation'}
-                  title={speech.status === 'denied' ? 'Microphone permission denied' : 'Voice input'}
-                  className={`comp-chip ${speech.status === 'listening' ? 'active' : ''}`}
-                  style={speech.status === 'listening' ? { color: 'var(--c-error)', borderColor: 'var(--c-error)', background: 'oklch(65% 0.20 25 / 0.10)' } : undefined}
-                >
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round"
-                      d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                    <path strokeLinecap="round" strokeLinejoin="round"
-                      d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
-                  </svg>
-                  {speech.status === 'listening' ? 'Listening' : 'Voice'}
-                </button>
-              )}
               <button
                 type="button"
                 className={`comp-chip ${citeOn ? 'active' : ''}`}
@@ -2966,20 +2898,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </button>
             </div>
           </div>
-          {speech.status === 'listening' && (
-            <div className="px-2 pt-2 text-xs flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
-              <span className="inline-flex w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              <span>
-                Listening — click mic to stop
-                {speech.interim ? ` · "${speech.interim}"` : '…'}
-              </span>
-            </div>
-          )}
         </div>
         <div className="composer-foot">
           <div className="tips-k">
             <span><span className="kbd">↵</span> send</span>
             <span><span className="kbd">⇧</span>+<span className="kbd">↵</span> new line</span>
+            <span><span className="kbd">@</span> speaker</span>
           </div>
           <span>Answers cite the original audio — not trained knowledge.</span>
         </div>
