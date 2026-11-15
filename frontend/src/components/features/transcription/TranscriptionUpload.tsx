@@ -40,6 +40,7 @@ import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
 import { useSummaries } from "../../../hooks/useSummaries";
 import { useChapters } from "../../../hooks/useChapters";
+import { useFeatureFlags } from "../../../hooks/useFeatureFlags";
 import { ChapterPanel } from "../chapters/ChapterPanel";
 import { useBackgroundJobSubmit } from "../../../hooks/useBackgroundJobSubmit";
 import { useJobTracker } from "../../../hooks/useJobTracker";
@@ -172,6 +173,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const chaptersHook = useChapters({
     videoHash: transcription?.video_hash,
   });
+  const featureFlags = useFeatureFlags();
 
   // Computed values
   const isTranscribing = backgroundJobSubmit.isSubmitting;
@@ -1041,7 +1043,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           onSeek={(time: number) => {
                             seek(time);
                           }}
-                          chapters={chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title }))}
+                          chapters={featureFlags.chapters ? chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title })) : []}
                         />
                         </div>
                         <div className="flex justify-end px-4 pb-2">
@@ -1082,7 +1084,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                       { key: 'chat',       label: 'Chat',                                                            active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); } },
                       { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length,                  active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
                       { key: 'summary',    label: 'Summary',                                                         active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
-                    ].map(({ key, label, count, active, onClick }) => (
+                    ].filter(({ key }) => (key !== 'chapters' || featureFlags.chapters) && (key !== 'summary' || featureFlags.summary)).map(({ key, label, count, active, onClick }) => (
                       <button
                         key={key}
                         onClick={onClick}
@@ -1391,7 +1393,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     )}
 
                     {/* Chapters Panel */}
-                    {showChapters && (
+                    {showChapters && featureFlags.chapters && (
                       <div style={{ position: 'absolute', inset: 0 }}>
                         <ChapterPanel
                           chapters={chaptersHook.chapters}
@@ -1404,7 +1406,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     )}
 
                     {/* Summary Panel */}
-                    {showSummary && (
+                    {showSummary && featureFlags.summary && (
                       <div style={{ position: 'absolute', inset: 0 }}>
                         <SummaryPanel
                           isVisible={showSummary}

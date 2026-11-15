@@ -13,7 +13,7 @@ load_dotenv()
 
 from config import settings as app_settings
 # Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing, features
 
 # Import LLM module (optional)
 try:
@@ -134,6 +134,7 @@ app.include_router(billing.router)   # Pricing tiers + usage snapshot (Stripe wi
 app.include_router(diagnostics.router)
 app.include_router(face_tags.router)  # Face tagging for scene search
 app.include_router(chapters.router, prefix="/api/chapters", tags=["chapters"])  # Auto chapter markers
+app.include_router(features.router)  # Feature flags for UI visibility
 
 
 # Health check endpoint
