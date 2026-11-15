@@ -4,7 +4,6 @@ import { Menu, Transition } from '@headlessui/react';
 import {
   ArrowRightStartOnRectangleIcon,
   ArrowUpTrayIcon,
-  ChevronLeftIcon,
   ChevronUpIcon,
   ClockIcon,
   Cog6ToothIcon,
@@ -103,9 +102,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggleCollapse })
           onClick={onToggleCollapse}
           aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'}
           title={collapsed ? 'Show sidebar' : 'Hide sidebar'}
-          aria-pressed={collapsed}
+          aria-expanded={!collapsed}
         >
-          <ChevronLeftIcon className={collapsed ? 'is-collapsed' : ''} strokeWidth={2} aria-hidden="true" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
+            <path d="M9 5v14" />
+            <path d={collapsed ? 'm13 9 3 3-3 3' : 'm16 9-3 3 3 3'} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
       </div>
 
