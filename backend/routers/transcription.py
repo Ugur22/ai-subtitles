@@ -7,10 +7,11 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 
 from config import settings
 from middleware.auth import require_auth
+from services.feature_flags import require_feature
 from models import (
     TranslationRequest,
     TranslationResponse,
@@ -138,6 +139,7 @@ async def translate_local_endpoint(http_request: Request, request: TranslationRe
 @router.post(
     "/generate_summary/",
     response_model=Dict,
+    dependencies=[Depends(require_feature("summary"))],
     summary="Generate video summary",
     description="Generate section summaries from transcription using local BART model",
     responses={

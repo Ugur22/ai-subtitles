@@ -577,3 +577,13 @@ export const generateChapters = async (
   );
   return response.data;
 };
+
+export interface FeatureFlags {
+  chapters: boolean;
+  summary: boolean;
+}
+
+export const getFeatureFlags = async (): Promise<FeatureFlags> => {
+  const response = await api.get<FeatureFlags>('/api/features');
+  return response.data;
+};

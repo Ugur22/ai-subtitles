@@ -178,6 +178,9 @@ class Settings(BaseSettings):
     # disable the bypass.
     INTERNAL_API_KEY: Optional[str] = os.getenv("INTERNAL_API_KEY")
 
+    # Flagsmith server-side environment key ("ser.…"). Unset = every flag off.
+    FLAGSMITH_SERVER_KEY: Optional[str] = os.getenv("FLAGSMITH_SERVER_KEY")
+
     # Cloud Run Worker Job (background pipeline lives here, not in this Service)
     WORKER_JOB_PROJECT: str = os.getenv("WORKER_JOB_PROJECT", "ai-subs-poc")
     WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
