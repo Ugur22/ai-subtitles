@@ -52,3 +52,53 @@ variable "worker_secret_ids" {
     "xai-api-key",
   ]
 }
+
+# Monitoring and budget (monitoring.tf)
+
+variable "alert_email" {
+  description = "Address that receives job-failure, uptime and budget alerts."
+  type        = string
+}
+
+variable "billing_account_id" {
+  description = "Billing account paying for the project, as XXXXXX-XXXXXX-XXXXXX."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$", var.billing_account_id))
+    error_message = "billing_account_id must look like 012345-6789AB-CDEF01."
+  }
+}
+
+variable "budget_amount" {
+  description = "Monthly budget in whole units of the billing account's currency."
+  type        = number
+
+  validation {
+    condition     = var.budget_amount > 0 && floor(var.budget_amount) == var.budget_amount
+    error_message = "budget_amount must be a positive whole number."
+  }
+}
+
+variable "budget_currency_code" {
+  description = "ISO 4217 code; leave null to use the billing account's currency (a mismatch is rejected by the API)."
+  type        = string
+  default     = null
+}
+
+variable "api_uptime_host" {
+  description = "Host of the API Service that the uptime check calls at GET /."
+  type        = string
+  default     = "ai-subs-backend-qtpkqndqoq-uc.a.run.app"
+}
+
+variable "uptime_check_period" {
+  description = "How often each uptime location probes the API; one of 60s, 300s, 600s, 900s."
+  type        = string
+  default     = "900s"
+
+  validation {
+    condition     = contains(["60s", "300s", "600s", "900s"], var.uptime_check_period)
+    error_message = "uptime_check_period must be 60s, 300s, 600s or 900s."
+  }
+}

@@ -61,6 +61,29 @@ terraform providers lock -platform=darwin_arm64 -platform=linux_amd64
 
 CI (`.github/workflows/check.yml`, job `terraform`) runs `terraform fmt -check`, `init -backend=false` and `validate` on every push and pull request.
 
+## Monitoring
+
+All alerts go to one email channel (`alert_email`). Defined in `infra/terraform/monitoring.tf`.
+
+| What | How | Alert |
+|---|---|---|
+| Failed jobs | Every job that ends as `failed` writes one stdout line `{"event":"job_failed","job_id","error_code","user_tier"}` (`JobQueueService._emit_job_failed`). That covers `mark_failed` (every Python-side error code), `worker_timeout`, `max_continuations_reached` and `finalization_retries_exhausted`. Log-based metric `logging.googleapis.com/user/job_failed`, labelled by `error_code` and `user_tier` | More than 2 in a rolling hour (PromQL, summed over the Service and the Job) |
+| Crashes | Unhandled exceptions in the API (FastAPI exception handler), the worker (`sys.excepthook`, `threading.excepthook`) and failed pipeline runs are written to stderr as **one** JSON line with `severity: ERROR` and the full trace (`backend/utils/structured_log.py`). Cloud Run would otherwise split a trace into one entry per line, which Error Reporting cannot group. No SDK | Error Reporting notifications, set up in the Console (below) |
+| API up | Uptime check `GET /` on the Service URL, expecting `"status":"healthy"`, every `uptime_check_period` (default 15 min; each probe can wake a scaled-to-zero instance) | Failing from more than one location |
+| Spend | `google_billing_budget` on the project, `budget_amount` per calendar month | 50%, 90% and 100% of actual spend, to the channel and the billing admins |
+
+Failed jobs in Logs Explorer: `jsonPayload.event="job_failed"`. Crashes: Error Reporting, or `severity=ERROR jsonPayload."@type":"type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent"`.
+
+### Error Reporting notifications (manual)
+
+Terraform (google provider 8.9) has no resource for Error Reporting notification settings, so turn them on once in the Console:
+
+1. Open [Error Reporting](https://console.cloud.google.com/errors?project=ai-subs-poc) and choose **Configure notifications**.
+2. Select the email channel Terraform created, "AI-Subs alerts (…)", and save.
+3. New error groups are then emailed when they first occur. Recurring groups are not emailed again until they are resolved and reappear.
+
+The budget needs the Billing Budgets API (enabled by `apis.tf`). The account running `terraform apply` needs **Billing Account Administrator** or **Billing Account Costs Manager** on the billing account; project Owner alone is not enough.
+
 ## Images, deploys and rollback
 
 Every image is tagged with the 12-character git SHA of the commit it was built from (`…/ai-subs-backend:0123456789ab`). `:latest` is no longer written or deployed.
@@ -93,4 +116,5 @@ Rollback changes the image only. Env vars, secrets and resources come from the c
 
 ## Still manual
 
+- Error Reporting notification settings (see Monitoring above).
 - Removing `roles/editor` from the default compute SA `1052285886390-compute@developer.gserviceaccount.com`, once the new SAs are verified in production.

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 
 from services.db_retry import with_db_retry
 from services.supabase_service import supabase
+from utils.structured_log import log_event
 from utils.time_utils import parse_db_timestamp
 
 
@@ -20,6 +21,9 @@ STALE_THRESHOLD_SECONDS = 90
 PENDING_STALE_SECONDS = 600
 MAX_RETRIES = 3
 WORKER_TIMEOUT_ERROR_CODE = "worker_timeout"
+# Set in SQL, not here; named so the job_failed events match the stored error_code.
+MAX_CONTINUATIONS_ERROR_CODE = "max_continuations_reached"
+FINALIZATION_EXHAUSTED_ERROR_CODE = "finalization_retries_exhausted"
 WORKER_TIMEOUT_MESSAGE = (
     "Processing stopped because the worker ran out of time. "
     "Progress was saved; retrying continues from where it stopped."
@@ -573,6 +577,43 @@ class JobQueueService:
         return response.data is True
 
     @staticmethod
+    def _user_tier(job_id: str) -> str:
+        """Plan of the job's owner for failure metrics: 'admin', the subscription plan, or 'unknown'."""
+        try:
+            client = supabase()
+            job = client.table("jobs").select("user_id").eq("id", job_id).limit(1).execute().data
+            user_id = job[0].get("user_id") if job else None
+            if not user_id:
+                return "unknown"
+            profile = (
+                client.table("user_profiles")
+                .select("is_admin,subscription_plan")
+                .eq("id", user_id).limit(1).execute()
+            ).data
+            if not profile:
+                return "unknown"
+            if profile[0].get("is_admin"):
+                return "admin"
+            return profile[0].get("subscription_plan") or "free"
+        except Exception:
+            return "unknown"
+
+    @staticmethod
+    def _emit_job_failed(job_id: str, error_code: Optional[str]) -> None:
+        """One JSON line per job that ends as failed; the job_failed log metric and alert count these."""
+        try:
+            log_event(
+                "job_failed",
+                severity="WARNING",
+                job_id=job_id,
+                error_code=error_code or "unknown",
+                user_tier=JobQueueService._user_tier(job_id),
+            )
+        except Exception as error:
+            # A metrics line must never turn a recorded failure into a crash.
+            print(f"[JobQueue] Could not log job_failed for {job_id}: {error}")
+
+    @staticmethod
     def mark_failed(job_id: str, error_message: str, error_code: str = "processing_error") -> bool:
         """
         Mark a job as failed with error details.
@@ -596,6 +637,7 @@ class JobQueueService:
             success = response.data is True
             if success:
                 print(f"[JobQueue] Marked job {job_id} as failed: {error_message}")
+                JobQueueService._emit_job_failed(job_id, error_code)
             return success
         except Exception as e:
             print(f"[JobQueue] Failed to mark job {job_id} as failed: {e}")
@@ -618,6 +660,7 @@ class JobQueueService:
             marked = response.data is True
             if marked:
                 print(f"[JobQueue] Marked job {job_id} as failed: worker_timeout")
+                JobQueueService._emit_job_failed(job_id, WORKER_TIMEOUT_ERROR_CODE)
             return marked
         except Exception as e:
             print(f"[JobQueue] Failed to mark job {job_id} as timed out: {e}")
@@ -708,6 +751,9 @@ class JobQueueService:
             if job and job.get("status") == "pending" and job.get("stage") == "continuing":
                 outcome = "continue"
         print(f"[JobQueue] Continuation request for job {job_id}: {outcome}")
+        if outcome == "exhausted":
+            # requeue_job_for_continuation failed the job in SQL (migration 018).
+            JobQueueService._emit_job_failed(job_id, MAX_CONTINUATIONS_ERROR_CODE)
         return outcome
 
     @staticmethod
@@ -850,6 +896,8 @@ class JobQueueService:
                     f"[JobQueue] Finalization retries exhausted for {job_id}; "
                     "job is available for manual retry"
                 )
+                # claim_stale_finalizing_job failed the job in SQL (migration 008).
+                JobQueueService._emit_job_failed(job_id, FINALIZATION_EXHAUSTED_ERROR_CODE)
             return job_id
 
         # A worker that hit the task timeout marked its job failed/worker_timeout.

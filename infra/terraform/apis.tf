@@ -3,6 +3,7 @@ locals {
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "cloudbuild.googleapis.com",
+    "clouderrorreporting.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",

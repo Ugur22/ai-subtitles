@@ -3,3 +3,9 @@
 
 project_id = "ai-subs-poc"
 region     = "us-central1"
+
+# Monitoring and budget
+alert_email        = "you@example.com"
+billing_account_id = "012345-6789AB-CDEF01" # gcloud billing projects describe ai-subs-poc
+budget_amount      = 50                     # whole units of the billing account's currency
+# budget_currency_code = "EUR"              # optional; must match the billing account
