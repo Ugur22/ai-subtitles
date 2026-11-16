@@ -9,12 +9,19 @@ from services import job_queue_service
 from services.job_queue_service import (
     GLOBAL_CONCURRENT_LIMIT,
     MAX_RETRIES,
-    WAITING_FOR_GPU_MESSAGE,
     WAITING_FOR_GPU_STAGE,
     JobQueueService,
 )
 
 OLD = "2000-01-01T00:00:00"
+WAITING_MESSAGE = "Waiting for a free GPU slot"
+
+
+def _set(job, **values):
+    """Applies an update the way the jobs_release_gpu_slot_hold trigger sees it."""
+    job.update(values)
+    if job.get("status") != "pending":
+        job["holds_gpu_slot"] = False
 
 
 class Query:
@@ -57,8 +64,9 @@ class Query:
         with self.store.lock:
             matched = [job for job in self.store.jobs if all(f(job) for f in self.filters)]
             if self.update_values is not None:
+                self.store.table_updates += 1
                 for job in matched:
-                    job.update(self.update_values)
+                    _set(job, **self.update_values)
             return SimpleNamespace(data=[dict(job) for job in matched])
 
 
@@ -66,6 +74,7 @@ class Store:
     def __init__(self, jobs):
         self.jobs = jobs
         self.lock = threading.Lock()
+        self.table_updates = 0
 
     def table(self, name):
         assert name == "jobs"
@@ -87,14 +96,15 @@ class Store:
                 return []
             if name == "auto_retry_timed_out_job":
                 return False
+            if name == "park_job_if_no_gpu_slot":
+                return self._park(self.job(params["p_job_id"]), limit)
             if name == "claim_job_with_outcome":
                 job = self.job(params["p_job_id"])
                 if job["status"] != "pending":
                     return "not_pending"
-                resuming = job.get("continuation_count", 0) > 0 and job.get("stage") == "continuing"
-                if not resuming and self._processing() >= limit:
+                if self._park(job, limit):
                     return "at_capacity"
-                job.update(status="processing", stage="starting")
+                _set(job, status="processing", stage="starting")
                 return "claimed"
             if name == "claim_waiting_for_gpu_job":
                 if self._processing() >= limit:
@@ -109,17 +119,23 @@ class Store:
                 waiting[0].update(stage="queued", last_seen="2099-01-01T00:00:00")
                 return waiting[0]["id"]
             if name == "fail_job_secure":
-                self.job(params["p_job_id"]).update(
-                    status="failed", error_code=params["p_error_code"]
-                )
+                _set(self.job(params["p_job_id"]), status="failed", error_code=params["p_error_code"])
                 return True
         raise AssertionError(f"unexpected rpc {name}")
+
+    def _park(self, job, limit):
+        if job["status"] != "pending" or job["holds_gpu_slot"] or self._processing() < limit:
+            return False
+        _set(job, stage=WAITING_FOR_GPU_STAGE, message=WAITING_MESSAGE,
+             last_seen="2099-01-01T00:00:00")
+        return True
 
 
 def _job(job_id, status="pending", stage="queued", **overrides):
     job = {
         "id": job_id, "user_id": "user-a", "status": status, "stage": stage,
-        "retry_count": 0, "continuation_count": 0, "created_at": "2026-11-16T10:00:00",
+        "retry_count": 0, "continuation_count": 0, "holds_gpu_slot": False,
+        "created_at": "2026-11-16T10:00:00",
         "last_seen": "2099-01-01T00:00:00",
     }
     job.update(overrides)
@@ -146,11 +162,13 @@ def _use(monkeypatch, store):
 
 def test_continuation_is_claimed_while_every_slot_is_taken(monkeypatch):
     store = _use(monkeypatch, Store(_busy() + [
-        _job("job-a", stage="continuing", continuation_count=1),
+        _job("job-a", stage="queued", continuation_count=1, holds_gpu_slot=True),
     ]))
 
     assert JobQueueService.claim_for_processing("job-a") == "claimed"
-    assert store.job("job-a")["status"] == "processing"
+    assert (store.job("job-a")["status"], store.job("job-a")["holds_gpu_slot"]) == (
+        "processing", False,
+    )
 
 
 def test_new_job_at_capacity_waits_without_spending_a_retry(monkeypatch):
@@ -173,10 +191,11 @@ def test_new_job_at_capacity_waits_without_spending_a_retry(monkeypatch):
     assert ok is True
     job = store.job("job-a")
     assert (job["status"], job["stage"], job["message"]) == (
-        "pending", WAITING_FOR_GPU_STAGE, WAITING_FOR_GPU_MESSAGE,
+        "pending", WAITING_FOR_GPU_STAGE, WAITING_MESSAGE,
     )
     assert job["retry_count"] == 1
     assert job["last_seen"] > OLD
+    assert store.table_updates == 0
 
 
 def test_claim_maps_unknown_results_to_not_pending(monkeypatch):
@@ -240,10 +259,70 @@ def test_dispatched_job_that_never_started_still_uses_the_retry_path(monkeypatch
     )
 
 
-def test_stuck_continuation_keeps_its_stage_so_it_keeps_its_slot(monkeypatch, dispatched):
+def test_stuck_continuation_keeps_its_slot_hold(monkeypatch, dispatched):
     store = _use(monkeypatch, Store([
-        _job("job-a", stage="continuing", continuation_count=2, last_seen=OLD),
+        _job("job-a", stage="continuing", continuation_count=2, holds_gpu_slot=True, last_seen=OLD),
     ]))
 
     assert JobQueueService.check_and_recover_stale_jobs() == "job-a"
-    assert (store.job("job-a")["stage"], store.job("job-a")["retry_count"]) == ("continuing", 1)
+    job = store.job("job-a")
+    assert (job["holds_gpu_slot"], job["retry_count"]) == (True, 1)
+
+
+@pytest.fixture
+def dispatcher(monkeypatch):
+    from services import job_dispatcher
+
+    calls = []
+    monkeypatch.setattr(
+        job_dispatcher, "get_job_dispatcher",
+        lambda: SimpleNamespace(dispatch=lambda job_id: calls.append(job_id)),
+    )
+    return calls
+
+
+def test_dispatch_at_capacity_parks_the_job_instead_of_starting_a_worker(monkeypatch, dispatcher):
+    store = _use(monkeypatch, Store(_busy() + [_job("job-a", retry_count=1)]))
+
+    assert JobQueueService.trigger_worker_job("job-a") is False
+    assert dispatcher == []
+    job = store.job("job-a")
+    assert (job["status"], job["stage"], job["retry_count"]) == ("pending", WAITING_FOR_GPU_STAGE, 1)
+
+    store.job("busy-0")["status"] = "completed"
+    store.job("job-a")["stage"] = "queued"
+    assert JobQueueService.trigger_worker_job("job-a") is True
+    assert dispatcher == ["job-a"]
+
+
+def test_dispatch_never_parks_a_continuation_or_a_non_pending_job(monkeypatch, dispatcher):
+    _use(monkeypatch, Store(_busy() + [
+        _job("job-a", stage="continuing", continuation_count=1, holds_gpu_slot=True),
+        _job("job-b", status="finalizing", stage="finalizing"),
+    ]))
+
+    assert JobQueueService.trigger_worker_job("job-a") is True
+    assert JobQueueService.trigger_worker_job("job-b") is True
+    assert dispatcher == ["job-a", "job-b"]
+
+
+def test_dispatch_goes_ahead_when_the_slot_check_fails(monkeypatch, dispatcher):
+    store = _use(monkeypatch, Store(_busy() + [_job("job-a")]))
+
+    def broken(name, params):
+        raise RuntimeError("database unreachable")
+
+    monkeypatch.setattr(store, "_rpc", broken)
+    assert JobQueueService.trigger_worker_job("job-a") is True
+    assert dispatcher == ["job-a"]
+
+
+def test_a_failed_continuation_loses_its_slot_hold(monkeypatch):
+    store = _use(monkeypatch, Store(_busy() + [
+        _job("job-a", stage="continuing", continuation_count=1, holds_gpu_slot=True),
+    ]))
+
+    JobQueueService.mark_failed("job-a", "boom", "processing_error")
+    _set(store.job("job-a"), status="pending", stage="queued")
+
+    assert JobQueueService.claim_for_processing("job-a") == "at_capacity"
