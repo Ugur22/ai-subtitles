@@ -169,23 +169,6 @@ POST /api/index_images/
 
 Index video screenshots for visual search using CLIP embeddings.
 
-### Visual Search
-
-```
-POST /api/search_images/
-```
-
-Search screenshots by text description.
-
-**Request Body:**
-```json
-{
-  "video_hash": "abc123",
-  "query": "person pointing at whiteboard",
-  "top_k": 5
-}
-```
-
 ### Chat with Video Content
 
 ```

@@ -19,10 +19,6 @@ from models.transcription import (
     TranslationResponse,
     SummaryRequest,
     SummaryResponse,
-    SearchTimestamp,
-    SearchContext,
-    SearchMatch,
-    SearchResponse
 )
 from models.speaker import (
     SpeakerInfo,
@@ -43,9 +39,6 @@ from models.chat import (
     ProviderModelsResponse,
     TestLLMResponse,
     IndexImagesResponse,
-    SearchImagesRequest,
-    SearchImagesResponse,
-    ImageSearchResult
 )
 from models.video import (
     CleanupScreenshotsResponse,
@@ -73,11 +66,6 @@ __all__ = [
     "TranslationResponse",
     "SummaryRequest",
     "SummaryResponse",
-    # Search
-    "SearchTimestamp",
-    "SearchContext",
-    "SearchMatch",
-    "SearchResponse",
     # Speaker
     "SpeakerInfo",
     "EnrollSpeakerResponse",
@@ -96,9 +84,6 @@ __all__ = [
     "ProviderModelsResponse",
     "TestLLMResponse",
     "IndexImagesResponse",
-    "SearchImagesRequest",
-    "SearchImagesResponse",
-    "ImageSearchResult",
     # Video
     "CleanupScreenshotsResponse",
     "UpdateFilePathResponse",

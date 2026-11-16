@@ -20,7 +20,6 @@ import {
   formatScreenshotUrlSafe,
 } from "../../../utils/url";
 import { SubtitleControls } from "./SubtitleControls";
-import { SearchPanel } from "../search/SearchPanel";
 // import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
 import { ChatPanel } from "../chat/ChatPanel";
@@ -72,7 +71,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showSummary, setShowSummary] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
-  const [showSearch, setShowSearch] = useState(false);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -596,10 +594,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   }, [displayedSegments, seek, play]);
 
 
-  const handleSearchClick = () => {
-    setShowSearch(!showSearch);
-  };
-
   // Create and add subtitles to video
   // Subtitle-related logic now handled by useSubtitles hook
 
@@ -821,23 +815,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    onClick={handleSearchClick}
-                    className="btn-ghost p-2"
-                    style={{
-                      color: showSearch ? 'var(--accent)' : 'var(--text-secondary)',
-                      backgroundColor: showSearch ? 'var(--accent-dim)' : 'transparent',
-                    }}
-                    title={showSearch ? "Hide search" : "Show search"}
-                    aria-pressed={showSearch}
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
-
-                  <div className="mx-1 h-4 w-px" style={{ backgroundColor: 'var(--border-subtle)' }} />
-
                   <SubtitleControls
                     filename={transcription.filename}
                     videoHash={transcription.video_hash}
@@ -1491,30 +1468,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
                 </div>
               </div>
-
-              {/* Right Column: Search & Analysis Panels */}
-              {showSearch && (
-                <div
-                  className="w-full lg:w-1/4 lg:min-w-[250px] overflow-y-auto mt-4 lg:mt-0 lg:ml-4"
-                  style={{ backgroundColor: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
-                >
-                  <div className="sticky top-0 z-10" style={{ backgroundColor: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div className="px-4 py-3 flex items-center justify-between">
-                      <h3 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
-                        Search & Analysis
-                      </h3>
-                    </div>
-                  </div>
-
-                  <div className="p-4 overflow-y-auto h-full">
-                    <SearchPanel
-                      onSeekToTimestamp={seekToTimestamp}
-                      videoHash={transcription?.video_hash}
-                      onImageClick={openImageModal}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}
