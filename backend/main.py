@@ -96,6 +96,22 @@ async def startup_event():
             print(f"- GCS cleanup failed (non-critical): {e}")
 
 
+from fastapi import Request
+from fastapi.responses import PlainTextResponse
+from utils.structured_log import install_excepthooks, log_exception
+
+install_excepthooks("api")
+
+
+# Starlette still re-raises after this, so uvicorn logs it too, but only this
+# single-line entry carries the whole trace for Error Reporting. The response
+# is Starlette's default 500, unchanged.
+@app.exception_handler(Exception)
+async def log_unhandled_exception(request: Request, exc: Exception):
+    log_exception(exc, f"Unhandled exception on {request.method} {request.url.path}")
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
 # CSRF protection. Added before CORS so it sits inside it: CORS answers
 # preflight requests first and the rest reach this check.
 from middleware.csrf import CSRFProtectionMiddleware

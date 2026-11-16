@@ -1,0 +1,61 @@
+name: deploy
+
+# Production deploy of the API Service and the GPU worker Job.
+# Push a tag (git tag v1.2.3 && git push origin v1.2.3) or run it by hand on main.
+# Setup (GitHub environment, repository variables): docs/INFRASTRUCTURE.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a queued deploy waits instead of cancelling the running one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  deploy:
+    needs: check
+    # A manual run can pick any branch; only main and v* tags may reach production.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # Cloud Build of the CUDA image (up to 45 min) plus both deploys.
+    timeout-minutes: 75
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keyless: the OIDC token of this job, in the production environment, is
+      # exchanged for ai-subs-deployer (infra/terraform/wif.tf).
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # The image is built on Cloud Build, not on this runner: the CUDA image
+      # does not fit on a hosted runner's disk.
+      - name: Build and deploy
+        run: infra/scripts/deploy_image.sh --yes
+        env:
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### Deployed \`$(git rev-parse --short=12 HEAD)\`"
+            echo ""
+            echo "Ref: \`${GITHUB_REF_NAME}\`. Roll back with \`infra/scripts/rollback.sh <previous tag>\`."
+          } >> "$GITHUB_STEP_SUMMARY"

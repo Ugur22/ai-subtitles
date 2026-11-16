@@ -48,6 +48,7 @@ from utils.file_utils import generate_file_hash
 from utils.time_utils import format_timestamp
 from services.word_speakers import assign_speakers
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
+from utils.structured_log import log_exception
 from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer, linking_signature
@@ -1232,7 +1233,7 @@ class BackgroundWorker:
                 error_code = "storage_error"
 
             print(f"[Worker] Job {job_id} failed: {error_message}")
-            traceback.print_exc()
+            log_exception(e, f"Job {job_id} failed ({error_code})", job_id=job_id, error_code=error_code)
 
             # Mark as failed
             JobQueueService.mark_failed(job_id, error_message, error_code)

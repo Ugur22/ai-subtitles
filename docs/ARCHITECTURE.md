@@ -1,6 +1,6 @@
 # Architecture
 
-Detailed architecture documentation for AI-Subs. For resource names, secrets, scheduler jobs and quotas see [GCP_OPERATIONS.md](GCP_OPERATIONS.md); `backend/deploy.sh` is the source of truth for deployed resources.
+Detailed architecture documentation for AI-Subs. For resource names, secrets, scheduler jobs and quotas see [GCP_OPERATIONS.md](GCP_OPERATIONS.md); `infra/scripts/deploy_image.sh` is the source of truth for deployed resources and [INFRASTRUCTURE.md](INFRASTRUCTURE.md) covers Terraform.
 
 ## System Overview
 
@@ -265,7 +265,7 @@ Schemas are in `backend/sql/` and `backend/sql/migrations/`.
 | Storage | Google Cloud Storage | Videos and screenshots |
 | Scheduling | Cloud Scheduler | `check-stale` (5 min), screenshot URL refresh (daily) |
 
-Deployment is defined only in `backend/deploy.sh`; there is no Cloud Run YAML. See [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md).
+Deployment is defined only in `infra/scripts/deploy_image.sh` (run by `backend/deploy.sh` and CI); there is no Cloud Run YAML. See [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md).
 
 ## Data Flow
 

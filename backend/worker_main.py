@@ -29,6 +29,12 @@ if os.environ.get("LOCAL_MODE", "false").lower() == "true":
 else:
     os.environ.setdefault("CLOUD_RUN_JOB", "1")
 
+from utils.structured_log import install_excepthooks
+
+# Before validate_runtime, so a config error is reported with its trace too. A crash
+# leaves the job processing on purpose: check-stale retries it once the heartbeat stops.
+install_excepthooks("worker")
+
 from config import settings
 
 settings.validate_runtime()

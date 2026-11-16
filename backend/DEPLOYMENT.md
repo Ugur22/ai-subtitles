@@ -7,7 +7,7 @@ The backend is deployed as two Cloud Run resources built from one image:
 | `ai-subs-backend` | Cloud Run **Service** | CPU only | FastAPI: auth, uploads, job API, search, chat |
 | `ai-subs-worker` | Cloud Run **Job** | 1x NVIDIA L4 | `python -m worker_main <job_id>`: one execution per transcription job |
 
-`backend/deploy.sh` is the only definition of both. Memory, CPU, timeouts, env vars and secrets are set there; read the script for current values instead of trusting a copy in a document. There is no Cloud Run YAML on purpose: the old `cloudrun-service.yaml` described a single GPU service and had drifted, and deploying a stale YAML with `gcloud run services replace` drops env vars and secrets.
+`infra/scripts/deploy_image.sh` is the only definition of both. `backend/deploy.sh` (local), `infra/scripts/rollback.sh` and the GitHub Actions deploy all run it. Memory, CPU, timeouts, env vars and secrets are set there; read the script for current values instead of trusting a copy in a document. There is no Cloud Run YAML on purpose: the old `cloudrun-service.yaml` described a single GPU service and had drifted, and deploying a stale YAML with `gcloud run services replace` drops env vars and secrets.
 
 Architecture and job flow: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md). Scheduler jobs, GCS, quotas and key rotation: [docs/GCP_OPERATIONS.md](../docs/GCP_OPERATIONS.md).
 
@@ -24,24 +24,27 @@ Run deploys from your own terminal, not from a Claude Code session: the agent's 
 ```bash
 cd backend
 ./deploy.sh               # Cloud Build, then deploy the Service and the worker Job
-./deploy.sh --skip-build  # redeploy both from the existing image
+./deploy.sh --skip-build  # redeploy both from the image already built for this commit
+./deploy.sh --allow-dirty # deploy uncommitted changes, tagged <sha>-dirty
 ```
+
+Images are tagged with the 12-character git SHA; `:latest` is no longer used. The script refuses a dirty working tree unless `--allow-dirty` is passed, gives the Service and the Job the same tag, and prints it at the end. Rollback and tag listing: [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md).
 
 The script asks for confirmation, builds with `cloudbuild.yaml`, deploys the Service without a GPU, deploys the worker Job with the GPU, and checks the Service's health endpoint.
 
-Apply pending SQL migrations in `backend/sql/migrations/` to Supabase **before** deploying code that needs them. The worker and the API call the SQL functions directly; deploying first makes job claims, retries and continuations fail.
+Apply pending SQL migrations in `backend/sql/migrations/` to Supabase **before** deploying code that needs them. The deploy checks this against `public.schema_migrations` and stops with the names of unapplied files; see "Database migrations" in [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md). The worker and the API call the SQL functions directly; deploying first makes job claims, retries and continuations fail.
 
 ## What the worker Job needs
 
 - `--task-timeout=3600`. One hour is the maximum Cloud Run allows for a GPU task. Longer files are handled by continuations, not by a longer timeout.
 - `--max-retries=0`. Retries are driven by the job table and `check-stale`, not by Cloud Run.
-- `CLOUD_RUN_TASK_TIMEOUT`, set by `deploy.sh` to the task timeout. Cloud Run does not expose the timeout to the container; the worker uses it to stop about 10 minutes early and continue in a new execution.
+- `CLOUD_RUN_TASK_TIMEOUT`, set by `deploy_image.sh` to the task timeout. Cloud Run does not expose the timeout to the container; the worker uses it to stop about 10 minutes early and continue in a new execution.
 - `WORKER_JOB_PROJECT`, `WORKER_JOB_REGION`, `WORKER_JOB_NAME`, on both the Service and the Job. The Service dispatches executions; the worker dispatches its own continuation.
-- A service account that can run the Job with overrides (`run.jobs.runWithOverrides`) and read/write the bucket. Both resources currently use the default compute service account.
+- A service account that can run the Job with overrides (`run.jobs.runWithOverrides`) and read/write the bucket. The Service runs as `ai-subs-api` and the Job as `ai-subs-worker`, both created by `infra/terraform/iam.tf`; the grants are listed in [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md).
 
 ## Secrets
 
-Secrets come from Secret Manager and are mapped in `deploy.sh` (`--set-secrets`). The Service and the Job get different sets; the Job only gets what the pipeline uses.
+Secrets come from Secret Manager and are mapped in `infra/scripts/deploy_image.sh` (`--set-secrets`). A new secret also needs an accessor binding in `infra/terraform/variables.tf`. The Service and the Job get different sets; the Job only gets what the pipeline uses.
 
 ```bash
 # Add a new version; the next revision or execution picks up :latest
@@ -62,7 +65,7 @@ gcloud run jobs update ai-subs-worker --region=us-central1 --project=ai-subs-poc
   --update-env-vars="VAR=value"
 ```
 
-Put lasting changes in `deploy.sh` as well, or the next deploy reverts them.
+Put lasting changes in `infra/scripts/deploy_image.sh` as well, or the next deploy reverts them.
 
 ## Logs and status
 

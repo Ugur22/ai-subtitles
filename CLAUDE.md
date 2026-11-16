@@ -24,7 +24,8 @@ For ANY non-trivial task, Claude MUST:
 
 ### NEVER Do Without Approval
 - NEVER make code changes without presenting a plan first
-- NEVER deploy to GCloud (`./deploy.sh`, `gcloud run deploy`, `gcloud builds submit`)
+- NEVER deploy to GCloud (`./deploy.sh`, `infra/scripts/deploy_image.sh`, `infra/scripts/rollback.sh`, `gcloud run deploy`, `gcloud builds submit`)
+- NEVER run `terraform apply` or `terraform destroy`
 - NEVER commit to git without explicit approval
 - NEVER assume the user wants changes implemented - always confirm
 - These rules are also enforced by deny/ask rules in `~/.claude/settings.json`; do not edit that file, `.claude/settings.json`, `scripts/hooks/` or the `Makefile` to loosen them
@@ -49,7 +50,7 @@ Run `make check` (offline, about 15 seconds: lint, pytest, tsc) before reporting
 ## Deployment
 
 - **GCP project**: `ai-subs-poc`, region `us-central1`
-- **Cloud Run**: CPU service `ai-subs-backend` plus a separate GPU worker job, both built and deployed by `backend/deploy.sh`, which is the source of truth for resources, secrets and env vars
+- **Cloud Run**: CPU service `ai-subs-backend` plus a separate GPU worker job, both built and deployed by `infra/scripts/deploy_image.sh` (run by `backend/deploy.sh` and `.github/workflows/deploy.yml`), which is the source of truth for resources, secrets and env vars; IAM, monitoring and the CI deployer are in `infra/terraform` (see `docs/INFRASTRUCTURE.md`)
 - **Artifact Registry**: repo is `ai-subs-repo` (NOT `ai-subs`)
 - Run deploys from your own terminal with Owner credentials, never from inside a Claude Code session: the agent's shell uses a read-only service account (`~/.config/gcloud-agent`)
 - Scheduler jobs, GCS layout, GPU quota and LLM provider notes: `docs/GCP_OPERATIONS.md`

@@ -2,6 +2,7 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 REPO = BACKEND.parent
+DEPLOY_IMAGE = REPO / "infra" / "scripts" / "deploy_image.sh"
 
 
 def test_deploy_sh_is_the_only_deployment_definition():
@@ -11,7 +12,7 @@ def test_deploy_sh_is_the_only_deployment_definition():
 
 
 def test_worker_job_gets_its_timeout_and_can_dispatch_continuations():
-    script = (BACKEND / "deploy.sh").read_text(encoding="utf-8")
+    script = DEPLOY_IMAGE.read_text(encoding="utf-8")
     worker = script[script.index("deploy_worker_job() {"):]
     worker = worker[:worker.index("\n}\n")]
 
@@ -23,12 +24,38 @@ def test_worker_job_gets_its_timeout_and_can_dispatch_continuations():
 
 
 def test_skip_build_only_skips_the_image_build():
-    script = (BACKEND / "deploy.sh").read_text(encoding="utf-8")
+    script = DEPLOY_IMAGE.read_text(encoding="utf-8")
     main = script[script.index("\nmain() {"):]
 
-    assert "--skip-build) SKIP_BUILD=\"true\"" in main
+    assert "--skip-build) SKIP_BUILD=\"true\"" in script
     assert main.index('if [ "${SKIP_BUILD}" == "true" ]') < main.index("build_and_push")
     assert main.index("build_and_push") < main.index("deploy_to_cloud_run") < main.index("deploy_worker_job")
+
+
+def test_deploy_sh_delegates_to_the_shared_deploy_script():
+    wrapper = (BACKEND / "deploy.sh").read_text(encoding="utf-8")
+    assert "infra/scripts/deploy_image.sh" in wrapper
+    assert "gcloud run" not in wrapper
+
+
+def test_images_are_immutable_and_shared_by_service_and_job():
+    script = DEPLOY_IMAGE.read_text(encoding="utf-8")
+    for path in (DEPLOY_IMAGE, BACKEND / "cloudbuild.yaml", BACKEND / "deploy.sh", REPO / "infra/scripts/rollback.sh"):
+        # Secret versions stay :latest on purpose; only image references must be pinned.
+        assert "ai-subs-backend:latest" not in path.read_text(encoding="utf-8"), path
+    assert 'IMAGE_REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/ai-subs-repo/ai-subs-backend"' in script
+    assert "rev-parse --short=12 HEAD" in script
+    assert 'IMAGE_TAG="${sha}-dirty"' in script
+    for function in ("deploy_to_cloud_run() {", "deploy_worker_job() {"):
+        body = script[script.index(function):]
+        body = body[:body.index("\n}\n")]
+        assert '--image="${IMAGE_REF}"' in body
+
+
+def test_a_dirty_tree_is_refused_before_any_gcloud_call():
+    main = DEPLOY_IMAGE.read_text(encoding="utf-8")
+    main = main[main.index("\nmain() {"):]
+    assert main.index("resolve_tag") < main.index("check_prerequisites")
 
 
 def test_unbuilt_cloud_tasks_plan_is_archived_as_superseded():
