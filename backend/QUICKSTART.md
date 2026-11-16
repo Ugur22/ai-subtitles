@@ -6,6 +6,10 @@ Run these from your own terminal with Owner credentials.
 
 ## Deploy
 
+Merge to `main`, then push a `v*` tag and approve the `deploy` run in GitHub Actions (details in [DEPLOYMENT.md](DEPLOYMENT.md)). Frontend-only changes need no tag; Netlify deploys them.
+
+Emergency only, when GitHub Actions is unavailable:
+
 ```bash
 cd backend
 ./deploy.sh               # build + deploy Service and worker Job

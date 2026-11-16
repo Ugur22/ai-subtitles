@@ -21,6 +21,22 @@ Run deploys from your own terminal, not from a Claude Code session: the agent's 
 
 ## Deploying
 
+Releases go through GitHub Actions (`.github/workflows/deploy.yml`):
+
+1. Merge the change to `main`; the `check` workflow must pass.
+2. Apply any new SQL migration in Supabase (see below).
+3. Tag the merge commit and push the tag:
+   ```bash
+   git switch main && git pull && git tag v0.1.1 && git push origin v0.1.1
+   ```
+4. Approve the `deploy` job (Actions → the run → Review deployments). It reruns the checks, builds on Cloud Build as `ai-subs-deployer`, and deploys the Service and the Job.
+
+Frontend-only changes need no tag: Netlify deploys the frontend on every push to `main`. Setup and permissions: [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md).
+
+### Local deploy (emergency only)
+
+When GitHub Actions is unavailable, the same script runs from your own terminal:
+
 ```bash
 cd backend
 ./deploy.sh               # Cloud Build, then deploy the Service and the worker Job

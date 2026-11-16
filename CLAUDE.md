@@ -26,6 +26,7 @@ For ANY non-trivial task, Claude MUST:
 - NEVER make code changes without presenting a plan first
 - NEVER deploy to GCloud (`./deploy.sh`, `infra/scripts/deploy_image.sh`, `infra/scripts/rollback.sh`, `gcloud run deploy`, `gcloud builds submit`)
 - NEVER run `terraform apply` or `terraform destroy`
+- NEVER push git tags, run the deploy workflow, or approve a deployment; releases are the user's
 - NEVER commit to git without explicit approval
 - NEVER assume the user wants changes implemented - always confirm
 - These rules are also enforced by deny/ask rules in `~/.claude/settings.json`; do not edit that file, `.claude/settings.json`, `scripts/hooks/` or the `Makefile` to loosen them
@@ -38,8 +39,8 @@ For ANY non-trivial task, Claude MUST:
 5. Claude asks user: "Ready to implement this plan?"
 6. WAIT for explicit approval
 7. Only then implement changes
-8. After changes, ask: "Deploy to GCloud?" - WAIT for approval
-9. Only deploy after explicit "yes"
+8. After backend changes, propose the release: merge to `main`, apply any new SQL migration first (only after explicit approval), push a `v*` tag, approve the `deploy` job in GitHub Actions. Suggest the next tag; the user runs these steps
+9. Frontend-only changes need no tag: Netlify deploys on push to `main`. Local `backend/deploy.sh` is an emergency fallback when GitHub Actions is unavailable, run by the user
 
 ---
 

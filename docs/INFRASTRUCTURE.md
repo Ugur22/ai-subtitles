@@ -113,7 +113,7 @@ Rollback changes the image only. Env vars, secrets and resources come from the c
 
 ## Deploys from GitHub Actions
 
-`.github/workflows/deploy.yml` runs on a pushed `v*` tag, or by hand (Actions → deploy → Run workflow) on `main`.
+This is the normal release path for the backend; `backend/deploy.sh` is only for when GitHub Actions is unavailable. `.github/workflows/deploy.yml` runs on a pushed `v*` tag, or by hand (Actions → deploy → Run workflow) on `main`.
 
 1. The `check` job reuses `check.yml`: lint, pytest, tsc, `terraform fmt` and `validate`.
 2. The `deploy` job runs in the GitHub environment `production`, so required reviewers there must approve it first. It gets a GitHub OIDC token and exchanges it through Workload Identity Federation for `ai-subs-deployer`. There are no JSON keys.
