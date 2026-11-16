@@ -454,20 +454,6 @@ Index video screenshots with CLIP embeddings for visual search.
 }
 ```
 
-#### `POST /api/search_images/`
-
-Search screenshots by text description using CLIP.
-
-**Request:**
-
-```json
-{
-  "video_hash": "abc123...",
-  "query": "person pointing at whiteboard",
-  "top_k": 5
-}
-```
-
 #### `POST /api/chat/`
 
 Multi-modal RAG chat with video content.

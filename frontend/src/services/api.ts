@@ -91,41 +91,6 @@ export interface TranscriptionResponse {
   };
 }
 
-export interface SearchResponse {
-  topic: string;
-  total_matches: number;
-  semantic_search_used: boolean;
-  matches: Array<{
-    timestamp: {
-      start: string;
-      end: string;
-    };
-    original_text: string;
-    translated_text: string;
-    context: {
-      before: string[];
-      after: string[];
-    };
-  }>;
-}
-
-export const searchTranscription = async (
-  topic: string,
-  semanticSearch: boolean = true,
-  videoHash?: string
-): Promise<SearchResponse> => {
-  const params = new URLSearchParams({
-    topic,
-    semantic_search: semanticSearch.toString()
-  });
-  if (videoHash) {
-    params.append('video_hash', videoHash);
-  }
-  const response = await api.post<SearchResponse>(`/api/search/?${params.toString()}`);
-
-  return response.data;
-};
-
 export const getSubtitles = async (language: 'original' | 'english', videoHash?: string): Promise<Blob> => {
   const params = videoHash ? { video_hash: videoHash } : {};
   const response = await api.get(`/api/subtitles/${language}`, {
@@ -496,38 +461,6 @@ export const deleteFaceTag = async (
   faceTagId: string
 ): Promise<{ success: boolean }> => {
   const response = await api.delete(`/api/face-tags/${videoHash}/${faceTagId}`);
-  return response.data;
-};
-
-// ============================================================================
-// Visual Scene Search API
-// ============================================================================
-
-export interface ImageSearchResult {
-  screenshot_path: string;
-  segment_id: string;
-  start: number;
-  end: number;
-  speaker: string;
-  similarity: number;
-}
-
-export interface ImageSearchResponse {
-  results: ImageSearchResult[];
-  video_hash: string;
-  query: string;
-}
-
-export const searchImages = async (
-  query: string,
-  videoHash?: string,
-  nResults: number = 12
-): Promise<ImageSearchResponse> => {
-  const response = await api.post<ImageSearchResponse>('/api/search_images/', {
-    query,
-    video_hash: videoHash,
-    n_results: nResults,
-  });
   return response.data;
 };
 

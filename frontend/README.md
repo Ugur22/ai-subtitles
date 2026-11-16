@@ -1,6 +1,6 @@
 # AI Subtitles - Frontend
 
-React + TypeScript frontend for the AI Subtitles application. Features a modern, responsive interface for video transcription, subtitle generation, semantic search, visual search, background job processing, and AI-powered chat about video content.
+React + TypeScript frontend for the AI Subtitles application. Features a modern, responsive interface for video transcription, subtitle generation, background job processing, and AI-powered chat about video content.
 
 **Live Demo**: [https://REDACTED_FRONTEND_URL](https://REDACTED_FRONTEND_URL)
 
@@ -129,8 +129,6 @@ frontend/
 │   │       │   └── SavedTranscriptionsPanel.tsx
 │   │       ├── chat/
 │   │       │   └── ChatPanel.tsx               # RAG chat interface
-│   │       ├── search/
-│   │       │   └── SearchPanel.tsx             # Semantic & visual search
 │   │       ├── summary/
 │   │       │   └── SummaryPanel.tsx            # Summary display
 │   │       ├── speakers/
@@ -215,14 +213,6 @@ frontend/
 - Real-time timestamp tracking
 - Editable speaker names (propagates to vector store)
 
-### Search Capabilities
-
-- **Semantic Search**: Find content by meaning using vector embeddings
-- **Visual Search**: Find moments by describing what you see (CLIP-powered)
-- **Full-text Search**: Traditional keyword search
-- Context display (before/after segments)
-- Jump-to-timestamp from search results
-
 ### AI-Powered Features
 
 - **RAG Chat**: Ask questions about video content (multi-modal)
@@ -304,10 +294,9 @@ GET /api/jobs/{job_id}               // Get job status/results
 GET /api/jobs                        // List all jobs
 GET /api/jobs/{job_id}/share         // Generate share link
 
-// Search & Chat
+// RAG Chat
 POST /api/index_video/               // Index for semantic search
 POST /api/index_images/              // Index screenshots (CLIP)
-POST /api/search_images/             // Visual search
 POST /api/chat/                      // Multi-modal RAG chat
 
 // Speaker Recognition

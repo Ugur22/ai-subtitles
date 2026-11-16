@@ -273,9 +273,6 @@ from models import (
     ProviderModelsResponse,
     TestLLMRequest,
     TestLLMResponse,
-    SearchImagesRequest,
-    SearchImagesResponse,
-    ImageSearchResult,
     ErrorResponse
 )
 
@@ -298,22 +295,6 @@ class ComparisonIntent:
     person_name: Optional[str]
     unmatched_name: Optional[str] = None
     secondary_person_name: Optional[str] = None
-
-
-def _extract_speaker_from_query(query: str, video_hash: str) -> Optional[str]:
-    """
-    Extract speaker name from query by checking against enrolled speakers
-    and segment speaker labels.
-
-    Args:
-        query: User's question/query
-        video_hash: Video hash to get segments from
-
-    Returns:
-        Speaker name/label if found in query, None otherwise
-    """
-    speakers = _extract_all_speakers_from_query(query, video_hash)
-    return speakers[0] if speakers else None
 
 
 def _extract_all_speakers_from_query(query: str, video_hash: str) -> List[str]:
@@ -4598,91 +4579,3 @@ async def index_video_images(request: Request, background_tasks: BackgroundTasks
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to start image indexing: {str(e)}")
-
-
-@router.post(
-    "/search_images/",
-    response_model=SearchImagesResponse,
-    summary="Search video images",
-    description="Search for video screenshots using text queries via CLIP embeddings",
-    responses={
-        503: {"model": ErrorResponse, "description": "LLM features not available"},
-        404: {"model": ErrorResponse, "description": "Video not found or images not indexed"}
-    }
-)
-@require_auth
-async def search_video_images(request: Request, search_request: SearchImagesRequest) -> SearchImagesResponse:
-    """
-    Search for video screenshots using text queries via CLIP embeddings
-
-    This endpoint allows you to search for visual moments in a video by describing what you're looking for.
-    For example: "person pointing at screen", "whiteboard with equations", "close-up of face", etc.
-    """
-    if not LLM_AVAILABLE:
-        raise HTTPException(status_code=503, detail="LLM features not available")
-
-    try:
-        query = search_request.query
-        video_hash = search_request.video_hash
-        n_results = search_request.n_results or 5
-
-        if not query:
-            raise HTTPException(status_code=400, detail="Query is required")
-        user_id, _ = _authorize_video(request, video_hash)
-        if not _hash_resources_allowed.get():
-            raise HTTPException(status_code=409, detail="Visual search is not owner-isolated for this video")
-
-        images_exist = image_embedding_service.image_collection_exists(video_hash, user_id)
-
-        if not images_exist:
-            raise HTTPException(
-                status_code=404,
-                detail="Images not indexed for this video. Please index images first using /api/index_images/"
-            )
-
-        # Check if the query mentions a specific speaker
-        speaker_filter = _extract_speaker_from_query(query, video_hash)
-
-        print(f"Searching images for query: {query} (using Supabase pgvector)")
-        search_results = await _run_in_executor(
-            image_embedding_service.search_images,
-            video_hash,
-            query,
-            user_id,
-            n_results=n_results,
-            speaker_filter=speaker_filter,
-        )
-
-        formatted_results = []
-        for result in search_results:
-            metadata = result['metadata']
-            screenshot = _owner_scoped_screenshot_url(
-                result.get('screenshot_url'),
-                video_hash,
-            )
-            if not screenshot:
-                continue
-            formatted_results.append(
-                ImageSearchResult(
-                    screenshot_path=screenshot,
-                    segment_id=metadata['segment_id'],
-                    start=metadata['start'],
-                    end=metadata['end'],
-                    speaker=metadata['speaker'],
-                    similarity=result['similarity'],
-                )
-            )
-
-        return SearchImagesResponse(
-            results=formatted_results,
-            video_hash=video_hash,
-            query=query
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error searching images: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Image search failed: {str(e)}")

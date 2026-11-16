@@ -61,19 +61,8 @@ def test_same_hash_search_and_face_matching_require_the_owner():
 
 def test_visual_score_is_similarity_and_sorted_higher_first():
     sql = _read("sql/migrations/009_owner_scoped_visual_embeddings.sql")
-    models = _read("models/chat.py")
-    api = (BACKEND.parent / "frontend/src/services/api.ts").read_text(encoding="utf-8")
-
     assert "1 - (ie.embedding <=> query_embedding) AS similarity" in sql
     assert "ORDER BY ie.embedding <=> query_embedding" in sql
-    image_model = models[models.index("class ImageSearchResult"):]
-    image_model = image_model[:image_model.index("class SearchImagesResponse")]
-    assert "similarity: float" in image_model
-    assert "distance" not in image_model
-    image_api = api[api.index("export interface ImageSearchResult"):]
-    image_api = image_api[:image_api.index("export interface ImageSearchResponse")]
-    assert "similarity: number" in image_api
-    assert "distance" not in image_api
 
 
 def test_clip_preloader_warms_the_shared_service_singleton():
