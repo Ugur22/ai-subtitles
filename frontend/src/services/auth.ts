@@ -55,7 +55,7 @@ export const register = async (
 };
 
 /**
- * Verify email with 6-digit code
+ * Verify email with the code sent by Supabase
  */
 export const verifyEmail = async (
   userId: string,

@@ -3,11 +3,16 @@
  */
 
 import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 
 export const ProtectedRoute: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
+  const { pathname, search } = useLocation();
+
+  if (import.meta.env.DEV && pathname === '/' && new URLSearchParams(search).get('preview') === '1') {
+    return <Outlet />;
+  }
 
   // Show loading state while checking authentication
   if (isLoading) {

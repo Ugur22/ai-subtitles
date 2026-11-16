@@ -73,14 +73,15 @@ export const ResetPasswordPage: React.FC = () => {
                 type="text"
                 inputMode="numeric"
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                 className="input-base w-full text-center tracking-widest"
                 style={{ fontSize: '20px', letterSpacing: '0.2em', fontVariantNumeric: 'tabular-nums' }}
-                placeholder="000000"
+                placeholder="Code from email"
                 required
                 autoFocus
                 disabled={isLoading}
-                maxLength={6}
+                pattern="(?:[0-9]{6}|[0-9]{8})"
+                autoComplete="one-time-code"
               />
             </div>
 
@@ -106,7 +107,7 @@ export const ResetPasswordPage: React.FC = () => {
               </div>
             )}
 
-            <button type="submit" disabled={isLoading || code.length !== 6} className="btn-primary w-full" style={{ marginTop: '8px', justifyContent: 'center' }}>
+            <button type="submit" disabled={isLoading || !/^(?:[0-9]{6}|[0-9]{8})$/.test(code)} className="btn-primary w-full" style={{ marginTop: '8px', justifyContent: 'center' }}>
               {isLoading ? (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">

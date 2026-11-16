@@ -18,6 +18,7 @@ class _Env:
         self.calls = []
         self.invalid_tokens = set()
         self.fresh_clients = 0
+        self.recovery_clients = set()
 
     def calls_named(self, name):
         return [call for call in self.calls if call[1] == name]
@@ -33,6 +34,8 @@ class _Admin:
             raise RuntimeError("invalid or expired jwt")
 
     def update_user_by_id(self, user_id, attributes):
+        if self.client_name in self.env.recovery_clients:
+            raise RuntimeError("User not allowed: recovery session cannot call admin API")
         self.env.calls.append((self.client_name, "admin.update_user_by_id", user_id, attributes))
 
 
@@ -55,6 +58,7 @@ class _Auth:
         self.env.calls.append((self.client_name, "verify_otp", params["type"]))
         if params["token"] != "123456":
             raise RuntimeError("bad otp")
+        self.env.recovery_clients.add(self.client_name)
         return SimpleNamespace(user=SimpleNamespace(id="user-1"),
                                session=SimpleNamespace(access_token="recovery-access"))
 
@@ -148,7 +152,7 @@ def test_reset_password_updates_by_user_id_and_ends_all_sessions(env):
 
     assert env.calls == [
         ("fresh-1", "verify_otp", "recovery"),
-        ("fresh-1", "admin.update_user_by_id", "user-1", {"password": "long-enough-password"}),
+        ("shared", "admin.update_user_by_id", "user-1", {"password": "long-enough-password"}),
         ("shared", "admin.sign_out", "recovery-access", "global"),
     ]
 

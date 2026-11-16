@@ -1,5 +1,5 @@
 /**
- * VerifyEmailPage - 6-digit code entry for email verification
+ * VerifyEmailPage - code entry for email verification
  */
 
 import React, { useState, useEffect } from 'react';
@@ -51,7 +51,7 @@ export const VerifyEmailPage: React.FC = () => {
   };
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+    setCode(e.target.value.replace(/\D/g, ''));
   };
 
   return (
@@ -75,7 +75,7 @@ export const VerifyEmailPage: React.FC = () => {
             Verify your email
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
-            Enter the 6-digit code we sent to your email
+            Enter the code we sent to your email
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-3">
@@ -94,17 +94,18 @@ export const VerifyEmailPage: React.FC = () => {
                 onChange={handleCodeChange}
                 className="input-base w-full text-center tracking-widest"
                 style={{ fontSize: '22px', letterSpacing: '0.25em', fontVariantNumeric: 'tabular-nums' }}
-                placeholder="000000"
+                placeholder="Code from email"
                 required
                 autoFocus
                 disabled={isLoading}
-                maxLength={6}
+                pattern="(?:[0-9]{6}|[0-9]{8})"
+                autoComplete="one-time-code"
               />
             </div>
 
             <button
               type="submit"
-              disabled={isLoading || code.length !== 6}
+              disabled={isLoading || !/^(?:[0-9]{6}|[0-9]{8})$/.test(code)}
               className="btn-primary w-full"
               style={{ marginTop: '8px', justifyContent: 'center' }}
             >

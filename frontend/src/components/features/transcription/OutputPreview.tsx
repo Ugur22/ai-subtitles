@@ -22,6 +22,10 @@ const ON_SCREEN = SAMPLE.filter((line) => line.onScreen);
 
 export const OutputPreview: React.FC = React.memo(() => (
   <figure className="m-0 flex min-w-0 flex-[1_1_520px] flex-col gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 px-2 text-[11px] text-text-tertiary">
+      <span className="font-medium uppercase tracking-[0.12em]">Inside the transcript</span>
+      <span className="mono">ES → EN · 3 speakers · Sample</span>
+    </div>
     <div className="relative">
       <SpeakerField />
       <div className="relative flex flex-col gap-2 rounded-[18px] border border-border-subtle bg-surface p-2 shadow-lg">
@@ -48,7 +52,7 @@ export const OutputPreview: React.FC = React.memo(() => (
           {SAMPLE.map((line) => (
             <li
               key={line.time}
-              className={`grid grid-cols-[72px_88px_minmax(0,1fr)] items-baseline gap-3 rounded-sm px-4 py-3 ${
+              className={`grid grid-cols-[56px_minmax(0,1fr)] sm:grid-cols-[72px_88px_minmax(0,1fr)] items-baseline gap-3 rounded-sm px-4 py-3 ${
                 line.active ? "bg-accent-dim ring-1 ring-inset ring-accent-border" : ""
               }`}
             >
@@ -59,7 +63,7 @@ export const OutputPreview: React.FC = React.memo(() => (
                 <span className={`h-2 w-2 shrink-0 rounded-full ${line.dot}`} aria-hidden="true" />
                 {line.speaker}
               </span>
-              <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="col-start-2 flex min-w-0 flex-col gap-0.5 sm:col-start-auto">
                 <span className="text-sm text-text-primary">{line.original}</span>
                 <span className="text-[13px] text-text-tertiary">{line.translation}</span>
               </span>

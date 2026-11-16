@@ -246,7 +246,7 @@ async def register(request: RegisterRequest):
     Register a new user with email, password, and invite code.
 
     Creates Supabase auth user and user_profile entry.
-    Sends verification email with 6-digit code.
+    Sends verification email with code.
 
     Raises:
         400: Invalid invite code, weak password, or duplicate email
@@ -361,7 +361,7 @@ async def register(request: RegisterRequest):
                 detail="Invalid or already used invite code"
             )
 
-        # The verification email (6-digit OTP) is sent by Supabase as part of
+        # The verification email (OTP) is sent by Supabase as part of
         # sign_up above, because "Confirm email" is enabled on the project and
         # the "Confirm signup" template uses {{ .Token }}. We verify it later
         # via auth.verify_otp in /verify-email.
@@ -388,7 +388,7 @@ async def register(request: RegisterRequest):
 @router.post("/verify-email", response_model=VerifyEmailResponse)
 async def verify_email(request: VerifyEmailRequest, response: Response):
     """
-    Verify email with the 6-digit OTP that Supabase emailed at sign-up.
+    Verify email with the OTP that Supabase emailed at sign-up.
 
     Confirms the Supabase auth user via auth.verify_otp (type="signup"),
     marks the profile verified, and sets HttpOnly session cookies so the
@@ -733,7 +733,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     """
     Request password reset code.
 
-    Sends a 6-digit recovery OTP via Supabase if the account exists.
+    Sends a recovery OTP via Supabase if the account exists.
     Always returns success for security (don't reveal if email exists).
     """
     try:
@@ -774,8 +774,7 @@ async def reset_password(request: ResetPasswordRequest):
     """
     Reset password with the recovery OTP that Supabase emailed.
 
-    Verifies the OTP (type="recovery") and updates the password on the
-    resulting session.
+    Verifies the OTP (type="recovery") and updates the verified user by ID.
 
     Raises:
         400: Invalid code, expired code, or weak password
@@ -811,10 +810,10 @@ async def reset_password(request: ResetPasswordRequest):
                 detail="Invalid or expired reset code"
             )
 
-        # Update the password by user id. update_user() without a token acts on
-        # whatever session its client holds, not on the user the OTP belongs to.
+        # OTP verification replaces the fresh client's service-role authorization
+        # with a user session, so admin calls need the separate service-role client.
         try:
-            auth_client.auth.admin.update_user_by_id(
+            SupabaseService.get_auth_client().auth.admin.update_user_by_id(
                 otp_response.user.id, {"password": request.new_password}
             )
             print(f"[Auth] Password reset successfully for user: {otp_response.user.id}")

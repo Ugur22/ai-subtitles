@@ -57,14 +57,19 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
     return (
       <section className="relative overflow-hidden">
-        <div className="relative mx-auto box-content flex max-w-page flex-wrap items-center gap-12 px-8 pb-24 pt-20">
+        <header className="relative mx-auto flex max-w-page items-center justify-between gap-4 border-b border-border-subtle px-6 py-5 sm:px-8">
+          <span className="text-sm font-semibold text-text-primary">AI Subs <span className="ml-3 border-l border-border-default pl-3 font-normal text-text-tertiary">Workspace</span></span>
+          <span className="mono text-[11px] text-text-tertiary">VIDEO / AUDIO → TRANSCRIPT</span>
+        </header>
+        <div className="relative mx-auto box-content flex max-w-page flex-wrap items-center gap-10 px-6 pb-10 pt-10 sm:px-8 sm:pt-12">
           <div className="flex min-w-0 max-w-[480px] flex-[1_1_400px] flex-col gap-8">
             <div className="flex flex-col gap-3">
-              <h1 className="m-0 text-balance text-[40px] font-medium leading-[48px] tracking-[-0.02em] text-text-primary">
-                Subtitles with speaker names, from any video or audio file
+              <span className="mono text-[11px] uppercase tracking-[0.16em] text-accent">Your next transcript starts here</span>
+              <h1 className="m-0 text-balance text-[36px] font-medium leading-[1.12] tracking-[-0.035em] text-text-primary sm:text-[44px]">
+                Every word. Every speaker.
               </h1>
               <p className="m-0 text-base leading-6 text-text-secondary">
-                Upload a file and come back later if you like. We transcribe it, mark who says what, and translate it. A 50-minute episode takes about half an hour.
+                Turn video or audio into a transcript with named speakers, translations, and subtitles synced to your file.
               </p>
             </div>
 
@@ -173,6 +178,24 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           </div>
 
           <OutputPreview />
+        </div>
+        <div className="relative mx-auto max-w-page px-6 pb-10 sm:px-8">
+          <ol aria-label="How transcription works" className="m-0 grid list-none gap-6 border-t border-border-subtle p-0 pt-6 sm:grid-cols-3">
+            {[
+              { step: '01', title: 'Bring your footage', detail: 'Upload a video, recording, interview, or podcast.' },
+              { step: '02', title: 'Let it process', detail: 'We transcribe, separate speakers, and translate. You can come back later.' },
+              { step: '03', title: 'Work with every word', detail: 'Follow the transcript alongside your video, with speakers and timestamps.' },
+            ].map(({ step, title, detail }) => (
+              <li key={step} className="flex gap-3">
+                <span className="mono pt-0.5 text-[11px] text-accent">{step}</span>
+                <div>
+                  <h2 className="m-0 text-[13px] font-medium text-text-primary">{title}</h2>
+                  <p className="mb-0 mt-1 max-w-[32ch] text-xs leading-5 text-text-tertiary">{detail}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <p className="mb-0 mt-6 text-[11px] text-text-tertiary">Processing time depends on file length. Allow about half an hour for a 50-minute episode.</p>
         </div>
       </section>
     );
