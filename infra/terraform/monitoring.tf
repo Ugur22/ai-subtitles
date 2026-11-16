@@ -52,10 +52,16 @@ resource "google_monitoring_alert_policy" "job_failures" {
   conditions {
     display_name = "job_failed over the last hour > 2"
 
-    # PromQL, because the metric comes from two monitored-resource types
-    # (cloud_run_revision and cloud_run_job), which a threshold filter cannot sum together.
+    # The metric comes from two monitored-resource types (the API on cloud_run_revision,
+    # the worker on cloud_run_job). Cloud Monitoring PromQL requires a monitored_resource
+    # matcher in that case, so each type is summed on its own and the two are added.
+    # `or vector(0)` keeps an hour with failures on only one side from yielding no result.
     condition_prometheus_query_language {
-      query               = "sum(increase(logging_googleapis_com:user_${google_logging_metric.job_failed.name}[1h])) > 2"
+      query               = <<-EOT
+        (sum(increase(logging_googleapis_com:user_${google_logging_metric.job_failed.name}{monitored_resource="cloud_run_revision"}[1h])) or vector(0))
+        + (sum(increase(logging_googleapis_com:user_${google_logging_metric.job_failed.name}{monitored_resource="cloud_run_job"}[1h])) or vector(0))
+        > 2
+      EOT
       duration            = "0s"
       evaluation_interval = "60s"
     }
