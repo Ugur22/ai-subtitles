@@ -28,7 +28,6 @@ WORKER_TIMEOUT_MESSAGE = (
 # so a job deferred by its owner's concurrency limit does not block the rest.
 TIMEOUT_RETRY_CANDIDATES = 5
 WAITING_FOR_GPU_STAGE = "waiting_for_gpu"
-WAITING_FOR_GPU_MESSAGE = "Waiting for a free GPU slot"
 CLAIM_OUTCOMES = ("claimed", "at_capacity", "not_pending")
 
 
@@ -474,17 +473,6 @@ class JobQueueService:
         return outcome
 
     @staticmethod
-    def mark_waiting_for_gpu(job_id: str) -> bool:
-        now = datetime.utcnow().isoformat()
-        response = supabase().table("jobs").update({
-            "stage": WAITING_FOR_GPU_STAGE,
-            "message": WAITING_FOR_GPU_MESSAGE,
-            "updated_at": now,
-            "last_seen": now,
-        }).eq("id", job_id).eq("status", "pending").execute()
-        return bool(response.data)
-
-    @staticmethod
     def dispatch_waiting_for_gpu_job() -> Optional[str]:
         response = supabase().rpc("claim_waiting_for_gpu_job", {
             "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
@@ -493,11 +481,10 @@ class JobQueueService:
         if not job_id:
             return None
         try:
-            JobQueueService.trigger_worker_job(job_id)
+            if JobQueueService.trigger_worker_job(job_id):
+                print(f"[JobQueue] Dispatched job {job_id} to a free GPU slot")
         except Exception as dispatch_error:
             print(f"[JobQueue] Dispatch of waiting job {job_id} failed: {dispatch_error}")
-        else:
-            print(f"[JobQueue] Dispatched job {job_id} to a free GPU slot")
         return job_id
 
     @staticmethod
@@ -1030,9 +1017,26 @@ class JobQueueService:
 
     @staticmethod
     def trigger_worker_job(job_id: str) -> bool:
-        """Dispatch via the backend selected by explicit runtime mode."""
+        """
+        Dispatch via the backend selected by explicit runtime mode.
+
+        Returns False without dispatching when every GPU slot is taken: the job
+        is then parked as WAITING_FOR_GPU_STAGE for check-stale.
+        """
         from services.job_dispatcher import get_job_dispatcher
 
+        try:
+            parked = supabase().rpc("park_job_if_no_gpu_slot", {
+                "p_job_id": job_id,
+                "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
+            }).execute().data is True
+        except Exception as error:
+            # The worker's claim enforces the limit too, so dispatching is safe.
+            print(f"[JobQueue] GPU slot check failed for {job_id}, dispatching anyway: {error}")
+            parked = False
+        if parked:
+            print(f"[JobQueue] No free GPU slot for {job_id}; parked without starting a worker")
+            return False
         get_job_dispatcher().dispatch(job_id)
         return True
 

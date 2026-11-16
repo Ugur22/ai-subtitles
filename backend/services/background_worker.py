@@ -318,7 +318,6 @@ class BackgroundWorker:
 
             claim = JobQueueService.claim_for_processing(job_id)
             if claim == "at_capacity":
-                JobQueueService.mark_waiting_for_gpu(job_id)
                 print(f"[Worker] Job {job_id} is waiting for a free GPU slot; exiting")
                 return True
             if claim != "claimed":

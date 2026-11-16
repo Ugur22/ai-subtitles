@@ -270,20 +270,22 @@ def test_timeout_auto_retry_is_granted_once_and_respects_limits():
         assert _job(cursor, job_id, "status, error_code") == ("failed", "worker_timeout")
 
 
-GPU_SLOT_MIGRATIONS = MIGRATIONS + ("021_gpu_slot_wait.sql",)
+GPU_SLOT_MIGRATIONS = MIGRATIONS + ("021_gpu_slot_wait.sql", "022_gpu_slot_hold.sql")
 
 
-def _pending_job(cursor, stage="queued", continuation_count=0, created_offset="0 minutes"):
+def _pending_job(
+    cursor, stage="queued", continuation_count=0, created_offset="0 minutes", holds=False,
+):
     user_id, job_id = uuid.uuid4(), uuid.uuid4()
     cursor.execute("INSERT INTO user_profiles (id) VALUES (%s)", (user_id,))
     cursor.execute(
         """
         INSERT INTO jobs (id, user_id, status, stage, progress, retry_count,
-                          continuation_count, started_at, created_at, last_seen)
-        VALUES (%s, %s, 'pending', %s, 42, 1, %s, now() - interval '50 minutes',
+                          continuation_count, holds_gpu_slot, started_at, created_at, last_seen)
+        VALUES (%s, %s, 'pending', %s, 42, 1, %s, %s, now() - interval '50 minutes',
                 now() - %s::interval, now() - interval '1 hour')
         """,
-        (job_id, user_id, stage, continuation_count, created_offset),
+        (job_id, user_id, stage, continuation_count, holds, created_offset),
     )
     return job_id
 
@@ -295,14 +297,15 @@ def _fill_slots(cursor, count=3):
 def test_continuation_is_claimed_even_when_every_slot_is_taken():
     with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
         _fill_slots(cursor)
-        continuation = _pending_job(cursor, stage="continuing", continuation_count=1)
+        # Stage rewritten by a recovery: the hold, not the stage, keeps the slot.
+        continuation = _pending_job(cursor, stage="queued", continuation_count=1, holds=True)
         started_at = _job(cursor, continuation, "started_at")[0]
 
         cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (continuation,))
         assert cursor.fetchone()[0] == "claimed"
-        assert _job(cursor, continuation, "status, progress, started_at, message") == (
-            "processing", 42, started_at, "Resuming from checkpoint",
-        )
+        assert _job(
+            cursor, continuation, "status, progress, started_at, message, holds_gpu_slot",
+        ) == ("processing", 42, started_at, "Resuming from checkpoint", False)
 
         cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (continuation,))
         assert cursor.fetchone()[0] == "not_pending"
@@ -312,12 +315,15 @@ def test_new_job_at_capacity_is_refused_without_touching_its_retries():
     with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
         busy = _fill_slots(cursor)
         new_job = _pending_job(cursor)
-        retried_chain = _pending_job(cursor, stage="queued", continuation_count=2)
+        stage_only = _pending_job(cursor, stage="continuing", continuation_count=2)
 
-        for job_id in (new_job, retried_chain):
+        for job_id in (new_job, stage_only):
             cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (job_id,))
             assert cursor.fetchone()[0] == "at_capacity"
-            assert _job(cursor, job_id, "status, retry_count") == ("pending", 1)
+            assert _job(
+                cursor, job_id,
+                "status, stage, message, retry_count, last_seen > now() - interval '1 minute'",
+            ) == ("pending", "waiting_for_gpu", "Waiting for a free GPU slot", 1, True)
         cursor.execute("SELECT claim_job(%s, 3)", (new_job,))
         assert cursor.fetchone()[0] is False
 
@@ -365,3 +371,43 @@ def test_concurrent_check_stale_runs_hand_out_a_waiting_job_once():
         with ThreadPoolExecutor(max_workers=2) as executor:
             claims = list(executor.map(lambda _index: claim(), range(2)))
         assert sorted(claims, key=str) == sorted([waiting, None], key=str)
+
+
+def test_requeue_sets_the_slot_hold_and_leaving_pending_clears_it():
+    with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
+        user_id, job_id = _processing_job(cursor)
+        cursor.execute("SELECT requeue_job_for_continuation(%s, 5, 1)", (job_id,))
+        assert cursor.fetchone()[0] == "continue"
+        assert _job(cursor, job_id, "status, holds_gpu_slot") == ("pending", True)
+
+        cursor.execute("UPDATE jobs SET stage = 'queued' WHERE id = %s", (job_id,))
+        assert _job(cursor, job_id, "holds_gpu_slot")[0] is True
+
+        cursor.execute("UPDATE jobs SET status = 'cancelled' WHERE id = %s", (job_id,))
+        assert _job(cursor, job_id, "holds_gpu_slot")[0] is False
+
+        holder = _pending_job(cursor, stage="continuing", continuation_count=1, holds=True)
+        cursor.execute("UPDATE jobs SET status = 'failed' WHERE id = %s", (holder,))
+        cursor.execute("UPDATE jobs SET status = 'pending', stage = 'queued' WHERE id = %s", (holder,))
+        _fill_slots(cursor)
+        cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (holder,))
+        assert cursor.fetchone()[0] == "at_capacity"
+
+
+def test_park_before_dispatch_only_parks_a_pending_job_without_a_hold_when_full():
+    with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
+        new_job = _pending_job(cursor)
+        holder = _pending_job(cursor, stage="continuing", continuation_count=1, holds=True)
+        finished = _pending_job(cursor)
+        cursor.execute("UPDATE jobs SET status = 'completed' WHERE id = %s", (finished,))
+
+        cursor.execute("SELECT park_job_if_no_gpu_slot(%s, 3)", (new_job,))
+        assert cursor.fetchone()[0] is False
+        assert _job(cursor, new_job, "stage")[0] == "queued"
+
+        _fill_slots(cursor)
+        for job_id, parked in ((new_job, True), (holder, False), (finished, False)):
+            cursor.execute("SELECT park_job_if_no_gpu_slot(%s, 3)", (job_id,))
+            assert cursor.fetchone()[0] is parked
+        assert _job(cursor, new_job, "status, stage, retry_count") == ("pending", "waiting_for_gpu", 1)
+        assert _job(cursor, holder, "stage")[0] == "continuing"
