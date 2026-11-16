@@ -8,6 +8,7 @@ Every failure path (no key, SDK missing, Flagsmith down, unknown flag) means
 """
 import logging
 import threading
+import time
 from typing import Dict, Optional
 
 from fastapi import HTTPException
@@ -19,17 +20,26 @@ logger = logging.getLogger(__name__)
 # Only these names are evaluated or exposed to clients; anything else is off.
 KNOWN_FLAGS = ("chapters", "summary")
 
+INIT_RETRY_COOLDOWN_SECONDS = 300
+
 _client = None
 _client_lock = threading.Lock()
-_init_failed = False
+_init_failed_at: Optional[float] = None
+
+
+def _in_cooldown() -> bool:
+    return (
+        _init_failed_at is not None
+        and time.monotonic() - _init_failed_at < INIT_RETRY_COOLDOWN_SECONDS
+    )
 
 
 def _get_client():
-    global _client, _init_failed
-    if _client is not None or _init_failed or not settings.FLAGSMITH_SERVER_KEY:
+    global _client, _init_failed_at
+    if _client is not None or _in_cooldown() or not settings.FLAGSMITH_SERVER_KEY:
         return _client
     with _client_lock:
-        if _client is None and not _init_failed:
+        if _client is None and not _in_cooldown():
             try:
                 # Imported lazily so a missing SDK disables flags instead of crashing startup.
                 from flagsmith import Flagsmith
@@ -42,8 +52,11 @@ def _get_client():
                     environment_refresh_interval_seconds=60,
                 )
             except Exception:
-                _init_failed = True
-                logger.exception("Flagsmith init failed; all feature flags are disabled")
+                _init_failed_at = time.monotonic()
+                logger.exception(
+                    "Flagsmith init failed; feature flags are disabled for %ss",
+                    INIT_RETRY_COOLDOWN_SECONDS,
+                )
     return _client
 
 
@@ -77,6 +90,6 @@ def require_feature(name: str):
 
 
 def _reset_for_tests(client: Optional[object] = None) -> None:
-    global _client, _init_failed
+    global _client, _init_failed_at
     _client = client
-    _init_failed = False
+    _init_failed_at = None

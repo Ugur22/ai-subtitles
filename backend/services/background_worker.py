@@ -316,8 +316,11 @@ class BackgroundWorker:
                 print(f"[Worker] Job {job_id} is not pending (status: {job['status']})")
                 return False
 
-            # Mark as processing
-            if not JobQueueService.mark_processing(job_id):
+            claim = JobQueueService.claim_for_processing(job_id)
+            if claim == "at_capacity":
+                print(f"[Worker] Job {job_id} is waiting for a free GPU slot; exiting")
+                return True
+            if claim != "claimed":
                 print(f"[Worker] Job {job_id} could not be claimed")
                 return False
 

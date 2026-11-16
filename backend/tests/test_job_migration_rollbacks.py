@@ -93,3 +93,39 @@ def test_orphan_cleanup_covers_the_same_tables_as_020():
     deleted = set(re.findall(r"DELETE FROM (\w+) d WHERE NOT EXISTS", cleanup))
 
     assert deleted == set(DERIVED_TABLES)
+
+
+def test_021_rollback_restores_018_claim_and_drops_the_rest():
+    forward, rollback = _read("021_gpu_slot_wait.sql"), _read("021_gpu_slot_wait_rollback.sql")
+
+    assert _function(rollback, "claim_job") == _function(
+        _read("018_job_continuations.sql"), "claim_job"
+    )
+    assert _created_functions(rollback) == {"claim_job"}
+    for name in _created_functions(forward) - {"claim_job"}:
+        assert f"DROP FUNCTION IF EXISTS {name}(" in rollback
+    for index in re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", forward):
+        assert f"DROP INDEX IF EXISTS {index}" in rollback
+    assert "stage = 'waiting_for_gpu'" in rollback
+    assert rollback.count("BEGIN;") == 1 and rollback.rstrip().endswith("COMMIT;")
+    assert forward.count("BEGIN;") == 1 and forward.rstrip().endswith("COMMIT;")
+
+
+def test_022_rollback_restores_the_previous_functions_and_drops_the_rest():
+    forward, rollback = _read("022_gpu_slot_hold.sql"), _read("022_gpu_slot_hold_rollback.sql")
+
+    assert _function(rollback, "requeue_job_for_continuation") == _function(
+        _read("018_job_continuations.sql"), "requeue_job_for_continuation"
+    )
+    assert _function(rollback, "claim_job_with_outcome") == _function(
+        _read("021_gpu_slot_wait.sql"), "claim_job_with_outcome"
+    )
+    assert _created_functions(rollback) == {"requeue_job_for_continuation", "claim_job_with_outcome"}
+    for name in _created_functions(forward) - _created_functions(rollback):
+        assert f"DROP FUNCTION IF EXISTS {name}(" in rollback
+    for column in re.findall(r"ADD COLUMN IF NOT EXISTS (\w+)", forward):
+        assert f"DROP COLUMN IF EXISTS {column}" in rollback
+    assert "DROP TRIGGER IF EXISTS jobs_release_gpu_slot_hold ON jobs;" in rollback
+    assert "holds_gpu_slot = true" in _function(forward, "requeue_job_for_continuation")
+    for sql in (forward, rollback):
+        assert sql.count("BEGIN;") == 1 and sql.rstrip().endswith("COMMIT;")

@@ -14,8 +14,8 @@ from utils.time_utils import parse_db_timestamp
 GLOBAL_CONCURRENT_LIMIT = 3
 STALE_THRESHOLD_SECONDS = 90
 # A job left in 'pending' longer than this never had a worker pick it up — the
-# dispatch failed or the worker crashed before mark_processing(). There is no
-# other poller for pending jobs, so the stale-check recovers these too. Must be
+# dispatch failed or the worker crashed before claiming it. There is no other
+# poller for pending jobs, so the stale-check recovers these too. Must be
 # comfortably above worker cold-start + provisioning (~2-3 min observed).
 PENDING_STALE_SECONDS = 600
 MAX_RETRIES = 3
@@ -27,6 +27,8 @@ WORKER_TIMEOUT_MESSAGE = (
 # How many failed-by-timeout jobs one check-stale run looks at. More than one
 # so a job deferred by its owner's concurrency limit does not block the rest.
 TIMEOUT_RETRY_CANDIDATES = 5
+WAITING_FOR_GPU_STAGE = "waiting_for_gpu"
+CLAIM_OUTCOMES = ("claimed", "at_capacity", "not_pending")
 
 
 class JobQueueError(Exception):
@@ -454,29 +456,36 @@ class JobQueueService:
             return False
 
     @staticmethod
-    def mark_processing(job_id: str) -> bool:
+    def claim_for_processing(job_id: str) -> str:
         """
-        Mark a job as processing (status change from pending to processing).
+        Move a pending job to processing.
 
-        Args:
-            job_id: Job ID
-
-        Returns:
-            True if successful
-
-        Raises:
-            Exception: If job is not in pending state
+        Returns 'claimed', 'at_capacity' (every GPU slot is taken; the job is
+        still pending) or 'not_pending'.
         """
-        client = supabase()
-
-        response = client.rpc("claim_job", {
+        response = supabase().rpc("claim_job_with_outcome", {
             "p_job_id": job_id,
             "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
         }).execute()
-        success = response.data is True
-        if success:
+        outcome = response.data if response.data in CLAIM_OUTCOMES else "not_pending"
+        if outcome == "claimed":
             print(f"[JobQueue] Marked job {job_id} as processing")
-        return success
+        return outcome
+
+    @staticmethod
+    def dispatch_waiting_for_gpu_job() -> Optional[str]:
+        response = supabase().rpc("claim_waiting_for_gpu_job", {
+            "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
+        }).execute()
+        job_id = response.data
+        if not job_id:
+            return None
+        try:
+            if JobQueueService.trigger_worker_job(job_id):
+                print(f"[JobQueue] Dispatched job {job_id} to a free GPU slot")
+        except Exception as dispatch_error:
+            print(f"[JobQueue] Dispatch of waiting job {job_id} failed: {dispatch_error}")
+        return job_id
 
     @staticmethod
     def mark_completed(
@@ -791,15 +800,18 @@ class JobQueueService:
         Find and recover ONE stuck job, then re-dispatch it (or fail it if retries
         are exhausted). Rate-limited to one job per call.
 
-        Two stuck conditions are handled, processing first:
-          1. status='processing' with no heartbeat for STALE_THRESHOLD_SECONDS —
-             the worker crashed mid-job.
-          0. status='failed' with error_code 'worker_timeout' that has not had
+        Checked in this order:
+          1. status='finalizing' with no heartbeat for STALE_THRESHOLD_SECONDS.
+          2. status='failed' with error_code 'worker_timeout' that has not had
              its one automatic retry yet (the worker hit the task timeout).
-          2. status='pending' older than PENDING_STALE_SECONDS — the worker never
-             started (dispatch failed, or the container crashed before
-             mark_processing). There is no other poller for pending jobs, so
-             without this they would sit stranded forever.
+          3. status='processing' with no heartbeat for STALE_THRESHOLD_SECONDS —
+             the worker crashed mid-job.
+          4. status='pending', stage WAITING_FOR_GPU_STAGE, once a GPU slot is
+             free. retry_count is not touched.
+          5. Any other status='pending' older than PENDING_STALE_SECONDS — the
+             worker never started (dispatch failed, or the container crashed
+             before claiming the job). There is no other poller for pending
+             jobs, so without this they would sit stranded forever.
 
         Recovery re-dispatches the worker (recovery used to only flip the status
         back to 'pending', which left the job stranded since nothing re-triggers
@@ -861,11 +873,15 @@ class JobQueueService:
 
         # 2. Otherwise, pending jobs a worker never picked up
         if not stuck_job:
+            waiting_job_id = JobQueueService.dispatch_waiting_for_gpu_job()
+            if waiting_job_id:
+                return waiting_job_id
             pending_threshold = now - timedelta(seconds=PENDING_STALE_SECONDS)
             response = (
                 client.table("jobs")
                 .select("*")
                 .eq("status", "pending")
+                .or_(f"stage.is.null,stage.neq.{WAITING_FOR_GPU_STAGE}")
                 .lt("last_seen", pending_threshold.isoformat())
                 .order("last_seen", desc=False)  # Oldest first
                 .limit(1)
@@ -894,14 +910,18 @@ class JobQueueService:
         # don't re-trigger before the worker has a chance to boot, then re-dispatch.
         # Conditional on the state that was read, so a concurrent check-stale run
         # (or a job that finished meanwhile) cannot lead to a second dispatch.
-        recovery = client.table("jobs").update({
+        recovery_values = {
             "status": "pending",
-            "stage": "queued",
             "message": f"Recovered ({reason}) - retrying (attempt {retry_count + 1}/{MAX_RETRIES})",
             "retry_count": retry_count + 1,
             "updated_at": now.isoformat(),
             "last_seen": now.isoformat(),
-        }).eq("id", job_id).eq("status", stuck_job["status"])
+        }
+        if stuck_job["status"] != "pending":
+            recovery_values["stage"] = "queued"
+        recovery = client.table("jobs").update(recovery_values).eq(
+            "id", job_id
+        ).eq("status", stuck_job["status"])
         raw_retry_count = stuck_job.get("retry_count")
         recovery = (
             recovery.is_("retry_count", "null") if raw_retry_count is None
@@ -997,9 +1017,26 @@ class JobQueueService:
 
     @staticmethod
     def trigger_worker_job(job_id: str) -> bool:
-        """Dispatch via the backend selected by explicit runtime mode."""
+        """
+        Dispatch via the backend selected by explicit runtime mode.
+
+        Returns False without dispatching when every GPU slot is taken: the job
+        is then parked as WAITING_FOR_GPU_STAGE for check-stale.
+        """
         from services.job_dispatcher import get_job_dispatcher
 
+        try:
+            parked = supabase().rpc("park_job_if_no_gpu_slot", {
+                "p_job_id": job_id,
+                "p_global_processing_limit": GLOBAL_CONCURRENT_LIMIT,
+            }).execute().data is True
+        except Exception as error:
+            # The worker's claim enforces the limit too, so dispatching is safe.
+            print(f"[JobQueue] GPU slot check failed for {job_id}, dispatching anyway: {error}")
+            parked = False
+        if parked:
+            print(f"[JobQueue] No free GPU slot for {job_id}; parked without starting a worker")
+            return False
         get_job_dispatcher().dispatch(job_id)
         return True
 

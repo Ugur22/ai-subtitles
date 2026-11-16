@@ -882,11 +882,12 @@ async def check_stale_jobs(request: Request, background_tasks: BackgroundTasks):
 
     This endpoint is called by Cloud Scheduler every 5 minutes to detect jobs
     that are stuck either in 'processing' (worker crashed mid-job) or in 'pending'
-    (worker never started — dispatch failed or crashed before mark_processing).
+    (worker never started — dispatch failed or crashed before claiming the job).
     Requires admin authentication to prevent unauthorized access.
 
     **Stale Detection**: processing jobs with no heartbeat for 90+ seconds, or
       pending jobs older than PENDING_STALE_SECONDS (no other poller picks these up)
+    **Waiting for a GPU slot**: re-dispatched once a slot is free, without counting a retry
     **Recovery**: re-dispatches the worker; after max 3 attempts marks the job failed
     **Rate Limit**: Processes one stuck job per call
 
