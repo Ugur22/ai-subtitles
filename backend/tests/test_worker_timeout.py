@@ -40,6 +40,11 @@ class Query:
         self.filters[f"{column}<"] = value
         return self
 
+    def or_(self, expression):
+        assert expression == "stage.is.null,stage.neq.waiting_for_gpu"
+        self.filters["stage!="] = "waiting_for_gpu"
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 
@@ -79,6 +84,9 @@ class Client:
             if column.endswith("<"):
                 if not (job.get(column[:-1]) or 0) < value:
                     return False
+            elif column.endswith("!="):
+                if job.get(column[:-2]) == value:
+                    return False
             elif job.get(column) != value:
                 return False
         return True
@@ -90,6 +98,8 @@ class Client:
     def _rpc(self, name, params):
         if name == "claim_stale_finalizing_job":
             return []
+        if name == "claim_waiting_for_gpu_job":
+            return None
         job = next((j for j in self.jobs if j["id"] == params["p_job_id"]), None)
         if name == "timeout_job_secure":
             if not job or job["status"] != "processing":

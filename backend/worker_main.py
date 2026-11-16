@@ -5,8 +5,8 @@ This is invoked as `python -m worker_main <job_id>` by a Cloud Run Job
 execution. It runs the pipeline that used to live behind FastAPI's
 `BackgroundTasks`, but standalone — no HTTP server, no scale-to-zero risk.
 
-Exit code 0 = success or a clean hand-over to a continuation execution,
-1 = failure or cancellation.
+Exit code 0 = success, a clean hand-over to a continuation execution, or no
+free GPU slot (the job waits for check-stale); 1 = failure or cancellation.
 """
 import asyncio
 import os

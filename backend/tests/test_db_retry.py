@@ -137,12 +137,12 @@ def test_worker_retries_its_job_reads():
 
 
 def test_claim_is_not_retried(monkeypatch):
-    client = RpcClient(errors={"claim_job": [DISCONNECT]})
+    client = RpcClient(errors={"claim_job_with_outcome": [DISCONNECT]})
     monkeypatch.setattr(job_queue_service, "supabase", lambda: client)
 
     with pytest.raises(httpx.RemoteProtocolError):
-        JobQueueService.mark_processing("job-a")
-    assert client.calls == ["claim_job"]
+        JobQueueService.claim_for_processing("job-a")
+    assert client.calls == ["claim_job_with_outcome"]
 
 
 def test_continuation_whose_first_attempt_landed_still_continues(monkeypatch):

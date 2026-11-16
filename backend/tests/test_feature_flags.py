@@ -132,3 +132,31 @@ def test_generate_summary_route_is_guarded():
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "generate_summary"
     )
     assert any(_calls_require_feature(decorator, "summary") for decorator in func.decorator_list)
+
+
+def test_failed_init_is_retried_after_the_cooldown(monkeypatch):
+    import sys
+    import types
+
+    now = [1000.0]
+    monkeypatch.setattr(feature_flags.time, "monotonic", lambda: now[0])
+    attempts = []
+
+    def flagsmith(**_kwargs):
+        attempts.append(now[0])
+        if len(attempts) == 1:
+            raise RuntimeError("Flagsmith unreachable")
+        return _FakeClient(enabled={"summary"})
+
+    monkeypatch.setitem(sys.modules, "flagsmith", types.SimpleNamespace(Flagsmith=flagsmith))
+
+    assert is_enabled("summary") is False
+    now[0] += feature_flags.INIT_RETRY_COOLDOWN_SECONDS - 1
+    assert is_enabled("summary") is False
+    assert len(attempts) == 1
+
+    now[0] += 1
+    assert is_enabled("summary") is True
+    assert len(attempts) == 2
+    assert is_enabled("summary") is True
+    assert len(attempts) == 2
