@@ -87,6 +87,10 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+export function toReadableTitle(name: string): string {
+  return /\s/.test(name) ? name : name.replace(/[._]+/g, " ").trim();
+}
+
 /**
  * Get file extension from filename
  */

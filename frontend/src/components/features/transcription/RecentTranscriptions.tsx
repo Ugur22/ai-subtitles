@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Job } from "../../../types/job";
 import { formatRelativeTime } from "../../../utils/time";
-import { getFileExtension } from "../../../utils/file";
+import { getFileExtension, toReadableTitle } from "../../../utils/file";
 
 interface RecentTranscriptionsProps {
   jobs: Job[];
@@ -81,7 +81,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
   };
 
   return (
-    <section className="mt-14" aria-labelledby="recent-heading">
+    <section className="mt-8" aria-labelledby="recent-heading">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 id="recent-heading" className="m-0 text-[15px] font-medium text-text-primary">
           Recent
@@ -107,7 +107,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
           </>
         )}
         {recent.map((job) => {
-          const title = job.display_title?.trim() || job.filename.replace(/\.[^./]+$/, "");
+          const title = job.display_title?.trim() || toReadableTitle(job.filename.replace(/\.[^./]+$/, ""));
           const duration = job.result_json?.transcription?.duration;
           const lead = duration || getFileExtension(job.filename).toUpperCase();
           const language = languageLabel(job.language);

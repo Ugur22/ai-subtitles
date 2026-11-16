@@ -191,7 +191,11 @@ export const formatRelativeTime = (isoString: string): string => {
   } else if (diffDays < 7) {
     return `${diffDays} days ago`;
   } else {
-    // For older dates, show the actual date
-    return date.toLocaleDateString();
+    const sameYear = date.getFullYear() === now.getFullYear();
+    return date.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      ...(sameYear ? {} : { year: "numeric" }),
+    });
   }
 };

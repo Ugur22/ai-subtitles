@@ -57,7 +57,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
       : "border-border-default bg-surface hover:border-accent-border";
 
     return (
-      <section className="relative overflow-hidden border-b border-border-subtle bg-surface">
+      <section className="relative overflow-hidden">
         <SpeakerField />
 
         <div className="relative mx-auto box-content flex max-w-page flex-wrap items-center gap-12 px-8 pb-24 pt-20">

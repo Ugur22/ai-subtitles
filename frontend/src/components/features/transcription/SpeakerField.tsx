@@ -1,15 +1,19 @@
-import React from "react";
+import React, { useId } from "react";
 
 interface Bar {
   height: number;
   tone: string;
 }
 
-const SPEAKER_TONES = ["bg-sp-1", "bg-sp-2", "bg-sp-3", "bg-sp-4", "bg-sp-5"];
+const SPEAKER_TONES = ["fill-sp-1", "fill-sp-2", "fill-sp-3", "fill-sp-4", "fill-sp-5"];
 const ODD_ROW_SPEAKER_COUNT = 3;
-const SILENCE_TONE = "bg-border-default";
+const SILENCE_TONE = "fill-border-default";
 const ROWS = 8;
+const ROW_HEIGHT = 56;
 const BARS_PER_TILE = 72;
+const BAR_WIDTH = 4;
+const BAR_STEP = 8;
+const TILE_WIDTH = BARS_PER_TILE * BAR_STEP;
 const FIXED_SEED = 7;
 
 const seededRandom = (seed: number) => () => {
@@ -17,9 +21,7 @@ const seededRandom = (seed: number) => () => {
   return (seed - 1) / 2147483646;
 };
 
-const repeatForSpeakerDriftLoop = <T,>(tile: T[]): T[] => tile.concat(tile);
-
-const buildRows = (): Bar[][] => {
+const buildTiles = (): Bar[][] => {
   const rand = seededRandom(FIXED_SEED);
 
   return Array.from({ length: ROWS }, (_, row) => {
@@ -37,30 +39,47 @@ const buildRows = (): Bar[][] => {
         tile.push({ height, tone });
       }
     }
-    return repeatForSpeakerDriftLoop(tile);
+    return tile;
   });
 };
 
-const ROW_DATA = buildRows();
+const TILES = buildTiles();
 
-export const SpeakerField: React.FC = React.memo(() => (
-  <div
-    aria-hidden="true"
-    className="speaker-field-mask pointer-events-none absolute inset-0 flex flex-col justify-center gap-4 opacity-[0.18] lg:opacity-70"
-  >
-    {ROW_DATA.map((bars, row) => (
-      <div key={row} className="h-14 overflow-hidden">
-        <div className={`speaker-field-track flex h-14 w-max items-center gap-1 ${row % 2 ? "is-rev" : ""}`}>
-          {bars.map((bar, i) => (
-            <i
-              key={i}
-              className={`block w-1 shrink-0 rounded-[2px] ${bar.tone}`}
-              style={{ height: bar.height }}
-            />
-          ))}
-        </div>
-      </div>
-    ))}
-  </div>
-));
+export const SpeakerField: React.FC = React.memo(() => {
+  const idPrefix = useId().replace(/:/g, "");
+
+  return (
+    <div
+      aria-hidden="true"
+      className="speaker-field-mask pointer-events-none absolute inset-0 hidden flex-col justify-center gap-4 opacity-70 lg:flex"
+      style={{ "--speaker-tile": `${TILE_WIDTH}px` } as React.CSSProperties}
+    >
+      {TILES.map((tile, row) => {
+        const patternId = `${idPrefix}-row-${row}`;
+        return (
+          <div key={row} className="overflow-hidden" style={{ height: ROW_HEIGHT }}>
+            <svg className={`speaker-field-track block ${row % 2 ? "is-rev" : ""}`} height={ROW_HEIGHT}>
+              <defs>
+                <pattern id={patternId} width={TILE_WIDTH} height={ROW_HEIGHT} patternUnits="userSpaceOnUse">
+                  {tile.map((bar, i) => (
+                    <rect
+                      key={i}
+                      className={bar.tone}
+                      x={i * BAR_STEP}
+                      y={(ROW_HEIGHT - bar.height) / 2}
+                      width={BAR_WIDTH}
+                      height={bar.height}
+                      rx={2}
+                    />
+                  ))}
+                </pattern>
+              </defs>
+              <rect width="100%" height={ROW_HEIGHT} fill={`url(#${patternId})`} />
+            </svg>
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 SpeakerField.displayName = "SpeakerField";
