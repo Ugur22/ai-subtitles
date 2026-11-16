@@ -147,6 +147,7 @@ deploy_to_cloud_run() {
         --memory="${SERVICE_MEMORY}" \
         --cpu="${SERVICE_CPU}" \
         --gpu=0 \
+        --cpu-boost \
         --timeout="${SERVICE_TIMEOUT}" \
         --min-instances="${SERVICE_MIN_INSTANCES}" \
         --max-instances="${SERVICE_MAX_INSTANCES}" \
