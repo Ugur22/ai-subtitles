@@ -150,8 +150,21 @@ Its rollback deletes that row: `DELETE FROM public.schema_migrations WHERE versi
 
 ## Rolling back Terraform
 
+- **The service-account switch:** while the default compute SA still holds Editor, point both back at it without a redeploy, then investigate:
+  ```bash
+  gcloud run services update ai-subs-backend --region=us-central1 --project=ai-subs-poc --service-account=1052285886390-compute@developer.gserviceaccount.com
+  gcloud run jobs update ai-subs-worker --region=us-central1 --project=ai-subs-poc --service-account=1052285886390-compute@developer.gserviceaccount.com
+  ```
+  The next `deploy_image.sh` run switches them back to the new SAs, so fix the missing grant in `iam.tf` first.
 - **A bad Terraform change:** revert the commit and apply again. Bindings and SAs that phase 1 creates can be removed by an apply without affecting existing resources, except that the Service and Job would lose their runtime permissions. Roll the Service back first (`--service-account` of the previous revision) when removing SAs.
 - **Corrupted state:** the state bucket is versioned. List versions with `gcloud storage ls -a gs://ai-subs-poc-tfstate/terraform/state/`, then copy a previous generation over `default.tfstate` (`gcloud storage cp gs://…/default.tfstate#<generation> gs://…/default.tfstate`). Run `terraform plan` to confirm the state matches reality.
+
+## Later phases
+
+- **Phase 2:** import the bucket `ai-subs-uploads`, Artifact Registry `ai-subs-repo` (then turn on tag immutability), the Secret Manager secrets (containers only, never versions) and the Scheduler jobs with `import` blocks. Then switch the `*_name` and `*_secret_ids` variables in `iam.tf` and `wif.tf` to resource references. The Scheduler jobs carry `X-Internal-Key` in their headers, which would land in state; move them to OIDC auth first or keep them out of Terraform.
+- **Phase 3:** import the Cloud Run Service and Job. Terraform then owns resources, env vars and secret mounts, `deploy_image.sh` only updates the image (`lifecycle { ignore_changes = [template[0].containers[0].image] }`), and the `allUsers` invoker binding moves into Terraform.
+
+Every import must plan with no changes before anything else is edited.
 
 ## Still manual
 
