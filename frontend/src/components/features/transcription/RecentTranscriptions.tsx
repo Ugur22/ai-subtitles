@@ -40,8 +40,8 @@ const ChevronIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-const ROW_LAYOUT = "flex h-[60px] items-center gap-4 px-5";
-const LEAD_COLUMN = "w-[72px] shrink-0";
+const ROW_LAYOUT = "recent-file-row flex min-h-[52px] items-center gap-3 px-3 py-2 sm:gap-4 sm:px-5";
+const LEAD_COLUMN = "w-[40px] shrink-0 sm:w-[72px]";
 
 const SkeletonRow: React.FC = () => (
   <div className={ROW_LAYOUT} aria-hidden="true">
@@ -81,7 +81,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
   };
 
   return (
-    <section className="mt-8" aria-labelledby="recent-heading">
+    <section className="recent-files" aria-labelledby="recent-heading">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 id="recent-heading" className="m-0 text-[15px] font-medium text-text-primary">
           Recent
@@ -90,7 +90,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
           <button
             type="button"
             onClick={onViewAll}
-            className="btn-ghost -mr-2 inline-flex items-center gap-1 px-2 py-1 text-[13px] font-medium text-text-secondary"
+            className="btn-ghost -mr-2 inline-flex min-h-11 items-center gap-1 px-2 py-1 text-[13px] font-medium text-text-secondary"
           >
             View all
             <ChevronIcon className="h-3 w-3" />
@@ -109,7 +109,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
         {recent.map((job) => {
           const title = job.display_title?.trim() || toReadableTitle(job.filename.replace(/\.[^./]+$/, ""));
           const duration = job.result_json?.transcription?.duration;
-          const lead = duration || getFileExtension(job.filename).toUpperCase();
+          const extension = getFileExtension(job.filename).toUpperCase();
           const language = languageLabel(job.language);
           const isOpening = openingId === job.job_id;
           const created = formatRelativeTime(job.created_at);
@@ -125,22 +125,23 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
               disabled={openingId !== null && !isOpening}
               className={`group ${ROW_LAYOUT} w-full bg-transparent text-left transition-colors duration-100 enabled:hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-55`}
             >
-              <span className={`mono truncate text-xs text-text-tertiary ${LEAD_COLUMN}`}>
-                {lead}
+              <span className={`recent-file-extension mono truncate text-xs text-text-tertiary ${LEAD_COLUMN}`}>
+                {extension}
               </span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-sm font-medium text-text-primary">{title}</span>
-                <span className="text-xs text-text-tertiary">
-                  <span className="sm:hidden">{created}{language && " · "}</span>
-                  {language}
+                <span className="recent-file-metadata flex flex-wrap items-center gap-x-2 text-xs text-text-tertiary">
+                  {duration && <span className="tabular-nums">{duration}</span>}
+                  {language && <span>{language}</span>}
+                  <span className="recent-file-date-mobile">{created}</span>
                 </span>
               </span>
-              <span className="hidden w-[120px] shrink-0 text-right text-xs text-text-tertiary sm:block">
+              <span className="recent-file-date-desktop w-[96px] shrink-0 text-right text-xs text-text-tertiary">
                 {created}
               </span>
               {isOpening ? (
                 <span
-                  className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-border-subtle border-t-accent"
+                  className="h-3.5 w-3.5 shrink-0 motion-safe:animate-spin rounded-full border-2 border-border-subtle border-t-accent"
                   aria-hidden="true"
                 />
               ) : (
