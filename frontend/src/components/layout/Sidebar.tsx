@@ -25,17 +25,8 @@ interface NavItemProps {
   to?: string;
 }
 
-// Waveform bars shrinking into caption lines: speech becoming subtitles.
-// Keep in sync with public/subtitle-icon.svg (favicon).
 const BrandMark: React.FC = () => (
-  <svg className="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-    <rect width="32" height="32" rx="8" fill="oklch(20% 0.012 250)" />
-    <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" stroke="oklch(100% 0 0 / 0.08)" />
-    <g stroke="oklch(96% 0.004 250)" strokeWidth="2.25" strokeLinecap="round">
-      <path d="M6.5 13v6M10 9v14M13.5 11.5v9M17 14v4" />
-    </g>
-    <path d="M20.5 13.5h5M20.5 18.5h3" stroke="oklch(72% 0.18 145)" strokeWidth="2.25" strokeLinecap="round" />
-  </svg>
+  <img className="brand-mark" src="/subtitle-icon.svg?v=2" width="32" height="32" alt="" aria-hidden="true" />
 );
 
 const NavItem: React.FC<NavItemProps> =({ active, icon, label, count, onClick, to }) => {
