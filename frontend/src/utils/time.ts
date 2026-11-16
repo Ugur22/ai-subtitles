@@ -8,9 +8,8 @@
  * @returns Formatted time string (e.g., "45.2 seconds" or "1 minute 23 seconds")
  */
 export const formatProcessingTime = (timeStr?: string | null): string => {
-  // Return a default value if timeStr is undefined or null
   if (!timeStr) {
-    return "Unknown";
+    return "";
   }
 
   // Try to extract a numeric value from the time string
