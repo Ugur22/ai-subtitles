@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-DEPLOY_SCRIPT = REPO / "backend" / "deploy.sh"
+DEPLOY_SCRIPT = REPO / "infra" / "scripts" / "deploy_image.sh"
 TERRAFORM = REPO / "infra" / "terraform"
 
 
@@ -42,7 +42,7 @@ def test_runtime_service_accounts_are_created_by_terraform():
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     iam = (TERRAFORM / "iam.tf").read_text(encoding="utf-8")
 
-    used = set(re.findall(r'_SERVICE_ACCOUNT="([a-z0-9-]+)@', script))
+    used = set(re.findall(r'(?:API|WORKER)_SERVICE_ACCOUNT="([a-z0-9-]+)@', script))
     created = set(re.findall(r'account_id\s*=\s*"([a-z0-9-]+)"', iam))
     assert used == {"ai-subs-api", "ai-subs-worker"}
     assert used <= created

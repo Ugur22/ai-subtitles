@@ -1,6 +1,6 @@
 # Cloud Run Deployment - Quick Reference
 
-Two resources, one image: the CPU Service `ai-subs-backend` (API) and the GPU Job `ai-subs-worker` (one execution per transcription job). `deploy.sh` defines both. Full guide: [DEPLOYMENT.md](DEPLOYMENT.md).
+Two resources, one image: the CPU Service `ai-subs-backend` (API) and the GPU Job `ai-subs-worker` (one execution per transcription job). `infra/scripts/deploy_image.sh` defines both; `deploy.sh` runs it. Full guide: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Run these from your own terminal with Owner credentials.
 
@@ -9,7 +9,8 @@ Run these from your own terminal with Owner credentials.
 ```bash
 cd backend
 ./deploy.sh               # build + deploy Service and worker Job
-./deploy.sh --skip-build  # redeploy both from the existing image
+./deploy.sh --skip-build  # redeploy both from the image already built for this commit
+../infra/scripts/rollback.sh --list   # recent image tags; rollback.sh <tag> redeploys one
 ```
 
 Apply new files in `sql/migrations/` to Supabase first.
@@ -18,8 +19,9 @@ Apply new files in `sql/migrations/` to Supabase first.
 
 | File | Purpose |
 |------|---------|
-| `deploy.sh` | Build and deploy the Service and the worker Job. Source of truth for resources, env vars and secrets. |
-| `cloudbuild.yaml` | Cloud Build config used by `deploy.sh` |
+| `deploy.sh` | Build and deploy the Service and the worker Job (runs `infra/scripts/deploy_image.sh`) |
+| `../infra/scripts/deploy_image.sh` | Source of truth for resources, env vars and secrets |
+| `cloudbuild.yaml` | Cloud Build config used by `deploy_image.sh` |
 | `Dockerfile` | Image shared by the Service and the Job |
 | `worker_main.py` | Worker Job entrypoint |
 | `scripts/rotate_encryption_key.py` | Re-encrypt stored user API keys after a key rotation |
@@ -48,7 +50,7 @@ gcloud run jobs update ai-subs-worker --region=us-central1 --project=ai-subs-poc
 echo -n "new_value" | gcloud secrets versions add secret-name --data-file=- --project=ai-subs-poc
 ```
 
-Mirror lasting changes in `deploy.sh`.
+Mirror lasting changes in `infra/scripts/deploy_image.sh`.
 
 ## Limits worth knowing
 

@@ -1,6 +1,6 @@
 # GCP Operations
 
-Resources, secrets and env vars for the Cloud Run service and the GPU worker job are defined in `backend/deploy.sh`, which is the source of truth. This page holds the operational notes that live outside it. Moved out of `CLAUDE.md` on 2026-10-27.
+Resources, secrets and env vars for the Cloud Run service and the GPU worker job are defined in `infra/scripts/deploy_image.sh` (run by `backend/deploy.sh`), which is the source of truth. IAM, monitoring and the CI deployer are in Terraform; see [INFRASTRUCTURE.md](INFRASTRUCTURE.md). This page holds the operational notes that live outside it. Moved out of `CLAUDE.md` on 2026-10-27.
 
 Run the commands below from your own terminal with Owner credentials, not from inside a Claude Code session.
 
@@ -48,7 +48,7 @@ Tunables (set via `--update-env-vars`): `URL_REFRESH_CUTOFF_DAYS` (default 30), 
 ### LLM Chat Configuration
 - **Default Provider**: `grok`
 - **Groq Model**: `llama-3.3-70b-versatile`
-- **Grok Model**: set via the `XAI_MODEL` env var in `backend/deploy.sh`
+- **Grok Model**: set via the `XAI_MODEL` env var in `infra/scripts/deploy_image.sh`
 
 To update secrets:
 ```bash
@@ -60,7 +60,7 @@ To update env vars (no rebuild needed):
 gcloud run services update ai-subs-backend --platform=managed --region=us-central1 --project=ai-subs-poc --update-env-vars="VAR=value"
 gcloud run jobs update ai-subs-worker --region=us-central1 --project=ai-subs-poc --update-env-vars="VAR=value"
 ```
-Mirror lasting changes in `backend/deploy.sh`, or the next deploy reverts them.
+Mirror lasting changes in `infra/scripts/deploy_image.sh`, or the next deploy reverts them.
 
 ### Long jobs, continuations and timeouts
 
@@ -68,7 +68,7 @@ A worker execution is limited to 1 hour (`--task-timeout=3600`, the Cloud Run ma
 
 | Setting | Default | Where | Meaning |
 |---------|---------|-------|---------|
-| `CLOUD_RUN_TASK_TIMEOUT` | `3600` | worker, set by `deploy.sh` | Lets the worker know its own task timeout |
+| `CLOUD_RUN_TASK_TIMEOUT` | `3600` | worker, set by `deploy_image.sh` | Lets the worker know its own task timeout |
 | `WORKER_TIME_BUDGET_SECONDS` | `0` | worker | Explicit budget per execution. `0` = task timeout minus 600s (3000s) |
 | `MAX_JOB_CONTINUATIONS` | `12` | worker | Hand-overs allowed per job before it fails with `max_continuations_reached` |
 | `PROCESSING_REALTIME_FACTOR` | `0.35` | API + worker | Estimated processing seconds per media second; only drives `[Quota] WARNING` log lines |

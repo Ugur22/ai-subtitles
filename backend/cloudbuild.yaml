@@ -1,9 +1,12 @@
+# Submitted by infra/scripts/deploy_image.sh, which passes:
+#   _IMAGE       full image reference with its immutable git-SHA tag
+#   _CACHE_FROM  image whose layers seed the build cache (normally the one the Service runs now)
+# The build runs as the deployer SA (--service-account), and its logs go to the
+# staging bucket (--gcs-log-dir), so it needs no project-level logging role.
 steps:
-  # Pull the previous image to use as cache source
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['pull', 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest']
+    args: ['pull', '${_CACHE_FROM}']
     allowFailure: true
-  # Build using the previous image as layer cache
   # BuildKit only reuses --cache-from layers when the cached image carries inline
   # cache metadata; without BUILDKIT_INLINE_CACHE=1 every layer silently rebuilds.
   - name: 'gcr.io/cloud-builders/docker'
@@ -12,14 +15,18 @@ steps:
       - 'build'
       - '--build-arg'
       - 'BUILDKIT_INLINE_CACHE=1'
-      - '--cache-from=us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
+      - '--cache-from=${_CACHE_FROM}'
       - '-t'
-      - 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
+      - '${_IMAGE}'
       - '.'
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest']
+    args: ['push', '${_IMAGE}']
 images:
-  - 'us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest'
+  - '${_IMAGE}'
+substitutions:
+  _IMAGE: ''
+  _CACHE_FROM: ''
 timeout: '2700s'
 options:
   machineType: 'E2_HIGHCPU_8'
+  logging: GCS_ONLY
