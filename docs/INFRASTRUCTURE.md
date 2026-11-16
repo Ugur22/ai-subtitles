@@ -113,7 +113,7 @@ Rollback changes the image only. Env vars, secrets and resources come from the c
 
 ## Deploys from GitHub Actions
 
-`.github/workflows/deploy.yml` runs on a pushed `v*` tag, or by hand (Actions → deploy → Run workflow) on `main`.
+This is the normal release path for the backend; `backend/deploy.sh` is only for when GitHub Actions is unavailable. `.github/workflows/deploy.yml` runs on a pushed `v*` tag, or by hand (Actions → deploy → Run workflow) on `main`.
 
 1. The `check` job reuses `check.yml`: lint, pytest, tsc, `terraform fmt` and `validate`.
 2. The `deploy` job runs in the GitHub environment `production`, so required reviewers there must approve it first. It gets a GitHub OIDC token and exchanges it through Workload Identity Federation for `ai-subs-deployer`. There are no JSON keys.
@@ -164,7 +164,7 @@ Its rollback deletes that row: `DELETE FROM public.schema_migrations WHERE versi
 - **Phase 2:** import the bucket `ai-subs-uploads`, Artifact Registry `ai-subs-repo` (then turn on tag immutability), the Secret Manager secrets (containers only, never versions) and the Scheduler jobs with `import` blocks. Then switch the `*_name` and `*_secret_ids` variables in `iam.tf` and `wif.tf` to resource references. The Scheduler jobs carry `X-Internal-Key` in their headers, which would land in state; move them to OIDC auth first or keep them out of Terraform.
 - **Phase 3:** import the Cloud Run Service and Job. Terraform then owns resources, env vars and secret mounts, `deploy_image.sh` only updates the image (`lifecycle { ignore_changes = [template[0].containers[0].image] }`), and the `allUsers` invoker binding moves into Terraform.
 
-Every import must plan with no changes before anything else is edited.
+Every import must plan with no changes before anything else is edited. Status, steps and risks per phase: [TERRAFORM_PHASES_HANDOFF.md](TERRAFORM_PHASES_HANDOFF.md).
 
 ## Still manual
 

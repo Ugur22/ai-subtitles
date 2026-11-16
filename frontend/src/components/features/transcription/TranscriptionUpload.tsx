@@ -3,7 +3,7 @@ import { Dialog, Transition } from "@headlessui/react";
 import toast from "react-hot-toast";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon } from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useJobs } from "../../../hooks/useJobs";
 import {
   type TranscriptionResponse,
@@ -28,6 +28,7 @@ import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
 import {
   formatProcessingTime,
+  secondsToTimeString,
   convertTimeToSeconds,
   timeToSeconds,
 } from "../../../utils/time";
@@ -90,7 +91,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
   const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
   const [showChapters, setShowChapters] = useState(false);
+  const displayDuration =
+    transcription?.transcription.duration ||
+    (videoDuration > 0 ? secondsToTimeString(videoDuration) : "");
+  const languageLabel = transcription?.transcription.language?.toUpperCase();
 
   // Speaker enrollment modal state
   const [enrollModalSegment, setEnrollModalSegment] = useState<EnrollableSegment | null>(null);
@@ -782,84 +788,72 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
           </div>
         )}
 
-        {/* Results Section */}
         {transcription && (
           <div className="h-screen flex flex-col overflow-hidden w-full" style={{ gap: '8px' }}>
-            {/* Flat results top bar */}
-            <div
-              className="flex-shrink-0"
-              style={{
-                borderBottom: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-subtle)',
-                borderRadius: '6px',
-              }}
-            >
-              {/* Always-visible row */}
-              <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+            <div className="flex-shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <div className="flex h-12 items-center justify-between gap-3 px-1">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setSearchParams({})}
-                    className="btn-ghost"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px', fontSize: '12.5px', fontWeight: 500, color: 'var(--text-secondary)', flexShrink: 0 }}
+                    className="btn-ghost inline-flex shrink-0 items-center gap-1 px-2 py-1 text-[13px]"
+                    style={{ color: 'var(--text-secondary)' }}
                   >
-                    <ChevronLeftIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />
+                    <ChevronLeftIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
                     All videos
                   </button>
-                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)' }} />
+                  <ChevronRightIcon className="h-4 w-4 shrink-0" strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} aria-hidden="true" />
                   <h2
-                    style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '320px' }}
+                    className="min-w-0 max-w-[360px] truncate text-sm font-medium"
+                    style={{ color: 'var(--text-primary)' }}
                     title={transcription.filename}
                   >
                     {transcription.filename}
                   </h2>
                   {!isHeaderExpanded && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                      <span className="badge badge-default" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {transcription.transcription.duration}
-                      </span>
-                      <span className="badge badge-default" style={{ textTransform: 'uppercase' }}>
-                        {transcription.transcription.language}
-                      </span>
-                    </div>
+                    <span className="shrink-0 font-mono text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
+                      {[displayDuration, languageLabel]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
                   )}
                 </div>
 
-                {/* Right: actions */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                <div className="flex shrink-0 items-center gap-1">
                   <button
                     onClick={handleSearchClick}
-                    className="btn-ghost"
+                    className="btn-ghost p-2"
                     style={{
-                      padding: '6px',
                       color: showSearch ? 'var(--accent)' : 'var(--text-secondary)',
                       backgroundColor: showSearch ? 'var(--accent-dim)' : 'transparent',
                     }}
                     title={showSearch ? "Hide search" : "Show search"}
+                    aria-pressed={showSearch}
                   >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </button>
 
-                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)', margin: '0 4px' }} />
+                  <div className="mx-1 h-4 w-px" style={{ backgroundColor: 'var(--border-subtle)' }} />
 
                   <SubtitleControls
                     filename={transcription.filename}
                     videoHash={transcription.video_hash}
                   />
 
-                  <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-subtle)', margin: '0 4px' }} />
+                  <div className="mx-1 h-4 w-px" style={{ backgroundColor: 'var(--border-subtle)' }} />
 
                   <button
                     onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
-                    className="btn-ghost"
-                    style={{ padding: '6px', color: 'var(--text-secondary)' }}
+                    className="btn-ghost p-2"
+                    style={{ color: 'var(--text-secondary)' }}
+                    title={isHeaderExpanded ? "Hide details" : "Show details"}
+                    aria-expanded={isHeaderExpanded}
                   >
                     <svg
-                      className="w-4 h-4"
-                      style={{ transition: 'transform 200ms ease', transform: isHeaderExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                      className={`w-4 h-4 transition-transform duration-200 motion-reduce:transition-none${isHeaderExpanded ? ' rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
                     </svg>
@@ -867,31 +861,23 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 </div>
               </div>
 
-              {/* Expanded stats */}
               {isHeaderExpanded && (
-                <div
-                  className="animate-fade-in"
-                  style={{ padding: '12px', borderTop: '1px solid var(--border-subtle)', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1px', backgroundColor: 'var(--border-subtle)' }}
-                >
+                <dl className="animate-fade-in flex h-9 flex-wrap items-center gap-x-6 px-3">
                   {[
-                    { label: 'File', value: transcription.filename, title: transcription.filename, truncate: true },
-                    { label: 'Duration', value: transcription.transcription.duration },
-                    { label: 'Language', value: transcription.transcription.language?.toUpperCase() },
-                    { label: 'Processing', value: formatProcessingTime(transcription.transcription.processing_time) },
-                  ].map(({ label, value, title, truncate }) => (
-                    <div key={label} style={{ backgroundColor: 'var(--bg-surface)', padding: '12px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-tertiary)', marginBottom: '4px' }}>
-                        {label}
+                    { label: 'Duration', value: displayDuration, mono: true },
+                    { label: 'Language', value: languageLabel, mono: true },
+                    { label: 'Processing', value: formatProcessingTime(transcription.transcription.processing_time), mono: false },
+                  ]
+                    .filter(({ value }) => value)
+                    .map(({ label, value, mono }) => (
+                      <div key={label} className="flex items-baseline gap-2">
+                        <dt className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{label}</dt>
+                        <dd className={`text-[13px]${mono ? ' font-mono tabular-nums' : ''}`} style={{ color: 'var(--text-primary)' }}>
+                          {value}
+                        </dd>
                       </div>
-                      <div
-                        style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}) }}
-                        title={title}
-                      >
-                        {value}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                </dl>
               )}
             </div>
 
@@ -911,6 +897,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         ref={setVideoRef}
                         src={videoUrl}
                         className="w-full h-full max-h-[70vh] xl:max-h-[80vh] object-contain"
+                        onLoadedMetadata={(e) => setVideoDuration(e.currentTarget.duration)}
                         onTimeUpdate={() => {
                           if (!isVideoSeeking && videoRef) {
                             const currentTime = videoRef.currentTime;
@@ -1070,11 +1057,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         </div>
                         <CustomProgressBar
                           videoRef={videoRef}
-                          duration={
-                            videoRef && videoRef.duration > 0
-                              ? videoRef.duration
-                              : 0
-                          }
+                          duration={videoDuration}
                           currentTime={currentTime}
                           segments={displayedSegments}
                           getScreenshotUrlForTime={(time) => {
@@ -1119,11 +1102,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           onJump={(seconds) => {
                             seek(seconds);
                           }}
-                          duration={
-                            videoRef && videoRef.duration > 0
-                              ? videoRef.duration
-                              : 0
-                          }
+                          duration={videoDuration}
                           currentTime={currentTime}
                         />
                       </>

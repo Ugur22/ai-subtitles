@@ -1,11 +1,5 @@
-/**
- * JumpToTimeModal - Modal for jumping to specific time in video
- * Allows users to enter time in HH:MM:SS or MM:SS format
- */
-
-import React, { useRef, useState, useEffect } from "react";
-import { useSpring, animated, config as springConfig } from "react-spring";
-import { animationConfig } from "../../../utils/animations";
+import React, { useState } from "react";
+import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { secondsToTimeString } from "../../../utils/time";
 
 interface JumpToTimeModalProps {
@@ -14,12 +8,8 @@ interface JumpToTimeModalProps {
   onJump: (seconds: number) => void;
   duration: number;
   currentTime: number;
-  inputRef?: React.RefObject<HTMLInputElement>;
 }
 
-/**
- * Parses time input string (HH:MM:SS, MM:SS, or SS) to seconds
- */
 const parseTimeInput = (input: string): number | null => {
   const parts = input
     .trim()
@@ -45,136 +35,83 @@ const parseTimeInput = (input: string): number | null => {
 export const JumpToTimeModal: React.FC<JumpToTimeModalProps> = ({
   isOpen,
   onClose,
+  ...formProps
+}) => (
+  <Dialog open={isOpen} onClose={onClose} className="relative z-50">
+    <div className="modal-overlay">
+      <DialogPanel className="modal-content max-w-sm p-6">
+        <JumpToTimeForm onClose={onClose} {...formProps} />
+      </DialogPanel>
+    </div>
+  </Dialog>
+);
+
+const JumpToTimeForm: React.FC<Omit<JumpToTimeModalProps, "isOpen">> = ({
+  onClose,
   onJump,
   duration,
   currentTime,
-  inputRef,
 }) => {
-  const localInputRef = useRef<HTMLInputElement>(null);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => secondsToTimeString(currentTime));
   const [error, setError] = useState("");
-  const wasOpenRef = useRef(false);
+  const hasDuration = duration > 0;
+  const durationLabel = secondsToTimeString(duration);
 
-  useEffect(() => {
-    // Only set the input when the modal first opens, not on every currentTime change
-    if (isOpen && !wasOpenRef.current) {
-      setInput(secondsToTimeString(currentTime));
-      setError("");
-      setTimeout(() => {
-        (inputRef?.current || localInputRef.current)?.focus();
-      }, 0);
-    }
-    wasOpenRef.current = isOpen;
-  }, [isOpen, currentTime, inputRef]);
-
-  const handleOk = () => {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     const seconds = parseTimeInput(input);
-    if (seconds === null || seconds < 0 || seconds > duration) {
+    if (seconds === null || seconds < 0 || (hasDuration && seconds > duration)) {
       setError(
-        "Invalid time. Please enter a value between 0 and the video duration."
+        hasDuration
+          ? `Enter a time between 00:00 and ${durationLabel}`
+          : "Enter a time like 20:35 or 1:30:45"
       );
       return;
     }
-    setError("");
     onJump(seconds);
     onClose();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleOk();
-    } else if (e.key === "Escape") {
-      onClose();
-    }
-  };
-
-  // Modal animation - hooks must be called before any conditional returns
-  const backdropAnimation = useSpring({
-    opacity: isOpen ? 1 : 0,
-    config: animationConfig.smooth,
-  });
-
-  const modalAnimation = useSpring({
-    transform: isOpen ? "scale(1)" : "scale(0.85)",
-    opacity: isOpen ? 1 : 0,
-    config: springConfig.wobbly,
-  });
-
-  if (!isOpen) return null;
-
   return (
-    <animated.div className="modal-overlay" style={backdropAnimation}>
-      <animated.div
-        className="modal-content p-8 flex flex-col items-center"
-        style={modalAnimation}
+    <form onSubmit={handleSubmit}>
+      <DialogTitle
+        className="text-base font-medium"
+        style={{ color: "var(--text-primary)" }}
       >
-        <div className="mb-6 flex flex-col items-center">
-          <div
-            className="w-12 h-12 mb-4 rounded-lg flex items-center justify-center"
-            style={{ background: 'var(--accent)' }}
-          >
-            <svg
-              className="w-6 h-6"
-              style={{ color: 'var(--accent-text)' }}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10 9V5a1 1 0 011-1h2a1 1 0 011 1v4m-1 4h.01M12 17h.01"
-              />
-              <polygon points="8,17 16,12 8,7" fill="currentColor" />
-            </svg>
-          </div>
-          <h2
-            className="text-xl font-semibold mb-1"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            Jump to Time
-          </h2>
-          <p
-            className="text-sm text-center leading-relaxed"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            Enter the time to jump to.{' '}
-            <span style={{ color: 'var(--accent)' }} className="font-mono">
-              20:35 or 1:30:45
-            </span>
-          </p>
-        </div>
-        <input
-          ref={inputRef || localInputRef}
-          className="input-base text-center text-lg font-mono mb-3"
-          placeholder="mm:ss or hh:mm:ss"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-        />
-        {error && (
-          <div
-            className="text-sm mb-4 p-3 rounded-md w-full"
-            style={{
-              color: 'var(--c-error)',
-              background: 'oklch(65% 0.20 25 / 0.10)',
-              border: '1px solid oklch(65% 0.20 25 / 0.30)',
-            }}
-          >
-            {error}
-          </div>
-        )}
-        <div className="flex w-full gap-3 mt-2">
-          <button className="btn-secondary flex-1" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn-primary flex-1" onClick={handleOk}>
-            Jump
-          </button>
-        </div>
-      </animated.div>
-    </animated.div>
+        Jump to time
+      </DialogTitle>
+      {hasDuration && (
+        <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+          Video length{" "}
+          <span className="font-mono tabular-nums">{durationLabel}</span>
+        </p>
+      )}
+      <input
+        data-autofocus
+        className="input-base mt-4 font-mono tabular-nums text-lg"
+        placeholder="mm:ss or h:mm:ss"
+        aria-label="Time"
+        aria-invalid={!!error}
+        value={input}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          setInput(e.target.value);
+          if (error) setError("");
+        }}
+      />
+      {error && (
+        <p className="mt-2 text-sm" style={{ color: "var(--c-error)" }}>
+          {error}
+        </p>
+      )}
+      <div className="mt-6 flex justify-end gap-2">
+        <button type="button" className="btn-secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="submit" className="btn-primary">
+          Jump
+        </button>
+      </div>
+    </form>
   );
 };
