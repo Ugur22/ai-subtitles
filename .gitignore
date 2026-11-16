@@ -120,3 +120,18 @@ static/videos/
 *.m4a 
 # Local-only test data (real film dialogue); tests skip without it
 backend/tests/fixtures/per_word_speaker_scene.json
+
+# Terraform (the lock file is committed on purpose)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

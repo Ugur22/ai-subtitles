@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # deploy.yml runs these checks before every production deploy.
+  workflow_call:
 
 permissions:
   contents: read
@@ -45,3 +47,19 @@ jobs:
           grep -viE '^(onnxruntime-gpu|insightface)' backend/requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
           pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest==9.1.1
       - run: make lint-backend test-backend PY=python
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+      - run: terraform fmt -check -recursive
+      # No backend: validate needs only the provider schema, not state or credentials.
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

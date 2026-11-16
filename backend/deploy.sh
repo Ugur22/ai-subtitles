@@ -36,7 +36,9 @@ REGION="us-central1"
 SERVICE_NAME="ai-subs-backend"
 WORKER_JOB_NAME="ai-subs-worker"
 IMAGE_NAME="us-central1-docker.pkg.dev/ai-subs-poc/ai-subs-repo/ai-subs-backend:latest"
-SERVICE_ACCOUNT="1052285886390-compute@developer.gserviceaccount.com"
+# Least-privilege runtime identities, created by infra/terraform/iam.tf.
+API_SERVICE_ACCOUNT="ai-subs-api@${PROJECT_ID}.iam.gserviceaccount.com"
+WORKER_SERVICE_ACCOUNT="ai-subs-worker@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Service (HTTP only) — no GPU; the heavy work has moved to the worker Job.
 SERVICE_MEMORY="8Gi"
@@ -143,7 +145,7 @@ deploy_to_cloud_run() {
         --platform=managed \
         --region="${REGION}" \
         --project="${PROJECT_ID}" \
-        --service-account="${SERVICE_ACCOUNT}" \
+        --service-account="${API_SERVICE_ACCOUNT}" \
         --memory="${SERVICE_MEMORY}" \
         --cpu="${SERVICE_CPU}" \
         --gpu=0 \
@@ -172,7 +174,7 @@ deploy_worker_job() {
         --image="${IMAGE_NAME}" \
         --region="${REGION}" \
         --project="${PROJECT_ID}" \
-        --service-account="${SERVICE_ACCOUNT}" \
+        --service-account="${WORKER_SERVICE_ACCOUNT}" \
         --memory="${WORKER_MEMORY}" \
         --cpu="${WORKER_CPU}" \
         --gpu="${GPU_COUNT}" \

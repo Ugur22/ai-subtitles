@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars (gitignored). Never put secret values here: Terraform
+# only references secrets by name, and everything in this file ends up in state.
+
+project_id = "ai-subs-poc"
+region     = "us-central1"
