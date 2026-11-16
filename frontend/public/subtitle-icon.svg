@@ -1,9 +1,19 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="32" height="32" rx="8" fill="#1b1e23"/>
-  <g stroke="#f1f2f4" stroke-width="2.25" stroke-linecap="round">
-    <path d="M6.5 13v6M10 9v14M13.5 11.5v9M17 14v4"/>
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#123125"/>
+      <stop offset="1" stop-color="#071C13"/>
+    </linearGradient>
+    <linearGradient id="search" x1="45" y1="39" x2="165" y2="166" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5FFAC"/>
+      <stop offset="0.45" stop-color="#68D976"/>
+      <stop offset="1" stop-color="#48BC60"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="44" fill="url(#background)"/>
+  <g stroke="url(#search)" stroke-width="9" stroke-linecap="round">
+    <circle cx="95" cy="97" r="59"/>
+    <path d="m137 139 29 28"/>
   </g>
-  <g stroke="#3cc069" stroke-width="2.25" stroke-linecap="round">
-    <path d="M20.5 13.5h5M20.5 18.5h3"/>
-  </g>
+  <path d="M59 91v15m18-27v39m18-52v61m18-48v39m18-27v15" stroke="#F5F2E9" stroke-width="9" stroke-linecap="round"/>
 </svg>
