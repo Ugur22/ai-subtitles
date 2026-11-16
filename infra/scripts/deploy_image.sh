@@ -13,6 +13,7 @@
 #   --allow-dirty           Allow uncommitted changes; the image is tagged <sha>-dirty.
 #   --tag <tag>             Deploy an existing SHA tag or sha256:<digest> (used by rollback.sh);
 #                           no build, no git checks. Digests reach images from before SHA tags.
+#   --skip-migration-check  Do not compare repo migrations with Supabase (emergencies only).
 #   --yes                   Do not ask for confirmation (CI).
 #
 # Images are tagged with the 12-character git SHA and never with :latest, so a
@@ -92,6 +93,7 @@ print_info() { echo -e "${BLUE}$1${NC}"; }
 
 SKIP_BUILD="false"
 ALLOW_DIRTY="false"
+SKIP_MIGRATION_CHECK="false"
 ASSUME_YES="false"
 REQUESTED_TAG=""
 
@@ -100,6 +102,7 @@ parse_args() {
         case "$1" in
             --skip-build) SKIP_BUILD="true" ;;
             --allow-dirty) ALLOW_DIRTY="true" ;;
+            --skip-migration-check) SKIP_MIGRATION_CHECK="true" ;;
             --yes) ASSUME_YES="true" ;;
             --tag)
                 [ $# -ge 2 ] || { print_error "--tag needs a value"; exit 2; }
@@ -159,6 +162,17 @@ check_prerequisites() {
     fi
 
     print_info "Prerequisites check passed (${ACTIVE_ACCOUNT})"
+}
+
+# Runs before the build: code that needs a migration Supabase lacks must not ship.
+# CI never applies migrations itself.
+check_migrations() {
+    if [ "${SKIP_MIGRATION_CHECK}" == "true" ]; then
+        print_warning "Skipping the Supabase migration check"
+        return
+    fi
+    print_step "Checking Supabase migrations..."
+    "${SCRIPT_DIR}/check_migrations.sh" "${SUPABASE_URL}"
 }
 
 image_exists() {
@@ -315,6 +329,10 @@ main() {
     fi
 
     check_prerequisites
+    # A rollback (--tag) deploys older code, which the current schema already covers.
+    if [ -z "${REQUESTED_TAG}" ]; then
+        check_migrations
+    fi
     if [ "${SKIP_BUILD}" == "true" ]; then
         if ! image_exists "${IMAGE_REF}"; then
             print_error "${IMAGE_REF} does not exist in Artifact Registry"

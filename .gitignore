@@ -135,3 +135,6 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Credentials file written by google-github-actions/auth; ignored so the deploy's clean-tree check passes
+gha-creds-*.json

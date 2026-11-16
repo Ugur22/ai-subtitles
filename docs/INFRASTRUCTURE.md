@@ -11,6 +11,8 @@ Terraform is being introduced in three phases. Phase 1 (this one) creates only n
 | Resource | Managed by | Notes |
 |---|---|---|
 | Runtime SAs `ai-subs-api`, `ai-subs-worker` and their IAM bindings | Terraform `infra/terraform/iam.tf` | Bindings sit on the bucket, secret or job, not the project |
+| CI deployer `ai-subs-deployer`, Workload Identity pool `github`, bucket `gs://ai-subs-poc-build-staging` | Terraform `wif.tf` | Keyless GitHub Actions deploys |
+| Email channel, `job_failed` metric, alerts, uptime check, billing budget | Terraform `monitoring.tf` | |
 | Project APIs used below | Terraform `apis.tf` | `disable_on_destroy = false`, so a destroy never switches an API off |
 | Terraform state bucket `gs://ai-subs-poc-tfstate` | `infra/bootstrap_state_bucket.sh` | Versioned; Terraform cannot create its own backend |
 | Cloud Run Service `ai-subs-backend`, worker Job `ai-subs-worker` | `infra/scripts/deploy_image.sh` | Resources, env vars, secret mounts and the image. Run by `backend/deploy.sh`, `infra/scripts/rollback.sh` and `.github/workflows/deploy.yml`. Terraform import in a later phase |
@@ -109,6 +111,43 @@ infra/scripts/rollback.sh sha256:<digest>
 
 Rollback changes the image only. Env vars, secrets and resources come from the current `deploy_image.sh`, and the database is not rolled back. An image older than a migration that changed existing functions may fail against the current schema.
 
+## Deploys from GitHub Actions
+
+`.github/workflows/deploy.yml` runs on a pushed `v*` tag, or by hand (Actions → deploy → Run workflow) on `main`.
+
+1. The `check` job reuses `check.yml`: lint, pytest, tsc, `terraform fmt` and `validate`.
+2. The `deploy` job runs in the GitHub environment `production`, so required reviewers there must approve it first. It gets a GitHub OIDC token and exchanges it through Workload Identity Federation for `ai-subs-deployer`. There are no JSON keys.
+3. It runs `infra/scripts/deploy_image.sh --yes`: migration check, Cloud Build, then both deploys with the same SHA tag.
+
+Only the pool provider's `attribute_condition` (repository `Ugur22/ai-subtitles`) and the binding on `attribute.environment/production` let a token in. A job outside that environment, or a fork, cannot impersonate the deployer.
+
+What the deployer can do:
+
+| Grant | Scope | Why |
+|---|---|---|
+| `roles/run.developer` | Service `ai-subs-backend`, Job `ai-subs-worker` | Deploy new revisions; it cannot change IAM policies, so deploys omit `--allow-unauthenticated` |
+| `roles/iam.serviceAccountUser` | `ai-subs-api`, `ai-subs-worker`, itself | Deploy revisions running as those SAs; Cloud Build runs as the deployer |
+| `roles/artifactregistry.writer` | Repository `ai-subs-repo` | Push images, check tags |
+| `roles/cloudbuild.builds.editor` | Project (Cloud Build has no per-resource IAM) | Submit and follow builds |
+| `roles/storage.objectAdmin` + `legacyBucketReader` | `gs://ai-subs-poc-build-staging` | Source upload and build logs |
+
+Repository variables (Settings → Secrets and variables → Actions → Variables): `GCP_WIF_PROVIDER` and `GCP_DEPLOYER_SA` from `terraform output`, and `SUPABASE_ANON_KEY` (the public anon key the frontend already ships; not a secret).
+
+## Database migrations
+
+Deploys never apply migrations. Apply them by hand in the Supabase SQL editor, before deploying the code that needs them.
+
+`public.schema_migrations` (migration 023) records what is applied. `infra/scripts/check_migrations.sh` runs before every build (locally and in CI). It reads the table with the anon key, which RLS limits to `SELECT`, and fails with the file names when any non-rollback file in `backend/sql/migrations` is missing from it. A rollback (`rollback.sh`) skips the check. `--skip-migration-check` exists for emergencies.
+
+Every migration after 023 ends with its own row, inside its transaction, and has a `_rollback.sql` (enforced by `backend/tests/test_schema_migrations.py`):
+
+```sql
+INSERT INTO public.schema_migrations (version) VALUES ('024') ON CONFLICT (version) DO NOTHING;
+COMMIT;
+```
+
+Its rollback deletes that row: `DELETE FROM public.schema_migrations WHERE version = '024';`.
+
 ## Rolling back Terraform
 
 - **A bad Terraform change:** revert the commit and apply again. Bindings and SAs that phase 1 creates can be removed by an apply without affecting existing resources, except that the Service and Job would lose their runtime permissions. Roll the Service back first (`--service-account` of the previous revision) when removing SAs.
@@ -116,5 +155,9 @@ Rollback changes the image only. Env vars, secrets and resources come from the c
 
 ## Still manual
 
+- The GitHub environment `production` (required reviewers, deployment branches and tags) and the three repository variables.
+- Applying SQL migrations, including 023.
+- The `allUsers` invoker binding on the Service. It exists today; deploys no longer re-assert it, so a recreated Service needs it again (`gcloud run services add-iam-policy-binding ai-subs-backend --member=allUsers --role=roles/run.invoker`).
+- Tag immutability on `ai-subs-repo` (an Artifact Registry repository setting; it belongs to the phase that imports the repository).
 - Error Reporting notification settings (see Monitoring above).
 - Removing `roles/editor` from the default compute SA `1052285886390-compute@developer.gserviceaccount.com`, once the new SAs are verified in production.

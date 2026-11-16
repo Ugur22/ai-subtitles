@@ -102,3 +102,29 @@ variable "uptime_check_period" {
     error_message = "uptime_check_period must be 60s, 300s, 600s or 900s."
   }
 }
+
+# CI deploys (wif.tf)
+
+variable "github_repository" {
+  description = "Only GitHub Actions runs from this owner/repo can get tokens."
+  type        = string
+  default     = "Ugur22/ai-subtitles"
+}
+
+variable "github_environment" {
+  description = "GitHub environment whose jobs may impersonate the deployer (add required reviewers there)."
+  type        = string
+  default     = "production"
+}
+
+variable "api_service_name" {
+  description = "Existing Cloud Run API Service (not managed here yet)."
+  type        = string
+  default     = "ai-subs-backend"
+}
+
+variable "artifact_registry_repository" {
+  description = "Existing Artifact Registry Docker repository (not managed here yet)."
+  type        = string
+  default     = "ai-subs-repo"
+}

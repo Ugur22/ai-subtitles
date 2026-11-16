@@ -32,7 +32,7 @@ Images are tagged with the 12-character git SHA; `:latest` is no longer used. Th
 
 The script asks for confirmation, builds with `cloudbuild.yaml`, deploys the Service without a GPU, deploys the worker Job with the GPU, and checks the Service's health endpoint.
 
-Apply pending SQL migrations in `backend/sql/migrations/` to Supabase **before** deploying code that needs them. The worker and the API call the SQL functions directly; deploying first makes job claims, retries and continuations fail.
+Apply pending SQL migrations in `backend/sql/migrations/` to Supabase **before** deploying code that needs them. The deploy checks this against `public.schema_migrations` and stops with the names of unapplied files; see "Database migrations" in [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md). The worker and the API call the SQL functions directly; deploying first makes job claims, retries and continuations fail.
 
 ## What the worker Job needs
 

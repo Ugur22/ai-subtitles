@@ -54,3 +54,24 @@ def test_terraform_never_holds_secret_values():
         text = tf.read_text(encoding="utf-8")
         assert "google_secret_manager_secret_version" not in text, tf.name
         assert "secret_data" not in text, tf.name
+
+
+def _script_value(name: str) -> str:
+    return re.search(rf'^{name}="([^"]+)"', DEPLOY_SCRIPT.read_text(encoding="utf-8"), re.M).group(1)
+
+
+def test_builds_run_as_the_terraform_deployer_in_its_staging_bucket():
+    wif = (TERRAFORM / "wif.tf").read_text(encoding="utf-8")
+    assert _script_value("DEPLOYER_SERVICE_ACCOUNT").startswith("ai-subs-deployer@")
+    assert 'account_id   = "ai-subs-deployer"' in wif
+    assert _script_value("BUILD_STAGING_BUCKET") == "gs://${PROJECT_ID}-build-staging"
+    assert 'name                        = "${var.project_id}-build-staging"' in wif
+
+
+def test_the_deployer_cannot_change_iam_policies_so_deploys_do_not_try():
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "--allow-unauthenticated \\" not in script
+    wif = (TERRAFORM / "wif.tf").read_text(encoding="utf-8")
+    assert "roles/run.admin" not in wif
+    assert "google_service_account_key" not in wif
+

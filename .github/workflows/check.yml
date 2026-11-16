@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
+# github.workflow is the caller's name under workflow_call, so a deploy's checks
+# never cancel (or get cancelled by) the push-triggered checks of the same ref.
 concurrency:
-  group: check-${{ github.ref }}
+  group: check-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
