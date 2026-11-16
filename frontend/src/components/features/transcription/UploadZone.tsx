@@ -1,6 +1,5 @@
 import React from "react";
 import { match } from "ts-pattern";
-import { SpeakerField } from "./SpeakerField";
 import { OutputPreview } from "./OutputPreview";
 import { formatFileSize } from "../../../utils/file";
 
@@ -58,8 +57,6 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
     return (
       <section className="relative overflow-hidden">
-        <SpeakerField />
-
         <div className="relative mx-auto box-content flex max-w-page flex-wrap items-center gap-12 px-8 pb-24 pt-20">
           <div className="flex min-w-0 max-w-[480px] flex-[1_1_400px] flex-col gap-8">
             <div className="flex flex-col gap-3">

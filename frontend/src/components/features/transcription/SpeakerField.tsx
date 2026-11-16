@@ -8,7 +8,7 @@ interface Bar {
 const SPEAKER_TONES = ["fill-sp-1", "fill-sp-2", "fill-sp-3", "fill-sp-4", "fill-sp-5"];
 const ODD_ROW_SPEAKER_COUNT = 3;
 const SILENCE_TONE = "fill-border-default";
-const ROWS = 8;
+const ROWS = 5;
 const ROW_HEIGHT = 56;
 const BARS_PER_TILE = 72;
 const BAR_WIDTH = 4;
@@ -51,7 +51,7 @@ export const SpeakerField: React.FC = React.memo(() => {
   return (
     <div
       aria-hidden="true"
-      className="speaker-field-mask pointer-events-none absolute inset-0 hidden flex-col justify-center gap-4 opacity-70 lg:flex"
+      className="speaker-field-mask pointer-events-none absolute -left-10 -right-40 inset-y-6 hidden flex-col justify-center gap-6 opacity-[0.45] lg:flex"
       style={{ "--speaker-tile": `${TILE_WIDTH}px` } as React.CSSProperties}
     >
       {TILES.map((tile, row) => {
