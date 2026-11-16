@@ -164,7 +164,7 @@ Its rollback deletes that row: `DELETE FROM public.schema_migrations WHERE versi
 - **Phase 2:** import the bucket `ai-subs-uploads`, Artifact Registry `ai-subs-repo` (then turn on tag immutability), the Secret Manager secrets (containers only, never versions) and the Scheduler jobs with `import` blocks. Then switch the `*_name` and `*_secret_ids` variables in `iam.tf` and `wif.tf` to resource references. The Scheduler jobs carry `X-Internal-Key` in their headers, which would land in state; move them to OIDC auth first or keep them out of Terraform.
 - **Phase 3:** import the Cloud Run Service and Job. Terraform then owns resources, env vars and secret mounts, `deploy_image.sh` only updates the image (`lifecycle { ignore_changes = [template[0].containers[0].image] }`), and the `allUsers` invoker binding moves into Terraform.
 
-Every import must plan with no changes before anything else is edited.
+Every import must plan with no changes before anything else is edited. Status, steps and risks per phase: [TERRAFORM_PHASES_HANDOFF.md](TERRAFORM_PHASES_HANDOFF.md).
 
 ## Still manual
 
