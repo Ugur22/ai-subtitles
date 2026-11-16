@@ -65,27 +65,48 @@ def _migration(name: str, schema: str) -> str:
     return sql.replace("TO service_role", "TO PUBLIC")
 
 
-@contextmanager
-def scratch_schema(*migrations: str):
+def _postgres():
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("TEST_DATABASE_URL is not configured")
     psycopg = pytest.importorskip(
         "psycopg", reason="psycopg is required for PostgreSQL integration tests"
     )
+    return database_url, psycopg
+
+
+@contextmanager
+def scratch_schema(*migrations: str, committed: bool = False):
+    """Yields a cursor on a fresh schema; with committed=True, yields (cursor, connect) instead.
+
+    connect() opens another connection on the same schema, for concurrency tests.
+    """
+    database_url, psycopg = _postgres()
     schema = f"job_continuations_{uuid.uuid4().hex}"
     connection = psycopg.connect(database_url)
+
+    def connect():
+        other = psycopg.connect(database_url)
+        other.execute(f'SET search_path TO "{schema}"')
+        return other
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(f'CREATE SCHEMA "{schema}"')
-            cursor.execute(f'SET LOCAL search_path TO "{schema}"')
+            cursor.execute(f'SET {"" if committed else "LOCAL "}search_path TO "{schema}"')
             cursor.execute(BASE_TABLES)
             for name in migrations:
                 cursor.execute(_migration(name, schema))
-            yield cursor
+            if committed:
+                connection.commit()
+                yield cursor, connect
+            else:
+                yield cursor
     finally:
-        # Nothing is committed, so the schema disappears with the transaction.
         connection.rollback()
+        if committed:
+            connection.autocommit = True
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         connection.close()
 
 
@@ -247,3 +268,100 @@ def test_timeout_auto_retry_is_granted_once_and_respects_limits():
         cursor.execute("SELECT auto_retry_timed_out_job(%s, %s, 3, 1)", (job_id, user_id))
         assert cursor.fetchone()[0] is False
         assert _job(cursor, job_id, "status, error_code") == ("failed", "worker_timeout")
+
+
+GPU_SLOT_MIGRATIONS = MIGRATIONS + ("021_gpu_slot_wait.sql",)
+
+
+def _pending_job(cursor, stage="queued", continuation_count=0, created_offset="0 minutes"):
+    user_id, job_id = uuid.uuid4(), uuid.uuid4()
+    cursor.execute("INSERT INTO user_profiles (id) VALUES (%s)", (user_id,))
+    cursor.execute(
+        """
+        INSERT INTO jobs (id, user_id, status, stage, progress, retry_count,
+                          continuation_count, started_at, created_at, last_seen)
+        VALUES (%s, %s, 'pending', %s, 42, 1, %s, now() - interval '50 minutes',
+                now() - %s::interval, now() - interval '1 hour')
+        """,
+        (job_id, user_id, stage, continuation_count, created_offset),
+    )
+    return job_id
+
+
+def _fill_slots(cursor, count=3):
+    return [_processing_job(cursor, reserved=0)[1] for _ in range(count)]
+
+
+def test_continuation_is_claimed_even_when_every_slot_is_taken():
+    with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
+        _fill_slots(cursor)
+        continuation = _pending_job(cursor, stage="continuing", continuation_count=1)
+        started_at = _job(cursor, continuation, "started_at")[0]
+
+        cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (continuation,))
+        assert cursor.fetchone()[0] == "claimed"
+        assert _job(cursor, continuation, "status, progress, started_at, message") == (
+            "processing", 42, started_at, "Resuming from checkpoint",
+        )
+
+        cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (continuation,))
+        assert cursor.fetchone()[0] == "not_pending"
+
+
+def test_new_job_at_capacity_is_refused_without_touching_its_retries():
+    with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
+        busy = _fill_slots(cursor)
+        new_job = _pending_job(cursor)
+        retried_chain = _pending_job(cursor, stage="queued", continuation_count=2)
+
+        for job_id in (new_job, retried_chain):
+            cursor.execute("SELECT claim_job_with_outcome(%s, 3)", (job_id,))
+            assert cursor.fetchone()[0] == "at_capacity"
+            assert _job(cursor, job_id, "status, retry_count") == ("pending", 1)
+        cursor.execute("SELECT claim_job(%s, 3)", (new_job,))
+        assert cursor.fetchone()[0] is False
+
+        cursor.execute("UPDATE jobs SET status = 'completed' WHERE id = %s", (busy[0],))
+        cursor.execute("SELECT claim_job(%s, 3)", (new_job,))
+        assert cursor.fetchone()[0] is True
+        assert _job(cursor, new_job, "status, progress, retry_count") == ("processing", 0, 1)
+
+
+def test_waiting_jobs_are_handed_out_oldest_first_once_a_slot_is_free():
+    with scratch_schema(*GPU_SLOT_MIGRATIONS) as cursor:
+        busy = _fill_slots(cursor)
+        newer = _pending_job(cursor, stage="waiting_for_gpu", created_offset="1 minute")
+        older = _pending_job(cursor, stage="waiting_for_gpu", created_offset="5 minutes")
+
+        cursor.execute("SELECT claim_waiting_for_gpu_job(3)")
+        assert cursor.fetchone()[0] is None
+
+        cursor.execute("UPDATE jobs SET status = 'completed' WHERE id = %s", (busy[0],))
+        cursor.execute("SELECT claim_waiting_for_gpu_job(3)")
+        assert cursor.fetchone()[0] == older
+        assert _job(cursor, older, "status, stage, retry_count, last_seen > now() - interval '1 minute'") == (
+            "pending", "queued", 1, True,
+        )
+        cursor.execute("SELECT claim_waiting_for_gpu_job(3)")
+        assert cursor.fetchone()[0] == newer
+        cursor.execute("SELECT claim_waiting_for_gpu_job(3)")
+        assert cursor.fetchone()[0] is None
+
+
+def test_concurrent_check_stale_runs_hand_out_a_waiting_job_once():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    with scratch_schema(*GPU_SLOT_MIGRATIONS, committed=True) as (cursor, connect):
+        waiting = _pending_job(cursor, stage="waiting_for_gpu")
+        cursor.connection.commit()
+        barrier = threading.Barrier(2, timeout=10)
+
+        def claim():
+            with connect() as other:
+                barrier.wait()
+                return other.execute("SELECT claim_waiting_for_gpu_job(3)").fetchone()[0]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claims = list(executor.map(lambda _index: claim(), range(2)))
+        assert sorted(claims, key=str) == sorted([waiting, None], key=str)

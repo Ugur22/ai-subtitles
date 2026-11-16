@@ -20,7 +20,7 @@ Each worker execution uses one L4 without zonal redundancy, and up to 3 jobs pro
 
 | Job | Endpoint | Frequency | Purpose |
 |-----|----------|-----------|---------|
-| `check-stale` | `POST /api/jobs/check-stale` | every 5 min | Recover one stuck job per call: stale `finalizing`, a `worker_timeout` failure (one automatic retry), stale `processing` (no heartbeat for 90s), or `pending` for over 10 min. Also drains pending media deletions. |
+| `check-stale` | `POST /api/jobs/check-stale` | every 5 min | Recover one stuck job per call: stale `finalizing`, a `worker_timeout` failure (one automatic retry), stale `processing` (no heartbeat for 90s), a `pending` job in stage `waiting_for_gpu` once a GPU slot is free (no retry counted), or another `pending` job for over 10 min (counts a retry). Also drains pending media deletions. |
 | `refresh-screenshot-urls` | `POST /api/jobs/refresh-screenshot-urls` | daily at 03:00 UTC | Re-sign GCS screenshot URLs in `jobs.result_json` + `image_embeddings` so V4 URLs (7-day cap) never go stale at rest |
 
 Create the URL refresh job (auth must match `check-stale` — clone whatever mechanism that one uses):

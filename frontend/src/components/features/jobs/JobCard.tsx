@@ -36,6 +36,11 @@ const FAILURE_MESSAGES: Record<string, string> = {
     "This file needed more processing runs than allowed. Your progress is saved; press Retry to continue from where it stopped.",
 };
 
+const PENDING_STAGE_LABELS: Record<string, string> = {
+  continuing: "Continuing in a new worker…",
+  waiting_for_gpu: "Waiting for a free GPU slot",
+};
+
 export const JobCard: React.FC<JobCardProps> = ({
   job,
   onViewTranscript,
@@ -134,8 +139,8 @@ export const JobCard: React.FC<JobCardProps> = ({
               <svg style={{ width: '13px', height: '13px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {job.progress_stage === "continuing"
-                ? job.progress_message || "Continuing in a new worker…"
+              {job.progress_stage && PENDING_STAGE_LABELS[job.progress_stage]
+                ? job.progress_message || PENDING_STAGE_LABELS[job.progress_stage]
                 : "Waiting to start…"}
             </span>
             <button
