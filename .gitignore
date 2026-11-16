@@ -126,6 +126,8 @@ backend/tests/fixtures/per_word_speaker_scene.json
 *.tfstate
 *.tfstate.*
 *.tfplan
+# Saved plans (`terraform plan -out=tfplan`, as in docs/INFRASTRUCTURE.md) can hold state values
+tfplan
 crash.log
 crash.*.log
 *.tfvars
