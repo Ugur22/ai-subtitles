@@ -756,10 +756,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               handleLanguageChange={handleLanguageChange}
               handleStartTranscriptionClick={handleStartTranscriptionClick}
               languageOptions={languageOptions}
-            />
-            <div className="mx-auto box-content max-w-page px-8">
+            >
             {jobTracker.jobs.some(job => isActiveJobStatus(job.status)) && (
-              <section className="mt-8" aria-labelledby="active-jobs-heading">
+              <section className="mb-6" aria-labelledby="active-jobs-heading">
                 <div className="mb-3 flex items-baseline justify-between gap-3">
                   <h2 id="active-jobs-heading" className="text-[15px] font-medium text-text-primary">In progress</h2>
                   <span className="text-xs text-text-tertiary">You can close this tab</span>
@@ -786,7 +785,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               onViewAll={() => setShowJobPanel(true)}
               isLoading={jobTracker.isLoading}
             />
-            </div>
+            </UploadZone>
           </div>
         )}
 

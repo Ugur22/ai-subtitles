@@ -1390,3 +1390,101 @@ button.badge-default:hover { color: var(--text-primary); }
     animation: none;
   }
 }
+
+
+.upload-workspace { container-type: inline-size; }
+.upload-workspace-grid { grid-template-areas: "form" "jobs" "example" "help"; }
+.upload-workspace-form { grid-area: form; }
+.upload-workspace-jobs { grid-area: jobs; }
+.upload-workspace-example { grid-area: example; }
+.upload-workspace-help { grid-area: help; }
+.upload-workspace-example[data-expanded="false"] > .upload-workspace-preview { display: none; }
+
+@container (min-width: 960px) {
+  .upload-workspace-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "form example" "jobs jobs" "help help";
+    align-items: start;
+  }
+  .upload-workspace-example > button { display: none; }
+  .upload-workspace-example[data-expanded] > .upload-workspace-preview { display: block; padding-top: 0; }
+}
+
+@media (max-height: 800px) {
+  .upload-workspace-grid { row-gap: 20px; padding-top: 20px; padding-bottom: 26px; }
+  .upload-workspace-form { gap: 16px; }
+}
+
+
+@media (hover: hover) and (pointer: fine) {
+  .upload-dropzone[aria-disabled="false"]:hover {
+    border-color: var(--accent);
+    background-color: var(--accent-dim);
+  }
+}
+
+.upload-dropzone[aria-disabled="false"]:active { border-color: var(--accent); }
+
+@container (max-width: 420px) {
+  .upload-language { display: grid; grid-template-columns: 16px minmax(0, 1fr); padding-block: 10px; }
+  .upload-language select { grid-column: 2; width: 100%; margin-left: 0; min-height: 44px; font-size: 16px; }
+  .upload-language > svg:last-child { bottom: 26px; }
+  .upload-dropzone { gap: 12px; }
+}
+
+.transcript-sample, .recent-files { container-type: inline-size; }
+.sample-transcript-row { grid-template-columns: 56px minmax(0, 1fr); }
+.sample-transcript-text { grid-column: 2; }
+.recent-file-date-desktop { display: none; }
+
+@container (min-width: 430px) {
+  .sample-transcript-row { grid-template-columns: 64px 68px minmax(0, 1fr); }
+  .sample-transcript-text { grid-column: auto; }
+  .recent-file-date-mobile { display: none; }
+  .recent-file-date-desktop { display: block; }
+}
+
+.sample-controls {
+  display: grid;
+  grid-template-columns: 44px minmax(64px, 1fr) auto;
+  grid-template-areas: "play seek time";
+  align-items: center;
+  gap: 12px;
+}
+.sample-play { grid-area: play; }
+.sample-timestamp { grid-area: time; }
+.sample-seek {
+  grid-area: seek;
+  appearance: none;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.sample-seek::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--player-track); }
+.sample-seek::-moz-range-track { height: 4px; border-radius: 2px; background: var(--player-track); }
+.sample-seek::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--player-icon); }
+.sample-seek::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: var(--player-icon); }
+.sample-seek::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--player-icon); }
+@media (hover: hover) and (pointer: fine) {
+  .sample-play:hover { background: var(--bg-overlay); }
+}
+.sample-play:active { background: var(--bg-subtle); }
+@container (max-width: 429px) {
+  .sample-player { min-height: 208px; }
+  .sample-controls { grid-template-columns: 44px minmax(0, 1fr); grid-template-areas: "play time" "seek seek"; gap: 0 12px; }
+  .sample-timestamp { justify-self: end; }
+  .sample-caption { bottom: 104px; }
+  .recent-file-row { gap: 12px; padding-inline: 12px; }
+}
+.sample-seek:focus-visible { outline: 2px solid var(--player-icon); outline-offset: 2px; border-radius: 3px; }
+
+
+@container (max-width: 639px) {
+  .upload-workspace > header > span:last-child { display: none; }
+  .upload-workspace-grid { padding-inline: 20px; }
+  .upload-workspace-form h1 { font-size: 32px; }
+  .upload-workspace-help ol { grid-template-columns: minmax(0, 1fr); }
+  .recent-file-extension { width: 40px; }
+}

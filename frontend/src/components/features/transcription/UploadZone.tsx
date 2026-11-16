@@ -21,6 +21,7 @@ interface UploadZoneProps {
   handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   handleStartTranscriptionClick: () => void;
   languageOptions: LanguageOption[];
+  children: React.ReactNode;
 }
 
 export const UploadZone: React.FC<UploadZoneProps> = React.memo(
@@ -37,7 +38,11 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     handleLanguageChange,
     handleStartTranscriptionClick,
     languageOptions,
+    children,
   }) => {
+    const [showExample, setShowExample] = React.useState(false);
+    const exampleId = React.useId();
+
     const getFileTypeLabel = (fileType: string) =>
       match(fileType)
         .when((t) => t.startsWith("video/"), () => "Video")
@@ -52,20 +57,20 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     };
 
     const dropzoneState = dragActive
-      ? "border-accent bg-accent-dim"
-      : "border-border-default bg-surface hover:border-accent-border";
+      ? "border-solid border-accent bg-accent-dim ring-1 ring-accent-border"
+      : "border-border-default bg-surface";
 
     return (
-      <section className="relative overflow-hidden">
-        <header className="relative mx-auto flex max-w-page items-center justify-between gap-4 border-b border-border-subtle px-6 py-5 sm:px-8">
+      <section className="upload-workspace relative overflow-hidden">
+        <header className="relative mx-auto flex max-w-page items-center justify-between gap-4 border-b border-border-subtle px-5 py-4 sm:px-8">
           <span className="text-sm font-semibold text-text-primary">AI Subs <span className="ml-3 border-l border-border-default pl-3 font-normal text-text-tertiary">Workspace</span></span>
-          <span className="mono text-[11px] text-text-tertiary">VIDEO / AUDIO → TRANSCRIPT</span>
+          <span className="mono hidden text-[11px] text-text-tertiary sm:block">VIDEO / AUDIO → TRANSCRIPT</span>
         </header>
-        <div className="relative mx-auto box-content flex max-w-page flex-wrap items-center gap-10 px-6 pb-10 pt-10 sm:px-8 sm:pt-12">
-          <div className="flex min-w-0 max-w-[480px] flex-[1_1_400px] flex-col gap-8">
+        <div className="upload-workspace-grid relative mx-auto grid max-w-page gap-6 px-5 py-6 sm:gap-8 sm:px-8">
+          <div className="upload-workspace-form flex min-w-0 flex-col gap-6">
             <div className="flex flex-col gap-3">
-              <span className="mono text-[11px] uppercase tracking-[0.16em] text-accent">Your next transcript starts here</span>
-              <h1 className="m-0 text-balance text-[36px] font-medium leading-[1.12] tracking-[-0.035em] text-text-primary sm:text-[44px]">
+              <span className="mono text-xs font-medium uppercase leading-5 tracking-[0.12em] text-accent">Your next transcript starts here</span>
+              <h1 className="m-0 text-balance text-[32px] font-medium leading-[1.12] tracking-[-0.035em] text-text-primary sm:text-[38px]">
                 Every word. Every speaker.
               </h1>
               <p className="m-0 text-base leading-6 text-text-secondary">
@@ -81,9 +86,10 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                 onDrop={handleDrop}
                 onClick={isTranscribing ? undefined : handleButtonClick}
                 onKeyDown={handleDropzoneKeyDown}
-                className={`flex items-center gap-4 rounded-lg border border-dashed p-6 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${dropzoneState} ${
+                className={`upload-dropzone flex min-h-[128px] items-center gap-4 rounded-lg border border-dashed p-4 sm:p-5 motion-safe:transition-colors motion-safe:duration-150 focus-visible:border-accent focus-visible:bg-accent-dim focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${dropzoneState} ${
                   isTranscribing ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                 }`}
+                data-drag-active={dragActive}
                 role="button"
                 tabIndex={isTranscribing ? -1 : 0}
                 aria-disabled={isTranscribing}
@@ -137,7 +143,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
 
               <label
                 htmlFor="language-select"
-                className="relative flex h-11 cursor-pointer items-center gap-2 rounded-md border border-border-subtle bg-surface px-4"
+                className="upload-language relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border-subtle bg-surface px-4 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent-border"
               >
                 <svg className="h-4 w-4 shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" />
@@ -149,7 +155,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                   value={selectedLanguage}
                   onChange={handleLanguageChange}
                   disabled={isTranscribing}
-                  className="ml-auto cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
+                  className="ml-auto min-w-0 max-w-full cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
                 >
                   {languageOptions.map((option) => (
                     <option key={option.value} value={option.value} className="bg-overlay text-text-primary">
@@ -174,13 +180,17 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                   </svg>
                 </button>
               )}
+              <p className="m-0 text-xs leading-5 text-text-tertiary">Processing time depends on file length. Allow about half an hour for a 50-minute episode.</p>
             </div>
           </div>
-
-          <OutputPreview />
-        </div>
-        <div className="relative mx-auto max-w-page px-6 pb-10 sm:px-8">
-          <ol aria-label="How transcription works" className="m-0 grid list-none gap-6 border-t border-border-subtle p-0 pt-6 sm:grid-cols-3">
+          <div className="upload-workspace-jobs min-w-0">{children}</div>
+          <div className="upload-workspace-example min-w-0" data-expanded={showExample}>
+            <button type="button" aria-expanded={showExample} aria-controls={exampleId} onClick={() => setShowExample(!showExample)} className="min-h-11 cursor-pointer rounded-md py-3 text-left text-sm font-medium text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{showExample ? "Hide example" : "See an example"}</button>
+            <div id={exampleId} className="upload-workspace-preview pt-3"><OutputPreview /></div>
+          </div>
+          <details className="upload-workspace-help border-t border-border-subtle">
+            <summary className="min-h-11 cursor-pointer rounded-md py-3 text-sm font-medium text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">How transcription works</summary>
+          <ol aria-label="How transcription works" className="m-0 grid list-none gap-6 p-0 pb-3 pt-3 sm:grid-cols-3">
             {[
               { step: '01', title: 'Bring your footage', detail: 'Upload a video, recording, interview, or podcast.' },
               { step: '02', title: 'Let it process', detail: 'We transcribe, separate speakers, and translate. You can come back later.' },
@@ -195,7 +205,7 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
               </li>
             ))}
           </ol>
-          <p className="mb-0 mt-6 text-[11px] text-text-tertiary">Processing time depends on file length. Allow about half an hour for a 50-minute episode.</p>
+          </details>
         </div>
       </section>
     );
