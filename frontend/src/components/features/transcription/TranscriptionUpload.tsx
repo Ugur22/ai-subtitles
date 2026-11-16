@@ -610,7 +610,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
   // Language options (ISO 639-1 codes)
   const languageOptions = [
-    { value: "", label: "Auto-detect Language" },
+    { value: "", label: "Detect automatically" },
     { value: "en", label: "English" },
     { value: "es", label: "Spanish" },
     { value: "fr", label: "French" },
@@ -742,7 +742,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       <div className="h-full px-4" style={{ color: 'var(--text-primary)' }}>
         {/* Upload Section */}
         {!transcription && (
-          <div style={{ paddingBottom: '64px' }}>
+          <div className="-mx-4 pb-24">
             <UploadZone
               file={file}
               dragActive={dragActive}
@@ -757,11 +757,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               handleStartTranscriptionClick={handleStartTranscriptionClick}
               languageOptions={languageOptions}
             />
+            <div className="mx-auto box-content max-w-page px-8">
             {jobTracker.jobs.some(job => isActiveJobStatus(job.status)) && (
-              <section className="mx-auto mt-8 max-w-[720px]" aria-labelledby="active-jobs-heading">
+              <section className="mt-14" aria-labelledby="active-jobs-heading">
                 <div className="mb-3 flex items-baseline justify-between gap-3">
-                  <h2 id="active-jobs-heading" className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>In progress</h2>
-                  <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>You can close this tab</span>
+                  <h2 id="active-jobs-heading" className="text-[15px] font-medium text-text-primary">In progress</h2>
+                  <span className="text-xs text-text-tertiary">You can close this tab</span>
                 </div>
                 <div className="space-y-3">
                   {jobTracker.jobs.filter(job => isActiveJobStatus(job.status)).map(job => (
@@ -785,6 +786,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               onViewAll={() => setShowJobPanel(true)}
               isLoading={jobTracker.isLoading}
             />
+            </div>
           </div>
         )}
 

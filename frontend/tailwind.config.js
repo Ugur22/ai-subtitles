@@ -11,6 +11,7 @@ export default {
     extend: {
       maxWidth: {
         '8xl': '1440px',
+        page: '1120px',
       },
       colors: {
         app:         'var(--bg-app)',
@@ -31,6 +32,9 @@ export default {
         'sp-3': 'var(--sp-3)',
         'sp-4': 'var(--sp-4)',
         'sp-5': 'var(--sp-5)',
+        'on-scrim':     'var(--on-scrim)',
+        'player-icon':  'var(--player-icon)',
+        'player-track': 'var(--player-track)',
         'border-subtle':  'var(--border-subtle)',
         'border-default': 'var(--border-default)',
         'text-primary':    'var(--text-primary)',
@@ -56,9 +60,7 @@ export default {
         xs: 'var(--shadow-xs)',
         sm: 'var(--shadow-sm)',
         md: 'var(--shadow-md)',
-        lg: 'var(--shadow-lg)',
-        accent: 'var(--shadow-accent)',
-      },
+        lg: 'var(--shadow-lg)',      },
       typography: {
         DEFAULT: {
           css: {

@@ -40,9 +40,12 @@ const ChevronIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const ROW_LAYOUT = "flex h-[60px] items-center gap-4 px-5";
+const LEAD_COLUMN = "w-[72px] shrink-0";
+
 const SkeletonRow: React.FC = () => (
-  <div className="flex items-center gap-4 px-4 py-3" aria-hidden="true">
-    <div className="recent-skeleton h-3 w-9 rounded-xs" />
+  <div className={ROW_LAYOUT} aria-hidden="true">
+    <div className={`recent-skeleton h-3 rounded-xs ${LEAD_COLUMN}`} />
     <div className="min-w-0 flex-1">
       <div className="recent-skeleton mb-2 h-3 w-[55%] rounded-xs" />
       <div className="recent-skeleton h-2.5 w-1/4 rounded-xs" />
@@ -78,16 +81,16 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
   };
 
   return (
-    <section className="mx-auto mt-10 max-w-[720px]" aria-labelledby="recent-heading">
-      <div className="mx-1 mb-2.5 flex items-baseline justify-between">
-        <h2 id="recent-heading" className="m-0 text-sm font-semibold text-text-secondary">
+    <section className="mt-14" aria-labelledby="recent-heading">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 id="recent-heading" className="m-0 text-[15px] font-medium text-text-primary">
           Recent
         </h2>
         {!isLoading && (
           <button
             type="button"
             onClick={onViewAll}
-            className="btn-ghost inline-flex items-center gap-1 px-2 py-1 text-[12.5px] font-medium"
+            className="btn-ghost -mr-2 inline-flex items-center gap-1 px-2 py-1 text-[13px] font-medium text-text-secondary"
           >
             View all
             <ChevronIcon className="h-3 w-3" />
@@ -109,6 +112,7 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
           const lead = duration || getFileExtension(job.filename).toUpperCase();
           const language = languageLabel(job.language);
           const isOpening = openingId === job.job_id;
+          const created = formatRelativeTime(job.created_at);
 
           return (
             <button
@@ -119,17 +123,20 @@ export const RecentTranscriptions: React.FC<RecentTranscriptionsProps> = ({
               aria-label={`Open ${job.filename}`}
               aria-busy={isOpening}
               disabled={openingId !== null && !isOpening}
-              className="group flex w-full items-center gap-4 bg-transparent px-4 py-3 text-left transition-colors duration-100 enabled:hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-55"
+              className={`group ${ROW_LAYOUT} w-full bg-transparent text-left transition-colors duration-100 enabled:hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-55`}
             >
-              <span className="w-[52px] shrink-0 truncate font-mono text-[11.5px] tabular-nums text-text-tertiary">
+              <span className={`mono truncate text-xs text-text-tertiary ${LEAD_COLUMN}`}>
                 {lead}
               </span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-sm font-medium text-text-primary">{title}</span>
                 <span className="text-xs text-text-tertiary">
-                  {formatRelativeTime(job.created_at)}
-                  {language ? ` · ${language}` : ""}
+                  <span className="sm:hidden">{created}{language && " · "}</span>
+                  {language}
                 </span>
+              </span>
+              <span className="hidden w-[120px] shrink-0 text-right text-xs text-text-tertiary sm:block">
+                {created}
               </span>
               {isOpening ? (
                 <span
