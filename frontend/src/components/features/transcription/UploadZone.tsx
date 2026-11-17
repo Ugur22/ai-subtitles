@@ -42,6 +42,8 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
   }) => {
     const [showExample, setShowExample] = React.useState(false);
     const exampleId = React.useId();
+    const waveformId = React.useId();
+    const [waveformPaused, setWaveformPaused] = React.useState(false);
 
     const getFileTypeLabel = (fileType: string) =>
       match(fileType)
@@ -186,7 +188,30 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
           <div className="upload-workspace-jobs min-w-0">{children}</div>
           <div className="upload-workspace-example min-w-0" data-expanded={showExample}>
             <button type="button" aria-expanded={showExample} aria-controls={exampleId} onClick={() => setShowExample(!showExample)} className="min-h-11 cursor-pointer rounded-md py-3 text-left text-sm font-medium text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{showExample ? "Hide example" : "See an example"}</button>
-            <div id={exampleId} className="upload-workspace-preview pt-3"><OutputPreview /></div>
+            <div id={exampleId} className="upload-workspace-preview pt-3" data-waveform-paused={waveformPaused}>
+              <div className="workspace-waveform" aria-hidden="true">
+                <svg className="workspace-waveform-track" width="100%" height="64">
+                  <defs>
+                    <pattern id={waveformId} width="576" height="64" patternUnits="userSpaceOnUse">
+                      {Array.from({ length: 72 }, (_, bar) => {
+                        const height = 4 + 42 * Math.abs(Math.sin(bar * 0.31) * Math.cos(bar * 0.13));
+                        return <rect key={bar} x={bar * 8} y={(64 - height) / 2} width="3" height={height} rx="1.5" />;
+                      })}
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="64" fill={`url(#${waveformId})`} />
+                </svg>
+              </div>
+              <button
+                type="button"
+                className="workspace-waveform-toggle"
+                aria-label={waveformPaused ? "Resume waveform animation" : "Pause waveform animation"}
+                onClick={() => setWaveformPaused((paused) => !paused)}
+              >
+                {waveformPaused ? "Play motion" : "Pause motion"}
+              </button>
+              <OutputPreview />
+            </div>
           </div>
           <details className="upload-workspace-help border-t border-border-subtle">
             <summary className="min-h-11 cursor-pointer rounded-md py-3 text-sm font-medium text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">How transcription works</summary>

@@ -1393,6 +1393,62 @@ button.badge-default:hover { color: var(--text-primary); }
 
 
 .upload-workspace { container-type: inline-size; }
+
+.upload-workspace-preview {
+  position: relative;
+  isolation: isolate;
+  max-width: 480px;
+  margin-inline: auto;
+  padding-top: 64px;
+}
+
+.upload-workspace-preview > figure { position: relative; }
+
+.workspace-waveform {
+  position: absolute;
+  inset: -4px -20px auto;
+  height: 64px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.12;
+  mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
+}
+
+.workspace-waveform-track {
+  width: calc(100% + 576px);
+  fill: var(--accent);
+  animation: workspace-waveform-drift 48s linear infinite;
+}
+
+@keyframes workspace-waveform-drift {
+  to { transform: translateX(-576px); }
+}
+
+.upload-workspace-preview[data-waveform-paused="true"] .workspace-waveform-track {
+  animation-play-state: paused;
+}
+
+.workspace-waveform-toggle {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.workspace-waveform-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-waveform-track { animation: none; }
+  .workspace-waveform-toggle { display: none; }
+}
 .upload-workspace-grid { grid-template-areas: "form" "jobs" "example" "help"; }
 .upload-workspace-form { grid-area: form; }
 .upload-workspace-jobs { grid-area: jobs; }
@@ -1407,7 +1463,7 @@ button.badge-default:hover { color: var(--text-primary); }
     align-items: start;
   }
   .upload-workspace-example > button { display: none; }
-  .upload-workspace-example[data-expanded] > .upload-workspace-preview { display: block; padding-top: 0; }
+  .upload-workspace-example[data-expanded] > .upload-workspace-preview { display: block; padding-top: 64px; }
 }
 
 @media (max-height: 800px) {
