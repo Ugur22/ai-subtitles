@@ -1,5 +1,6 @@
 import ast
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -78,6 +79,64 @@ def test_missing_key_disables_everything(monkeypatch):
 def test_sdk_error_fails_closed():
     feature_flags._reset_for_tests(_FakeClient(enabled={"summary"}, error=RuntimeError("down")))
     assert is_enabled("summary") is False
+
+
+def test_flags_are_cached_and_failed_refresh_keeps_last_values(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(feature_flags.time, "monotonic", lambda: now[0])
+
+    class Client(_FakeClient):
+        calls = 0
+
+        def get_environment_flags(self):
+            self.calls += 1
+            return super().get_environment_flags()
+
+    client = Client(enabled={"summary"})
+    feature_flags._reset_for_tests(client)
+    assert all_flags() == {"chapters": False, "summary": True}
+    client.enabled = {"chapters"}
+    assert all_flags()["summary"] is True
+    assert client.calls == 1
+
+    now[0] += 900
+    client.error = RuntimeError("down")
+    assert all_flags()["summary"] is True
+    assert client.calls == 2
+    now[0] += 299
+    assert all_flags()["summary"] is True
+    assert client.calls == 2
+    now[0] += 1
+    client.error = None
+    assert all_flags() == {"chapters": True, "summary": False}
+    assert client.calls == 3
+
+
+def test_concurrent_requests_share_one_fetch():
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class Client(_FakeClient):
+        calls = 0
+
+        def get_environment_flags(self):
+            self.calls += 1
+            started.set()
+            assert release.wait(2)
+            return super().get_environment_flags()
+
+    client = Client(enabled={"summary"})
+    feature_flags._reset_for_tests(client)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(is_enabled, "summary")
+        assert started.wait(2)
+        second = executor.submit(is_enabled, "summary")
+        release.set()
+        assert first.result() is True
+        assert second.result() is True
+    assert client.calls == 1
 
 
 def test_sdk_init_failure_fails_closed(monkeypatch):

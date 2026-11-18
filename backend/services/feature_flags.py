@@ -3,8 +3,7 @@ Server-side feature flags backed by Flagsmith.
 
 The backend is the only Flagsmith client: the browser reads flags from
 GET /api/features, so a hidden feature cannot be re-enabled from DevTools.
-Every failure path (no key, SDK missing, Flagsmith down, unknown flag) means
-"disabled".
+Unknown flags and failures before the first successful fetch mean "disabled".
 """
 import logging
 import threading
@@ -21,60 +20,42 @@ logger = logging.getLogger(__name__)
 KNOWN_FLAGS = ("chapters", "summary")
 
 INIT_RETRY_COOLDOWN_SECONDS = 300
+FLAG_CACHE_SECONDS = 900
 
 _client = None
 _client_lock = threading.Lock()
-_init_failed_at: Optional[float] = None
+_cached_flags: Optional[Dict[str, bool]] = None
+_next_refresh_at = 0.0
 
 
-def _in_cooldown() -> bool:
-    return (
-        _init_failed_at is not None
-        and time.monotonic() - _init_failed_at < INIT_RETRY_COOLDOWN_SECONDS
-    )
-
-
-def _get_client():
-    global _client, _init_failed_at
-    if _client is not None or _in_cooldown() or not settings.FLAGSMITH_SERVER_KEY:
-        return _client
+def all_flags() -> Dict[str, bool]:
+    global _client, _cached_flags, _next_refresh_at
+    if not settings.FLAGSMITH_SERVER_KEY:
+        return dict.fromkeys(KNOWN_FLAGS, False)
     with _client_lock:
-        if _client is None and not _in_cooldown():
+        if time.monotonic() >= _next_refresh_at:
             try:
-                # Imported lazily so a missing SDK disables flags instead of crashing startup.
-                from flagsmith import Flagsmith
+                if _client is None:
+                    from flagsmith import Flagsmith
 
-                # Local evaluation polls the environment document once a minute per
-                # instance instead of one API call per request (free tier: 50k/month).
-                _client = Flagsmith(
-                    environment_key=settings.FLAGSMITH_SERVER_KEY,
-                    enable_local_evaluation=True,
-                    environment_refresh_interval_seconds=60,
-                )
+                    _client = Flagsmith(environment_key=settings.FLAGSMITH_SERVER_KEY)
+                flags = _client.get_environment_flags()
+                _cached_flags = {name: bool(flags.is_feature_enabled(name)) for name in KNOWN_FLAGS}
+                _next_refresh_at = time.monotonic() + FLAG_CACHE_SECONDS
             except Exception:
-                _init_failed_at = time.monotonic()
-                logger.exception(
-                    "Flagsmith init failed; feature flags are disabled for %ss",
+                _next_refresh_at = time.monotonic() + INIT_RETRY_COOLDOWN_SECONDS
+                logger.warning(
+                    "Flagsmith refresh failed; retrying on demand after %ss",
                     INIT_RETRY_COOLDOWN_SECONDS,
+                    exc_info=True,
                 )
-    return _client
+        return dict(_cached_flags) if _cached_flags is not None else dict.fromkeys(KNOWN_FLAGS, False)
 
 
 def is_enabled(name: str) -> bool:
     if name not in KNOWN_FLAGS:
         return False
-    client = _get_client()
-    if client is None:
-        return False
-    try:
-        return bool(client.get_environment_flags().is_feature_enabled(name))
-    except Exception:
-        logger.warning("Flagsmith evaluation failed for %r; treating as disabled", name, exc_info=True)
-        return False
-
-
-def all_flags() -> Dict[str, bool]:
-    return {name: is_enabled(name) for name in KNOWN_FLAGS}
+    return all_flags()[name]
 
 
 def require_feature(name: str):
@@ -90,6 +71,7 @@ def require_feature(name: str):
 
 
 def _reset_for_tests(client: Optional[object] = None) -> None:
-    global _client, _init_failed_at
+    global _client, _cached_flags, _next_refresh_at
     _client = client
-    _init_failed_at = None
+    _cached_flags = None
+    _next_refresh_at = 0.0
