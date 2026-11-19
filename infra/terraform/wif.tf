@@ -64,6 +64,14 @@ resource "google_cloud_run_v2_job_iam_member" "deployer_job" {
   member   = google_service_account.deployer.member
 }
 
+resource "google_secret_manager_secret_iam_member" "deployer_secret_metadata" {
+  for_each  = toset(concat(var.api_secret_ids, var.worker_secret_ids))
+  project   = var.project_id
+  secret_id = each.value
+  role      = "roles/secretmanager.viewer"
+  member    = google_service_account.deployer.member
+}
+
 # Deploying a revision that runs as an SA requires actAs on it. The deployer acts as
 # itself because Cloud Build runs the build as the deployer (--service-account).
 resource "google_service_account_iam_member" "deployer_act_as" {
