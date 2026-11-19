@@ -30,7 +30,7 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
 
 
 from services.email import send_welcome_email
-from middleware.auth import require_auth, clear_token_cache
+from middleware.auth import require_auth, clear_token_cache, _get_user_profile
 
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -861,7 +861,9 @@ async def get_current_user(request: Request):
     """
     try:
         user = request.state.user
-        profile = request.state.profile
+        profile = await _run_in_executor(_get_user_profile, user["id"])
+        if profile is None:
+            raise RuntimeError("Could not load user profile")
 
         return UserProfileResponse(
             user_id=user["id"],

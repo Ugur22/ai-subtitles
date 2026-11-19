@@ -258,6 +258,26 @@ def test_models_endpoint_advertises_only_supported_efforts(monkeypatch):
     assert error.value.status_code == 400
 
 
+def test_chat_rejects_missing_personal_key_even_with_server_key(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from llm_providers import LLMManager
+    from routers import chat
+
+    async def no_saved_key(*_args):
+        return None
+
+    monkeypatch.setenv("XAI_API_KEY", "server-key")
+    monkeypatch.setattr(chat, "llm_manager", LLMManager())
+    monkeypatch.setattr(chat, "_get_saved_provider_key", no_saved_key)
+    request = SimpleNamespace(state=SimpleNamespace(user={"id": "test-user"}))
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(chat._get_chat_provider(request, "grok"))
+    assert error.value.status_code == 400
+    assert "No valid API key saved" in error.value.detail
+
+
 def test_chat_request_rejects_invalid_effort():
     from models.chat import ChatRequest
     from pydantic import ValidationError
