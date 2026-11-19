@@ -65,7 +65,7 @@ resource "google_cloud_run_v2_job_iam_member" "deployer_job" {
 }
 
 resource "google_secret_manager_secret_iam_member" "deployer_secret_metadata" {
-  for_each  = toset(concat(var.api_secret_ids, var.worker_secret_ids))
+  for_each  = setunion(var.api_secret_ids, var.worker_secret_ids)
   project   = var.project_id
   secret_id = each.value
   role      = "roles/secretmanager.viewer"
