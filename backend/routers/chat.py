@@ -170,11 +170,14 @@ async def _get_chat_provider(
     model: Optional[str] = None,
     reasoning_effort: Optional[ReasoningEffort] = None,
 ):
-    """Resolve an LLM provider, preferring a validated user-saved key over env keys.
+    """Resolve an LLM provider using the user's validated saved key.
 
     `model` overrides the provider's default for this request only.
     """
+    provider_name = provider_name or llm_manager.default_provider
     saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
+    if not saved_key:
+        raise HTTPException(status_code=400, detail=f"No valid API key saved for {provider_name}. Add one in Settings.")
     try:
         return llm_manager.get_provider(
             provider_name, api_key_override=saved_key,
@@ -4407,8 +4410,7 @@ async def list_llm_providers(request: Request) -> Dict:
 
         for provider in providers:
             key_provider = _stored_key_provider_name(provider.get("name"))
-            if key_provider in saved_key_providers:
-                provider["available"] = True
+            provider["available"] = key_provider is not None and key_provider in saved_key_providers
         return {
             "providers": providers,
             "default": llm_manager.default_provider
@@ -4429,6 +4431,8 @@ async def list_provider_models(request: Request, provider_name: str) -> Provider
         raise HTTPException(status_code=503, detail="LLM features not available")
 
     saved_key = await _get_saved_provider_key(_request_user_id(request), provider_name)
+    if not saved_key:
+        return ProviderModelsResponse(models=[], source="fallback")
     try:
         provider = llm_manager.get_provider(provider_name, api_key_override=saved_key)
     except ValueError:
