@@ -84,6 +84,9 @@ FASTWHISPER_DEVICE="cuda"  # Use GPU for transcription (faster than CPU)
 FASTWHISPER_MODEL="large-v3"  # Worker only; must match WHISPER_MODEL_REPO baked in the Dockerfile
 FASTWHISPER_COMPUTE_TYPE="float16"  # int8 is the CPU default
 
+API_SECRETS="SUPABASE_SERVICE_KEY=supabase-service-key:latest@APP_PASSWORD_HASH=app-password-hash:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@STRIPE_SECRET_KEY=stripe-secret-key:latest@STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest@STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest@INTERNAL_API_KEY=internal-api-key:latest@FLAGSMITH_SERVER_KEY=flagsmith-server-key:latest"
+WORKER_SECRETS="SUPABASE_SERVICE_KEY=supabase-service-key:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest"
+
 export PATH="/opt/homebrew/share/google-cloud-sdk/bin:${PATH}"
 
 print_step() { echo -e "${BLUE}==>${NC} ${GREEN}$1${NC}"; }
@@ -164,6 +167,27 @@ check_prerequisites() {
     print_info "Prerequisites check passed (${ACTIVE_ACCOUNT})"
 }
 
+check_secrets() {
+    print_step "Checking deployment secrets..."
+    local entry secret version state
+    local -a entries
+    IFS='@' read -r -a entries <<< "${API_SECRETS}@${WORKER_SECRETS}"
+    for entry in "${entries[@]}"; do
+        secret="${entry#*=}"
+        version="${secret##*:}"
+        secret="${secret%:*}"
+        if ! state=$(gcloud secrets versions describe "${version}" --secret="${secret}" \
+            --project="${PROJECT_ID}" --format='value(state)'); then
+            print_error "Cannot inspect secret ${secret} version ${version}; check that it exists and the deployer can view its metadata"
+            return 1
+        fi
+        if [ "${state}" != "ENABLED" ]; then
+            print_error "Secret ${secret} version ${version} is ${state:-unknown}; deployment requires an enabled version"
+            return 1
+        fi
+    done
+}
+
 # Runs before the build: code that needs a migration Supabase lacks must not ship.
 # CI never applies migrations itself.
 check_migrations() {
@@ -233,7 +257,7 @@ deploy_to_cloud_run() {
         --max-instances="${SERVICE_MAX_INSTANCES}" \
         --port="${PORT}" \
         --set-env-vars="^@^CORS_ORIGINS=${CORS_ORIGINS}@ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@PUBLIC_APP_URL=${PUBLIC_APP_URL}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
-        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@APP_PASSWORD_HASH=app-password-hash:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest@STRIPE_SECRET_KEY=stripe-secret-key:latest@STRIPE_PRO_PRICE_ID=stripe-pro-price-id:latest@STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest@INTERNAL_API_KEY=internal-api-key:latest@FLAGSMITH_SERVER_KEY=flagsmith-server-key:latest"; then
+        --set-secrets="^@^${API_SECRETS}"; then
         print_info "Service deployment successful"
     else
         print_error "Service deployment failed"
@@ -264,7 +288,7 @@ deploy_worker_job() {
         --command="python" \
         --args="-m,worker_main" \
         --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@FASTWHISPER_MODEL=${FASTWHISPER_MODEL}@FASTWHISPER_COMPUTE_TYPE=${FASTWHISPER_COMPUTE_TYPE}@CLOUD_RUN_TASK_TIMEOUT=${WORKER_TASK_TIMEOUT}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
-        --set-secrets="^@^SUPABASE_SERVICE_KEY=supabase-service-key:latest@HUGGINGFACE_TOKEN=huggingface-token:latest@GROQ_API_KEY=groq-api-key:latest"; then
+        --set-secrets="^@^${WORKER_SECRETS}"; then
         print_info "Worker Job deployment successful"
     else
         print_error "Worker Job deployment failed"
@@ -329,6 +353,7 @@ main() {
     fi
 
     check_prerequisites
+    check_secrets
     # A rollback (--tag) deploys older code, which the current schema already covers.
     if [ -z "${REQUESTED_TAG}" ]; then
         check_migrations
@@ -351,4 +376,6 @@ main() {
     print_info "Roll back with: infra/scripts/rollback.sh <previous tag>   (list tags: infra/scripts/rollback.sh --list)"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

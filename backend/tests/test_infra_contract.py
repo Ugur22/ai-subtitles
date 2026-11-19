@@ -4,6 +4,8 @@ A secret mounted by the deploy script without a matching secretAccessor binding
 fails only at revision start in production, so the lists are compared here.
 """
 import re
+import subprocess
+import pytest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -17,8 +19,10 @@ def _function_body(script: str, name: str) -> str:
 
 
 def _mounted_secrets(function_name: str) -> set:
-    body = _function_body(DEPLOY_SCRIPT.read_text(encoding="utf-8"), function_name)
-    chain = re.search(r'--set-secrets="\^@\^([^"]+)"', body).group(1)
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    name = {"deploy_to_cloud_run": "API_SECRETS", "deploy_worker_job": "WORKER_SECRETS"}[function_name]
+    assert f'--set-secrets="^@^${{{name}}}"' in _function_body(script, function_name)
+    chain = re.search(rf'^{name}="([^"]+)"', script, re.M).group(1)
     return {entry.split("=", 1)[1].split(":", 1)[0] for entry in chain.split("@")}
 
 
@@ -36,6 +40,18 @@ def test_every_api_secret_has_an_accessor_binding():
 
 def test_every_worker_secret_has_an_accessor_binding():
     assert _mounted_secrets("deploy_worker_job") == _terraform_default_list("worker_secret_ids")
+
+
+@pytest.mark.parametrize("state,exit_code", [("ENABLED", 0), ("DISABLED", 1), ("", 1)])
+def test_secret_preflight_checks_version_state(tmp_path, state, exit_code):
+    gcloud = tmp_path / "gcloud"
+    gcloud.write_text(f'#!/bin/sh\nprintf "%s\\n" "{state}"\n', encoding="utf-8")
+    gcloud.chmod(0o755)
+    command = f'source "{DEPLOY_SCRIPT}"; PATH="{tmp_path}:$PATH"; check_secrets'
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+    assert result.returncode == exit_code
+    if exit_code:
+        assert "supabase-service-key" in result.stderr
 
 
 def test_runtime_service_accounts_are_created_by_terraform():
