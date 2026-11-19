@@ -38,7 +38,6 @@ variable "api_secret_ids" {
     "stripe-secret-key",
     "stripe-webhook-secret",
     "supabase-service-key",
-    "xai-api-key",
   ]
 }
 
@@ -49,7 +48,6 @@ variable "worker_secret_ids" {
     "groq-api-key",
     "huggingface-token",
     "supabase-service-key",
-    "xai-api-key",
   ]
 }
 
