@@ -56,11 +56,11 @@ RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/download_models.
 # Using CUDA 12.6 wheels (match the CUDA 12.6 / cuDNN 9 base image)
 RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 
-COPY requirements.txt .
+COPY requirements.txt constraints.txt ./
 
-# Install remaining Python dependencies
+# Install remaining Python dependencies at the exact versions in constraints.txt
 # Use --no-cache-dir to reduce image size
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Cheap build-time check (no GPU needed): the GPU libraries import cleanly
 RUN python -c "import ctranslate2, torch; print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda)"
