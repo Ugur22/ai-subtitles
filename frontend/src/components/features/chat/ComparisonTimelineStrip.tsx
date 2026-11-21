@@ -1,14 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
-
-export interface TimelineFrame {
-  url: string;
-  timestamp: string;
-  timestamp_seconds: number;
-  bbox?: { x: number; y: number; w: number; h: number } | null;
-  similarity?: number;
-  low_confidence?: boolean;
-}
+import { imagePlaceholderSrc } from "./screenshots";
+import type { TimelineFrame } from "./types";
 
 interface ComparisonTimelineStripProps {
   frames: TimelineFrame[];
@@ -25,9 +18,6 @@ interface ComparisonTimelineStripProps {
 }
 
 const ACTIVE_TOLERANCE_SECONDS = 0.5;
-
-const imagePlaceholderSrc =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='12'%3ENo Image%3C/text%3E%3C/svg%3E";
 
 function isSameMoment(a: number, b: number): boolean {
   return Math.abs(a - b) < ACTIVE_TOLERANCE_SECONDS;

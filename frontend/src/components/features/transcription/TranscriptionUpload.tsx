@@ -1,42 +1,32 @@
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
-import { Dialog, Transition } from "@headlessui/react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import toast from "react-hot-toast";
-import axios from "axios";
 import { useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useJobs } from "../../../hooks/useJobs";
 import {
   type TranscriptionResponse,
-  translateLocalText,
-  updateSpeakerName,
-  enrollSpeaker,
-  autoIdentifySpeakers,
   getJobVideoUrl,
   getJob,
 } from "../../../services/api";
-import { API_BASE_URL } from "../../../config";
-import {
-  formatScreenshotUrl,
-  formatScreenshotUrlSafe,
-} from "../../../utils/url";
-import { SubtitleControls } from "./SubtitleControls";
-// import { AnalyticsPanel } from "../analytics/AnalyticsPanel";
 import { SummaryPanel } from "../summary/SummaryPanel";
 import { ChatPanel } from "../chat/ChatPanel";
-import CustomProgressBar from "./CustomProgressBar";
 import React from "react";
-import {
-  formatProcessingTime,
-  secondsToTimeString,
-  convertTimeToSeconds,
-  timeToSeconds,
-} from "../../../utils/time";
+import { secondsToTimeString } from "../../../utils/time";
 import { formatSpeakerLabel } from "../../../utils/speaker";
 import { DraggableImageModal } from "../../common/DraggableImageModal";
-import { JumpToTimeModal } from "./JumpToTimeModal";
 import { TranscriptSegmentList } from "./TranscriptSegmentList";
 import { UploadZone } from "./UploadZone";
 import { RecentTranscriptions } from "./RecentTranscriptions";
+import { ActiveJobsSection } from "./ActiveJobsSection";
+import { AutoIdentifyConfirmDialog } from "./AutoIdentifyConfirmDialog";
+import { SpeakerEnrollModal } from "./SpeakerEnrollModal";
+import { SubmissionProgressDialog } from "./SubmissionProgressDialog";
+import { TranscriptHeader } from "./TranscriptHeader";
+import { TranscriptToolbar } from "./TranscriptToolbar";
+import { TranscriptionErrorBanner } from "./TranscriptionErrorBanner";
+import { VideoPlayerPanel } from "./VideoPlayerPanel";
+import { useSpeakerManagement } from "./hooks/useSpeakerManagement";
+import { useTranscriptPlayback } from "./hooks/useTranscriptPlayback";
+import { filterDisplayedSegments, listUniqueSpeakers } from "./segments";
 import { Job, isActiveJobStatus } from "../../../types/job";
 import { useFileUpload } from "../../../hooks/useFileUpload";
 import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
@@ -49,15 +39,27 @@ import { useBackgroundJobSubmit } from "../../../hooks/useBackgroundJobSubmit";
 import { useJobTracker } from "../../../hooks/useJobTracker";
 import { useAuth } from "../../../hooks/useAuth";
 import { getMediaDurationSeconds } from "../../../utils/file";
+import { JobPanel } from "../jobs";
 
 // Per-file video length cap for non-admin (free) users. Backend (middleware/quota.py)
 // is the source of truth; this just gives instant feedback before uploading.
 const FREE_MAX_FILE_MINUTES = 30;
-import { JobPanel } from "../jobs";
 
-type TranslationMethod = "none" | "marianmt";
-type TranscriptSegment = TranscriptionResponse["transcription"]["segments"][number];
-type EnrollableSegment = Pick<TranscriptSegment, "start_time" | "end_time" | "speaker">;
+// Language options (ISO 639-1 codes)
+const languageOptions = [
+  { value: "", label: "Detect automatically" },
+  { value: "en", label: "English" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "it", label: "Italian" },
+  { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" },
+  { value: "pt", label: "Portuguese" },
+  { value: "ru", label: "Russian" },
+  { value: "zh", label: "Chinese" },
+  { value: "cs", label: "Czech" },
+];
 
 type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
@@ -71,24 +73,15 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [showSummary, setShowSummary] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
-  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
-  const [translationMethod] = useState<TranslationMethod>("none");
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const openJobId = searchParams.get("job");
   const [error, setError] = useState<string | null>(null);
   const [jumpModalOpen, setJumpModalOpen] = useState(false);
-  const [showScreenshots] = useState(false); // Unused but kept for future use
-  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
-  const [editSpeakerName, setEditSpeakerName] = useState("");
-  const [isRenamingSpeaker, setIsRenamingSpeaker] = useState(false);
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
-  const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
   const [showVisualMoments, setShowVisualMoments] = useState(true);
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
   const [showChapters, setShowChapters] = useState(false);
   const displayDuration =
@@ -96,20 +89,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     (videoDuration > 0 ? secondsToTimeString(videoDuration) : "");
   const languageLabel = transcription?.transcription.language?.toUpperCase();
 
-  // Speaker enrollment modal state
-  const [enrollModalSegment, setEnrollModalSegment] = useState<EnrollableSegment | null>(null);
-  const [enrollSpeakerName, setEnrollSpeakerName] = useState('');
-  const [enrollSubmitting, setEnrollSubmitting] = useState(false);
-
-  // Auto-identify confirmation state
-  const [autoIdentifyConfirmOpen, setAutoIdentifyConfirmOpen] = useState(false);
-  const [autoIdentifyRunning, setAutoIdentifyRunning] = useState(false);
-
-  // Enrolled speakers in speakers dropdown
-  const [enrolledSpeakers, setEnrolledSpeakers] = useState<{name: string, samples_count: number}[]>([]);
-  const [enrolledLoading, setEnrolledLoading] = useState(false);
-  const [showEnrolledInDropdown, setShowEnrolledInDropdown] = useState(false);
-  const [confirmingDeleteEnrolled, setConfirmingDeleteEnrolled] = useState<string | null>(null);
 
   // Refs for video URL retry on expiry
   const currentJobRef = useRef<{ jobId: string; accessToken?: string } | null>(null);
@@ -154,26 +133,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const videoPlayerHook = useVideoPlayer({
     onJumpToTimeRequest: () => setJumpModalOpen(true),
   });
-  const {
-    videoRef,
-    setVideoRef,
-    currentTime,
-    isPlaying,
-    volume,
-    isVideoSeeking,
-    handlePlayPause,
-    handleVolumeChange,
-    seek,
-    play,
-  } = videoPlayerHook;
+  const { videoRef, seek, play } = videoPlayerHook;
 
   const subtitlesHook = useSubtitles({
     transcription,
     videoRef,
     showTranslation,
   });
-  const { showSubtitles, subtitleTrackUrl, translatedSubtitleUrl } =
-    subtitlesHook;
 
   const summariesHook = useSummaries({
     transcription,
@@ -186,47 +152,45 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   });
   const featureFlags = useFeatureFlags();
 
+
   // Computed values
   const isTranscribing = backgroundJobSubmit.isSubmitting;
-  const submissionStage = backgroundJobSubmit.progress?.stage ?? 'hashing';
-  const submissionPercent = backgroundJobSubmit.progress?.progress ?? 0;
-  const submissionStep = submissionStage === 'hashing' ? 0 : submissionStage === 'uploading' ? 1 : 2;
-
 
   // Filter segments by selected speaker, optionally including visual moments
-  const displayedSegments = useMemo(() => {
-    if (!transcription) return [];
-    const segments = transcription.transcription.segments;
+  const displayedSegments = useMemo(
+    () => (transcription ? filterDisplayedSegments(transcription.transcription.segments, filteredSpeaker, showVisualMoments) : []),
+    [transcription, filteredSpeaker, showVisualMoments],
+  );
 
-    // No speaker filter - show all, but respect visual moments toggle
-    if (!filteredSpeaker) {
-      if (showVisualMoments) return segments;
-      return segments.filter((seg) => !seg.is_silent);
-    }
+  const uniqueSpeakers = useMemo(
+    () => (transcription ? listUniqueSpeakers(transcription.transcription.segments) : []),
+    [transcription],
+  );
 
-    // With speaker filter - include visual moments if toggle is on
-    return segments.filter(
-      (seg) =>
-        seg.speaker === filteredSpeaker || (showVisualMoments && seg.is_silent)
-    );
-  }, [transcription, filteredSpeaker, showVisualMoments]);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  const { activeSegmentId, seekToTimestamp } = useTranscriptPlayback({
+    videoRef,
+    transcriptScrollRef,
+    displayedSegments,
+    seek,
+    play,
+  });
 
-  // Use a ref to track displayedSegments to avoid unnecessary effect re-runs
-  const displayedSegmentsRef = useRef(displayedSegments);
-  useEffect(() => {
-    displayedSegmentsRef.current = displayedSegments;
-  }, [displayedSegments]);
-
-  // Get unique speakers
-  const uniqueSpeakers = useMemo(() => {
-    if (!transcription) return [];
-    const speakers = new Set(
-      transcription.transcription.segments
-        .map((seg) => seg.speaker)
-        .filter((speaker): speaker is string => !!speaker)
-    );
-    return Array.from(speakers).sort();
-  }, [transcription]);
+  const speakers = useSpeakerManagement({
+    transcription,
+    setTranscription,
+    filteredSpeaker,
+    setFilteredSpeaker,
+  });
+  const {
+    editingSegmentId,
+    setEditingSegmentId,
+    editSpeakerName,
+    setEditSpeakerName,
+    isRenamingSpeaker,
+    handleSpeakerRename,
+    handleEnrollSpeaker,
+  } = speakers;
 
   // Sync active job count to header via context
   useEffect(() => {
@@ -235,36 +199,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     ).length;
     setActiveJobCount(activeCount);
   }, [jobTracker.jobs, setActiveJobCount]);
-
-  // Add time update handler to track current video position
-  useEffect(() => {
-    if (videoRef) {
-      const handleTimeUpdate = () => {
-        // currentTime is now managed by the useVideoPlayer hook internally
-        // We only need to track the active segment here
-
-        // Find the currently active segment based on video time (only from displayed segments)
-        if (displayedSegments.length > 0) {
-          const currentSegment = displayedSegments.find((segment) => {
-            const startSeconds = convertTimeToSeconds(segment.start_time);
-            const endSeconds = convertTimeToSeconds(segment.end_time);
-            return (
-              videoRef.currentTime >= startSeconds &&
-              videoRef.currentTime <= endSeconds
-            );
-          });
-
-          setActiveSegmentId(currentSegment?.id ?? null);
-        }
-      };
-
-      videoRef.addEventListener("timeupdate", handleTimeUpdate);
-
-      return () => {
-        videoRef.removeEventListener("timeupdate", handleTimeUpdate);
-      };
-    }
-  }, [videoRef, displayedSegments]);
 
   // Handle Escape key to clear speaker filter
   useEffect(() => {
@@ -293,23 +227,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       return;
     }
 
-    // Convert language name to ISO code
-    const languageCodeMap: Record<string, string> = {
-      spanish: "es",
-      italian: "it",
-      french: "fr",
-      german: "de",
-      english: "en",
-      portuguese: "pt",
-      russian: "ru",
-      chinese: "zh",
-      japanese: "ja",
-      korean: "ko",
-      czech: "cs",
-    };
-    const languageCode =
-      languageCodeMap[selectedLanguage.toLowerCase()] || selectedLanguage;
-
     const durationSeconds = await getMediaDurationSeconds(file);
 
     if (
@@ -328,7 +245,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       setError(null);
       const result = await backgroundJobSubmit.submit(file, {
         durationSeconds: durationSeconds ?? undefined,
-        language: languageCode || undefined,
+        language: selectedLanguage || undefined,
         forceLanguage: true,
       });
 
@@ -414,315 +331,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   }, [openJobId, transcription, jobTracker.isFresh, jobTracker.jobs, handleViewTranscript, setSearchParams]);
 
 
-  const handleSpeakerRename = async (originalSpeaker: string) => {
-    if (!editSpeakerName.trim() || !transcription) return;
-
-    setIsRenamingSpeaker(true);
-    try {
-      // Call API
-      await updateSpeakerName(
-        transcription.video_hash,
-        originalSpeaker,
-        editSpeakerName.trim()
-      );
-
-      // Update local state
-      const updatedSegments = transcription.transcription.segments.map(
-        (seg) => {
-          if (seg.speaker === originalSpeaker) {
-            return { ...seg, speaker: editSpeakerName.trim() };
-          }
-          return seg;
-        }
-      );
-
-      setTranscription({
-        ...transcription,
-        transcription: {
-          ...transcription.transcription,
-          segments: updatedSegments,
-        },
-      });
-
-      // Update filtered speaker if it was renamed
-      if (filteredSpeaker === originalSpeaker) {
-        setFilteredSpeaker(editSpeakerName.trim());
-      }
-
-      setEditingSegmentId(null);
-      setEditSpeakerName("");
-    } catch (err) {
-      console.error("Failed to rename speaker:", err);
-      alert("Failed to rename speaker");
-    } finally {
-      setIsRenamingSpeaker(false);
-    }
-  };
-
-  // Speaker Recognition Handlers
-  const handleEnrollSpeaker = (segment: EnrollableSegment) => {
-    setEnrollSpeakerName(formatSpeakerLabel(segment.speaker || "Unknown"));
-    setEnrollModalSegment(segment);
-  };
-
-  const handleEnrollConfirm = async () => {
-    if (!enrollModalSegment || !transcription || !enrollSpeakerName.trim()) return;
-    setEnrollSubmitting(true);
-    try {
-      const startTime = timeToSeconds(enrollModalSegment.start_time);
-      const endTime = timeToSeconds(enrollModalSegment.end_time);
-      await enrollSpeaker(
-        enrollSpeakerName.trim(),
-        transcription.video_hash,
-        startTime,
-        endTime
-      );
-      toast.success(`${enrollSpeakerName.trim()} enrolled successfully`);
-      setEnrollModalSegment(null);
-      setEnrollSpeakerName('');
-    } catch (error: unknown) {
-      console.error("Failed to enroll speaker:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to enroll speaker");
-    } finally {
-      setEnrollSubmitting(false);
-    }
-  };
-
-  const handleAutoIdentifySpeakers = () => {
-    if (!transcription) return;
-    setAutoIdentifyConfirmOpen(true);
-    setSpeakerDropdownOpen(false);
-  };
-
-  const handleAutoIdentifyConfirm = async () => {
-    if (!transcription) return;
-    setAutoIdentifyRunning(true);
-    try {
-      const result = await autoIdentifySpeakers(transcription.video_hash, 0.7);
-      toast.success(
-        `Identified ${result.identified_segments}/${result.total_segments} segments — refreshing…`,
-        { duration: 3000 }
-      );
-      setAutoIdentifyConfirmOpen(false);
-      setTimeout(() => window.location.reload(), 1500);
-    } catch (error: unknown) {
-      console.error("Failed to auto-identify speakers:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to auto-identify speakers");
-      setAutoIdentifyRunning(false);
-    }
-  };
-
-  const fetchEnrolledSpeakers = async () => {
-    setEnrolledLoading(true);
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/speaker/list`, {
-        withCredentials: true,
-      });
-      setEnrolledSpeakers(response.data.speakers || []);
-    } catch (error) {
-      console.error("Failed to fetch enrolled speakers:", error);
-    } finally {
-      setEnrolledLoading(false);
-    }
-  };
-
-  const handleDeleteEnrolledSpeaker = async (name: string) => {
-    try {
-      await axios.delete(`${API_BASE_URL}/api/speaker/${name}`, {
-        withCredentials: true,
-      });
-      setConfirmingDeleteEnrolled(null);
-      await fetchEnrolledSpeakers();
-    } catch {
-      toast.error("Failed to remove speaker");
-    }
-  };
-
-  const seekToTimestamp = useCallback((timeString: string) => {
-    if (!timeString) return;
-
-    const seconds = timeToSeconds(timeString);
-    seek(seconds);
-    play();
-
-    // Find the corresponding segment in the transcript (only from displayed segments)
-    if (displayedSegments.length > 0) {
-      const segments = displayedSegments;
-      const matchingSegmentIndex = segments.findIndex((segment) => {
-        const segmentStartSeconds = timeToSeconds(segment.start_time);
-        const segmentEndSeconds = timeToSeconds(segment.end_time);
-        return seconds >= segmentStartSeconds && seconds <= segmentEndSeconds;
-      });
-
-      // If a matching segment is found, scroll to it
-      if (matchingSegmentIndex !== -1) {
-        const matchingSegment = segments[matchingSegmentIndex];
-        setActiveSegmentId(matchingSegment.id);
-
-        // Use setTimeout to ensure the DOM has updated with the active segment
-        setTimeout(() => {
-          const segmentElement = document.getElementById(
-            `transcript-segment-${matchingSegment.id}`
-          );
-          if (segmentElement) {
-            // Find the scrollable container instead of scrolling the whole page
-            const transcriptContainer = document.querySelector(
-              ".flex-grow.overflow-auto"
-            );
-            if (transcriptContainer) {
-              // Calculate position relative to the container
-              const containerRect = transcriptContainer.getBoundingClientRect();
-              const elementRect = segmentElement.getBoundingClientRect();
-              const relativeTop = elementRect.top - containerRect.top;
-
-              // Scroll the container, not the element
-              transcriptContainer.scrollTo({
-                top: transcriptContainer.scrollTop + relativeTop - 100, // 100px from top for better visibility
-                behavior: "smooth",
-              });
-            } else {
-              // Fallback to the previous behavior
-              segmentElement.scrollIntoView({
-                behavior: "smooth",
-                block: "center",
-              });
-            }
-          }
-        }, 100);
-      }
-    }
-  }, [displayedSegments, seek, play]);
-
-
-  // Create and add subtitles to video
-  // Subtitle-related logic now handled by useSubtitles hook
-
-  // Note: Removed unused functions: updateUploadProgress, handleExtractingAudio,
-  // handleTranscribing, fetchCurrentTranscription - all were unused
-
-  // Summary logic now handled by useSummaries hook
-
-  // Language options (ISO 639-1 codes)
-  const languageOptions = [
-    { value: "", label: "Detect automatically" },
-    { value: "en", label: "English" },
-    { value: "es", label: "Spanish" },
-    { value: "fr", label: "French" },
-    { value: "de", label: "German" },
-    { value: "it", label: "Italian" },
-    { value: "ja", label: "Japanese" },
-    { value: "ko", label: "Korean" },
-    { value: "pt", label: "Portuguese" },
-    { value: "ru", label: "Russian" },
-    { value: "zh", label: "Chinese" },
-    { value: "cs", label: "Czech" },
-    // Add more languages as needed
-  ];
 
   // Function to open the modal
   const openImageModal = (imageUrl: string | undefined) => {
-    if (imageUrl) {
-      setModalImageUrl(imageUrl as string); // TypeScript narrowing
-      setIsModalOpen(true);
-    }
+    if (imageUrl) setModalImageUrl(imageUrl);
   };
-
-  // Add this after the useEffect hooks
-  useEffect(() => {
-    if (videoRef) {
-      // Seeking state is managed by useVideoPlayer hook
-      // This effect only handles active segment updates after seeking
-      const handleSeeked = () => {
-        // Update active segment based on current time (only from displayed segments)
-        // Use ref to avoid unnecessary effect re-runs when displayedSegments changes
-        if (displayedSegmentsRef.current.length > 0) {
-          const currentTime = videoRef.currentTime;
-          const segments = displayedSegmentsRef.current;
-          const matchingSegment = segments.find((segment) => {
-            const segmentStartSeconds = timeToSeconds(segment.start_time);
-            const segmentEndSeconds = timeToSeconds(segment.end_time);
-            return (
-              currentTime >= segmentStartSeconds &&
-              currentTime <= segmentEndSeconds
-            );
-          });
-
-          if (matchingSegment) {
-            setActiveSegmentId(matchingSegment.id);
-            // Scroll to the active segment
-            const segmentElement = document.getElementById(
-              `transcript-segment-${matchingSegment.id}`
-            );
-            if (segmentElement) {
-              const transcriptContainer = document.querySelector(
-                ".flex-grow.overflow-auto"
-              );
-              if (transcriptContainer) {
-                const containerRect =
-                  transcriptContainer.getBoundingClientRect();
-                const elementRect = segmentElement.getBoundingClientRect();
-                const relativeTop = elementRect.top - containerRect.top;
-
-                transcriptContainer.scrollTo({
-                  top: transcriptContainer.scrollTop + relativeTop - 100,
-                  behavior: "smooth",
-                });
-              }
-            }
-          }
-        }
-      };
-
-      videoRef.addEventListener("seeked", handleSeeked);
-
-      return () => {
-        videoRef.removeEventListener("seeked", handleSeeked);
-      };
-    }
-  }, [videoRef]);
-
-  // --- Spinner/modal overlay logic handled by computed isTranscribing value ---
-
-  // When translation is requested, translate all segments using the selected translation method
-  useEffect(() => {
-    if (
-      transcription &&
-      transcription.transcription.language &&
-      transcription.transcription.language.toLowerCase() !== "en" &&
-      translationMethod === "marianmt" &&
-      transcription.transcription.segments.some((seg) => !seg.translation)
-    ) {
-      const doTranslation = async () => {
-        const sourceLang = transcription.transcription.language.toLowerCase();
-        const updatedSegments = await Promise.all(
-          transcription.transcription.segments.map(async (seg) => {
-            if (!seg.translation && seg.text) {
-              try {
-                const translation = await translateLocalText(
-                  seg.text,
-                  sourceLang
-                );
-                return { ...seg, translation };
-              } catch {
-                return { ...seg, translation: "[Translation failed]" };
-              }
-            }
-            return seg;
-          })
-        );
-        setTranscription({
-          ...transcription,
-          transcription: {
-            ...transcription.transcription,
-            segments: updatedSegments,
-          },
-        });
-      };
-      doTranslation();
-    }
-  }, [transcription, translationMethod, setTranscription]);
-
-  // Video player logic now handled by useVideoPlayer hook
 
   // Notify parent when transcription changes
   useEffect(() => {
@@ -751,28 +364,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               handleStartTranscriptionClick={handleStartTranscriptionClick}
               languageOptions={languageOptions}
             >
-            {jobTracker.jobs.some(job => isActiveJobStatus(job.status)) && (
-              <section className="mb-6" aria-labelledby="active-jobs-heading">
-                <div className="mb-3 flex items-baseline justify-between gap-3">
-                  <h2 id="active-jobs-heading" className="text-[15px] font-medium text-text-primary">In progress</h2>
-                  <span className="text-xs text-text-tertiary">You can close this tab</span>
-                </div>
-                <div className="space-y-3">
-                  {jobTracker.jobs.filter(job => isActiveJobStatus(job.status)).map(job => (
-                    <button key={job.job_id} type="button" onClick={() => setShowJobPanel(true)} className="block w-full rounded-xl border p-4 text-left transition-colors hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }} aria-label={`View progress for ${job.filename}`}>
-                      <span className="flex items-start justify-between gap-4">
-                        <span className="min-w-0 truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }} title={job.filename}>{job.filename}</span>
-                        <span className="shrink-0 text-xs font-medium tabular-nums" style={{ color: 'var(--accent)' }}>{job.status === 'pending' ? 'Queued' : job.status === 'finalizing' ? 'Finishing up' : job.progress > 0 ? `${Math.round(job.progress)}%` : 'Starting…'}</span>
-                      </span>
-                      <span className="mt-2 block text-xs" style={{ color: 'var(--text-secondary)' }}>{job.progress_message || (job.status === 'pending' ? 'Waiting to start' : 'Transcription is running in the background')}</span>
-                      <span className="mt-3 block h-1 overflow-hidden rounded-full" style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                        <span className={job.progress > 0 ? 'block h-full rounded-full transition-[width] motion-reduce:transition-none' : job.status === 'pending' ? 'block h-full' : 'job-progress-indeterminate block h-full rounded-full'} style={{ width: job.progress > 0 ? `${Math.min(100, job.progress)}%` : job.status === 'pending' ? '0%' : '35%', backgroundColor: 'var(--accent)' }} />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
+            <ActiveJobsSection jobs={jobTracker.jobs} onOpenJobPanel={() => setShowJobPanel(true)} />
             <RecentTranscriptions
               jobs={jobTracker.jobs}
               onViewJob={handleViewTranscript}
@@ -785,79 +377,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
         {transcription && (
           <div className="h-screen flex flex-col overflow-hidden w-full" style={{ gap: '8px' }}>
-            <div className="flex-shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-              <div className="flex h-12 items-center justify-between gap-3 px-1">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSearchParams({})}
-                    className="btn-ghost inline-flex shrink-0 items-center gap-1 px-2 py-1 text-[13px]"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    <ChevronLeftIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-                    All videos
-                  </button>
-                  <ChevronRightIcon className="h-4 w-4 shrink-0" strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} aria-hidden="true" />
-                  <h2
-                    className="min-w-0 max-w-[360px] truncate text-sm font-medium"
-                    style={{ color: 'var(--text-primary)' }}
-                    title={transcription.filename}
-                  >
-                    {transcription.filename}
-                  </h2>
-                  {!isHeaderExpanded && (
-                    <span className="shrink-0 font-mono text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
-                      {[displayDuration, languageLabel]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1">
-                  <SubtitleControls
-                    filename={transcription.filename}
-                    videoHash={transcription.video_hash}
-                  />
-
-                  <div className="mx-1 h-4 w-px" style={{ backgroundColor: 'var(--border-subtle)' }} />
-
-                  <button
-                    onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
-                    className="btn-ghost p-2"
-                    style={{ color: 'var(--text-secondary)' }}
-                    title={isHeaderExpanded ? "Hide details" : "Show details"}
-                    aria-expanded={isHeaderExpanded}
-                  >
-                    <svg
-                      className={`w-4 h-4 transition-transform duration-200 motion-reduce:transition-none${isHeaderExpanded ? ' rotate-180' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {isHeaderExpanded && (
-                <dl className="animate-fade-in flex h-9 flex-wrap items-center gap-x-6 px-3">
-                  {[
-                    { label: 'Duration', value: displayDuration, mono: true },
-                    { label: 'Language', value: languageLabel, mono: true },
-                    { label: 'Processing', value: formatProcessingTime(transcription.transcription.processing_time), mono: false },
-                  ]
-                    .filter(({ value }) => value)
-                    .map(({ label, value, mono }) => (
-                      <div key={label} className="flex items-baseline gap-2">
-                        <dt className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{label}</dt>
-                        <dd className={`text-[13px]${mono ? ' font-mono tabular-nums' : ''}`} style={{ color: 'var(--text-primary)' }}>
-                          {value}
-                        </dd>
-                      </div>
-                    ))}
-                </dl>
-              )}
-            </div>
+            <TranscriptHeader
+              transcription={transcription}
+              onClose={() => setSearchParams({})}
+              displayDuration={displayDuration}
+              languageLabel={languageLabel}
+            />
 
             {/* Three-Column Layout */}
             <div className="flex flex-col lg:flex-row flex-grow overflow-hidden w-full" style={{ gap: '8px' }}>
@@ -865,227 +390,22 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               <div
                 className="watch-layout flex-grow flex flex-col overflow-hidden gap-4 w-full"
               >
-                  <div
-                    className="overflow-hidden flex-shrink-0 w-full flex flex-col"
-                    style={{ backgroundColor: '#000', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
-                  >
-                    <div className="w-full bg-black flex justify-center relative flex-grow items-center">
-                      {videoUrl ? (
-                      <video
-                        ref={setVideoRef}
-                        src={videoUrl}
-                        className="w-full h-full max-h-[70vh] xl:max-h-[80vh] object-contain"
-                        onLoadedMetadata={(e) => setVideoDuration(e.currentTarget.duration)}
-                        onTimeUpdate={() => {
-                          if (!isVideoSeeking && videoRef) {
-                            const currentTime = videoRef.currentTime;
-                            if (displayedSegments.length > 0) {
-                              const segments = displayedSegments;
-                              const matchingSegment = segments.find(
-                                (segment) => {
-                                  const segmentStartSeconds = timeToSeconds(
-                                    segment.start_time
-                                  );
-                                  const segmentEndSeconds = timeToSeconds(
-                                    segment.end_time
-                                  );
-                                  return (
-                                    currentTime >= segmentStartSeconds &&
-                                    currentTime <= segmentEndSeconds
-                                  );
-                                }
-                              );
-
-                              if (matchingSegment) {
-                                setActiveSegmentId(matchingSegment.id);
-                              }
-                            }
-                          }
-                        }}
-                        onError={async () => {
-                          if (videoRetriedRef.current || !currentJobRef.current) return;
-                          videoRetriedRef.current = true;
-                          try {
-                            const { download_url } = await getJobVideoUrl(
-                              currentJobRef.current.jobId,
-                              currentJobRef.current.accessToken
-                            );
-                            setVideoUrl(download_url);
-                          } catch (e) {
-                            console.error("Failed to refresh video URL", e);
-                          }
-                        }}
-                      >
-                        {subtitleTrackUrl && (
-                          <track
-                            src={subtitleTrackUrl}
-                            kind="subtitles"
-                            srcLang={
-                              transcription?.transcription.language || "en"
-                            }
-                            label={
-                              transcription?.transcription.language?.toUpperCase() ||
-                              "Original"
-                            }
-                            default={showSubtitles && !showTranslation}
-                          />
-                        )}
-                        {translatedSubtitleUrl && (
-                          <track
-                            src={translatedSubtitleUrl}
-                            kind="subtitles"
-                            srcLang="en"
-                            label="ENGLISH"
-                            default={showSubtitles && showTranslation}
-                          />
-                        )}
-                      </video>
-                      ) : (
-                      <div
-                        className="w-full flex items-center justify-center"
-                        style={{ minHeight: '320px', aspectRatio: '16 / 9' }}
-                      >
-                        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                          Loading video…
-                        </span>
-                      </div>
-                      )}
-                    </div>
-                    {/* Custom Progress Bar with Tooltip and Screenshot Preview */}
-                    {videoRef && (
-                      <>
-                        <div className="bg-gradient-to-t from-black/70 via-black/20 to-transparent pt-4">
-                        <div className="flex items-center px-4 py-2 gap-4">
-                          {/* Play/Pause Button */}
-                          <button
-                            onClick={handlePlayPause}
-                            aria-label={isPlaying ? "Pause" : "Play"}
-                            className="group flex items-center justify-center w-9 h-9 rounded-full transition-[background-color,transform] duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                          >
-                            {isPlaying ? (
-                              <svg
-                                className="w-6 h-6 transition-colors duration-150"
-                                style={{ color: 'var(--player-icon)' }}
-                                fill="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <rect x="6" y="4" width="4" height="16" rx="1" />
-                                <rect x="14" y="4" width="4" height="16" rx="1" />
-                              </svg>
-                            ) : (
-                              <svg
-                                className="w-6 h-6 transition-colors duration-150"
-                                style={{ color: 'var(--player-icon)' }}
-                                fill="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path d="M8 5v14l11-7z" />
-                              </svg>
-                            )}
-                          </button>
-
-                          {/* Volume Control */}
-                          <div className="flex items-center space-x-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (videoRef) {
-                                  videoRef.volume = volume === 0 ? 1 : 0;
-                                }
-                              }}
-                              aria-label={volume === 0 ? "Unmute" : "Mute"}
-                              className="group flex items-center justify-center w-8 h-8 rounded-full transition-[background-color,transform] duration-150 hover:bg-white/10 active:bg-white/20 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                            >
-                              <svg
-                                className="w-5 h-5 transition-colors duration-150"
-                                style={{ color: 'var(--player-icon)' }}
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                {volume === 0 ? (
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                                  />
-                                ) : (
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                                  />
-                                )}
-                              </svg>
-                            </button>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.05"
-                              value={volume}
-                              onChange={handleVolumeChange}
-                              aria-label="Volume"
-                              className="player-volume-slider rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                              style={{ width: '80px', ['--vol' as string]: volume } as React.CSSProperties}
-                            />
-                          </div>
-                        </div>
-                        <CustomProgressBar
-                          videoRef={videoRef}
-                          duration={videoDuration}
-                          currentTime={currentTime}
-                          segments={displayedSegments}
-                          getScreenshotUrlForTime={(time) => {
-                            // Find the segment whose start_time is closest to the hovered time
-                            if (!transcription.transcription.segments)
-                              return null;
-                            let closest = null;
-                            let minDiff = Infinity;
-                            for (const seg of transcription.transcription
-                              .segments) {
-                              const segTime = timeToSeconds(seg.start_time);
-                              const diff = Math.abs(segTime - time);
-                              if (diff < minDiff) {
-                                minDiff = diff;
-                                closest = seg;
-                              }
-                            }
-                            return closest && closest.screenshot_url
-                              ? formatScreenshotUrl(closest.screenshot_url) ??
-                                  null
-                              : null;
-                          }}
-                          onSeek={(time: number) => {
-                            seek(time);
-                          }}
-                          chapters={featureFlags.chapters ? chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title })) : []}
-                        />
-                        </div>
-                        <div className="flex justify-end px-4 pb-2">
-                          <button
-                            className="btn-ghost"
-                            style={{ fontSize: '12px', padding: '4px 8px' }}
-                            onClick={() => setJumpModalOpen(true)}
-                            title="Jump to a specific timestamp (Ctrl+J)"
-                          >
-                            Jump to time
-                          </button>
-                        </div>
-                        <JumpToTimeModal
-                          isOpen={jumpModalOpen}
-                          onClose={() => setJumpModalOpen(false)}
-                          onJump={(seconds) => {
-                            seek(seconds);
-                          }}
-                          duration={videoDuration}
-                          currentTime={currentTime}
-                        />
-                      </>
-                    )}
-                  </div>
+                <VideoPlayerPanel
+                  transcription={transcription}
+                  videoUrl={videoUrl}
+                  setVideoUrl={setVideoUrl}
+                  videoPlayer={videoPlayerHook}
+                  subtitles={subtitlesHook}
+                  displayedSegments={displayedSegments}
+                  videoDuration={videoDuration}
+                  setVideoDuration={setVideoDuration}
+                  showTranslation={showTranslation}
+                  currentJobRef={currentJobRef}
+                  videoRetriedRef={videoRetriedRef}
+                  chapters={featureFlags.chapters ? chaptersHook.chapters.map(ch => ({ start: ch.start, title: ch.title })) : []}
+                  jumpModalOpen={jumpModalOpen}
+                  setJumpModalOpen={setJumpModalOpen}
+                />
 
                 <div
                   className="rp overflow-hidden flex-grow flex flex-col w-full"
@@ -1110,269 +430,22 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                     ))}
                   </div>
 
-                  <div className="flex-grow overflow-auto relative">
+                  <div ref={transcriptScrollRef} className="flex-grow overflow-auto relative">
                     {!showSummary && !showChat && !showChapters && (
                       <>
                         {/* Transcript toolbar */}
-                        <div
-                          className="sticky top-0 z-10 flex-wrap gap-2"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '8px 10px',
-                            borderBottom: '1px solid var(--border-subtle)',
-                            backgroundColor: 'var(--bg-subtle)',
-                          }}
-                        >
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <button
-                              onClick={() => setShowTranslation(!showTranslation)}
-                              className="btn-ghost"
-                              style={{
-                                padding: '4px 10px',
-                                fontSize: '12px',
-                                color: showTranslation ? 'var(--accent)' : 'var(--text-secondary)',
-                                backgroundColor: showTranslation ? 'var(--accent-dim)' : 'transparent',
-                              }}
-                              title="Show translated text for each segment"
-                            >
-                              {showTranslation ? "Original" : "Translate"}
-                            </button>
-
-                            {/* Speaker Filter Dropdown */}
-                            <div className="relative">
-                              <button
-                                onClick={() => setSpeakerDropdownOpen(!speakerDropdownOpen)}
-                                className="btn-ghost"
-                                style={{
-                                  padding: '4px 10px',
-                                  fontSize: '12px',
-                                  color: filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
-                                  backgroundColor: filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
-                                  display: 'flex', alignItems: 'center', gap: '6px',
-                                }}
-                              >
-                                <span>{filteredSpeaker ? formatSpeakerLabel(filteredSpeaker) : 'Speakers'}</span>
-                                <span style={{ opacity: 0.6 }}>({displayedSegments.length})</span>
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: speakerDropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 150ms ease' }}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                              </button>
-
-                              {/* Dropdown Menu */}
-                              {speakerDropdownOpen && (
-                                <div
-                                  className="absolute left-0 mt-1 z-20 rounded-md"
-                                  style={{
-                                    width: '240px',
-                                    backgroundColor: 'var(--bg-overlay)',
-                                    border: '1px solid var(--border-subtle)',
-                                    boxShadow: '0 8px 24px oklch(0% 0 0 / 0.5)',
-                                  }}
-                                >
-                                  {/* Filter section */}
-                                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
-                                    {/* Show All option */}
-                                    <button
-                                      onClick={() => { setFilteredSpeaker(null); setSpeakerDropdownOpen(false); }}
-                                      style={{
-                                        display: 'flex', width: '100%', textAlign: 'left',
-                                        padding: '8px 12px', fontSize: '13px',
-                                        color: !filteredSpeaker ? 'var(--accent)' : 'var(--text-secondary)',
-                                        backgroundColor: !filteredSpeaker ? 'var(--accent-dim)' : 'transparent',
-                                        alignItems: 'center', justifyContent: 'space-between',
-                                      }}
-                                    >
-                                      <span style={{ fontWeight: 500 }}>All speakers</span>
-                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                        {transcription?.transcription.segments.length}
-                                      </span>
-                                    </button>
-
-                                    {/* Individual speakers */}
-                                    {uniqueSpeakers.map((speaker) => {
-                                      const segmentCount =
-                                        transcription?.transcription.segments.filter(
-                                          (seg) => seg.speaker === speaker
-                                        ).length || 0;
-
-                                      return (
-                                        <button
-                                          key={speaker}
-                                          onClick={() => {
-                                            setFilteredSpeaker(speaker);
-                                            setSpeakerDropdownOpen(false);
-                                          }}
-                                          style={{
-                                            width: '100%',
-                                            textAlign: 'left',
-                                            padding: '8px 14px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            borderTop: '1px solid var(--border-subtle)',
-                                            backgroundColor: filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent',
-                                            cursor: 'pointer',
-                                            transition: 'background-color 100ms ease',
-                                          }}
-                                          onMouseEnter={e => { if (filteredSpeaker !== speaker) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'; }}
-                                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = filteredSpeaker === speaker ? 'var(--accent-dim)' : 'transparent'; }}
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <span style={{
-                                              display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                              padding: '2px 8px', borderRadius: '9999px',
-                                              fontSize: '11px', fontWeight: 600,
-                                              backgroundColor: filteredSpeaker === speaker ? 'var(--accent)' : 'var(--bg-overlay)',
-                                              color: filteredSpeaker === speaker ? 'var(--accent-text)' : 'var(--text-secondary)',
-                                              border: '1px solid var(--border-default)',
-                                            }}>
-                                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                                              </svg>
-                                              {formatSpeakerLabel(speaker)}
-                                            </span>
-                                          </div>
-                                          <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                            {segmentCount}
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-
-                                  {/* Speaker tools section */}
-                                  <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                                    <p style={{ padding: '8px 12px 4px', fontSize: '11px', fontWeight: 500, color: 'var(--text-tertiary)' }}>
-                                      Speaker tools
-                                    </p>
-
-                                    {/* Auto-identify */}
-                                    <button
-                                      onClick={handleAutoIdentifySpeakers}
-                                      style={{
-                                        width: '100%', textAlign: 'left',
-                                        padding: '7px 12px', fontSize: '12px',
-                                        color: 'var(--text-secondary)',
-                                        display: 'flex', alignItems: 'center', gap: '8px',
-                                        transition: 'background-color 100ms ease',
-                                      }}
-                                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'}
-                                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'}
-                                      title="Automatically identify speakers using enrolled voice prints"
-                                    >
-                                      <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                                      </svg>
-                                      Auto-identify speakers
-                                    </button>
-
-                                    {/* Enrolled speakers toggle */}
-                                    <button
-                                      onClick={() => {
-                                        const next = !showEnrolledInDropdown;
-                                        setShowEnrolledInDropdown(next);
-                                        if (next) fetchEnrolledSpeakers();
-                                      }}
-                                      style={{
-                                        width: '100%', textAlign: 'left',
-                                        padding: '7px 12px', fontSize: '12px',
-                                        color: showEnrolledInDropdown ? 'var(--accent)' : 'var(--text-secondary)',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        transition: 'background-color 100ms ease',
-                                      }}
-                                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'var(--bg-surface)'}
-                                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'}
-                                    >
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                                        </svg>
-                                        Enrolled speakers
-                                        {enrolledSpeakers.length > 0 && (
-                                          <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '9999px', padding: '0 5px' }}>
-                                            {enrolledSpeakers.length}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <svg
-                                        className="w-3 h-3"
-                                        style={{ color: 'var(--text-tertiary)', transform: showEnrolledInDropdown ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 150ms ease' }}
-                                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                      >
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                      </svg>
-                                    </button>
-
-                                    {/* Enrolled speakers list */}
-                                    {showEnrolledInDropdown && (
-                                      <div style={{ borderTop: '1px solid var(--border-subtle)', maxHeight: '200px', overflowY: 'auto' }}>
-                                        {enrolledLoading ? (
-                                          <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
-                                            <div className="animate-spin" style={{ width: '16px', height: '16px', border: '2px solid var(--border-default)', borderTopColor: 'var(--accent)', borderRadius: '50%' }} />
-                                          </div>
-                                        ) : enrolledSpeakers.length === 0 ? (
-                                          <p style={{ padding: '12px', fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center' }}>
-                                            No enrolled speakers. Click "Enroll" on a segment.
-                                          </p>
-                                        ) : (
-                                          enrolledSpeakers.map(sp => (
-                                            <div key={sp.name}>
-                                              {confirmingDeleteEnrolled === sp.name ? (
-                                                <div style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'oklch(65% 0.20 25 / 0.06)' }}>
-                                                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Remove <strong style={{ color: 'var(--text-primary)' }}>{sp.name}</strong>?</span>
-                                                  <div style={{ display: 'flex', gap: '6px' }}>
-                                                    <button onClick={() => handleDeleteEnrolledSpeaker(sp.name)} style={{ fontSize: '11px', fontWeight: 600, color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer' }}>Yes</button>
-                                                    <button onClick={() => setConfirmingDeleteEnrolled(null)} style={{ fontSize: '11px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer' }}>No</button>
-                                                  </div>
-                                                </div>
-                                              ) : (
-                                                <div
-                                                  style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}
-                                                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.backgroundColor = 'var(--bg-surface)'}
-                                                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'}
-                                                >
-                                                  <div>
-                                                    <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-primary)' }}>{sp.name}</span>
-                                                    <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '6px' }}>{sp.samples_count} sample{sp.samples_count !== 1 ? 's' : ''}</span>
-                                                  </div>
-                                                  <button
-                                                    onClick={() => setConfirmingDeleteEnrolled(sp.name)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', flexShrink: 0 }}
-                                                    title="Remove enrolled speaker"
-                                                  >
-                                                    <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                    </svg>
-                                                  </button>
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Visual Moments Toggle */}
-                            <button
-                              onClick={() => setShowVisualMoments(!showVisualMoments)}
-                              className="btn-ghost"
-                              style={{
-                                padding: '4px 10px',
-                                fontSize: '12px',
-                                color: showVisualMoments ? 'var(--accent)' : 'var(--text-secondary)',
-                                backgroundColor: showVisualMoments ? 'var(--accent-dim)' : 'transparent',
-                              }}
-                              title="Show visual-only segments (silent frames captured from the video)"
-                            >
-                              <span>Scenes</span>
-                            </button>
-                          </div>
-                        </div>
+                        <TranscriptToolbar
+                          transcription={transcription}
+                          displayedSegments={displayedSegments}
+                          uniqueSpeakers={uniqueSpeakers}
+                          showTranslation={showTranslation}
+                          setShowTranslation={setShowTranslation}
+                          filteredSpeaker={filteredSpeaker}
+                          setFilteredSpeaker={setFilteredSpeaker}
+                          showVisualMoments={showVisualMoments}
+                          setShowVisualMoments={setShowVisualMoments}
+                          speakers={speakers}
+                        />
                         {/* Transcript content */}
                         <TranscriptSegmentList
                           segments={displayedSegments}
@@ -1431,40 +504,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         />
                       </div>
                     )}
-                    {showScreenshots && (
-                      <div className="h-full p-4">
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                          {summaries.map(
-                            (summary, index) =>
-                              summary.screenshot_url && (
-                                <div
-                                  key={index}
-                                  className="relative group cursor-pointer"
-                                  onClick={() =>
-                                    summary.screenshot_url &&
-                                    openImageModal(
-                                      formatScreenshotUrlSafe(
-                                        summary.screenshot_url
-                                      )
-                                    )
-                                  }
-                                >
-                                  <img
-                                    src={formatScreenshotUrlSafe(
-                                      summary.screenshot_url
-                                    )}
-                                    alt={`Screenshot at ${summary.start}`}
-                                    className="w-full h-auto rounded-lg shadow-sm hover:shadow-md transition-shadow"
-                                  />
-                                  <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white p-2 rounded-b-lg">
-                                    <p className="text-sm">{summary.start}</p>
-                                  </div>
-                                </div>
-                              )
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -1473,42 +512,13 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         )}
 
         {/* Error Display */}
-        {error && (
-          <div
-            className="mt-6 w-full"
-            style={{
-              padding: '12px 16px',
-              borderRadius: '6px',
-              backgroundColor: 'oklch(65% 0.20 25 / 0.08)',
-              border: '1px solid oklch(65% 0.20 25 / 0.3)',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '12px',
-            }}
-          >
-            <svg style={{ width: '16px', height: '16px', color: 'var(--c-error)', flexShrink: 0, marginTop: '1px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--c-error)', marginBottom: '2px' }}>Transcription failed</p>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{error}</p>
-              <button
-                onClick={() => setError(null)}
-                style={{ marginTop: '8px', fontSize: '12px', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}
-              >
-                Try again
-              </button>
-            </div>
-          </div>
-        )}
+        {error && <TranscriptionErrorBanner error={error} setError={setError} />}
 
         {/* Image Modal */}
-        {isModalOpen && modalImageUrl && (
+        {modalImageUrl && (
           <DraggableImageModal
             imageUrl={modalImageUrl}
-            onClose={() => setIsModalOpen(false)}
+            onClose={() => setModalImageUrl(null)}
             videoHash={transcription?.video_hash}
             speakers={uniqueSpeakers}
           />
@@ -1516,53 +526,11 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
 
       </div>
 
-      <Dialog open={backgroundJobSubmit.isSubmitting} onClose={() => {}} className="relative z-50">
-        <div className="fixed inset-0" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.55)', backdropFilter: 'blur(4px)' }} aria-hidden="true" />
-        <div className="fixed inset-0 flex items-center justify-center overflow-y-auto p-5">
-          <Dialog.Panel className="w-full max-w-md overflow-hidden rounded-2xl" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', boxShadow: '0 24px 80px oklch(0% 0 0 / 0.22)' }}>
-            <div className="p-6 sm:p-8">
-              <p className="mb-3 text-xs font-medium uppercase tracking-widest" style={{ color: 'var(--accent)' }}>New transcription</p>
-              <Dialog.Title className="text-xl font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                {submissionStage === 'hashing' ? 'Preparing your file' : submissionStage === 'uploading' ? 'Uploading your file' : submissionStage === 'complete' ? 'Ready to transcribe' : 'Adding to the queue'}
-              </Dialog.Title>
-              <Dialog.Description className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                Keep this tab open until your file is uploaded and queued.
-              </Dialog.Description>
-              <div className="mt-6 min-w-0 rounded-lg px-4 py-3" style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-                <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }} title={file?.name}>{file?.name || 'Media file'}</p>
-                {file && <p className="mt-1 text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(file.size / (1024 ** 2))} MB</p>}
-              </div>
-              <div className="mt-6 flex items-baseline justify-between gap-3">
-                <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Overall progress</span>
-                <span className="text-2xl font-medium tabular-nums tracking-tight" style={{ color: 'var(--text-primary)' }}>{submissionPercent}<span className="ml-0.5 text-sm" style={{ color: 'var(--text-tertiary)' }}>%</span></span>
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full" role="progressbar" aria-label="Transcription submission" aria-valuemin={0} aria-valuemax={100} aria-valuenow={submissionPercent} style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                <div className="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${submissionPercent}%`, backgroundColor: 'var(--accent)' }} />
-              </div>
-              <ol className="mt-4 flex justify-between gap-2 text-xs" aria-label="Submission steps">
-                {['Prepare', 'Upload', 'Queue'].map((label, index) => {
-                  const complete = submissionStage === 'complete' || index < submissionStep;
-                  const active = submissionStage !== 'complete' && index === submissionStep;
-                  return (
-                    <li key={label} aria-current={active ? 'step' : undefined} className="flex items-center gap-1.5" style={{ color: complete || active ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: active ? 600 : 400 }}>
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full text-[10px]" style={{ backgroundColor: complete || active ? 'var(--accent-dim)' : 'var(--bg-subtle)' }}>
-                        {complete ? <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-label="Complete"><path d="m3 8 3 3 7-7" /></svg> : index + 1}
-                      </span>
-                      {label}
-                    </li>
-                  );
-                })}
-              </ol>
-              <p role="status" className="mt-5 min-h-4 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                {submissionStage === 'uploading' && submissionPercent >= 80 ? 'All bytes sent. Waiting for storage to confirm…' : submissionStage === 'uploading' ? backgroundJobSubmit.progress?.message || 'Connecting to storage…' : submissionStage === 'hashing' ? 'Reading your file before upload…' : submissionStage === 'complete' ? 'Your transcription is queued.' : 'Your file is uploaded. Waiting for the queue to confirm…'}
-              </p>
-            </div>
-            <div className="px-6 py-4 text-xs leading-relaxed sm:px-8" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-base)', color: 'var(--text-tertiary)' }}>
-              Once queued, transcription continues even if you close this tab.
-            </div>
-          </Dialog.Panel>
-        </div>
-      </Dialog>
+      <SubmissionProgressDialog
+        isOpen={backgroundJobSubmit.isSubmitting}
+        progress={backgroundJobSubmit.progress}
+        file={file}
+      />
 
       {/* Background Jobs Panel */}
       <JobPanel
@@ -1573,124 +541,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
       />
 
       {/* Enroll Speaker Modal */}
-      <Transition appear show={enrollModalSegment !== null} as={Fragment}>
-        <Dialog as="div" className="relative z-50" onClose={() => { setEnrollModalSegment(null); setEnrollSpeakerName(''); }}>
-          <Transition.Child
-            as={Fragment}
-            enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100"
-            leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0"
-          >
-            <div className="fixed inset-0" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.75)' }} />
-          </Transition.Child>
-          <div className="fixed inset-0 flex items-center justify-center p-4">
-            <Transition.Child
-              as={Fragment}
-              enter="ease-out duration-200" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100"
-              leave="ease-in duration-150" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95"
-            >
-              <Dialog.Panel style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '24px', width: '100%', maxWidth: '360px', boxShadow: '0 16px 48px oklch(0% 0 0 / 0.6)' }}>
-                <Dialog.Title style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                  Enroll speaker
-                </Dialog.Title>
-                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
-                  Save this voice segment as a named speaker for future identification.
-                </p>
-                <input
-                  type="text"
-                  value={enrollSpeakerName}
-                  onChange={e => setEnrollSpeakerName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleEnrollConfirm(); if (e.key === 'Escape') { setEnrollModalSegment(null); setEnrollSpeakerName(''); } }}
-                  placeholder="Speaker name"
-                  autoFocus
-                  style={{
-                    width: '100%', padding: '8px 10px', fontSize: '13px',
-                    backgroundColor: 'var(--bg-overlay)', border: '1px solid var(--border-default)',
-                    borderRadius: '5px', color: 'var(--text-primary)', outline: 'none',
-                    marginBottom: '16px',
-                  }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--border-default)')}
-                />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button
-                    onClick={() => { setEnrollModalSegment(null); setEnrollSpeakerName(''); }}
-                    className="btn-ghost"
-                    style={{ padding: '6px 14px', fontSize: '13px' }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleEnrollConfirm}
-                    disabled={enrollSubmitting || !enrollSpeakerName.trim()}
-                    className="btn-primary"
-                    style={{ padding: '6px 14px', fontSize: '13px', opacity: enrollSubmitting || !enrollSpeakerName.trim() ? 0.5 : 1 }}
-                  >
-                    {enrollSubmitting ? 'Enrolling…' : 'Enroll'}
-                  </button>
-                </div>
-              </Dialog.Panel>
-            </Transition.Child>
-          </div>
-        </Dialog>
-      </Transition>
+      <SpeakerEnrollModal speakers={speakers} />
 
       {/* Auto-identify Confirmation Modal */}
-      <Transition appear show={autoIdentifyConfirmOpen} as={Fragment}>
-        <Dialog as="div" className="relative z-50" onClose={() => { if (!autoIdentifyRunning) setAutoIdentifyConfirmOpen(false); }}>
-          <Transition.Child
-            as={Fragment}
-            enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100"
-            leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0"
-          >
-            <div className="fixed inset-0" style={{ backgroundColor: 'oklch(11% 0.008 250 / 0.75)' }} />
-          </Transition.Child>
-          <div className="fixed inset-0 flex items-center justify-center p-4">
-            <Transition.Child
-              as={Fragment}
-              enter="ease-out duration-200" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100"
-              leave="ease-in duration-150" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95"
-            >
-              <Dialog.Panel style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '24px', width: '100%', maxWidth: '380px', boxShadow: '0 16px 48px oklch(0% 0 0 / 0.6)' }}>
-                <Dialog.Title style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                  Auto-identify speakers
-                </Dialog.Title>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5' }}>
-                  This will compare all transcript segments against your enrolled speaker voice prints and assign names where there's a confident match.
-                </p>
-                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '20px' }}>
-                  The page will refresh after identification completes.
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button
-                    onClick={() => setAutoIdentifyConfirmOpen(false)}
-                    disabled={autoIdentifyRunning}
-                    className="btn-ghost"
-                    style={{ padding: '6px 14px', fontSize: '13px', opacity: autoIdentifyRunning ? 0.5 : 1 }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleAutoIdentifyConfirm}
-                    disabled={autoIdentifyRunning}
-                    className="btn-primary"
-                    style={{ padding: '6px 14px', fontSize: '13px', opacity: autoIdentifyRunning ? 0.5 : 1 }}
-                  >
-                    {autoIdentifyRunning ? (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <svg style={{ width: '12px', height: '12px', animation: 'spin 1s linear infinite' }} fill="none" viewBox="0 0 24 24">
-                          <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Identifying…
-                      </span>
-                    ) : 'Identify'}
-                  </button>
-                </div>
-              </Dialog.Panel>
-            </Transition.Child>
-          </div>
-        </Dialog>
-      </Transition>
+      <AutoIdentifyConfirmDialog speakers={speakers} />
     </div>
   );
 };
