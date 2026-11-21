@@ -2,18 +2,14 @@ import type { Message } from "./types";
 
 const HISTORY_LIMIT = 10;
 
-export const newMessageId = (): string => crypto.randomUUID();
+// randomUUID only exists in secure contexts (HTTPS/localhost); dev over a LAN IP is plain HTTP.
+export const newMessageId = (): string =>
+  typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 export function updateMessageById(messages: Message[], id: string, update: (message: Message) => Message): Message[] {
   return messages.map((m) => (m.id === id ? update(m) : m));
-}
-
-/** The question a comparison answer responds to: its own, or the user turn just before it. */
-export function findSwapQuestion(messages: Message[], id: string): string {
-  const index = messages.findIndex((m) => m.id === id);
-  if (index < 0) return "";
-  const previous = messages[index - 1];
-  return messages[index].original_question || (previous?.role === "user" ? previous.content : "");
 }
 
 /**

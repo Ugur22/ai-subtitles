@@ -3,9 +3,9 @@ import axios from "axios";
 import { API_BASE_URL } from "../../../../config";
 import { getFriendlyErrorMessage } from "../chatErrors";
 import { advancePhases, parseStreamSources, takeSseDataLines } from "../chatStream";
-import { buildConversationHistory, findSwapQuestion, newMessageId, settleStreamingMessages, updateMessageById } from "../messages";
+import { buildConversationHistory, newMessageId, settleStreamingMessages, updateMessageById } from "../messages";
 import { PHASE_LABELS, isPhaseId } from "../phases";
-import { useStableCallback } from "./useStableCallback";
+import { useStableCallback } from "../../../../hooks/useStableCallback";
 import type { Message, PersonComparisonData, PhaseEntry, ReasoningEffort, TimelineFrame } from "../types";
 
 interface ChatConversationOptions {
@@ -30,14 +30,16 @@ export function useChatConversation({
   const [phases, setPhases] = useState<PhaseEntry[]>([]);
   const [screenshotCount, setScreenshotCount] = useState(0);
 
+  const updateMessage = (messageId: string, update: (message: Message) => Message) => {
+    setMessages((previous) => updateMessageById(previous, messageId, update));
+  };
+
   const sendViaStream = async (
     textToSend: string,
     history: Array<{ role: string; content: string }>,
     assistantId: string,
   ) => {
-    const updateAssistant = (update: (message: Message) => Message) => {
-      setMessages((previous) => updateMessageById(previous, assistantId, update));
-    };
+    const updateAssistant = (update: (message: Message) => Message) => updateMessage(assistantId, update);
     try {
       const response = await axios.post<ReadableStream<Uint8Array>>(
         `${API_BASE_URL}/api/chat/stream`,
@@ -148,27 +150,24 @@ export function useChatConversation({
     }
   };
 
-  const patchMessage = (messageId: string, patch: Partial<Message>) => {
-    setMessages((prev) => updateMessageById(prev, messageId, (m) => ({ ...m, ...patch })));
-  };
+  const patchMessage = (messageId: string, patch: Partial<Message>) => updateMessage(messageId, (m) => ({ ...m, ...patch }));
 
-  const swapControllerRef = useRef<AbortController | null>(null);
+  const swapControllers = useRef(new Map<string, AbortController>());
 
   const swapComparisonFrame = async (
     messageId: string,
+    originalQuestion: string | undefined,
     meta: PersonComparisonData,
     frame: TimelineFrame,
     target: "a" | "b",
   ) => {
-    if (!videoHash) return;
+    if (!videoHash || !originalQuestion) return;
     if (!meta.person || !meta.frame_a || !meta.frame_b) return;
     if (typeof meta.frame_a.timestamp_seconds !== "number") return;
-    const originalQuestion = findSwapQuestion(messages, messageId);
-    if (!originalQuestion) return;
 
-    swapControllerRef.current?.abort();
+    swapControllers.current.get(messageId)?.abort();
     const controller = new AbortController();
-    swapControllerRef.current = controller;
+    swapControllers.current.set(messageId, controller);
 
     patchMessage(messageId, {
       isSwapping: true,
@@ -221,6 +220,8 @@ export function useChatConversation({
         pendingSwapTarget: null,
         swapError: message,
       });
+    } finally {
+      if (swapControllers.current.get(messageId) === controller) swapControllers.current.delete(messageId);
     }
   };
 
@@ -283,6 +284,7 @@ export function useChatConversation({
     phases,
     screenshotCount,
     sendMessage: useStableCallback(sendMessage),
+    retryMessage: useStableCallback((question: string) => sendMessage(question, { retry: true })),
     swapComparisonFrame: useStableCallback(swapComparisonFrame),
     dismissSwapError: useStableCallback(dismissSwapError),
   };

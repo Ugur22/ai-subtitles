@@ -8,11 +8,15 @@ import type { Message, PersonComparisonData, PhaseEntry, ScreenshotModalState, T
 
 interface ChatMessageProps {
   message: Message;
-  /** Live progress; only the streaming message receives it, so the others stay memoized. */
-  phases: PhaseEntry[] | null;
-  screenshotCount: number;
+  streamingProgress: { phases: PhaseEntry[]; screenshotCount: number } | null;
   onRetry: (question: string) => void;
-  onSwapFrame: (messageId: string, meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
+  onSwapFrame: (
+    messageId: string,
+    originalQuestion: string | undefined,
+    meta: PersonComparisonData,
+    frame: TimelineFrame,
+    target: "a" | "b",
+  ) => void;
   onDismissSwapError: (messageId: string) => void;
   setScreenshotModal: Dispatch<SetStateAction<ScreenshotModalState | null>>;
   onTimestampClick?: (timeString: string) => void;
@@ -22,8 +26,7 @@ interface ChatMessageProps {
 
 export const ChatMessage = memo(function ChatMessage({
   message,
-  phases,
-  screenshotCount,
+  streamingProgress,
   onRetry,
   onSwapFrame,
   onDismissSwapError,
@@ -89,8 +92,8 @@ export const ChatMessage = memo(function ChatMessage({
         />
       ) : (
         <>
-          {message.role === "assistant" && message.isStreaming && phases && (
-            <PhaseIndicator phases={phases} screenshotCount={screenshotCount} />
+          {streamingProgress && (
+            <PhaseIndicator phases={streamingProgress.phases} screenshotCount={streamingProgress.screenshotCount} />
           )}
           {message.content && (
             <AssistantMessageContent
@@ -106,7 +109,7 @@ export const ChatMessage = memo(function ChatMessage({
               swapError={message.swapError}
               onSwapFrame={
                 message.role === "assistant"
-                  ? (meta, frame, target) => onSwapFrame(message.id, meta, frame, target)
+                  ? (meta, frame, target) => onSwapFrame(message.id, message.original_question, meta, frame, target)
                   : undefined
               }
               onDismissSwapError={() => onDismissSwapError(message.id)}

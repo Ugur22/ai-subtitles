@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useLayoutEffect, useRef } from "react";
+import { memo, useState, useLayoutEffect, useRef } from "react";
 import { useTransition, animated } from "react-spring";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessage } from "./ChatMessage";
@@ -40,7 +40,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     includeVisuals,
     customInstructions,
   });
-  const { messages, loading, phases, screenshotCount, swapComparisonFrame, dismissSwapError } = conversation;
+  const { messages, loading, phases, screenshotCount, retryMessage, swapComparisonFrame, dismissSwapError } = conversation;
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const latestQuestionRef = useRef<HTMLDivElement>(null);
   const latestQuestion = [...messages].reverse().find((message) => message.role === "user");
@@ -48,10 +48,6 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const sendMessage = (text: string) => {
     if (conversation.sendMessage(text)) setInput("");
   };
-  const conversationSend = conversation.sendMessage;
-  const retryMessage = useCallback((question: string) => {
-    conversationSend(question, { retry: true });
-  }, [conversationSend]);
 
   // Message transitions
   const messageTransitions = useTransition(messages, {
@@ -162,8 +158,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           >
             <ChatMessage
               message={message}
-              phases={message.isStreaming ? phases : null}
-              screenshotCount={message.isStreaming ? screenshotCount : 0}
+              streamingProgress={message.isStreaming ? { phases, screenshotCount } : null}
               onRetry={retryMessage}
               onSwapFrame={swapComparisonFrame}
               onDismissSwapError={dismissSwapError}

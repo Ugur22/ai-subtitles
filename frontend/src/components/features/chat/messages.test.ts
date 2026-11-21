@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildConversationHistory, findSwapQuestion, settleStreamingMessages, updateMessageById } from "./messages";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildConversationHistory, newMessageId, settleStreamingMessages, updateMessageById } from "./messages";
 import type { Message } from "./types";
 
 let nextId = 0;
@@ -9,13 +9,11 @@ const answer = (content: string, extra: Partial<Message> = {}): Message => ({ id
 describe("settleStreamingMessages", () => {
   it("stops a stream that already has text and turns an empty one into a retryable error", () => {
     const partial = answer("partial", { isStreaming: true });
-    const settled = settleStreamingMessages([
-      partial,
-      answer("", { isStreaming: true, original_question: "why?" }),
-    ]);
+    const empty = answer("", { isStreaming: true, original_question: "why?" });
+    const settled = settleStreamingMessages([partial, empty]);
 
     expect(settled[0]).toEqual({ ...partial, isStreaming: false });
-    expect(settled[1]).toMatchObject({ isStreaming: false, isError: true, errorType: "server", retryQuestion: "why?" });
+    expect(settled[1]).toMatchObject({ id: empty.id, isStreaming: false, isError: true, errorType: "server", retryQuestion: "why?" });
   });
 
   it("drops the previous error for the question being retried, and only that one", () => {
@@ -45,32 +43,26 @@ describe("buildConversationHistory", () => {
 });
 
 describe("message ids", () => {
-  it("keeps ids when settling streams, so in-flight updates still find their message", () => {
-    const streaming = answer("", { isStreaming: true });
-
-    expect(settleStreamingMessages([streaming])[0].id).toBe(streaming.id);
-  });
-
   it("patches the right message after a retry removes an earlier one", () => {
     const failed = answer("boom", { isError: true, retryQuestion: "first?" });
     const comparison = answer("Earlier vs later", { isSwapping: true });
     const after = answer("unrelated");
-    // A retry drops the failed answer, shifting every later message down one index.
     const shifted = settleStreamingMessages([failed, comparison, after], "first?");
 
     const patched = updateMessageById(shifted, comparison.id, (m) => ({ ...m, content: "Swapped", isSwapping: false }));
 
     expect(patched.map((m) => m.content)).toEqual(["Swapped", "unrelated"]);
   });
+});
 
-  it("resolves a comparison's question from itself, else the user turn before it", () => {
-    const question = user("Compare her outfits");
-    const withOwn = answer("a", { original_question: "Own question" });
-    const withoutOwn = answer("b");
+describe("newMessageId", () => {
+  afterEach(() => vi.unstubAllGlobals());
 
-    expect(findSwapQuestion([question, withOwn], withOwn.id)).toBe("Own question");
-    expect(findSwapQuestion([question, withoutOwn], withoutOwn.id)).toBe("Compare her outfits");
-    expect(findSwapQuestion([withoutOwn], withoutOwn.id)).toBe("");
-    expect(findSwapQuestion([question], "missing")).toBe("");
+  it("still produces distinct ids where randomUUID is unavailable (plain-HTTP dev)", () => {
+    vi.stubGlobal("crypto", {});
+
+    const ids = new Set(Array.from({ length: 50 }, newMessageId));
+
+    expect(ids.size).toBe(50);
   });
 });
