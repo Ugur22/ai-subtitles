@@ -129,3 +129,50 @@ def test_cloud_build_enables_inline_layer_cache():
     assert "BUILDKIT_INLINE_CACHE=1" in cloudbuild
     assert "DOCKER_BUILDKIT=1" in cloudbuild
     assert "--cache-from=" in cloudbuild
+
+
+def _requirement_lines(path):
+    lines = []
+    for raw in path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _canonical(name):
+    import re
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _constraint_pins():
+    pins = {}
+    for line in _requirement_lines(BACKEND / "constraints.txt"):
+        name, version = line.split("==")
+        pins[_canonical(name)] = version
+    return pins
+
+
+# Installed by the Dockerfile's own torch step from the cu126 index.
+_TORCH_STACK = {"torch", "torchaudio"}
+
+
+def test_requirements_install_uses_the_constraints_lock():
+    # Without -c, any requirements.txt edit re-resolves every unpinned package to its newest release.
+    dockerfile = (BACKEND / "Dockerfile").read_text()
+    assert "COPY requirements.txt constraints.txt ./" in dockerfile
+    assert "pip install --no-cache-dir -r requirements.txt -c constraints.txt" in dockerfile
+
+
+def test_every_direct_requirement_is_locked_to_a_compatible_version():
+    import re
+
+    pins = _constraint_pins()
+    for requirement in _requirement_lines(BACKEND / "requirements.txt"):
+        name = _canonical(re.split(r"[<>=!~\[;\s]", requirement, maxsplit=1)[0])
+        if name in _TORCH_STACK:
+            continue
+        assert name in pins, f"{name} is not in constraints.txt"
+        exact = re.search(r"==\s*([\w.+]+)", requirement)
+        if exact:
+            assert pins[name] == exact.group(1), f"{name}: requirements.txt pins {exact.group(1)}, constraints.txt {pins[name]}"
