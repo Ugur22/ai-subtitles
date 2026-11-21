@@ -2,6 +2,20 @@ import type { Message } from "./types";
 
 const HISTORY_LIMIT = 10;
 
+export const newMessageId = (): string => crypto.randomUUID();
+
+export function updateMessageById(messages: Message[], id: string, update: (message: Message) => Message): Message[] {
+  return messages.map((m) => (m.id === id ? update(m) : m));
+}
+
+/** The question a comparison answer responds to: its own, or the user turn just before it. */
+export function findSwapQuestion(messages: Message[], id: string): string {
+  const index = messages.findIndex((m) => m.id === id);
+  if (index < 0) return "";
+  const previous = messages[index - 1];
+  return messages[index].original_question || (previous?.role === "user" ? previous.content : "");
+}
+
 /**
  * Ends every still-streaming assistant message before a new send, so only the
  * new placeholder animates. A stream that died empty becomes a retryable error.

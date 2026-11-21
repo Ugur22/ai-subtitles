@@ -3,8 +3,9 @@ import axios from "axios";
 import { API_BASE_URL } from "../../../../config";
 import { getFriendlyErrorMessage } from "../chatErrors";
 import { advancePhases, parseStreamSources, takeSseDataLines } from "../chatStream";
-import { buildConversationHistory, settleStreamingMessages } from "../messages";
+import { buildConversationHistory, findSwapQuestion, newMessageId, settleStreamingMessages, updateMessageById } from "../messages";
 import { PHASE_LABELS, isPhaseId } from "../phases";
+import { useStableCallback } from "./useStableCallback";
 import type { Message, PersonComparisonData, PhaseEntry, ReasoningEffort, TimelineFrame } from "../types";
 
 interface ChatConversationOptions {
@@ -31,14 +32,11 @@ export function useChatConversation({
 
   const sendViaStream = async (
     textToSend: string,
-    history: Array<{ role: string; content: string }>
+    history: Array<{ role: string; content: string }>,
+    assistantId: string,
   ) => {
     const updateAssistant = (update: (message: Message) => Message) => {
-      setMessages((previous) => {
-        let index = previous.length - 1;
-        while (index >= 0 && !(previous[index].role === "assistant" && previous[index].isStreaming)) index--;
-        return previous.map((message, i) => i === index ? update(message) : message);
-      });
+      setMessages((previous) => updateMessageById(previous, assistantId, update));
     };
     try {
       const response = await axios.post<ReadableStream<Uint8Array>>(
@@ -150,28 +148,29 @@ export function useChatConversation({
     }
   };
 
-  const patchMessage = (messageIndex: number, patch: Partial<Message>) => {
-    setMessages((prev) => prev.map((m, i) => (i === messageIndex ? { ...m, ...patch } : m)));
+  const patchMessage = (messageId: string, patch: Partial<Message>) => {
+    setMessages((prev) => updateMessageById(prev, messageId, (m) => ({ ...m, ...patch })));
   };
 
   const swapControllerRef = useRef<AbortController | null>(null);
 
   const swapComparisonFrame = async (
-    messageIndex: number,
+    messageId: string,
     meta: PersonComparisonData,
     frame: TimelineFrame,
     target: "a" | "b",
-    originalQuestion: string,
   ) => {
     if (!videoHash) return;
     if (!meta.person || !meta.frame_a || !meta.frame_b) return;
     if (typeof meta.frame_a.timestamp_seconds !== "number") return;
+    const originalQuestion = findSwapQuestion(messages, messageId);
+    if (!originalQuestion) return;
 
     swapControllerRef.current?.abort();
     const controller = new AbortController();
     swapControllerRef.current = controller;
 
-    patchMessage(messageIndex, {
+    patchMessage(messageId, {
       isSwapping: true,
       pendingBSeconds: frame.timestamp_seconds,
       pendingSwapTarget: target,
@@ -204,7 +203,7 @@ export function useChatConversation({
 
       if (controller.signal.aborted) return;
 
-      patchMessage(messageIndex, {
+      patchMessage(messageId, {
         content: response.data.answer,
         isSwapping: false,
         pendingBSeconds: null,
@@ -216,7 +215,7 @@ export function useChatConversation({
         return;
       }
       const { message } = getFriendlyErrorMessage(error);
-      patchMessage(messageIndex, {
+      patchMessage(messageId, {
         isSwapping: false,
         pendingBSeconds: null,
         pendingSwapTarget: null,
@@ -225,7 +224,7 @@ export function useChatConversation({
     }
   };
 
-  const dismissSwapError = (messageIndex: number) => patchMessage(messageIndex, { swapError: undefined });
+  const dismissSwapError = (messageId: string) => patchMessage(messageId, { swapError: undefined });
 
   const sendMessage = (
     textToSend: string,
@@ -235,11 +234,13 @@ export function useChatConversation({
     const isRetry = Boolean(options?.retry);
 
     const userMessage: Message = {
+      id: newMessageId(),
       role: "user",
       content: textToSend,
     };
 
     const placeholderAssistant: Message = {
+      id: newMessageId(),
       role: "assistant",
       content: "",
       original_question: textToSend,
@@ -266,7 +267,7 @@ export function useChatConversation({
 
     void (async () => {
       try {
-        await sendViaStream(textToSend, history);
+        await sendViaStream(textToSend, history, placeholderAssistant.id);
       } finally {
         setLoading(false);
         setPhases([]);
@@ -281,10 +282,8 @@ export function useChatConversation({
     loading,
     phases,
     screenshotCount,
-    sendMessage,
-    swapComparisonFrame,
-    dismissSwapError,
+    sendMessage: useStableCallback(sendMessage),
+    swapComparisonFrame: useStableCallback(swapComparisonFrame),
+    dismissSwapError: useStableCallback(dismissSwapError),
   };
 }
-
-export type ChatConversationState = ReturnType<typeof useChatConversation>;

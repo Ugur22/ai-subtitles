@@ -1,4 +1,4 @@
-import { memo, useState, useLayoutEffect, useRef } from "react";
+import { memo, useCallback, useState, useLayoutEffect, useRef } from "react";
 import { useTransition, animated } from "react-spring";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessage } from "./ChatMessage";
@@ -40,7 +40,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     includeVisuals,
     customInstructions,
   });
-  const { messages, loading } = conversation;
+  const { messages, loading, phases, screenshotCount, swapComparisonFrame, dismissSwapError } = conversation;
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const latestQuestionRef = useRef<HTMLDivElement>(null);
   const latestQuestion = [...messages].reverse().find((message) => message.role === "user");
@@ -48,12 +48,16 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const sendMessage = (text: string) => {
     if (conversation.sendMessage(text)) setInput("");
   };
+  const conversationSend = conversation.sendMessage;
+  const retryMessage = useCallback((question: string) => {
+    conversationSend(question, { retry: true });
+  }, [conversationSend]);
 
   // Message transitions
   const messageTransitions = useTransition(messages, {
     from: { opacity: 0, transform: "translate3d(0, 10px, 0)" },
     enter: { opacity: 1, transform: "translate3d(0, 0px, 0)" },
-    keys: (item) => messages.indexOf(item),
+    keys: (item) => item.id,
     config: { tension: 220, friction: 20 },
   });
 
@@ -158,7 +162,11 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           >
             <ChatMessage
               message={message}
-              conversation={conversation}
+              phases={message.isStreaming ? phases : null}
+              screenshotCount={message.isStreaming ? screenshotCount : 0}
+              onRetry={retryMessage}
+              onSwapFrame={swapComparisonFrame}
+              onDismissSwapError={dismissSwapError}
               setScreenshotModal={setScreenshotModal}
               onTimestampClick={onTimestampClick}
               jobId={jobId}

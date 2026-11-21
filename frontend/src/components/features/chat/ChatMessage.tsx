@@ -1,29 +1,37 @@
+import { memo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { AssistantMessageContent } from "./AssistantMessageContent";
 import { ErrorMessageDisplay } from "./ErrorMessageDisplay";
 import { MessageSources } from "./MessageSources";
 import { PhaseIndicator } from "./PhaseIndicator";
-import type { ChatConversationState } from "./hooks/useChatConversation";
-import type { Message, ScreenshotModalState } from "./types";
+import type { Message, PersonComparisonData, PhaseEntry, ScreenshotModalState, TimelineFrame } from "./types";
 
 interface ChatMessageProps {
   message: Message;
-  conversation: ChatConversationState;
+  /** Live progress; only the streaming message receives it, so the others stay memoized. */
+  phases: PhaseEntry[] | null;
+  screenshotCount: number;
+  onRetry: (question: string) => void;
+  onSwapFrame: (messageId: string, meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
+  onDismissSwapError: (messageId: string) => void;
   setScreenshotModal: Dispatch<SetStateAction<ScreenshotModalState | null>>;
   onTimestampClick?: (timeString: string) => void;
   jobId?: string | null;
   accessToken?: string;
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({
+export const ChatMessage = memo(function ChatMessage({
   message,
-  conversation,
+  phases,
+  screenshotCount,
+  onRetry,
+  onSwapFrame,
+  onDismissSwapError,
   setScreenshotModal,
   onTimestampClick,
   jobId,
   accessToken,
-}) => {
-  const { messages, phases, screenshotCount, sendMessage, swapComparisonFrame, dismissSwapError } = conversation;
+}: ChatMessageProps) {
 
   return (
     <div className="msg-col">
@@ -77,11 +85,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       {message.isError ? (
         <ErrorMessageDisplay
           message={message}
-          onRetry={(question) => sendMessage(question, { retry: true })}
+          onRetry={onRetry}
         />
       ) : (
         <>
-          {message.role === "assistant" && message.isStreaming && (
+          {message.role === "assistant" && message.isStreaming && phases && (
             <PhaseIndicator phases={phases} screenshotCount={screenshotCount} />
           )}
           {message.content && (
@@ -98,23 +106,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               swapError={message.swapError}
               onSwapFrame={
                 message.role === "assistant"
-                  ? (meta, frame, target) => {
-                      const messageIndex = messages.indexOf(message);
-                      if (messageIndex < 0) return;
-                      const question =
-                        message.original_question ||
-                        (messageIndex > 0 && messages[messageIndex - 1]?.role === "user"
-                          ? messages[messageIndex - 1].content
-                          : "");
-                      if (!question) return;
-                      swapComparisonFrame(messageIndex, meta, frame, target, question);
-                    }
+                  ? (meta, frame, target) => onSwapFrame(message.id, meta, frame, target)
                   : undefined
               }
-              onDismissSwapError={() => {
-                const messageIndex = messages.indexOf(message);
-                if (messageIndex >= 0) dismissSwapError(messageIndex);
-              }}
+              onDismissSwapError={() => onDismissSwapError(message.id)}
             />
           )}
           {message.role === "assistant" &&
@@ -145,4 +140,4 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     </div>
     </div>
   );
-};
+});
