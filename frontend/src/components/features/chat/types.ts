@@ -81,6 +81,7 @@ export function isChatSource(value: unknown): value is Source {
 }
 
 export interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
   sources?: Source[];

@@ -2,6 +2,16 @@ import type { Message } from "./types";
 
 const HISTORY_LIMIT = 10;
 
+// randomUUID only exists in secure contexts (HTTPS/localhost); dev over a LAN IP is plain HTTP.
+export const newMessageId = (): string =>
+  typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+export function updateMessageById(messages: Message[], id: string, update: (message: Message) => Message): Message[] {
+  return messages.map((m) => (m.id === id ? update(m) : m));
+}
+
 /**
  * Ends every still-streaming assistant message before a new send, so only the
  * new placeholder animates. A stream that died empty becomes a retryable error.

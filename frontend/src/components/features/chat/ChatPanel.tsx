@@ -40,7 +40,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     includeVisuals,
     customInstructions,
   });
-  const { messages, loading } = conversation;
+  const { messages, loading, phases, screenshotCount, retryMessage, swapComparisonFrame, dismissSwapError } = conversation;
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const latestQuestionRef = useRef<HTMLDivElement>(null);
   const latestQuestion = [...messages].reverse().find((message) => message.role === "user");
@@ -53,7 +53,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const messageTransitions = useTransition(messages, {
     from: { opacity: 0, transform: "translate3d(0, 10px, 0)" },
     enter: { opacity: 1, transform: "translate3d(0, 0px, 0)" },
-    keys: (item) => messages.indexOf(item),
+    keys: (item) => item.id,
     config: { tension: 220, friction: 20 },
   });
 
@@ -158,7 +158,10 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           >
             <ChatMessage
               message={message}
-              conversation={conversation}
+              streamingProgress={message.isStreaming ? { phases, screenshotCount } : null}
+              onRetry={retryMessage}
+              onSwapFrame={swapComparisonFrame}
+              onDismissSwapError={dismissSwapError}
               setScreenshotModal={setScreenshotModal}
               onTimestampClick={onTimestampClick}
               jobId={jobId}
