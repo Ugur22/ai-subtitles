@@ -37,13 +37,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from routers.chat import (  # noqa: E402
+from services.chat.query import _is_causal_question, _resolve_contextual_visual_question  # noqa: E402
+from services.chat.text_retrieval import (  # noqa: E402
     _expand_text_hits_with_neighbors,
     _format_text_context,
-    _is_causal_question,
     _lexical_segment_matches,
     _merge_text_results,
-    _resolve_contextual_visual_question,
 )
 
 CHUNK_SIZE = 3
@@ -348,13 +347,13 @@ def test_is_causal_question_false_for_non_causal_wording():
 
 
 def _resolve(question, history, tags=("vila", "anna")):
-    import routers.chat as chat
-    orig = chat._load_face_tag_names
-    chat._load_face_tag_names = lambda _h: list(tags)
+    import services.chat.query as query
+    orig = query._load_face_tag_names
+    query._load_face_tag_names = lambda _h: list(tags)
     try:
         return _resolve_contextual_visual_question(question, history, set(), [], "vh")
     finally:
-        chat._load_face_tag_names = orig
+        query._load_face_tag_names = orig
 
 
 def test_pronoun_followup_anchors_to_previously_named_person():

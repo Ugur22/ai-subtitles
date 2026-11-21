@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from routers.chat import _robust_mean_embedding  # noqa: E402
+from services.chat.visual_refs import _robust_mean_embedding  # noqa: E402
 
 
 def _near(base, seed, noise=0.05):

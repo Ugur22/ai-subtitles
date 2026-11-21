@@ -230,6 +230,7 @@ def test_models_endpoint_advertises_only_supported_efforts(monkeypatch):
     from types import SimpleNamespace
     from llm_providers import LLMManager
     from routers import chat
+    from services.chat import providers
 
     async def saved_key(*_args):
         return "test-key"
@@ -237,9 +238,11 @@ def test_models_endpoint_advertises_only_supported_efforts(monkeypatch):
     async def listed_models(*_args):
         return ["grok-4.5", "grok-4.7", "grok-4.20-0309-non-reasoning"]
 
-    monkeypatch.setattr(chat, "_get_saved_provider_key", saved_key)
+    manager = LLMManager()
+    for module in (chat, providers):
+        monkeypatch.setattr(module, "_get_saved_provider_key", saved_key)
+        monkeypatch.setattr(module, "llm_manager", manager)
     monkeypatch.setattr(chat, "list_models", listed_models)
-    monkeypatch.setattr(chat, "llm_manager", LLMManager())
     monkeypatch.setattr(chat, "LLM_AVAILABLE", True)
     request = SimpleNamespace(state=SimpleNamespace(user={"id": "test-user"}))
     result = asyncio.run(chat.list_provider_models.__wrapped__(request, "grok"))
@@ -248,13 +251,13 @@ def test_models_endpoint_advertises_only_supported_efforts(monkeypatch):
         "grok-4.5": ["low", "medium", "high"],
         "grok-4.7": ["low", "medium", "high", "xhigh"],
     }
-    picked = asyncio.run(chat._get_chat_provider(request, "grok", "grok-4.7", "low"))
+    picked = asyncio.run(providers._get_chat_provider(request, "grok", "grok-4.7", "low"))
     assert picked.model == "grok-4.7"
     assert picked.reasoning_effort == "low"
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as error:
-        asyncio.run(chat._get_chat_provider(request, "grok", "grok-4.5", "xhigh"))
+        asyncio.run(providers._get_chat_provider(request, "grok", "grok-4.5", "xhigh"))
     assert error.value.status_code == 400
 
 
@@ -262,18 +265,18 @@ def test_chat_rejects_missing_personal_key_even_with_server_key(monkeypatch):
     from types import SimpleNamespace
     from fastapi import HTTPException
     from llm_providers import LLMManager
-    from routers import chat
+    from services.chat import providers
 
     async def no_saved_key(*_args):
         return None
 
     monkeypatch.setenv("XAI_API_KEY", "server-key")
-    monkeypatch.setattr(chat, "llm_manager", LLMManager())
-    monkeypatch.setattr(chat, "_get_saved_provider_key", no_saved_key)
+    monkeypatch.setattr(providers, "llm_manager", LLMManager())
+    monkeypatch.setattr(providers, "_get_saved_provider_key", no_saved_key)
     request = SimpleNamespace(state=SimpleNamespace(user={"id": "test-user"}))
 
     with pytest.raises(HTTPException) as error:
-        asyncio.run(chat._get_chat_provider(request, "grok"))
+        asyncio.run(providers._get_chat_provider(request, "grok"))
     assert error.value.status_code == 400
     assert "No valid API key saved" in error.value.detail
 
