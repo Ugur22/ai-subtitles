@@ -1016,7 +1016,7 @@ class BackgroundWorker:
                                 if settings.ENABLE_VISION_CAPTIONS:
                                     api_key = None
                                     try:
-                                        from routers.chat import _get_saved_provider_key
+                                        from services.chat.providers import _get_saved_provider_key
                                         api_key = await _get_saved_provider_key(user_id, "xai")
                                     except Exception:
                                         pass

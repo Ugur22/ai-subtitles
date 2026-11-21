@@ -120,7 +120,11 @@ def test_screenshot_regeneration_uses_owner_scoped_media_storage():
 def test_public_static_mount_and_media_fallbacks_are_absent():
     main_source = (BACKEND / "main.py").read_text()
     transcription_source = (BACKEND / "routers" / "transcription.py").read_text()
-    chat_source = (BACKEND / "routers" / "chat.py").read_text()
+    chat_source = "\n".join(
+        path.read_text()
+        for path in [BACKEND / "routers" / "chat.py", *sorted((BACKEND / "services" / "chat").rglob("*.py"))]
+    )
+    visual_refs_source = (BACKEND / "services" / "chat" / "visual_refs.py").read_text()
     worker_source = (BACKEND / "services" / "background_worker.py").read_text()
 
     assert 'app.mount("/static"' not in main_source
@@ -131,6 +135,6 @@ def test_public_static_mount_and_media_fallbacks_are_absent():
     assert "/static" not in chat_source
     assert 'os.path.join("static", "screenshots")' not in worker_source
     assert "tempfile.mkdtemp" in worker_source
-    assert "_owner_scoped_screenshot_url" in chat_source
-    assert "storage.is_owned_screenshot_key" in chat_source
+    assert "_owner_scoped_screenshot_url" in visual_refs_source
+    assert "storage.is_owned_screenshot_key" in visual_refs_source
     assert "_refresh_owned_screenshot_urls" in transcription_source

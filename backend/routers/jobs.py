@@ -1199,7 +1199,7 @@ async def backfill_captions(
     from services.supabase_service import supabase
     from services.transcription_repository import transcription_repository
     from services.background_worker import _extract_dense_segments
-    from routers.chat import _get_saved_provider_key
+    from services.chat.providers import _get_saved_provider_key
 
     if bool(video_hash) != bool(user_id):
         raise HTTPException(status_code=400, detail="video_hash and user_id are required together")

@@ -200,7 +200,7 @@ def test_targeted_backfill_requires_owner():
 
 def test_backfill_caps_attempts_to_the_total_request_budget(monkeypatch):
     from routers import jobs
-    from routers import chat
+    from services.chat import providers
     from services import supabase_service, transcription_repository
 
     captured = []
@@ -217,7 +217,7 @@ def test_backfill_caps_attempts_to_the_total_request_budget(monkeypatch):
     monkeypatch.setattr(supabase_service, "supabase", lambda: SimpleNamespace())
     monkeypatch.setattr(transcription_repository.transcription_repository, "get_job", lambda _video, _owner: {"id": "owned-job"})
     monkeypatch.setattr(jobs, "get_media_storage", lambda: SimpleNamespace())
-    monkeypatch.setattr(chat, "_get_saved_provider_key", key)
+    monkeypatch.setattr(providers, "_get_saved_provider_key", key)
     monkeypatch.setattr(image_module.image_embedding_service, "caption_video_images", caption)
 
     response = asyncio.run(jobs.backfill_captions.__wrapped__(
