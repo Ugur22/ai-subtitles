@@ -198,3 +198,10 @@ def test_image_swaps_in_gpu_onnxruntime_and_headless_opencv_from_the_lock():
     assert "onnxruntime-gpu" not in (BACKEND / "requirements.txt").read_text()
     for package in ("build-essential", "libgl1-mesa-glx", "python3-dev"):
         assert package not in dockerfile
+
+
+def test_cuda_libraries_come_from_torch_wheels():
+    dockerfile = (BACKEND / "Dockerfile").read_text()
+    base = next(line for line in dockerfile.splitlines() if line.startswith("FROM "))
+    assert "cudnn" not in base and "runtime" not in base, base
+    assert "/etc/ld.so.conf.d/nvidia-pip.conf" in dockerfile
