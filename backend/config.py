@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     # Chunked Diarization Configuration
     # For long videos, process diarization in chunks to reduce memory usage
-    DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "2700"))  # one pass for a 45-min episode
+    DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "2700"))
     DIARIZATION_BATCH_SIZE: int = int(os.getenv("DIARIZATION_BATCH_SIZE", "128"))
     DIARIZATION_LINK_MODEL: str = os.getenv("DIARIZATION_LINK_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
     DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.5"))

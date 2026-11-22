@@ -86,6 +86,7 @@ class VideoService:
             # This is critical for HTTP efficiency - only downloads needed keyframes
             cmd = [
                 'ffmpeg',
+                '-threads', '1',              # Runs next to diarization on 4 vCPU; one frame gains nothing from more
                 '-ss', str(timestamp),        # Seek BEFORE input (critical for HTTP efficiency)
                 '-i', source_url,             # Input from URL
                 '-vframes', '1',              # Extract exactly one frame

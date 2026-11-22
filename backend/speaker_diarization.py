@@ -33,6 +33,10 @@ import tempfile
 import subprocess
 
 
+def _even_group_size(count: int, max_per_group: int) -> int:
+    return math.ceil(count / math.ceil(count / max_per_group))
+
+
 def load_diarization_pipeline(auth_token: Optional[str]):
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=auth_token)
     # Batch size changes speed only, not the diarization result.
@@ -195,7 +199,7 @@ class ChunkedSpeakerDiarizer:
 
     def __init__(
         self,
-        chunk_duration: int = 900,
+        chunk_duration: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         use_auth_token: str = None,
         link_model: Optional[str] = None,
@@ -204,12 +208,12 @@ class ChunkedSpeakerDiarizer:
         Initialize chunked diarization system.
 
         Args:
-            chunk_duration: Target duration for each diarization chunk in seconds (default: 900 = 15 min)
+            chunk_duration: Target duration for each diarization chunk in seconds (default: settings)
             similarity_threshold: Cosine similarity threshold for matching speakers across chunks (default: settings)
             use_auth_token: Hugging Face authentication token for pyannote models
             link_model: Embedding model used to link speakers across chunks (default: settings)
         """
-        self.chunk_duration = chunk_duration
+        self.chunk_duration = chunk_duration or settings.DIARIZATION_CHUNK_DURATION
         self.similarity_threshold = (
             settings.DIARIZATION_SIMILARITY_THRESHOLD if similarity_threshold is None else similarity_threshold
         )
@@ -437,8 +441,9 @@ class ChunkedSpeakerDiarizer:
                 clear_gpu_memory("PipelineUnloaded")
 
             # PHASE 3 + 4: Extract embeddings for groups that do not have them yet
-            print("\n=== PHASE 3/4: Extracting embeddings ===")
-            for i, result in enumerate(chunk_results):
+            groups_to_link = chunk_results if len(chunk_results) > 1 else []
+            print(f"\n=== PHASE 3/4: Extracting embeddings for {len(groups_to_link)} groups ===")
+            for i, result in enumerate(groups_to_link):
                 cached_embeddings = diarization_groups[i]['_embeddings']
                 if cached_embeddings is not None:
                     result['speaker_embeddings'] = {
@@ -511,21 +516,14 @@ class ChunkedSpeakerDiarizer:
             List of groups, each containing chunk paths and time offset
             Format: [{"chunks": [...], "time_offset": 0}, ...]
         """
-        groups = []
+        if not audio_chunks:
+            return []
         max_per_group = max(1, int(self.chunk_duration / chunk_duration))
-        # Even groups: a short last group has too little speech to link its speakers reliably.
-        group_count = max(1, math.ceil(len(audio_chunks) / max_per_group))
-        chunks_per_group = math.ceil(len(audio_chunks) / group_count) if audio_chunks else 1
-
-        for i in range(0, len(audio_chunks), chunks_per_group):
-            group_chunks = audio_chunks[i:i + chunks_per_group]
-            time_offset = i * chunk_duration
-            groups.append({
-                "chunks": group_chunks,
-                "time_offset": time_offset
-            })
-
-        return groups
+        size = _even_group_size(len(audio_chunks), max_per_group)
+        return [
+            {"chunks": audio_chunks[i:i + size], "time_offset": i * chunk_duration}
+            for i in range(0, len(audio_chunks), size)
+        ]
 
     def _diarize_group_segments_only(
         self,
