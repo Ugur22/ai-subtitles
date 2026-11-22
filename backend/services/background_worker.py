@@ -4,6 +4,7 @@ Background worker for processing transcription jobs
 import os
 import subprocess
 import asyncio
+import contextlib
 import tempfile
 import shutil
 import time
@@ -16,7 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Single worker executor for CPU/GPU-bound tasks
 # This prevents blocking the event loop while allowing other requests (auth, status) to be served
-_transcription_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="transcribe")
+_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
+_screenshot_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenshots")
 
 
 async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
@@ -27,10 +29,10 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     loop = asyncio.get_event_loop()
     if kwargs:
         return await loop.run_in_executor(
-            _transcription_executor,
+            _gpu_executor,
             lambda: func(*args, **kwargs)
         )
-    return await loop.run_in_executor(_transcription_executor, func, *args)
+    return await loop.run_in_executor(_gpu_executor, func, *args)
 
 from config import settings
 from services.db_retry import with_db_retry
@@ -70,8 +72,8 @@ from services.transcription_checkpoint import (
 
 # First-unit estimates, used until this execution has timed a real one.
 INITIAL_TRANSCRIPTION_CHUNK_ESTIMATE = 120
-INITIAL_DIARIZATION_GROUP_ESTIMATE = 240
-INITIAL_EMBEDDING_GROUP_ESTIMATE = 60
+INITIAL_DIARIZATION_SECONDS_PER_AUDIO_SECOND = 240 / 900
+INITIAL_EMBEDDING_SECONDS_PER_AUDIO_SECOND = 60 / 900
 # Time the uncheckpointed tail (audio analysis, screenshots, indexing,
 # captions, translation) is assumed to need, as a share of media duration.
 TAIL_SECONDS_PER_MEDIA_SECOND = 0.1
@@ -111,6 +113,30 @@ def _compute_dense_timestamps(duration, existing_ts, interval, min_gap, max_coun
     return timestamps
 
 
+async def _extract_and_upload_screenshots(read_url, timestamps, output_dir, video_hash, user_id, max_workers=4):
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(_screenshot_executor, lambda: VideoService.extract_screenshots_parallel_from_url(
+        source_url=read_url, timestamps=timestamps, output_dir=output_dir,
+        video_hash=video_hash, max_workers=max_workers,
+    ))
+    try:
+        usable = {timestamp: path for timestamp, path in results.items() if path}
+        return await loop.run_in_executor(_screenshot_executor, lambda: get_media_storage().upload_screenshots_batch(
+            screenshot_paths=usable, video_hash=video_hash, user_id=user_id,
+        ))
+    finally:
+        for path in results.values():
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
+def _starts_added_by_speaker_split(segments, screenshot_urls):
+    return list(dict.fromkeys(seg['start'] for seg in segments if seg['start'] not in screenshot_urls))
+
+
 async def _extract_dense_segments(
     video_hash, user_id, read_url, duration, existing_ts, output_dir, max_frames
 ):
@@ -120,29 +146,12 @@ async def _extract_dense_segments(
     )
     if not timestamps:
         return []
-    results = await _run_in_executor(
-        VideoService.extract_screenshots_parallel_from_url,
-        source_url=read_url, timestamps=timestamps, output_dir=output_dir,
-        video_hash=video_hash, max_workers=4,
-    )
-    try:
-        usable = {timestamp: path for timestamp, path in results.items() if path}
-        urls = await _run_in_executor(
-            get_media_storage().upload_screenshots_batch,
-            screenshot_paths=usable, video_hash=video_hash, user_id=user_id,
-        )
-        return [
-            {"id": f"dense_{timestamp:.2f}", "start": timestamp, "end": timestamp,
-             "speaker": None, "screenshot_url": urls[timestamp]}
-            for timestamp in timestamps if urls.get(timestamp)
-        ]
-    finally:
-        for path in results.values():
-            if path:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+    urls = await _extract_and_upload_screenshots(read_url, timestamps, output_dir, video_hash, user_id)
+    return [
+        {"id": f"dense_{timestamp:.2f}", "start": timestamp, "end": timestamp,
+         "speaker": None, "screenshot_url": urls[timestamp]}
+        for timestamp in timestamps if urls.get(timestamp)
+    ]
 
 
 # Configuration
@@ -287,6 +296,7 @@ class BackgroundWorker:
         """
         temp_files = []
         temp_dirs = []
+        screenshot_task = None
         heartbeat_thread = None
         gpu_start_ts = time.monotonic()  # for cost-accounting (gpu_seconds)
         budget = time_budget or TimeBudget(resolve_budget_seconds(
@@ -673,7 +683,15 @@ class BackgroundWorker:
                 unload_whisper_model()
                 clear_gpu_memory("Worker:AfterWhisperUnload")
 
-            # Step 4: Speaker diarization (50-80%) — may run in parallel with screenshots
+            if is_video_format and not cached_screenshots:
+                screenshots_dir = tempfile.mkdtemp(prefix="ai-subs-screenshots-")
+                temp_dirs.append(screenshots_dir)
+                print(f"[Worker] Extracting {len(formatted_segments)} screenshots while diarizing...")
+                screenshot_task = asyncio.create_task(_extract_and_upload_screenshots(
+                    read_url, [seg['start'] for seg in formatted_segments], screenshots_dir, video_hash, user_id,
+                    max_workers=2,
+                ))
+
             if cached_diarization:
                 speaker_segments = cached_diarization["speaker_segments"]
                 formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
@@ -707,13 +725,14 @@ class BackgroundWorker:
                                 settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
                             ),
                         )
+                        group_seconds = min(total_duration, settings.DIARIZATION_CHUNK_DURATION)
                         diarization_checkpoint = BudgetedCheckpoint(
                             PipelineCacheService, user_id, video_hash,
                             stage_prefix(DIARIZATION_PREFIX, diarization_key),
                             budget=budget,
                             initial_estimates={
-                                "segments": INITIAL_DIARIZATION_GROUP_ESTIMATE,
-                                "embeddings": INITIAL_EMBEDDING_GROUP_ESTIMATE,
+                                "segments": INITIAL_DIARIZATION_SECONDS_PER_AUDIO_SECOND * group_seconds,
+                                "embeddings": INITIAL_EMBEDDING_SECONDS_PER_AUDIO_SECOND * group_seconds,
                             },
                             check_cancelled=lambda: _check_cancelled(job_id),
                         )
@@ -844,44 +863,13 @@ class BackgroundWorker:
                 else:
                     _check_cancelled(job_id)
                     try:
-                        JobQueueService.update_progress(job_id, 76, "extracting", "Extracting screenshots...")
-
-                        screenshots_dir = tempfile.mkdtemp(prefix="ai-subs-screenshots-")
-                        temp_dirs.append(screenshots_dir)
-
-                        timestamps = [seg['start'] for seg in formatted_segments]
-
-                        print(f"[Worker] Extracting {len(timestamps)} screenshots from video...")
-                        log_all_memory("Worker:BeforeScreenshotExtraction")
-
-                        def screenshot_progress(completed: int, total: int):
-                            progress = 76 + int((completed / total) * 2) if total > 0 else 76
-                            JobQueueService.update_progress(
-                                job_id,
-                                progress,
-                                "extracting",
-                                f"Extracting screenshots... {completed}/{total}"
-                            )
-
-                        screenshot_results = await _run_in_executor(
-                            VideoService.extract_screenshots_parallel_from_url,
-                            source_url=read_url,
-                            timestamps=timestamps,
-                            output_dir=screenshots_dir,
-                            video_hash=video_hash,
-                            max_workers=4,
-                            progress_callback=screenshot_progress
-                        )
-
-                        log_all_memory("Worker:AfterScreenshotExtraction")
-                        JobQueueService.update_progress(job_id, 78, "extracting", "Uploading screenshots to cloud...")
-
-                        log_all_memory("Worker:BeforeMediaUpload")
-                        screenshot_urls = media_storage.upload_screenshots_batch(
-                            screenshot_paths=screenshot_results,
-                            video_hash=video_hash,
-                            user_id=user_id,
-                        )
+                        JobQueueService.update_progress(job_id, 76, "extracting", "Finishing screenshots...")
+                        screenshot_urls = await screenshot_task
+                        missing = _starts_added_by_speaker_split(formatted_segments, screenshot_urls)
+                        if missing:
+                            screenshot_urls.update(await _extract_and_upload_screenshots(
+                                read_url, missing, screenshots_dir, video_hash, user_id,
+                            ))
                         screenshot_count = 0
                         screenshot_url_map = {}
                         for seg in formatted_segments:
@@ -895,14 +883,6 @@ class BackgroundWorker:
                                 seg['screenshot_url'] = None
 
                         print(f"[Worker] Stored {screenshot_count}/{len(formatted_segments)} screenshots")
-                        log_all_memory("Worker:AfterMediaUpload")
-
-                        for local_path in screenshot_results.values():
-                            if local_path and os.path.exists(local_path):
-                                try:
-                                    os.unlink(local_path)
-                                except Exception:
-                                    pass
 
                         JobQueueService.update_progress(job_id, 79, "extracting", f"Extracted {screenshot_count} screenshots")
 
@@ -945,36 +925,17 @@ class BackgroundWorker:
                             silent_timestamps = [s['screenshot_timestamp'] for s in silent_segs]
                             print(f"[Worker] Extracting {len(silent_timestamps)} silent segment screenshots in parallel...")
 
-                            silent_screenshot_results = await _run_in_executor(
-                                VideoService.extract_screenshots_parallel_from_url,
-                                source_url=read_url,
-                                timestamps=silent_timestamps,
-                                output_dir=screenshots_dir,
-                                video_hash=video_hash,
-                                max_workers=4
+                            silent_urls = await _extract_and_upload_screenshots(
+                                read_url, silent_timestamps, screenshots_dir, video_hash, user_id,
                             )
-
                             silent_screenshot_count = 0
-                            screenshot_urls = media_storage.upload_screenshots_batch(
-                                screenshot_paths=silent_screenshot_results,
-                                video_hash=video_hash,
-                                user_id=user_id,
-                            )
-
                             for seg in silent_segs:
                                 ts = seg['screenshot_timestamp']
-                                screenshot_url = screenshot_urls.get(ts)
+                                screenshot_url = silent_urls.get(ts)
                                 if screenshot_url:
                                     seg['screenshot_url'] = screenshot_url
                                     screenshot_url_map[str(ts)] = screenshot_url
                                     silent_screenshot_count += 1
-
-                            for local_path in silent_screenshot_results.values():
-                                if local_path and os.path.exists(local_path):
-                                    try:
-                                        os.unlink(local_path)
-                                    except Exception:
-                                        pass
 
                             print(f"[Worker] Extracted {silent_screenshot_count}/{len(silent_segs)} silent screenshots")
                             log_all_memory("Worker:AfterSilentGCSUpload")
@@ -1246,6 +1207,11 @@ class BackgroundWorker:
             return False
 
         finally:
+            if screenshot_task is not None:
+                screenshot_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await screenshot_task
+
             # Stop heartbeat thread gracefully
             if heartbeat_thread is not None:
                 heartbeat_thread.stop()
