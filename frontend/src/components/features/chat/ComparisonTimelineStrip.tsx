@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useRef } from "react";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { imagePlaceholderSrc } from "./screenshots";
-import type { TimelineFrame } from "./types";
+import { swapView } from "./swap";
+import type { SwapState, TimelineFrame } from "./types";
 
 interface ComparisonTimelineStripProps {
   frames: TimelineFrame[];
   activeASeconds: number;
   activeBSeconds: number;
   person: string;
-  isSwapping: boolean;
-  pendingBSeconds: number | null;
+  swap?: SwapState;
   replaceTarget: "a" | "b";
-  swapError?: string;
   onReplaceTargetChange: (target: "a" | "b") => void;
   onSwap: (frame: TimelineFrame, target: "a" | "b") => void;
   onDismissError?: () => void;
@@ -28,14 +27,13 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
   activeASeconds,
   activeBSeconds,
   person,
-  isSwapping,
-  pendingBSeconds,
+  swap,
   replaceTarget,
-  swapError,
   onReplaceTargetChange,
   onSwap,
   onDismissError,
 }) => {
+  const { isSwapping, pendingBSeconds, swapError } = swapView(swap);
   const listRef = useRef<HTMLOListElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 

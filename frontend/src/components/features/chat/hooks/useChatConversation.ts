@@ -3,10 +3,10 @@ import axios from "axios";
 import { API_BASE_URL } from "../../../../config";
 import { getFriendlyErrorMessage } from "../chatErrors";
 import { advancePhases, parseStreamSources, takeSseDataLines } from "../chatStream";
-import { buildConversationHistory, newMessageId, settleStreamingMessages, updateMessageById } from "../messages";
+import { buildConversationHistory, newMessageId, settleStreamingMessages, updateMessageById, updateStreamingProgress } from "../messages";
 import { PHASE_LABELS, isPhaseId } from "../phases";
 import { useStableCallback } from "../../../../hooks/useStableCallback";
-import type { Message, PersonComparisonData, PhaseEntry, ReasoningEffort, TimelineFrame } from "../types";
+import type { Message, PersonComparisonData, ReasoningEffort, SwapState, TimelineFrame } from "../types";
 
 interface ChatConversationOptions {
   videoHash: string | null;
@@ -27,8 +27,6 @@ export function useChatConversation({
 }: ChatConversationOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [phases, setPhases] = useState<PhaseEntry[]>([]);
-  const [screenshotCount, setScreenshotCount] = useState(0);
 
   const updateMessage = (messageId: string, update: (message: Message) => Message) => {
     setMessages((previous) => updateMessageById(previous, messageId, update));
@@ -101,15 +99,21 @@ export function useChatConversation({
                 const visualQuery = "visual_query_used" in event && typeof event.visual_query_used === "string" ? event.visual_query_used : undefined;
                 const variants = "visual_query_variants" in event && Array.isArray(event.visual_query_variants)
                   ? event.visual_query_variants.filter((value): value is string => typeof value === "string") : [];
-                updateAssistant((message) => ({ ...message, sources, visual_query_used: visualQuery, visual_query_variants: variants }));
-                setScreenshotCount(sources.filter((source) => source.screenshot_url).length);
+                const screenshotCount = sources.filter((source) => source.screenshot_url).length;
+                updateAssistant((message) => updateStreamingProgress(
+                  { ...message, sources, visual_query_used: visualQuery, visual_query_variants: variants },
+                  () => ({ screenshotCount }),
+                ));
                 break;
               }
               case "phase": {
                 if (!("phase" in event) || !isPhaseId(event.phase)) break;
                 const id = event.phase;
                 const label = "label" in event && typeof event.label === "string" ? event.label : PHASE_LABELS[id];
-                setPhases((previous) => advancePhases(previous, id, label, Date.now()));
+                const now = Date.now();
+                updateAssistant((message) => updateStreamingProgress(message, ({ phases }) => ({
+                  phases: advancePhases(phases, id, label, now),
+                })));
                 break;
               }
               case "error":
@@ -123,7 +127,7 @@ export function useChatConversation({
           if (done) break;
         }
         if (!completed) throw new Error("The connection closed before the answer finished. Please retry.");
-        updateAssistant((message) => ({ ...message, isStreaming: false }));
+        updateAssistant((message) => ({ ...message, status: { kind: "done" } }));
       } finally {
         await reader.cancel().catch(() => undefined);
         reader.releaseLock();
@@ -142,15 +146,13 @@ export function useChatConversation({
       updateAssistant((previous) => ({
         ...previous,
         content: previous.content ? `${previous.content}\n\n${message}` : message,
-        isError: true,
-        errorType: friendly.errorType,
-        retryQuestion: textToSend,
-        isStreaming: false,
+        status: { kind: "error", errorType: friendly.errorType, retryQuestion: textToSend },
       }));
     }
   };
 
-  const patchMessage = (messageId: string, patch: Partial<Message>) => updateMessage(messageId, (m) => ({ ...m, ...patch }));
+  const setSwap = (messageId: string, swap: SwapState, content?: string) =>
+    updateMessage(messageId, (m) => ({ ...m, swap, ...(content !== undefined && { content }) }));
 
   const swapControllers = useRef(new Map<string, AbortController>());
 
@@ -169,12 +171,7 @@ export function useChatConversation({
     const controller = new AbortController();
     swapControllers.current.set(messageId, controller);
 
-    patchMessage(messageId, {
-      isSwapping: true,
-      pendingBSeconds: frame.timestamp_seconds,
-      pendingSwapTarget: target,
-      swapError: undefined,
-    });
+    setSwap(messageId, { kind: "pending", bSeconds: frame.timestamp_seconds, target });
 
     try {
       const response = await axios.post(
@@ -202,30 +199,19 @@ export function useChatConversation({
 
       if (controller.signal.aborted) return;
 
-      patchMessage(messageId, {
-        content: response.data.answer,
-        isSwapping: false,
-        pendingBSeconds: null,
-        pendingSwapTarget: null,
-        swapError: undefined,
-      });
+      setSwap(messageId, { kind: "idle" }, response.data.answer);
     } catch (error: unknown) {
       if (axios.isCancel(error) || (error instanceof Error && (error.name === "CanceledError" || error.name === "AbortError"))) {
         return;
       }
       const { message } = getFriendlyErrorMessage(error);
-      patchMessage(messageId, {
-        isSwapping: false,
-        pendingBSeconds: null,
-        pendingSwapTarget: null,
-        swapError: message,
-      });
+      setSwap(messageId, { kind: "failed", error: message });
     } finally {
       if (swapControllers.current.get(messageId) === controller) swapControllers.current.delete(messageId);
     }
   };
 
-  const dismissSwapError = (messageId: string) => patchMessage(messageId, { swapError: undefined });
+  const dismissSwapError = (messageId: string) => setSwap(messageId, { kind: "idle" });
 
   const sendMessage = (
     textToSend: string,
@@ -238,6 +224,7 @@ export function useChatConversation({
       id: newMessageId(),
       role: "user",
       content: textToSend,
+      status: { kind: "done" },
     };
 
     const placeholderAssistant: Message = {
@@ -245,7 +232,16 @@ export function useChatConversation({
       role: "assistant",
       content: "",
       original_question: textToSend,
-      isStreaming: true,
+      status: {
+        kind: "streaming",
+        phases: [{
+          id: "generating",
+          label: includeVisuals ? "Analyzing video" : PHASE_LABELS.generating,
+          status: "active",
+          startedAt: Date.now(),
+        }],
+        screenshotCount: 0,
+      },
     };
 
     const retryQuestion = isRetry ? textToSend : undefined;
@@ -254,15 +250,6 @@ export function useChatConversation({
       return isRetry ? [...settled, placeholderAssistant] : [...settled, userMessage, placeholderAssistant];
     });
     setLoading(true);
-    setPhases([
-      {
-        id: "generating",
-        label: includeVisuals ? "Analyzing video" : PHASE_LABELS.generating,
-        status: "active",
-        startedAt: Date.now(),
-      },
-    ]);
-    setScreenshotCount(0);
 
     const history = buildConversationHistory(messages, retryQuestion);
 
@@ -271,8 +258,6 @@ export function useChatConversation({
         await sendViaStream(textToSend, history, placeholderAssistant.id);
       } finally {
         setLoading(false);
-        setPhases([]);
-        setScreenshotCount(0);
       }
     })();
     return true;
@@ -281,8 +266,6 @@ export function useChatConversation({
   return {
     messages,
     loading,
-    phases,
-    screenshotCount,
     sendMessage: useStableCallback(sendMessage),
     retryMessage: useStableCallback((question: string) => sendMessage(question, { retry: true })),
     swapComparisonFrame: useStableCallback(swapComparisonFrame),

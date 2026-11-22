@@ -88,15 +88,19 @@ export interface Message {
   visual_query_used?: string;
   visual_query_variants?: string[];
   original_question?: string;
-  isError?: boolean;
-  errorType?: FriendlyErrorType;
-  retryQuestion?: string;
-  isStreaming?: boolean;
-  isSwapping?: boolean;
-  pendingBSeconds?: number | null;
-  pendingSwapTarget?: "a" | "b" | null;
-  swapError?: string;
+  status: MessageStatus;
+  swap?: SwapState;
 }
+
+export type MessageStatus =
+  | { kind: "streaming"; phases: PhaseEntry[]; screenshotCount: number }
+  | { kind: "done" }
+  | { kind: "error"; errorType: FriendlyErrorType; retryQuestion?: string };
+
+export type SwapState =
+  | { kind: "idle" }
+  | { kind: "pending"; bSeconds: number; target: "a" | "b" }
+  | { kind: "failed"; error: string };
 
 export type PhaseId =
   | "searching"
