@@ -178,21 +178,23 @@ def test_every_direct_requirement_is_locked_to_a_compatible_version():
             assert pins[name] == exact.group(1), f"{name}: requirements.txt pins {exact.group(1)}, constraints.txt {pins[name]}"
 
 
+
+_LOCAL_SECRETS = (".env.*", "api-key-transcribe", "*.key", "*.pem", "local_data/")
+
+
 def test_build_context_excludes_local_secrets_and_data():
-    # .gcloudignore only includes backend/.gitignore; these are covered by the root one.
-    for name in (".gcloudignore", ".dockerignore"):
+    # .gcloudignore pulls these in through #!include:.gitignore; .dockerignore has no include.
+    assert "#!include:.gitignore" in (BACKEND / ".gcloudignore").read_text()
+    for name in (".gitignore", ".dockerignore"):
         lines = (BACKEND / name).read_text().splitlines()
-        for pattern in (".env.*", "api-key-transcribe", "local_data/"):
+        for pattern in _LOCAL_SECRETS:
             assert pattern in lines, f"{name} must exclude {pattern}"
 
 
-def test_image_ships_gpu_onnxruntime_and_headless_opencv_without_a_toolchain():
+def test_image_swaps_in_gpu_onnxruntime_and_headless_opencv_from_the_lock():
     dockerfile = (BACKEND / "Dockerfile").read_text()
     assert "pip uninstall -y opencv-python onnxruntime" in dockerfile
-    assert "opencv-python-headless==4.11.0.86 onnxruntime-gpu==1.23.2" in dockerfile
-    assert "'CUDAExecutionProvider' in ort.get_available_providers()" in dockerfile
+    assert "pip install --no-cache-dir --no-deps -c constraints.txt opencv-python-headless onnxruntime-gpu" in dockerfile
+    assert "onnxruntime-gpu" not in (BACKEND / "requirements.txt").read_text()
     for package in ("build-essential", "libgl1-mesa-glx", "python3-dev"):
         assert package not in dockerfile
-    pins = _constraint_pins()
-    assert pins["opencv-python-headless"] == "4.11.0.86"
-    assert pins["onnxruntime-gpu"] == "1.23.2"

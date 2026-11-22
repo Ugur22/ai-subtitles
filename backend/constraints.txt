@@ -114,7 +114,7 @@ onnxruntime==1.23.2
 onnxruntime-gpu==1.23.2
 openai==1.12.0
 opencv-python==4.11.0.86
-opencv-python-headless==4.11.0.86  # swapped in for opencv-python by the Dockerfile
+opencv-python-headless==4.11.0.86
 opentelemetry-api==1.45.2
 optuna==5.0.0
 packaging==26.3

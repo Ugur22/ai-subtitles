@@ -15,8 +15,6 @@ venv/
 ENV/
 env/
 .env
-.env.local
-.env.*.local
 
 # IDE
 .idea/
@@ -65,7 +63,6 @@ tests/
 docker-compose*.yml
 Makefile
 
-# ===== Secrets and local-only data covered only by the root .gitignore =====
 .env.*
 !.env.example
 api-key-transcribe
