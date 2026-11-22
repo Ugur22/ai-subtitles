@@ -1,14 +1,14 @@
 import { memo } from "react";
+import { match } from "ts-pattern";
 import type { Dispatch, SetStateAction } from "react";
 import { AssistantMessageContent } from "./AssistantMessageContent";
 import { ErrorMessageDisplay } from "./ErrorMessageDisplay";
 import { MessageSources } from "./MessageSources";
 import { PhaseIndicator } from "./PhaseIndicator";
-import type { Message, PersonComparisonData, PhaseEntry, ScreenshotModalState, TimelineFrame } from "./types";
+import type { Message, PersonComparisonData, ScreenshotModalState, TimelineFrame } from "./types";
 
 interface ChatMessageProps {
   message: Message;
-  streamingProgress: { phases: PhaseEntry[]; screenshotCount: number } | null;
   onRetry: (question: string) => void;
   onSwapFrame: (
     messageId: string,
@@ -26,7 +26,6 @@ interface ChatMessageProps {
 
 export const ChatMessage = memo(function ChatMessage({
   message,
-  streamingProgress,
   onRetry,
   onSwapFrame,
   onDismissSwapError,
@@ -35,6 +34,23 @@ export const ChatMessage = memo(function ChatMessage({
   jobId,
   accessToken,
 }: ChatMessageProps) {
+  const content = message.content && (
+    <AssistantMessageContent
+      content={message.content}
+      role={message.role}
+      onTimestampClick={onTimestampClick}
+      onOpenScreenshots={(sources, currentIndex) => {
+        setScreenshotModal({ currentIndex, sources });
+      }}
+      swap={message.swap}
+      onSwapFrame={
+        message.role === "assistant"
+          ? (meta, frame, target) => onSwapFrame(message.id, message.original_question, meta, frame, target)
+          : undefined
+      }
+      onDismissSwapError={() => onDismissSwapError(message.id)}
+    />
+  );
 
   return (
     <div className="msg-col">
@@ -80,44 +96,20 @@ export const ChatMessage = memo(function ChatMessage({
 
     <div
       className={
-        message.isError && !message.sources?.length
+        message.status.kind === "error" && !message.sources?.length
           ? "msg-bubble is-error"
           : "msg-bubble"
       }
     >
-      {message.isError ? (
-        <ErrorMessageDisplay
-          message={message}
-          onRetry={onRetry}
-        />
-      ) : (
-        <>
-          {streamingProgress && (
-            <PhaseIndicator phases={streamingProgress.phases} screenshotCount={streamingProgress.screenshotCount} />
-          )}
-          {message.content && (
-            <AssistantMessageContent
-              content={message.content}
-              role={message.role}
-              onTimestampClick={onTimestampClick}
-              onOpenScreenshots={(sources, currentIndex) => {
-                setScreenshotModal({ currentIndex, sources });
-              }}
-              isSwapping={message.isSwapping}
-              pendingBSeconds={message.pendingBSeconds}
-              pendingSwapTarget={message.pendingSwapTarget}
-              swapError={message.swapError}
-              onSwapFrame={
-                message.role === "assistant"
-                  ? (meta, frame, target) => onSwapFrame(message.id, message.original_question, meta, frame, target)
-                  : undefined
-              }
-              onDismissSwapError={() => onDismissSwapError(message.id)}
-            />
-          )}
-          {message.role === "assistant" &&
-            message.isStreaming &&
-            message.content && (
+      {match(message.status)
+        .with({ kind: "error" }, ({ retryQuestion }) => (
+          <ErrorMessageDisplay content={message.content} retryQuestion={retryQuestion} onRetry={onRetry} />
+        ))
+        .with({ kind: "streaming" }, ({ phases, screenshotCount }) => (
+          <>
+            <PhaseIndicator phases={phases} screenshotCount={screenshotCount} />
+            {content}
+            {message.content && (
               <span
                 aria-hidden="true"
                 className="inline-block align-middle ml-0.5 animate-pulse"
@@ -130,8 +122,10 @@ export const ChatMessage = memo(function ChatMessage({
                 }}
               />
             )}
-        </>
-      )}
+          </>
+        ))
+        .with({ kind: "done" }, () => content)
+        .exhaustive()}
 
               <MessageSources
                 message={message}

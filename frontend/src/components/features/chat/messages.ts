@@ -1,4 +1,4 @@
-import type { Message } from "./types";
+import type { Message, MessageStatus } from "./types";
 
 const HISTORY_LIMIT = 10;
 
@@ -19,25 +19,32 @@ export function updateMessageById(messages: Message[], id: string, update: (mess
  */
 export function settleStreamingMessages(messages: Message[], retryQuestion?: string): Message[] {
   return messages.flatMap((m) => {
-    if (retryQuestion !== undefined && m.role === "assistant" && m.isError && m.retryQuestion === retryQuestion) {
+    if (retryQuestion !== undefined && m.status.kind === "error" && m.status.retryQuestion === retryQuestion) {
       return [];
     }
-    if (m.role !== "assistant" || !m.isStreaming) return [m];
-    if (m.content) return [{ ...m, isStreaming: false }];
+    if (m.status.kind !== "streaming") return [m];
+    if (m.content) return [{ ...m, status: { kind: "done" } }];
     return [{
       ...m,
-      isStreaming: false,
-      isError: true,
-      errorType: "server" as const,
+      status: { kind: "error", errorType: "server", retryQuestion: m.original_question },
       content: "That request didn't finish. Retry?",
-      retryQuestion: m.original_question,
     }];
   });
 }
 
+type StreamingStatus = Extract<MessageStatus, { kind: "streaming" }>;
+
+export function updateStreamingProgress(
+  message: Message,
+  update: (status: StreamingStatus) => Partial<Omit<StreamingStatus, "kind">>,
+): Message {
+  if (message.status.kind !== "streaming") return message;
+  return { ...message, status: { ...message.status, ...update(message.status) } };
+}
+
 /** The last completed turns sent as context; a retry omits its own earlier question. */
 export function buildConversationHistory(messages: Message[], retryQuestion?: string): Array<{ role: string; content: string }> {
-  const completed = messages.filter((m) => !m.isError && !m.isStreaming);
+  const completed = messages.filter((m) => m.status.kind === "done");
   if (retryQuestion !== undefined) {
     for (let i = completed.length - 1; i >= 0; i--) {
       if (completed[i].role === "user" && completed[i].content === retryQuestion) {

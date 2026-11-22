@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import toast from "react-hot-toast";
+import { match } from "ts-pattern";
 import { useSearchParams } from "react-router-dom";
 import { useJobs } from "../../../hooks/useJobs";
 import {
@@ -65,13 +66,14 @@ type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
 };
 
+type TranscriptTab = "transcript" | "chat" | "chapters" | "summary";
+
 export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   onTranscriptionChange,
 }) => {
   // UI-specific state (keep these)
   const [showTranslation, setShowTranslation] = useState(true);
-  const [showSummary, setShowSummary] = useState(false);
-  const [showChat, setShowChat] = useState(false);
+  const [activeTab, setActiveTab] = useState<TranscriptTab>("transcript");
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
@@ -83,7 +85,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [filteredSpeaker, setFilteredSpeaker] = useState<string | null>(null);
   const [showVisualMoments, setShowVisualMoments] = useState(true);
   const [videoDuration, setVideoDuration] = useState(0);
-  const [showChapters, setShowChapters] = useState(false);
   const displayDuration =
     transcription?.transcription.duration ||
     (videoDuration > 0 ? secondsToTimeString(videoDuration) : "");
@@ -411,16 +412,19 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   className="rp overflow-hidden flex-grow flex flex-col w-full"
                 >
                   <div className="rp-tabs">
-                    {[
-                      { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length, active: !showSummary && !showChat && !showChapters, onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(false); } },
-                      { key: 'chat',       label: 'Chat',                                                            active: showChat,       onClick: () => { setShowSummary(false); setShowChat(true);  setShowChapters(false); setChatMountedFor(transcription?.video_hash ?? null); } },
-                      { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length,                  active: showChapters,   onClick: () => { setShowSummary(false); setShowChat(false); setShowChapters(true);  } },
-                      { key: 'summary',    label: 'Summary',                                                         active: showSummary,    onClick: () => { setShowSummary(true);  setShowChat(false); setShowChapters(false); } },
-                    ].filter(({ key }) => (key !== 'chapters' || featureFlags.chapters) && (key !== 'summary' || featureFlags.summary)).map(({ key, label, count, active, onClick }) => (
+                    {([
+                      { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length },
+                      { key: 'chat',       label: 'Chat' },
+                      { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length },
+                      { key: 'summary',    label: 'Summary' },
+                    ] satisfies Array<{ key: TranscriptTab; label: string; count?: number }>).filter(({ key }) => (key !== 'chapters' || featureFlags.chapters) && (key !== 'summary' || featureFlags.summary)).map(({ key, label, count }) => (
                       <button
                         key={key}
-                        onClick={onClick}
-                        className={`rp-tab ${active ? 'on' : ''}`}
+                        onClick={() => {
+                          setActiveTab(key);
+                          if (key === 'chat') setChatMountedFor(transcription?.video_hash ?? null);
+                        }}
+                        className={`rp-tab ${activeTab === key ? 'on' : ''}`}
                       >
                         {label}
                         {typeof count === 'number' && count > 0 && (
@@ -431,76 +435,72 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
 
                   <div ref={transcriptScrollRef} className="flex-grow overflow-auto relative">
-                    {!showSummary && !showChat && !showChapters && (
-                      <>
-                        {/* Transcript toolbar */}
-                        <TranscriptToolbar
-                          transcription={transcription}
-                          displayedSegments={displayedSegments}
-                          uniqueSpeakers={uniqueSpeakers}
-                          showTranslation={showTranslation}
-                          setShowTranslation={setShowTranslation}
-                          filteredSpeaker={filteredSpeaker}
-                          setFilteredSpeaker={setFilteredSpeaker}
-                          showVisualMoments={showVisualMoments}
-                          setShowVisualMoments={setShowVisualMoments}
-                          speakers={speakers}
-                        />
-                        {/* Transcript content */}
-                        <TranscriptSegmentList
-                          segments={displayedSegments}
-                          activeSegmentId={activeSegmentId}
-                          showTranslation={showTranslation}
-                          seekToTimestamp={seekToTimestamp}
-                          openImageModal={openImageModal}
-                          editingSegmentId={editingSegmentId}
-                          setEditingSegmentId={setEditingSegmentId}
-                          editSpeakerName={editSpeakerName}
-                          setEditSpeakerName={setEditSpeakerName}
-                          handleSpeakerRename={handleSpeakerRename}
-                          isRenamingSpeaker={isRenamingSpeaker}
-                          formatSpeakerLabel={formatSpeakerLabel}
-                          onEnrollSpeaker={handleEnrollSpeaker}
-                        />
-                      </>
-                    )}
+                    {activeTab !== 'chat' && match(activeTab)
+                      .with('transcript', () => (
+                        <>
+                          <TranscriptToolbar
+                            transcription={transcription}
+                            displayedSegments={displayedSegments}
+                            uniqueSpeakers={uniqueSpeakers}
+                            showTranslation={showTranslation}
+                            setShowTranslation={setShowTranslation}
+                            filteredSpeaker={filteredSpeaker}
+                            setFilteredSpeaker={setFilteredSpeaker}
+                            showVisualMoments={showVisualMoments}
+                            setShowVisualMoments={setShowVisualMoments}
+                            speakers={speakers}
+                          />
+                          <TranscriptSegmentList
+                            segments={displayedSegments}
+                            activeSegmentId={activeSegmentId}
+                            showTranslation={showTranslation}
+                            seekToTimestamp={seekToTimestamp}
+                            openImageModal={openImageModal}
+                            editingSegmentId={editingSegmentId}
+                            setEditingSegmentId={setEditingSegmentId}
+                            editSpeakerName={editSpeakerName}
+                            setEditSpeakerName={setEditSpeakerName}
+                            handleSpeakerRename={handleSpeakerRename}
+                            isRenamingSpeaker={isRenamingSpeaker}
+                            formatSpeakerLabel={formatSpeakerLabel}
+                            onEnrollSpeaker={handleEnrollSpeaker}
+                          />
+                        </>
+                      ))
+                      .with('chapters', () => featureFlags.chapters && (
+                        <div style={{ position: 'absolute', inset: 0 }}>
+                          <ChapterPanel
+                            chapters={chaptersHook.chapters}
+                            loading={chaptersHook.loading}
+                            error={chaptersHook.error}
+                            onGenerate={chaptersHook.generate}
+                            onSeekTo={seekToTimestamp}
+                          />
+                        </div>
+                      ))
+                      .with('summary', () => featureFlags.summary && (
+                        <div style={{ position: 'absolute', inset: 0 }}>
+                          <SummaryPanel
+                            isVisible
+                            onSeekTo={seekToTimestamp}
+                            summaries={summaries}
+                            setSummaries={setSummaries}
+                            loading={summaryLoading}
+                            generateSummaries={generateSummaries}
+                            videoHash={transcription?.video_hash}
+                          />
+                        </div>
+                      ))
+                      .exhaustive()}
 
                     {chatMountedFor && chatMountedFor === transcription?.video_hash && (
-                      <div style={{ position: 'absolute', inset: 0 }} hidden={!showChat}>
+                      <div style={{ position: 'absolute', inset: 0 }} hidden={activeTab !== 'chat'}>
                         <ChatPanel
                           videoHash={chatMountedFor}
                           transcriptSpeakers={uniqueSpeakers}
                           onTimestampClick={seekToTimestamp}
                           jobId={currentJobId}
                           accessToken={currentAccessToken}
-                        />
-                      </div>
-                    )}
-
-                    {/* Chapters Panel */}
-                    {showChapters && featureFlags.chapters && (
-                      <div style={{ position: 'absolute', inset: 0 }}>
-                        <ChapterPanel
-                          chapters={chaptersHook.chapters}
-                          loading={chaptersHook.loading}
-                          error={chaptersHook.error}
-                          onGenerate={() => chaptersHook.generate()}
-                          onSeekTo={seekToTimestamp}
-                        />
-                      </div>
-                    )}
-
-                    {/* Summary Panel */}
-                    {showSummary && featureFlags.summary && (
-                      <div style={{ position: 'absolute', inset: 0 }}>
-                        <SummaryPanel
-                          isVisible={showSummary}
-                          onSeekTo={seekToTimestamp}
-                          summaries={summaries}
-                          setSummaries={setSummaries}
-                          loading={summaryLoading}
-                          generateSummaries={generateSummaries}
-                          videoHash={transcription?.video_hash}
                         />
                       </div>
                     )}

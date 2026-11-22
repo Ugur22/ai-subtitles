@@ -6,7 +6,7 @@ import { getSectionIcon } from "./markdown";
 import { imagePlaceholderSrc } from "./screenshots";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { formatSecondsToTimestamp } from "./timestamps";
-import type { ComparisonFrame, PersonComparisonData, Source, TimelineFrame } from "./types";
+import type { ComparisonFrame, PersonComparisonData, Source, SwapState, TimelineFrame } from "./types";
 
 const MIN_TIMELINE_FRAMES_FOR_STRIP = 3;
 
@@ -15,10 +15,7 @@ export const PersonComparisonSection: React.FC<{
   components: Components;
   onTimestampClick?: (ts: string) => void;
   onOpenScreenshots?: (sources: Source[], index: number) => void;
-  isSwapping?: boolean;
-  pendingBSeconds?: number | null;
-  pendingSwapTarget?: "a" | "b" | null;
-  swapError?: string;
+  swap?: SwapState;
   onSwapFrame?: (meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
   onDismissSwapError?: () => void;
 }> = ({
@@ -26,13 +23,11 @@ export const PersonComparisonSection: React.FC<{
   components,
   onTimestampClick,
   onOpenScreenshots,
-  isSwapping = false,
-  pendingBSeconds = null,
-  pendingSwapTarget = null,
-  swapError,
+  swap,
   onSwapFrame,
   onDismissSwapError,
 }) => {
+  const pendingSwap = swap?.kind === "pending" ? swap : null;
   const { metadata, prose } = parsePersonComparisonSection(body);
   const [replaceTarget, setReplaceTarget] = useState<"a" | "b">("b");
   const frames = [metadata?.frame_a, metadata?.frame_b].filter(
@@ -91,9 +86,8 @@ export const PersonComparisonSection: React.FC<{
                 ? [{ person: metadata?.person, bbox: frame.bbox }]
                 : [];
             const isPendingFrame =
-              isSwapping &&
-              ((idx === 0 && pendingSwapTarget === "a") ||
-                (idx === 1 && (pendingSwapTarget === "b" || pendingSwapTarget == null)));
+              pendingSwap !== null &&
+              ((idx === 0 && pendingSwap.target === "a") || (idx === 1 && pendingSwap.target === "b"));
             return (
               <div
                 key={`${frame.url}-${idx}`}
@@ -176,10 +170,8 @@ export const PersonComparisonSection: React.FC<{
           activeASeconds={activeASeconds}
           activeBSeconds={activeBSeconds}
           person={metadata.person || "Person"}
-          isSwapping={isSwapping}
-          pendingBSeconds={pendingBSeconds}
+          swap={swap}
           replaceTarget={replaceTarget}
-          swapError={swapError}
           onReplaceTargetChange={setReplaceTarget}
           onSwap={(frame, target) => onSwapFrame?.(metadata, frame, target)}
           onDismissError={onDismissSwapError}
@@ -189,7 +181,7 @@ export const PersonComparisonSection: React.FC<{
       {prose && (
         <div
           className="prose prose-sm mt-3 max-w-none transition-opacity"
-          style={{ opacity: isSwapping ? 0.4 : 1 }}
+          style={{ opacity: pendingSwap ? 0.4 : 1 }}
         >
           <ReactMarkdown components={components}>{prose}</ReactMarkdown>
         </div>

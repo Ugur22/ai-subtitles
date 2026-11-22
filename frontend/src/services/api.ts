@@ -4,7 +4,14 @@ import { generateFileHash } from '../utils/file';
 
 console.log('[API] Creating axios instance with baseURL:', API_BASE_URL);
 
-const api = axios.create({
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+export const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true, // Enable cookies for auth
 });
@@ -49,7 +56,7 @@ api.interceptors.response.use(
         }
       }
 
-      throw new Error(message);
+      throw new ApiError(message, error.response.status);
     } else if (error.request) {
       // The request was made but no response was received
       throw new Error('No response from server. Please check your connection.');
@@ -464,11 +471,37 @@ export const deleteFaceTag = async (
   return response.data;
 };
 
+export const indexVideo = async (videoHash: string): Promise<void> => {
+  await api.post('/api/index_video/', null, { params: { video_hash: videoHash } });
+};
+
+const FORCED_REINDEX_TIMEOUT_MS = 15000;
+
 export const indexImages = async (videoHash: string, forceReindex: boolean = false): Promise<void> => {
   await api.post('/api/index_images/', null, {
     params: { video_hash: videoHash, force_reindex: forceReindex },
-    timeout: forceReindex ? 300000 : undefined, // 5 min for re-indexing
+    timeout: forceReindex ? FORCED_REINDEX_TIMEOUT_MS : undefined,
   });
+};
+
+export interface SummarySection {
+  title: string;
+  start: string;
+  end: string;
+  summary: string;
+  screenshot_url?: string | null;
+}
+
+export interface SummaryResponse {
+  summaries?: SummarySection[];
+  filename?: string;
+}
+
+export const generateSummary = async (videoHash?: string): Promise<SummaryResponse> => {
+  const response = await api.post<SummaryResponse>('/generate_summary/', null, {
+    params: videoHash ? { video_hash: videoHash } : undefined,
+  });
+  return response.data;
 };
 
 // ============================================================================

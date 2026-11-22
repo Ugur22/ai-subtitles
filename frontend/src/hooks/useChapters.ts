@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { generateChapters, type Chapter, type ChaptersResponse } from "../services/api";
+import { useMutation } from "@tanstack/react-query";
+import { generateChapters } from "../services/api";
 
 interface UseChaptersOptions {
   videoHash?: string;
@@ -8,41 +8,18 @@ interface UseChaptersOptions {
 export const useChapters = (options: UseChaptersOptions) => {
   const { videoHash } = options;
 
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const generate = async (provider?: string) => {
-    if (!videoHash) {
-      setError("No video loaded");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response: ChaptersResponse = await generateChapters(videoHash, provider);
-      setChapters(response.chapters);
-    } catch (err) {
-      console.error("[useChapters] Generation failed:", err);
-      setError(err instanceof Error ? err.message : "Failed to generate chapters");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const reset = () => {
-    setChapters([]);
-    setError(null);
-  };
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!videoHash) throw new Error("No video loaded");
+      return generateChapters(videoHash);
+    },
+    onError: (err) => console.error("[useChapters] Generation failed:", err),
+  });
 
   return {
-    chapters,
-    setChapters,
-    loading,
-    error,
-    generate,
-    reset,
+    chapters: mutation.data?.chapters ?? [],
+    loading: mutation.isPending,
+    error: mutation.error ? mutation.error.message || "Failed to generate chapters" : null,
+    generate: () => mutation.mutate(),
   };
 };

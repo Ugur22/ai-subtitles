@@ -3,7 +3,8 @@
  * Displays job information, progress, and available actions based on status
  */
 
-import { useState, Fragment } from "react";
+import { Fragment } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
 import { Job, JobStatus, isActiveJobStatus } from "../../../types/job";
@@ -48,35 +49,25 @@ export const JobCard: React.FC<JobCardProps> = ({
   onDelete,
   estimatedRemaining,
 }) => {
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [isCancelling, setIsCancelling] = useState(false);
-
   const status = statusConfig[job.status];
   const progress = Math.min(100, Math.max(0, job.progress || 0));
 
-  const handleRetry = async () => {
-    setIsRetrying(true);
-    try {
-      // Must go through the shared client: the auth cookie belongs to the API
-      // host, so a same-origin fetch to /api reaches the backend without it.
-      await retryJob(job.job_id, job.access_token);
-    } catch (error) {
-      console.error("Failed to retry job:", error);
-    } finally {
-      setIsRetrying(false);
-    }
-  };
+  // Must go through the shared client: the auth cookie belongs to the API
+  // host, so a same-origin fetch to /api reaches the backend without it.
+  const retry = useMutation({
+    mutationFn: () => retryJob(job.job_id, job.access_token),
+    onError: (error) => console.error("Failed to retry job:", error),
+  });
+  const isRetrying = retry.isPending;
+  const handleRetry = () => retry.mutate();
 
-  const handleCancel = async () => {
-    setIsCancelling(true);
-    try {
-      await cancelJob(job.job_id, job.access_token);
-      onCancel?.(job.job_id);
-    } catch (error) {
-      console.error("Failed to cancel job:", error);
-      setIsCancelling(false);
-    }
-  };
+  const cancel = useMutation({
+    mutationFn: () => cancelJob(job.job_id, job.access_token),
+    onSuccess: () => onCancel?.(job.job_id),
+    onError: (error) => console.error("Failed to cancel job:", error),
+  });
+  const isCancelling = cancel.isPending || cancel.isSuccess;
+  const handleCancel = () => cancel.mutate();
 
   // The card disappears on click (the tracker hides the job), so it keeps
   // no "deleting" state of its own.

@@ -31,7 +31,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
   const [screenshotModal, setScreenshotModal] = useState<ScreenshotModalState | null>(null);
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const chatProviders = useChatProviders();
-  const { indexingStatus, reindexing, reindexStatus, handleReindex } = useChatIndexing(videoHash);
+  const { indexingStatus, reindexStatus, handleReindex } = useChatIndexing(videoHash);
   const conversation = useChatConversation({
     videoHash,
     selectedProvider: chatProviders.selectedProvider,
@@ -40,7 +40,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     includeVisuals,
     customInstructions,
   });
-  const { messages, loading, phases, screenshotCount, retryMessage, swapComparisonFrame, dismissSwapError } = conversation;
+  const { messages, loading, retryMessage, swapComparisonFrame, dismissSwapError } = conversation;
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const latestQuestionRef = useRef<HTMLDivElement>(null);
   const latestQuestion = [...messages].reverse().find((message) => message.role === "user");
@@ -131,7 +131,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
         includeVisuals={includeVisuals}
         setIncludeVisuals={setIncludeVisuals}
         handleReindex={handleReindex}
-        reindexing={reindexing}
+        reindexing={reindexStatus === "running"}
       />
 
       <ChatStatusBanners reindexStatus={reindexStatus} indexingStatus={indexingStatus} />
@@ -158,7 +158,6 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           >
             <ChatMessage
               message={message}
-              streamingProgress={message.isStreaming ? { phases, screenshotCount } : null}
               onRetry={retryMessage}
               onSwapFrame={swapComparisonFrame}
               onDismissSwapError={dismissSwapError}

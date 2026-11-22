@@ -11,10 +11,10 @@ def _read(path: Path) -> str:
 
 def test_retry_button_uses_the_shared_api_client():
     card = _read(JOBS / "JobCard.tsx")
-    handler = card[card.index("const handleRetry"):card.index("const handleCancel")]
+    handler = card[card.index("const retry = useMutation"):card.index("const cancel = useMutation")]
 
     # The auth cookie belongs to the API host; a same-origin fetch to /api lacks it.
-    assert "await retryJob(job.job_id, job.access_token)" in handler
+    assert "mutationFn: () => retryJob(job.job_id, job.access_token)" in handler
     assert "fetch(" not in card
     assert "connection_lost:" in card
 

@@ -1,15 +1,15 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
   type TranscriptionResponse,
   updateSpeakerName,
   enrollSpeaker,
   autoIdentifySpeakers,
-  listSpeakers,
   deleteSpeaker,
-  type SpeakerInfo,
 } from "../../../../services/api";
+import { queryKeys, speakersQuery } from "../../../../lib/queryKeys";
 import { timeToSeconds } from "../../../../utils/time";
 import { formatSpeakerLabel } from "../../../../utils/speaker";
 import type { TranscriptSegment } from "../segments";
@@ -29,92 +29,102 @@ export function useSpeakerManagement({
   filteredSpeaker,
   setFilteredSpeaker,
 }: SpeakerManagementOptions) {
+  const queryClient = useQueryClient();
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [editSpeakerName, setEditSpeakerName] = useState("");
-  const [isRenamingSpeaker, setIsRenamingSpeaker] = useState(false);
   const [speakerDropdownOpen, setSpeakerDropdownOpen] = useState(false);
 
   const [enrollModalSegment, setEnrollModalSegment] = useState<EnrollableSegment | null>(null);
   const [enrollSpeakerName, setEnrollSpeakerName] = useState('');
-  const [enrollSubmitting, setEnrollSubmitting] = useState(false);
 
   const [autoIdentifyConfirmOpen, setAutoIdentifyConfirmOpen] = useState(false);
-  const [autoIdentifyRunning, setAutoIdentifyRunning] = useState(false);
 
-  const [enrolledSpeakers, setEnrolledSpeakers] = useState<SpeakerInfo[]>([]);
-  const [enrolledLoading, setEnrolledLoading] = useState(false);
   const [showEnrolledInDropdown, setShowEnrolledInDropdown] = useState(false);
   const [confirmingDeleteEnrolled, setConfirmingDeleteEnrolled] = useState<string | null>(null);
 
-  const handleSpeakerRename = async (originalSpeaker: string) => {
-    if (!editSpeakerName.trim() || !transcription) return;
+  const enrolledQuery = useQuery({
+    ...speakersQuery,
+    enabled: showEnrolledInDropdown,
+  });
+  const enrolledSpeakers = enrolledQuery.data?.speakers ?? [];
+  const invalidateSpeakers = () => queryClient.invalidateQueries({ queryKey: queryKeys.speakers });
 
-    setIsRenamingSpeaker(true);
-    try {
-      await updateSpeakerName(
-        transcription.video_hash,
-        originalSpeaker,
-        editSpeakerName.trim()
-      );
-
-      const updatedSegments = transcription.transcription.segments.map(
-        (seg) => {
-          if (seg.speaker === originalSpeaker) {
-            return { ...seg, speaker: editSpeakerName.trim() };
-          }
-          return seg;
-        }
-      );
-
-      setTranscription({
-        ...transcription,
+  const renameMutation = useMutation({
+    mutationFn: ({ videoHash, from, to }: { videoHash: string; from: string; to: string }) =>
+      updateSpeakerName(videoHash, from, to),
+    onSuccess: (_data, { from, to }) => {
+      setTranscription((current) => current && {
+        ...current,
         transcription: {
-          ...transcription.transcription,
-          segments: updatedSegments,
+          ...current.transcription,
+          segments: current.transcription.segments.map((seg) =>
+            seg.speaker === from ? { ...seg, speaker: to } : seg
+          ),
         },
       });
-
-      if (filteredSpeaker === originalSpeaker) {
-        setFilteredSpeaker(editSpeakerName.trim());
-      }
-
+      if (filteredSpeaker === from) setFilteredSpeaker(to);
       setEditingSegmentId(null);
       setEditSpeakerName("");
-    } catch (err) {
+    },
+    onError: (err) => {
       console.error("Failed to rename speaker:", err);
       alert("Failed to rename speaker");
-    } finally {
-      setIsRenamingSpeaker(false);
-    }
+    },
+  });
+
+  const handleSpeakerRename = (originalSpeaker: string) => {
+    if (!editSpeakerName.trim() || !transcription) return;
+    renameMutation.mutate({
+      videoHash: transcription.video_hash,
+      from: originalSpeaker,
+      to: editSpeakerName.trim(),
+    });
   };
+
+  const enrollMutation = useMutation({
+    mutationFn: ({ name, videoHash, segment }: { name: string; videoHash: string; segment: EnrollableSegment }) =>
+      enrollSpeaker(name, videoHash, timeToSeconds(segment.start_time), timeToSeconds(segment.end_time)),
+    onSuccess: (_data, { name }) => {
+      toast.success(`${name} enrolled successfully`);
+      setEnrollModalSegment(null);
+      setEnrollSpeakerName('');
+      void invalidateSpeakers();
+    },
+    onError: (error) => {
+      console.error("Failed to enroll speaker:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to enroll speaker");
+    },
+  });
 
   const handleEnrollSpeaker = (segment: EnrollableSegment) => {
     setEnrollSpeakerName(formatSpeakerLabel(segment.speaker || "Unknown"));
     setEnrollModalSegment(segment);
   };
 
-  const handleEnrollConfirm = async () => {
+  const handleEnrollConfirm = () => {
     if (!enrollModalSegment || !transcription || !enrollSpeakerName.trim()) return;
-    setEnrollSubmitting(true);
-    try {
-      const startTime = timeToSeconds(enrollModalSegment.start_time);
-      const endTime = timeToSeconds(enrollModalSegment.end_time);
-      await enrollSpeaker(
-        enrollSpeakerName.trim(),
-        transcription.video_hash,
-        startTime,
-        endTime
-      );
-      toast.success(`${enrollSpeakerName.trim()} enrolled successfully`);
-      setEnrollModalSegment(null);
-      setEnrollSpeakerName('');
-    } catch (error: unknown) {
-      console.error("Failed to enroll speaker:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to enroll speaker");
-    } finally {
-      setEnrollSubmitting(false);
-    }
+    enrollMutation.mutate({
+      name: enrollSpeakerName.trim(),
+      videoHash: transcription.video_hash,
+      segment: enrollModalSegment,
+    });
   };
+
+  const autoIdentifyMutation = useMutation({
+    mutationFn: (videoHash: string) => autoIdentifySpeakers(videoHash, 0.7),
+    onSuccess: (result) => {
+      toast.success(
+        `Identified ${result.identified_segments}/${result.total_segments} segments — refreshing…`,
+        { duration: 3000 }
+      );
+      setAutoIdentifyConfirmOpen(false);
+      setTimeout(() => window.location.reload(), 1500);
+    },
+    onError: (error) => {
+      console.error("Failed to auto-identify speakers:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to auto-identify speakers");
+    },
+  });
 
   const handleAutoIdentifySpeakers = () => {
     if (!transcription) return;
@@ -122,52 +132,26 @@ export function useSpeakerManagement({
     setSpeakerDropdownOpen(false);
   };
 
-  const handleAutoIdentifyConfirm = async () => {
+  const handleAutoIdentifyConfirm = () => {
     if (!transcription) return;
-    setAutoIdentifyRunning(true);
-    try {
-      const result = await autoIdentifySpeakers(transcription.video_hash, 0.7);
-      toast.success(
-        `Identified ${result.identified_segments}/${result.total_segments} segments — refreshing…`,
-        { duration: 3000 }
-      );
-      setAutoIdentifyConfirmOpen(false);
-      setTimeout(() => window.location.reload(), 1500);
-    } catch (error: unknown) {
-      console.error("Failed to auto-identify speakers:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to auto-identify speakers");
-      setAutoIdentifyRunning(false);
-    }
+    autoIdentifyMutation.mutate(transcription.video_hash);
   };
 
-  const fetchEnrolledSpeakers = async () => {
-    setEnrolledLoading(true);
-    try {
-      const { speakers } = await listSpeakers();
-      setEnrolledSpeakers(speakers || []);
-    } catch (error) {
-      console.error("Failed to fetch enrolled speakers:", error);
-    } finally {
-      setEnrolledLoading(false);
-    }
-  };
-
-  const handleDeleteEnrolledSpeaker = async (name: string) => {
-    try {
-      await deleteSpeaker(name);
+  const deleteMutation = useMutation({
+    mutationFn: deleteSpeaker,
+    onSuccess: () => {
       setConfirmingDeleteEnrolled(null);
-      await fetchEnrolledSpeakers();
-    } catch {
-      toast.error("Failed to remove speaker");
-    }
-  };
+      return invalidateSpeakers();
+    },
+    onError: () => toast.error("Failed to remove speaker"),
+  });
 
   return {
     editingSegmentId,
     setEditingSegmentId,
     editSpeakerName,
     setEditSpeakerName,
-    isRenamingSpeaker,
+    isRenamingSpeaker: renameMutation.isPending,
     handleSpeakerRename,
     speakerDropdownOpen,
     setSpeakerDropdownOpen,
@@ -175,22 +159,21 @@ export function useSpeakerManagement({
     setEnrollModalSegment,
     enrollSpeakerName,
     setEnrollSpeakerName,
-    enrollSubmitting,
+    enrollSubmitting: enrollMutation.isPending,
     handleEnrollSpeaker,
     handleEnrollConfirm,
     autoIdentifyConfirmOpen,
     setAutoIdentifyConfirmOpen,
-    autoIdentifyRunning,
+    autoIdentifyRunning: autoIdentifyMutation.isPending || autoIdentifyMutation.isSuccess,
     handleAutoIdentifySpeakers,
     handleAutoIdentifyConfirm,
     enrolledSpeakers,
-    enrolledLoading,
+    enrolledLoading: enrolledQuery.isFetching,
     showEnrolledInDropdown,
     setShowEnrolledInDropdown,
     confirmingDeleteEnrolled,
     setConfirmingDeleteEnrolled,
-    fetchEnrolledSpeakers,
-    handleDeleteEnrolledSpeaker,
+    handleDeleteEnrolledSpeaker: (name: string) => deleteMutation.mutate(name),
   };
 }
 

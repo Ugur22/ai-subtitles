@@ -35,7 +35,6 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
     handleAutoIdentifySpeakers,
     showEnrolledInDropdown,
     setShowEnrolledInDropdown,
-    fetchEnrolledSpeakers,
     enrolledSpeakers,
     enrolledLoading,
     confirmingDeleteEnrolled,
@@ -191,11 +190,7 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    const next = !showEnrolledInDropdown;
-                    setShowEnrolledInDropdown(next);
-                    if (next) fetchEnrolledSpeakers();
-                  }}
+                  onClick={() => setShowEnrolledInDropdown(!showEnrolledInDropdown)}
                   style={{
                     width: '100%', textAlign: 'left',
                     padding: '7px 12px', fontSize: '12px',

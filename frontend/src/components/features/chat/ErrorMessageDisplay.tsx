@@ -1,9 +1,8 @@
-import type { Message } from "./types";
-
 export const ErrorMessageDisplay: React.FC<{
-  message: Message;
+  content: string;
+  retryQuestion?: string;
   onRetry: (q: string) => void;
-}> = ({ message, onRetry }) => {
+}> = ({ content, retryQuestion, onRetry }) => {
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
@@ -26,11 +25,11 @@ export const ErrorMessageDisplay: React.FC<{
         </span>
       </div>
       <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>
-        {message.content}
+        {content}
       </p>
-      {message.retryQuestion && (
+      {retryQuestion && (
         <button
-          onClick={() => onRetry(message.retryQuestion!)}
+          onClick={() => onRetry(retryQuestion)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
           style={{ color: "var(--c-error)", background: "oklch(65% 0.20 25 / 0.12)" }}
         >

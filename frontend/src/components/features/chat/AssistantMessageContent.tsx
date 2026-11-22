@@ -4,17 +4,14 @@ import { Disclosure, DisclosureButton, DisclosurePanel } from "@headlessui/react
 import { PersonComparisonSection } from "./PersonComparisonSection";
 import { splitIntoSections } from "./answerSections";
 import { buildMarkdownComponents, getSectionIcon } from "./markdown";
-import type { PersonComparisonData, Source, TimelineFrame } from "./types";
+import type { PersonComparisonData, Source, SwapState, TimelineFrame } from "./types";
 
 export const AssistantMessageContent: React.FC<{
   content: string;
   role: "user" | "assistant";
   onTimestampClick?: (ts: string) => void;
   onOpenScreenshots?: (sources: Source[], index: number) => void;
-  isSwapping?: boolean;
-  pendingBSeconds?: number | null;
-  pendingSwapTarget?: "a" | "b" | null;
-  swapError?: string;
+  swap?: SwapState;
   onSwapFrame?: (meta: PersonComparisonData, frame: TimelineFrame, target: "a" | "b") => void;
   onDismissSwapError?: () => void;
 }> = ({
@@ -22,10 +19,7 @@ export const AssistantMessageContent: React.FC<{
   role,
   onTimestampClick,
   onOpenScreenshots,
-  isSwapping,
-  pendingBSeconds,
-  pendingSwapTarget,
-  swapError,
+  swap,
   onSwapFrame,
   onDismissSwapError,
 }) => {
@@ -84,10 +78,7 @@ export const AssistantMessageContent: React.FC<{
               components={components}
               onTimestampClick={onTimestampClick}
               onOpenScreenshots={onOpenScreenshots}
-              isSwapping={isSwapping}
-              pendingBSeconds={pendingBSeconds}
-              pendingSwapTarget={pendingSwapTarget}
-              swapError={swapError}
+              swap={swap}
               onSwapFrame={onSwapFrame}
               onDismissSwapError={onDismissSwapError}
             />

@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { imagePlaceholderSrc } from "./screenshots";
-import type { TimelineFrame } from "./types";
+import type { SwapState, TimelineFrame } from "./types";
 
 interface ComparisonTimelineStripProps {
   frames: TimelineFrame[];
   activeASeconds: number;
   activeBSeconds: number;
   person: string;
-  isSwapping: boolean;
-  pendingBSeconds: number | null;
+  swap?: SwapState;
   replaceTarget: "a" | "b";
-  swapError?: string;
   onReplaceTargetChange: (target: "a" | "b") => void;
   onSwap: (frame: TimelineFrame, target: "a" | "b") => void;
   onDismissError?: () => void;
@@ -28,14 +26,14 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
   activeASeconds,
   activeBSeconds,
   person,
-  isSwapping,
-  pendingBSeconds,
+  swap,
   replaceTarget,
-  swapError,
   onReplaceTargetChange,
   onSwap,
   onDismissError,
 }) => {
+  const pendingSwap = swap?.kind === "pending" ? swap : null;
+  const swapError = swap?.kind === "failed" ? swap.error : undefined;
   const listRef = useRef<HTMLOListElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -169,10 +167,10 @@ export const ComparisonTimelineStrip: React.FC<ComparisonTimelineStripProps> = (
           const isA = isSameMoment(frame.timestamp_seconds, activeASeconds);
           const isCurrentB = isSameMoment(frame.timestamp_seconds, activeBSeconds);
           const isPending =
-            pendingBSeconds != null &&
-            isSameMoment(frame.timestamp_seconds, pendingBSeconds);
+            pendingSwap !== null &&
+            isSameMoment(frame.timestamp_seconds, pendingSwap.bSeconds);
           const inert = isA || isCurrentB;
-          const disabledByLock = isSwapping && !isPending && !inert;
+          const disabledByLock = pendingSwap !== null && !isPending && !inert;
           const ring = isA
             ? "var(--accent)"
             : isCurrentB
