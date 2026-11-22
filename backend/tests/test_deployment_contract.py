@@ -176,3 +176,23 @@ def test_every_direct_requirement_is_locked_to_a_compatible_version():
         exact = re.search(r"==\s*([\w.+]+)", requirement)
         if exact:
             assert pins[name] == exact.group(1), f"{name}: requirements.txt pins {exact.group(1)}, constraints.txt {pins[name]}"
+
+
+def test_build_context_excludes_local_secrets_and_data():
+    # .gcloudignore only includes backend/.gitignore; these are covered by the root one.
+    for name in (".gcloudignore", ".dockerignore"):
+        lines = (BACKEND / name).read_text().splitlines()
+        for pattern in (".env.*", "api-key-transcribe", "local_data/"):
+            assert pattern in lines, f"{name} must exclude {pattern}"
+
+
+def test_image_ships_gpu_onnxruntime_and_headless_opencv_without_a_toolchain():
+    dockerfile = (BACKEND / "Dockerfile").read_text()
+    assert "pip uninstall -y opencv-python onnxruntime" in dockerfile
+    assert "opencv-python-headless==4.11.0.86 onnxruntime-gpu==1.23.2" in dockerfile
+    assert "'CUDAExecutionProvider' in ort.get_available_providers()" in dockerfile
+    for package in ("build-essential", "libgl1-mesa-glx", "python3-dev"):
+        assert package not in dockerfile
+    pins = _constraint_pins()
+    assert pins["opencv-python-headless"] == "4.11.0.86"
+    assert pins["onnxruntime-gpu"] == "1.23.2"

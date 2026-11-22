@@ -19,19 +19,15 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
-# Install Python 3.10 (native to Ubuntu 22.04) and system dependencies
+# Install Python 3.10 (native to Ubuntu 22.04) and runtime system dependencies.
+# No compiler: every pinned package ships a Linux wheel except docopt and moviepy,
+# which are pure Python. No libGL: the Dockerfile swaps in headless OpenCV below.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 \
-    python3-dev \
-    python3-venv \
     python3-pip \
     ffmpeg \
-    libgl1-mesa-glx \
     libglib2.0-0 \
-    build-essential \
-    wget \
-    git \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && python -m pip install --upgrade pip
@@ -59,11 +55,21 @@ RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https:
 COPY requirements.txt constraints.txt ./
 
 # Install remaining Python dependencies at the exact versions in constraints.txt
-# Use --no-cache-dir to reduce image size
-RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
+# Use --no-cache-dir to reduce image size.
+# insightface hard-requires GUI opencv-python and CPU onnxruntime (faster-whisper and
+# chromadb want onnxruntime too). The CPU and GPU onnxruntime wheels share one module
+# directory, so the last install wins; replace both with the headless and GPU builds.
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt \
+    && pip uninstall -y opencv-python onnxruntime \
+    && pip install --no-cache-dir --no-deps --force-reinstall \
+       opencv-python-headless==4.11.0.86 onnxruntime-gpu==1.23.2
 
-# Cheap build-time check (no GPU needed): the GPU libraries import cleanly
-RUN python -c "import ctranslate2, torch; print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda)"
+# Cheap build-time check (no GPU needed): the GPU libraries import cleanly and
+# onnxruntime is the GPU build (providers are compiled in, so no device is required)
+RUN python -c "import ctranslate2, torch, cv2, onnxruntime as ort; \
+assert 'CUDAExecutionProvider' in ort.get_available_providers(), ort.get_available_providers(); \
+print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda, \
+'| cv2', cv2.__version__, '| onnxruntime', ort.__version__)"
 
 # Load every fetched model fully offline: an incomplete cache or a library bump
 # that can't read it fails the build here, not as a runtime download on Cloud Run.

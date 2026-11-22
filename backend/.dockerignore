@@ -64,3 +64,13 @@ tests/
 # Local development files
 docker-compose*.yml
 Makefile
+
+# ===== Secrets and local-only data covered only by the root .gitignore =====
+.env.*
+!.env.example
+api-key-transcribe
+*.key
+*.pem
+local_data/
+graphify-out/
+.claude/
