@@ -34,3 +34,12 @@ def test_panel_and_page_share_one_job_list():
 
     assert "useJobTracker()" not in _read(JOBS / "JobPanel.tsx")
     assert "tracker={jobTracker}" in upload
+
+
+def test_upload_sends_the_chosen_whisper_model():
+    upload = _read(FRONTEND / "components" / "features" / "transcription" / "TranscriptionUpload.tsx")
+    api = _read(FRONTEND / "services" / "api.ts")
+    submit = upload[upload.index("backgroundJobSubmit.submit(file, {"):]
+    assert "model: selectedModel," in submit[:submit.index("});")]
+    body = api[api.index("const jobParams: JobSubmitParams = {"):]
+    assert "    model,\n" in body[:body.index("};")]

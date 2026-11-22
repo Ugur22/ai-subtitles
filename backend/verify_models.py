@@ -17,9 +17,10 @@ def verify_whisper():
     from faster_whisper import WhisperModel
 
     # CPU is fine here: no GPU at build time.
-    WhisperModel(m.WHISPER_MODEL_REPO, device="cpu", compute_type="int8",
-                 download_root=m.HF_HOME, local_files_only=True)
-    print(f"OK: whisper {m.WHISPER_MODEL_REPO}")
+    for repo_id in m.WHISPER_MODEL_REPOS:
+        WhisperModel(repo_id, device="cpu", compute_type="int8",
+                     download_root=m.HF_HOME, local_files_only=True)
+        print(f"OK: whisper {repo_id}")
 
 
 def verify_sentence_transformers():

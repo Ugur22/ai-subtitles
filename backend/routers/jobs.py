@@ -10,7 +10,7 @@ import logging
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Callable, Any
+from typing import Optional, List, Callable, Any, Literal
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Request
@@ -56,6 +56,7 @@ class JobSubmitRequest(BaseModel):
     max_speakers: Optional[int] = None
     language: Optional[str] = None
     force_language: bool = False
+    model: Literal["large-v3", "turbo"] = "large-v3"
 
 
 class JobSubmitResponse(BaseModel):
@@ -353,7 +354,8 @@ async def submit_job(
             min_speakers=job_request.min_speakers,
             max_speakers=job_request.max_speakers,
             language=job_request.language,
-            force_language=job_request.force_language
+            force_language=job_request.force_language,
+            model=job_request.model,
         )
 
         # If not cached, trigger the Cloud Run Job worker (runs to completion outside the Service).

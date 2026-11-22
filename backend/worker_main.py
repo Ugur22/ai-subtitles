@@ -82,7 +82,7 @@ def _check_gpu(job_id: str) -> bool:
     gpu_name = torch.cuda.get_device_name(0) if cuda_ok else "n/a"
     print(
         f"[worker_main] cuda_available={cuda_ok} gpu={gpu_name} torch_cuda={torch.version.cuda} "
-        f"whisper_model={settings.FASTWHISPER_MODEL} device={settings.FASTWHISPER_DEVICE} "
+        f"device={settings.FASTWHISPER_DEVICE} "
         f"compute_type={resolve_whisper_compute_type()}"
     )
 

@@ -28,7 +28,7 @@ import { VideoPlayerPanel } from "./VideoPlayerPanel";
 import { useSpeakerManagement } from "./hooks/useSpeakerManagement";
 import { useTranscriptPlayback } from "./hooks/useTranscriptPlayback";
 import { filterDisplayedSegments, listUniqueSpeakers } from "./segments";
-import { Job, isActiveJobStatus } from "../../../types/job";
+import { Job, isActiveJobStatus, type WhisperModelChoice } from "../../../types/job";
 import { useFileUpload } from "../../../hooks/useFileUpload";
 import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
@@ -62,6 +62,12 @@ const languageOptions = [
   { value: "cs", label: "Czech" },
 ];
 
+// The A/B on our own clips: turbo is about 3x faster but drops more words, mostly outside English.
+const modelOptions: { value: WhisperModelChoice; label: string }[] = [
+  { value: "large-v3", label: "Accurate (large-v3)" },
+  { value: "turbo", label: "Fast (turbo)" },
+];
+
 type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
 };
@@ -76,6 +82,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [activeTab, setActiveTab] = useState<TranscriptTab>("transcript");
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+  const [selectedModel, setSelectedModel] = useState<WhisperModelChoice>("large-v3");
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -218,6 +225,10 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setSelectedLanguage(event.target.value);
   };
 
+  const handleModelChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedModel(event.target.value as WhisperModelChoice);
+  };
+
   // Note: startPollingForTranscription removed - was unused
   // Polling logic can be added back if needed for cloud transcription
 
@@ -248,6 +259,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         durationSeconds: durationSeconds ?? undefined,
         language: selectedLanguage || undefined,
         forceLanguage: true,
+        model: selectedModel,
       });
 
       if (result) {
@@ -306,6 +318,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setVideoUrl(null);
     setShowTranslation(true);
     setSelectedLanguage("");
+    setSelectedModel("large-v3");
     setFilteredSpeaker(null);
   }, [resetJobSubmit, setVideoUrl]);
 
@@ -364,6 +377,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               handleLanguageChange={handleLanguageChange}
               handleStartTranscriptionClick={handleStartTranscriptionClick}
               languageOptions={languageOptions}
+              selectedModel={selectedModel}
+              handleModelChange={handleModelChange}
+              modelOptions={modelOptions}
             >
             <ActiveJobsSection jobs={jobTracker.jobs} onOpenJobPanel={() => setShowJobPanel(true)} />
             <RecentTranscriptions

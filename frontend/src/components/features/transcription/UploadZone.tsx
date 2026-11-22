@@ -2,9 +2,10 @@ import React from "react";
 import { match } from "ts-pattern";
 import { OutputPreview } from "./OutputPreview";
 import { formatFileSize } from "../../../utils/file";
+import type { WhisperModelChoice } from "../../../types/job";
 
-interface LanguageOption {
-  value: string;
+interface SelectOption<T extends string = string> {
+  value: T;
   label: string;
 }
 
@@ -20,7 +21,10 @@ interface UploadZoneProps {
   selectedLanguage: string;
   handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   handleStartTranscriptionClick: () => void;
-  languageOptions: LanguageOption[];
+  languageOptions: SelectOption[];
+  selectedModel: WhisperModelChoice;
+  handleModelChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  modelOptions: SelectOption<WhisperModelChoice>[];
   children: React.ReactNode;
 }
 
@@ -38,6 +42,9 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     handleLanguageChange,
     handleStartTranscriptionClick,
     languageOptions,
+    selectedModel,
+    handleModelChange,
+    modelOptions,
     children,
   }) => {
     const [showExample, setShowExample] = React.useState(false);
@@ -160,6 +167,32 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                   className="ml-auto min-w-0 max-w-full cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
                 >
                   {languageOptions.map((option) => (
+                    <option key={option.value} value={option.value} className="bg-overlay text-text-primary">
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <svg className="pointer-events-none absolute right-4 h-3 w-3 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </label>
+
+              <label
+                htmlFor="model-select"
+                className="upload-language relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border-subtle bg-surface px-4 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent-border"
+              >
+                <svg className="h-4 w-4 shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" />
+                </svg>
+                <span className="text-sm text-text-secondary">Model</span>
+                <select
+                  id="model-select"
+                  value={selectedModel}
+                  onChange={handleModelChange}
+                  disabled={isTranscribing}
+                  className="ml-auto min-w-0 max-w-full cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
+                >
+                  {modelOptions.map((option) => (
                     <option key={option.value} value={option.value} className="bg-overlay text-text-primary">
                       {option.label}
                     </option>

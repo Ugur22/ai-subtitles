@@ -21,7 +21,7 @@ flowchart LR
 
     subgraph Worker["GPU worker · Cloud Run Job · L4"]
         BW("worker_main.py<br/>BackgroundWorker")
-        WH("faster-whisper<br/>large-v3")
+        WH("faster-whisper<br/>large-v3 / turbo")
         PY("pyannote<br/>chunked diarization")
         EMB("Sentence Transformers<br/>text + caption embeddings")
         CL("CLIP<br/>image embeddings")

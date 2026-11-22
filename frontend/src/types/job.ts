@@ -89,6 +89,8 @@ export interface JobListResponse {
   per_page: number;
 }
 
+export type WhisperModelChoice = "large-v3" | "turbo";
+
 /**
  * Job submission parameters
  */
@@ -100,6 +102,7 @@ export interface JobSubmitParams {
   duration_seconds?: number;
   language?: string;
   force_language?: boolean;
+  model?: WhisperModelChoice;
   num_speakers?: number;
   min_speakers?: number;
   max_speakers?: number;

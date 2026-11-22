@@ -200,6 +200,18 @@ def test_image_swaps_in_gpu_onnxruntime_and_headless_opencv_from_the_lock():
         assert package not in dockerfile
 
 
+def test_every_whisper_model_choice_is_baked():
+    import ast
+    from config import WHISPER_MODEL_CHOICES
+
+    tree = ast.parse((BACKEND / "download_models.py").read_text())
+    baked = next(
+        ast.literal_eval(node.value) for node in tree.body
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "WHISPER_MODEL_REPOS"
+    )
+    assert set(WHISPER_MODEL_CHOICES.values()) == set(baked)
+
+
 def test_cuda_libraries_come_from_torch_wheels():
     dockerfile = (BACKEND / "Dockerfile").read_text()
     base = next(line for line in dockerfile.splitlines() if line.startswith("FROM "))

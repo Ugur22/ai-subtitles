@@ -192,6 +192,7 @@ import type {
   JobSubmitResponse,
   JobSubmitParams,
   JobListResponse,
+  WhisperModelChoice,
   JobShareResponse,
 } from '../types/job';
 import { uploadMedia } from './gcsUpload';
@@ -329,6 +330,7 @@ export interface BackgroundJobOptions {
   durationSeconds?: number;
   language?: string;
   forceLanguage?: boolean;
+  model?: WhisperModelChoice;
   numSpeakers?: number;
   minSpeakers?: number;
   maxSpeakers?: number;
@@ -349,7 +351,7 @@ export interface BackgroundJobOptions {
 export const submitBackgroundJob = async (
   options: BackgroundJobOptions
 ): Promise<JobSubmitResponse> => {
-  const { file, durationSeconds, language, forceLanguage = false, numSpeakers, minSpeakers, maxSpeakers, onProgress } = options;
+  const { file, durationSeconds, language, forceLanguage = false, model, numSpeakers, minSpeakers, maxSpeakers, onProgress } = options;
 
   const report = (stage: SubmissionStage, progress: number, message: string) => {
     if (onProgress) {
@@ -392,6 +394,7 @@ export const submitBackgroundJob = async (
     duration_seconds: durationSeconds,
     language,
     force_language: forceLanguage,
+    model,
     num_speakers: numSpeakers,
     min_speakers: minSpeakers,
     max_speakers: maxSpeakers,

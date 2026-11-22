@@ -49,7 +49,7 @@ from utils.time_utils import format_timestamp
 from services.word_speakers import assign_speakers
 from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from utils.structured_log import log_exception
-from dependencies import get_whisper_model, get_speaker_diarizer, unload_whisper_model
+from dependencies import get_whisper_model, get_speaker_diarizer, resolve_whisper_model, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
 from speaker_diarization import ChunkedSpeakerDiarizer, linking_signature
 from services.audio_analysis_service import AudioAnalysisService
@@ -151,6 +151,10 @@ HEARTBEAT_INTERVAL = 30  # seconds
 
 class JobCancelled(Exception):
     """Raised when a job is cancelled mid-pipeline so finally/except handlers can distinguish it from real failures."""
+
+
+def _transcription_param_key(model_name, language, force_language) -> str:
+    return f"{model_name}|{language}|{force_language}"
 
 
 def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
@@ -345,6 +349,7 @@ class BackgroundWorker:
             max_speakers = params.get("max_speakers")
             language = params.get("language")
             force_language = params.get("force_language", False)
+            model_name = resolve_whisper_model(params.get("model"))
 
             print(f"[Worker] Processing job {job_id}: {filename} ({file_size_bytes / (1024*1024):.1f} MB)")
 
@@ -354,6 +359,11 @@ class BackgroundWorker:
             # Check what's already cached to decide what we need to download/process
             cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, "transcription")
             cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
+
+            transcription_param_key = _transcription_param_key(model_name, language, force_language)
+            if cached_transcription and cached_transcription.get("param_key") != transcription_param_key:
+                print(f"[Worker] Transcription cache param mismatch, invalidating")
+                cached_transcription = None
 
             diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
@@ -500,7 +510,7 @@ class BackgroundWorker:
                 JobQueueService.update_progress(job_id, 35, "transcribing", "Starting transcription...")
 
                 # Get Whisper model
-                whisper_model = get_whisper_model()
+                whisper_model = get_whisper_model(model_name)
 
                 # Build transcription parameters
                 transcribe_params = {
@@ -522,7 +532,7 @@ class BackgroundWorker:
                 total_chunks = len(audio_chunks)
                 # Everything that changes a chunk's text goes into the cache key.
                 base_key = settings_key(
-                    model=settings.FASTWHISPER_MODEL,
+                    model=model_name,
                     compute_type=settings.FASTWHISPER_COMPUTE_TYPE,
                     requested_language=language,
                     chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
@@ -658,6 +668,7 @@ class BackgroundWorker:
                     "formatted_segments": formatted_segments,
                     "detected_language": detected_language,
                     "normalized_lang": normalized_lang,
+                    "param_key": transcription_param_key,
                 }):
                     transcription_checkpoint.clear()
 
@@ -1146,6 +1157,7 @@ class BackgroundWorker:
                 "video_url": f"/video/{video_hash}",
                 "transcription": {
                     "language": detected_language,
+                    "model": model_name,
                     "segments": formatted_segments,
                 },
             }
