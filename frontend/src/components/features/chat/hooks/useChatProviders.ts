@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getProviderModels, getProviders } from "../../../../services/llm";
+import { getProviderModels, getProviders, type ProviderModels } from "../../../../services/llm";
 import { queryKeys } from "../../../../lib/queryKeys";
 import type { ReasoningEffort } from "../types";
 
@@ -14,6 +14,11 @@ const readSavedModel = (provider: string): string | null => {
   }
 };
 
+const listingFailed = (listing: ProviderModels | undefined) => Boolean(listing?.error);
+
+const pickModel = (listing: ProviderModels, wanted: string | null) =>
+  wanted && listing.models.includes(wanted) ? wanted : (listing.default ?? listing.models[0] ?? "");
+
 export function useChatProviders() {
   const providersQuery = useQuery({
     queryKey: queryKeys.llmProviders,
@@ -22,7 +27,7 @@ export function useChatProviders() {
   const providers = providersQuery.data ?? [];
   const providersLoaded = providers.length > 0;
 
-  const [providerChoice, setSelectedProvider] = useState<string | null>(null);
+  const [providerChoice, setProviderChoice] = useState<string | null>(null);
   const selectedProvider =
     providerChoice
     ?? providers.find((p) => p.name === "grok" && p.available)?.name
@@ -33,23 +38,18 @@ export function useChatProviders() {
     queryKey: queryKeys.llmModels(selectedProvider),
     queryFn: () => getProviderModels(selectedProvider),
     enabled: providersLoaded,
-    // A listing that came back with an error is refetched the next time the provider is picked.
-    staleTime: (query) => (query.state.data?.error ? 0 : Infinity),
+    staleTime: (query) => (listingFailed(query.state.data) ? 0 : Infinity),
   });
-  const modelsLoading =
-    modelsQuery.isPending || (modelsQuery.isFetching && Boolean(modelsQuery.data?.error));
+  const refetchingFailedListing = modelsQuery.isFetching && listingFailed(modelsQuery.data);
+  const modelsLoading = modelsQuery.isPending || refetchingFailedListing;
   const listing = modelsLoading ? undefined : modelsQuery.data;
   const providerModels = listing?.models ?? [];
   const modelListError = listing?.error ?? null;
   const reasoningEfforts = listing?.reasoning_efforts ?? {};
 
   const [modelChoices, setModelChoices] = useState<Record<string, string>>({});
-  const wantedModel = modelChoices[selectedProvider] ?? readSavedModel(selectedProvider);
-  const selectedModel = !listing
-    ? ""
-    : wantedModel && providerModels.includes(wantedModel)
-      ? wantedModel
-      : (listing.default ?? providerModels[0] ?? "");
+  const savedModel = useMemo(() => readSavedModel(selectedProvider), [selectedProvider]);
+  const selectedModel = listing ? pickModel(listing, modelChoices[selectedProvider] ?? savedModel) : "";
 
   const [effortChoices, setEffortChoices] = useState<Record<string, ReasoningEffort>>({});
   const effortKey = `${selectedProvider}:${selectedModel}`;
@@ -82,7 +82,7 @@ export function useChatProviders() {
     loadingProviders: providersQuery.isPending,
     providersLoaded,
     selectedProvider,
-    setSelectedProvider: (provider: string) => setSelectedProvider(provider),
+    setSelectedProvider: setProviderChoice,
     providerModels,
     selectedModel,
     selectModel,

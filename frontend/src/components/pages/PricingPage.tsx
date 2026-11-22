@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { ApiError } from "../../services/api";
 import { getPlans, startCheckout, type Tier } from "../../services/billing";
 import { useAuth } from "../../hooks/useAuth";
 import { queryKeys } from "../../lib/queryKeys";
@@ -32,14 +33,13 @@ export const PricingPage = () => {
     mutationFn: startCheckout,
     onSuccess: (url) => {
       if (url) {
-        window.location.href = url;  // Stripe-hosted checkout
+        window.location.href = url;
       } else {
         toast.error("Couldn't start checkout. Please try again.");
       }
     },
     onError: (error) => {
-      // The shared client turns the backend's `detail` into the error message.
-      if (error.message.includes("not configured")) {
+      if (error instanceof ApiError && error.status === 503) {
         toast.error("Billing isn't configured yet. Try again shortly.");
       } else {
         toast.error("Checkout failed. Please try again.");

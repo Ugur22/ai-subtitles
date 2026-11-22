@@ -66,7 +66,6 @@ export const JobCard: React.FC<JobCardProps> = ({
     onSuccess: () => onCancel?.(job.job_id),
     onError: (error) => console.error("Failed to cancel job:", error),
   });
-  // The tracker removes a cancelled card, so it stays "Cancelling…" until then.
   const isCancelling = cancel.isPending || cancel.isSuccess;
   const handleCancel = () => cancel.mutate();
 

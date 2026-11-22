@@ -1,6 +1,6 @@
 import type { FaceBbox } from "../../../services/api";
 import type { FriendlyErrorType } from "./chatErrors";
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type { ChatProviderStatus, ReasoningEffort } from "../../../services/llm";
 
 export interface ComparisonFrame {
   url?: string;
@@ -116,12 +116,6 @@ export interface PhaseEntry {
   label: string;
   status: "active" | "done";
   startedAt: number;
-}
-
-export interface ChatProviderStatus {
-  name: string;
-  available: boolean;
-  model: string;
 }
 
 export interface ScreenshotModalState {

@@ -6,7 +6,6 @@ import { getSectionIcon } from "./markdown";
 import { imagePlaceholderSrc } from "./screenshots";
 import { formatScreenshotUrlSafe } from "../../../utils/url";
 import { formatSecondsToTimestamp } from "./timestamps";
-import { swapView } from "./swap";
 import type { ComparisonFrame, PersonComparisonData, Source, SwapState, TimelineFrame } from "./types";
 
 const MIN_TIMELINE_FRAMES_FOR_STRIP = 3;
@@ -28,7 +27,7 @@ export const PersonComparisonSection: React.FC<{
   onSwapFrame,
   onDismissSwapError,
 }) => {
-  const { isSwapping, pendingSwapTarget } = swapView(swap);
+  const pendingSwap = swap?.kind === "pending" ? swap : null;
   const { metadata, prose } = parsePersonComparisonSection(body);
   const [replaceTarget, setReplaceTarget] = useState<"a" | "b">("b");
   const frames = [metadata?.frame_a, metadata?.frame_b].filter(
@@ -87,9 +86,8 @@ export const PersonComparisonSection: React.FC<{
                 ? [{ person: metadata?.person, bbox: frame.bbox }]
                 : [];
             const isPendingFrame =
-              isSwapping &&
-              ((idx === 0 && pendingSwapTarget === "a") ||
-                (idx === 1 && (pendingSwapTarget === "b" || pendingSwapTarget == null)));
+              pendingSwap !== null &&
+              ((idx === 0 && pendingSwap.target === "a") || (idx === 1 && pendingSwap.target === "b"));
             return (
               <div
                 key={`${frame.url}-${idx}`}
@@ -183,7 +181,7 @@ export const PersonComparisonSection: React.FC<{
       {prose && (
         <div
           className="prose prose-sm mt-3 max-w-none transition-opacity"
-          style={{ opacity: isSwapping ? 0.4 : 1 }}
+          style={{ opacity: pendingSwap ? 0.4 : 1 }}
         >
           <ReactMarkdown components={components}>{prose}</ReactMarkdown>
         </div>

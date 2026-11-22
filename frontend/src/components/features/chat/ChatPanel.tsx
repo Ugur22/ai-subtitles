@@ -131,7 +131,7 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
         includeVisuals={includeVisuals}
         setIncludeVisuals={setIncludeVisuals}
         handleReindex={handleReindex}
-        reindexing={reindexStatus.kind === "running"}
+        reindexing={reindexStatus === "running"}
       />
 
       <ChatStatusBanners reindexStatus={reindexStatus} indexingStatus={indexingStatus} />

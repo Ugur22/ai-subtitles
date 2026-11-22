@@ -34,7 +34,6 @@ export function settleStreamingMessages(messages: Message[], retryQuestion?: str
 
 type StreamingStatus = Extract<MessageStatus, { kind: "streaming" }>;
 
-/** Updates a message's live progress; a message that has already settled is left alone. */
 export function updateStreamingProgress(
   message: Message,
   update: (status: StreamingStatus) => Partial<Omit<StreamingStatus, "kind">>,

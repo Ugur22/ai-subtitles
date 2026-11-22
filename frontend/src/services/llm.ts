@@ -1,5 +1,12 @@
 import { api } from './api';
-import type { ChatProviderStatus, ReasoningEffort } from '../components/features/chat/types';
+
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface ChatProviderStatus {
+  name: string;
+  available: boolean;
+  model: string;
+}
 
 export interface ProviderModels {
   models: string[];

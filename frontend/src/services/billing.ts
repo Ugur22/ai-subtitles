@@ -17,7 +17,6 @@ export const getPlans = async (): Promise<Tier[]> => {
   return response.data.tiers || [];
 };
 
-/** Returns the Stripe-hosted checkout URL, when the backend provides one. */
 export const startCheckout = async (): Promise<string | undefined> => {
   const response = await api.post<{ url?: string }>('/api/billing/checkout', {});
   return response.data?.url;

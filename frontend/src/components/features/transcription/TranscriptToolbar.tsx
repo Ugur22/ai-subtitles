@@ -190,9 +190,7 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    setShowEnrolledInDropdown(!showEnrolledInDropdown);
-                  }}
+                  onClick={() => setShowEnrolledInDropdown(!showEnrolledInDropdown)}
                   style={{
                     width: '100%', textAlign: 'left',
                     padding: '7px 12px', fontSize: '12px',

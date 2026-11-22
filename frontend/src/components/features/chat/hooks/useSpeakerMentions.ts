@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getFaceTagSpeakers, listSpeakers } from "../../../../services/api";
-import { queryKeys } from "../../../../lib/queryKeys";
+import { getFaceTagSpeakers } from "../../../../services/api";
+import { queryKeys, speakersQuery } from "../../../../lib/queryKeys";
 
 export function useSpeakerMentions(videoHash: string | null, transcriptSpeakers: string[]) {
   const [showMentions, setShowMentions] = useState(false);
@@ -9,8 +9,7 @@ export function useSpeakerMentions(videoHash: string | null, transcriptSpeakers:
   const [mentionIndex, setMentionIndex] = useState(0);
 
   const enrolled = useQuery({
-    queryKey: queryKeys.speakers,
-    queryFn: listSpeakers,
+    ...speakersQuery,
     enabled: Boolean(videoHash),
   });
   const faceTags = useQuery({

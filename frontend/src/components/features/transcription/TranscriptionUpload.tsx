@@ -435,10 +435,9 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                   </div>
 
                   <div ref={transcriptScrollRef} className="flex-grow overflow-auto relative">
-                    {match(activeTab)
+                    {activeTab !== 'chat' && match(activeTab)
                       .with('transcript', () => (
                         <>
-                          {/* Transcript toolbar */}
                           <TranscriptToolbar
                             transcription={transcription}
                             displayedSegments={displayedSegments}
@@ -451,7 +450,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             setShowVisualMoments={setShowVisualMoments}
                             speakers={speakers}
                           />
-                          {/* Transcript content */}
                           <TranscriptSegmentList
                             segments={displayedSegments}
                             activeSegmentId={activeSegmentId}
@@ -475,7 +473,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                             chapters={chaptersHook.chapters}
                             loading={chaptersHook.loading}
                             error={chaptersHook.error}
-                            onGenerate={() => chaptersHook.generate()}
+                            onGenerate={chaptersHook.generate}
                             onSeekTo={seekToTimestamp}
                           />
                         </div>
@@ -493,8 +491,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                           />
                         </div>
                       ))
-                      // Chat renders below, mounted even while hidden so the conversation survives tab switches.
-                      .with('chat', () => null)
                       .exhaustive()}
 
                     {chatMountedFor && chatMountedFor === transcription?.video_hash && (

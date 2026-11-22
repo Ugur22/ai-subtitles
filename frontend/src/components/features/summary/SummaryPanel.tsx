@@ -4,14 +4,8 @@ import { useSpring, animated, config, useTransition } from "react-spring";
 import { API_BASE_URL } from "../../../config";
 import { formatScreenshotUrl } from "../../../utils/url";
 import { DraggableImageModal } from "../../common/DraggableImageModal";
+import type { SummarySection } from "../../../services/api";
 
-interface SummarySection {
-  title: string;
-  start: string;
-  end: string;
-  summary: string;
-  screenshot_url?: string | null;
-}
 
 interface SummaryPanelProps {
   isVisible: boolean;

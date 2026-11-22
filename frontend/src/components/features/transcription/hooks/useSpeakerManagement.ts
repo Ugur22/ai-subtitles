@@ -7,10 +7,9 @@ import {
   updateSpeakerName,
   enrollSpeaker,
   autoIdentifySpeakers,
-  listSpeakers,
   deleteSpeaker,
 } from "../../../../services/api";
-import { queryKeys } from "../../../../lib/queryKeys";
+import { queryKeys, speakersQuery } from "../../../../lib/queryKeys";
 import { timeToSeconds } from "../../../../utils/time";
 import { formatSpeakerLabel } from "../../../../utils/speaker";
 import type { TranscriptSegment } from "../segments";
@@ -44,8 +43,7 @@ export function useSpeakerManagement({
   const [confirmingDeleteEnrolled, setConfirmingDeleteEnrolled] = useState<string | null>(null);
 
   const enrolledQuery = useQuery({
-    queryKey: queryKeys.speakers,
-    queryFn: listSpeakers,
+    ...speakersQuery,
     enabled: showEnrolledInDropdown,
   });
   const enrolledSpeakers = enrolledQuery.data?.speakers ?? [];
@@ -166,7 +164,6 @@ export function useSpeakerManagement({
     handleEnrollConfirm,
     autoIdentifyConfirmOpen,
     setAutoIdentifyConfirmOpen,
-    // Success schedules a page reload, so stay busy until it happens.
     autoIdentifyRunning: autoIdentifyMutation.isPending || autoIdentifyMutation.isSuccess,
     handleAutoIdentifySpeakers,
     handleAutoIdentifyConfirm,

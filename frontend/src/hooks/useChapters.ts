@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { generateChapters, type ChaptersResponse } from "../services/api";
+import { generateChapters } from "../services/api";
 
 interface UseChaptersOptions {
   videoHash?: string;
@@ -8,10 +8,10 @@ interface UseChaptersOptions {
 export const useChapters = (options: UseChaptersOptions) => {
   const { videoHash } = options;
 
-  const mutation = useMutation<ChaptersResponse, Error, string | undefined>({
-    mutationFn: (provider) => {
+  const mutation = useMutation({
+    mutationFn: () => {
       if (!videoHash) throw new Error("No video loaded");
-      return generateChapters(videoHash, provider);
+      return generateChapters(videoHash);
     },
     onError: (err) => console.error("[useChapters] Generation failed:", err),
   });
@@ -20,7 +20,6 @@ export const useChapters = (options: UseChaptersOptions) => {
     chapters: mutation.data?.chapters ?? [],
     loading: mutation.isPending,
     error: mutation.error ? mutation.error.message || "Failed to generate chapters" : null,
-    generate: (provider?: string) => mutation.mutate(provider),
-    reset: mutation.reset,
+    generate: () => mutation.mutate(),
   };
 };

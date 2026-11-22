@@ -43,11 +43,11 @@ const ReindexBanner: React.FC<{ tone: React.CSSProperties; message: string }> = 
 export const ChatStatusBanners: React.FC<ChatStatusBannersProps> = ({ reindexStatus, indexingStatus }) => (
   <div className="px-4 py-2" style={{ background: "var(--bg-surface)" }}>
     {match(reindexStatus)
-      .with({ kind: "idle" }, { kind: "running" }, () => null)
-      .with({ kind: "started" }, () => (
+      .with("idle", "running", () => null)
+      .with("started", () => (
         <ReindexBanner tone={SUCCESS_TONE} message="Re-indexing started — visual search will update in a few minutes." />
       ))
-      .with({ kind: "failed" }, () => (
+      .with("failed", () => (
         <ReindexBanner tone={FAILURE_TONE} message="Re-indexing failed. Please try again." />
       ))
       .exhaustive()}

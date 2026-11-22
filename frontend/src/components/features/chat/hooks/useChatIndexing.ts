@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, type MutationStatus } from "@tanstack/react-query";
 import { match } from "ts-pattern";
 import { indexImages, indexVideo } from "../../../../services/api";
+import { useResetAfterSettle } from "../../../../hooks/useResetAfterSettle";
 
 export type IndexingStatus =
   | { kind: "idle" }
@@ -9,7 +10,14 @@ export type IndexingStatus =
   | { kind: "done"; imagesIndexed: boolean }
   | { kind: "failed" };
 
-export type ReindexStatus = { kind: "idle" | "running" | "started" | "failed" };
+export type ReindexStatus = "idle" | "running" | "started" | "failed";
+
+const REINDEX_STATUS: Record<MutationStatus, ReindexStatus> = {
+  idle: "idle",
+  pending: "running",
+  success: "started",
+  error: "failed",
+};
 
 const indexForChat = async (videoHash: string): Promise<{ imagesIndexed: boolean }> => {
   await indexVideo(videoHash);
@@ -27,17 +35,18 @@ export function useChatIndexing(videoHash: string | null) {
     mutationFn: indexForChat,
     onError: (error) => console.error("Failed to index video:", error),
   });
-  const { mutate: startIndexing, reset: clearIndexing } = indexing;
+  const { mutate: startIndexing } = indexing;
+  useResetAfterSettle(indexing, { success: 3000, error: 3000 });
 
   useEffect(() => {
-    if (!videoHash) return;
-    startIndexing(videoHash, { onSettled: () => setTimeout(clearIndexing, 3000) });
-  }, [videoHash, startIndexing, clearIndexing]);
+    if (videoHash) startIndexing(videoHash);
+  }, [videoHash, startIndexing]);
 
   const reindex = useMutation({
     mutationFn: (videoHash: string) => indexImages(videoHash, true),
     onError: (error) => console.error("Failed to re-index images:", error),
   });
+  useResetAfterSettle(reindex, { success: 8000, error: 5000 });
 
   const indexingStatus = match(indexing)
     .returnType<IndexingStatus>()
@@ -47,20 +56,11 @@ export function useChatIndexing(videoHash: string | null) {
     .with({ status: "error" }, () => ({ kind: "failed" }))
     .exhaustive();
 
-  const reindexStatus = match(reindex.status)
-    .returnType<ReindexStatus>()
-    .with("idle", () => ({ kind: "idle" }))
-    .with("pending", () => ({ kind: "running" }))
-    .with("success", () => ({ kind: "started" }))
-    .with("error", () => ({ kind: "failed" }))
-    .exhaustive();
+  const reindexStatus = REINDEX_STATUS[reindex.status];
 
   const handleReindex = () => {
-    if (!videoHash || reindexStatus.kind === "running") return;
-    reindex.mutate(videoHash, {
-      onSuccess: () => setTimeout(reindex.reset, 8000),
-      onError: () => setTimeout(reindex.reset, 5000),
-    });
+    if (!videoHash || reindexStatus === "running") return;
+    reindex.mutate(videoHash);
   };
 
   return { indexingStatus, reindexStatus, handleReindex };
