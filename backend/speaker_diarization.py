@@ -5,6 +5,7 @@ This module provides speaker diarization functionality to identify
 different speakers in audio/video files.
 """
 
+import math
 import os
 import time
 import torch
@@ -32,6 +33,14 @@ import tempfile
 import subprocess
 
 
+def load_diarization_pipeline(auth_token: Optional[str]):
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=auth_token)
+    # Batch size changes speed only, not the diarization result.
+    pipeline.segmentation_batch_size = settings.DIARIZATION_BATCH_SIZE
+    pipeline.embedding_batch_size = settings.DIARIZATION_BATCH_SIZE
+    return pipeline
+
+
 class SpeakerDiarizer:
     """
     Handle speaker diarization using pyannote.audio
@@ -54,11 +63,7 @@ class SpeakerDiarizer:
         if self.pipeline is None:
             print("Loading speaker diarization pipeline...")
             try:
-                # Load the latest pyannote speaker diarization model
-                self.pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    use_auth_token=self.use_auth_token
-                )
+                self.pipeline = load_diarization_pipeline(self.use_auth_token)
 
                 # Use GPU if available
                 # Check for CUDA (NVIDIA) first
@@ -224,11 +229,7 @@ class ChunkedSpeakerDiarizer:
             log_all_memory("ChunkedDiarizer:BeforePipeline")
 
             try:
-                # Load diarization pipeline
-                self.pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    use_auth_token=self.use_auth_token
-                )
+                self.pipeline = load_diarization_pipeline(self.use_auth_token)
 
                 # Use GPU if available
                 if torch.cuda.is_available():
@@ -511,7 +512,10 @@ class ChunkedSpeakerDiarizer:
             Format: [{"chunks": [...], "time_offset": 0}, ...]
         """
         groups = []
-        chunks_per_group = max(1, int(self.chunk_duration / chunk_duration))
+        max_per_group = max(1, int(self.chunk_duration / chunk_duration))
+        # Even groups: a short last group has too little speech to link its speakers reliably.
+        group_count = max(1, math.ceil(len(audio_chunks) / max_per_group))
+        chunks_per_group = math.ceil(len(audio_chunks) / group_count) if audio_chunks else 1
 
         for i in range(0, len(audio_chunks), chunks_per_group):
             group_chunks = audio_chunks[i:i + chunks_per_group]

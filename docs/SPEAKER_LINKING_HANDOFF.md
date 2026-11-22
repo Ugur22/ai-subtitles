@@ -4,7 +4,7 @@ Status as of 2026-11-15: **not fixed.** La Casa de Papel E04 (about an hour) sti
 
 ## How long videos are diarized
 
-- Videos over 30 min are diarized with pyannote `speaker-diarization-3.1` in 15-minute groups (`ChunkedSpeakerDiarizer`, `chunk_duration=900`, in `backend/speaker_diarization.py`).
+- Videos over 30 min are diarized with pyannote `speaker-diarization-3.1` in 45-minute groups (`ChunkedSpeakerDiarizer`, `DIARIZATION_CHUNK_DURATION=2700`, in `backend/speaker_diarization.py`).
 - Each group gets its own `SPEAKER_00..NN` labels. The same person therefore has a different label in every group, and the groups have to be linked afterwards.
 - Linking uses a **second, older model**, `pyannote/embedding` (loaded around `speaker_diarization.py:288`), to embed each group speaker. Speakers in different groups are then merged by cosine similarity.
 - The threshold is `DIARIZATION_SIMILARITY_THRESHOLD` in `backend/config.py:80`. The default is 0.7, and `deploy.sh` doesn't set it.
