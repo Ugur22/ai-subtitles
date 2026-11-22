@@ -28,7 +28,7 @@ import { VideoPlayerPanel } from "./VideoPlayerPanel";
 import { useSpeakerManagement } from "./hooks/useSpeakerManagement";
 import { useTranscriptPlayback } from "./hooks/useTranscriptPlayback";
 import { filterDisplayedSegments, listUniqueSpeakers } from "./segments";
-import { Job, isActiveJobStatus } from "../../../types/job";
+import { DEFAULT_WHISPER_MODEL, Job, isActiveJobStatus, type WhisperModelChoice } from "../../../types/job";
 import { useFileUpload } from "../../../hooks/useFileUpload";
 import { useVideoPlayer } from "../../../hooks/useVideoPlayer";
 import { useSubtitles } from "../../../hooks/useSubtitles";
@@ -62,6 +62,11 @@ const languageOptions = [
   { value: "cs", label: "Czech" },
 ];
 
+const modelOptions: { value: WhisperModelChoice; label: string }[] = [
+  { value: "large-v3", label: "Accurate (large-v3)" },
+  { value: "turbo", label: "Fast (turbo)" },
+];
+
 type TranscriptionUploadProps = {
   onTranscriptionChange?: (transcription: TranscriptionResponse | null) => void;
 };
@@ -76,6 +81,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
   const [activeTab, setActiveTab] = useState<TranscriptTab>("transcript");
   const [chatMountedFor, setChatMountedFor] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+  const [selectedModel, setSelectedModel] = useState<WhisperModelChoice>(DEFAULT_WHISPER_MODEL);
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -212,12 +218,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [filteredSpeaker]);
 
-  const handleLanguageChange = (
-    event: React.ChangeEvent<HTMLSelectElement>
-  ) => {
-    setSelectedLanguage(event.target.value);
-  };
-
   // Note: startPollingForTranscription removed - was unused
   // Polling logic can be added back if needed for cloud transcription
 
@@ -248,6 +248,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
         durationSeconds: durationSeconds ?? undefined,
         language: selectedLanguage || undefined,
         forceLanguage: true,
+        model: selectedModel,
       });
 
       if (result) {
@@ -306,6 +307,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
     setVideoUrl(null);
     setShowTranslation(true);
     setSelectedLanguage("");
+    setSelectedModel(DEFAULT_WHISPER_MODEL);
     setFilteredSpeaker(null);
   }, [resetJobSubmit, setVideoUrl]);
 
@@ -361,9 +363,12 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
               handleButtonClick={handleButtonClick}
               fileUploadHandleChange={fileUploadHandleChange}
               selectedLanguage={selectedLanguage}
-              handleLanguageChange={handleLanguageChange}
+              onLanguageChange={setSelectedLanguage}
               handleStartTranscriptionClick={handleStartTranscriptionClick}
               languageOptions={languageOptions}
+              selectedModel={selectedModel}
+              onModelChange={setSelectedModel}
+              modelOptions={modelOptions}
             >
             <ActiveJobsSection jobs={jobTracker.jobs} onOpenJobPanel={() => setShowJobPanel(true)} />
             <RecentTranscriptions

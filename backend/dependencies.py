@@ -7,6 +7,7 @@ from typing import Optional
 from faster_whisper import WhisperModel
 
 from config import settings
+from whisper_models import DEFAULT_WHISPER_MODEL_CHOICE, WHISPER_MODEL_CHOICES
 
 # Import speaker diarization module
 try:
@@ -26,6 +27,7 @@ except ImportError as e:
 
 # Global model instances (lazy loaded)
 _whisper_model: Optional[WhisperModel] = None
+_whisper_model_name: Optional[str] = None
 _speaker_diarizer: Optional['SpeakerDiarizer'] = None
 _audio_analyzer: Optional['AudioAnalyzer'] = None
 
@@ -38,10 +40,18 @@ def resolve_whisper_compute_type() -> str:
     return settings.FASTWHISPER_COMPUTE_TYPE
 
 
-def get_whisper_model() -> WhisperModel:
-    """Get or initialize the faster-whisper model (singleton)"""
-    global _whisper_model
+def resolve_whisper_model(choice: Optional[str]) -> str:
+    if settings.LOCAL_MODE:
+        return settings.FASTWHISPER_MODEL
+    return WHISPER_MODEL_CHOICES[choice or DEFAULT_WHISPER_MODEL_CHOICE]
+
+
+def get_whisper_model(model_name: str) -> WhisperModel:
+    global _whisper_model, _whisper_model_name
     import os
+
+    if _whisper_model is not None and _whisper_model_name != model_name:
+        unload_whisper_model()
 
     if _whisper_model is None:
         # Use the same cache directory as set in Dockerfile/download_models.py
@@ -49,15 +59,16 @@ def get_whisper_model() -> WhisperModel:
 
         compute_type = resolve_whisper_compute_type()
 
-        print(f"Initializing Whisper model: {settings.FASTWHISPER_MODEL} on {settings.FASTWHISPER_DEVICE}")
+        print(f"Initializing Whisper model: {model_name} on {settings.FASTWHISPER_DEVICE}")
         print(f"Using cache directory: {cache_dir}")
 
         _whisper_model = WhisperModel(
-            settings.FASTWHISPER_MODEL,
+            model_name,
             device=settings.FASTWHISPER_DEVICE,
             compute_type=compute_type,
             download_root=cache_dir  # Use pre-downloaded models
         )
+        _whisper_model_name = model_name
         print("Whisper model initialized successfully")
 
     return _whisper_model
@@ -120,12 +131,13 @@ def get_audio_analyzer() -> Optional['AudioAnalyzer']:
 
 def unload_whisper_model():
     """Unload Whisper model to free GPU memory."""
-    global _whisper_model
+    global _whisper_model, _whisper_model_name
 
     if _whisper_model is not None:
         print("[Dependencies] Unloading Whisper model from GPU...")
         del _whisper_model
         _whisper_model = None
+        _whisper_model_name = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

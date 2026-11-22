@@ -2,7 +2,7 @@
 """Fetch every model baked into the Docker image (source of truth for what is baked).
 
 Runs BEFORE `pip install -r requirements.txt` so dependency bumps don't invalidate this
-multi-GB layer: only huggingface_hub and the stdlib may be imported here
+multi-GB layer: only huggingface_hub, whisper_models and the stdlib may be imported here
 (enforced by tests/test_deployment_contract.py). Load checks live in verify_models.py.
 """
 import os
@@ -11,12 +11,13 @@ import zipfile
 
 from huggingface_hub import HfApi, snapshot_download
 
+from whisper_models import WHISPER_MODEL_CHOICES
+
 HF_HOME = '/app/.cache/huggingface'
 os.environ['HF_HOME'] = HF_HOME
 os.environ['XDG_CACHE_HOME'] = '/app/.cache'
 
-# Must match FASTWHISPER_MODEL at runtime (e.g. "large-v3" resolves to this repo)
-WHISPER_MODEL_REPO = os.environ.get('WHISPER_MODEL_REPO', 'Systran/faster-whisper-large-v3')
+WHISPER_MODEL_REPOS = tuple(WHISPER_MODEL_CHOICES.values())
 
 # Active chat embedding model + offline MiniLM comparison/rollback (both 384-dim)
 SENTENCE_TRANSFORMER_REPOS = ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2")
@@ -77,17 +78,17 @@ def _transformers_snapshot(repo_id):
 
 
 def fetch_whisper():
-    _banner(f"Fetching Faster-Whisper {WHISPER_MODEL_REPO}...")
-    # cache_dir=HF_HOME (not HF_HOME/hub) is where faster_whisper's download_root looks.
-    path = snapshot_download(repo_id=WHISPER_MODEL_REPO, cache_dir=HF_HOME)
-    print(f"  OK: {path}: {os.listdir(path)}")
+    for repo_id in WHISPER_MODEL_REPOS:
+        _banner(f"Fetching Faster-Whisper {repo_id}...")
+        # cache_dir=HF_HOME (not HF_HOME/hub) is where faster_whisper's download_root looks.
+        path = snapshot_download(repo_id=repo_id, cache_dir=HF_HOME)
+        print(f"  OK: {path}: {os.listdir(path)}")
 
 
 def fetch_sentence_transformers():
     _banner("Fetching sentence-transformers models...")
     for repo_id in (*SENTENCE_TRANSFORMER_REPOS, CLIP_REPO):
-        # Full snapshot: module subfolders (1_Pooling/config.json) must be present.
-        snapshot_download(repo_id)
+        _transformers_snapshot(repo_id)
         print(f"  OK: {repo_id}")
 
 

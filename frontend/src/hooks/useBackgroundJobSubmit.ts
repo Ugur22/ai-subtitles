@@ -12,7 +12,7 @@
 import { useState, useCallback } from 'react';
 import { useJobStorage } from './useJobStorage';
 import { submitBackgroundJob, type SubmissionProgress } from '../services/api';
-import type { JobSubmitResponse } from '../types/job';
+import type { JobSubmitResponse, WhisperModelChoice } from '../types/job';
 
 export interface SubmissionState {
   isSubmitting: boolean;
@@ -25,6 +25,7 @@ export interface SubmitOptions {
   durationSeconds?: number;
   language?: string;
   forceLanguage?: boolean;
+  model?: WhisperModelChoice;
   numSpeakers?: number;
   minSpeakers?: number;
   maxSpeakers?: number;
@@ -60,6 +61,7 @@ export const useBackgroundJobSubmit = (onJobSubmitted?: () => void) => {
         durationSeconds: options.durationSeconds,
         language: options.language,
         forceLanguage: options.forceLanguage,
+        model: options.model,
         numSpeakers: options.numSpeakers,
         minSpeakers: options.minSpeakers,
         maxSpeakers: options.maxSpeakers,

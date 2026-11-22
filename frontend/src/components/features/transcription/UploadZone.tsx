@@ -2,11 +2,50 @@ import React from "react";
 import { match } from "ts-pattern";
 import { OutputPreview } from "./OutputPreview";
 import { formatFileSize } from "../../../utils/file";
+import type { WhisperModelChoice } from "../../../types/job";
 
-interface LanguageOption {
-  value: string;
+interface SelectOption<T extends string = string> {
+  value: T;
   label: string;
 }
+
+interface SelectFieldProps<T extends string> {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  value: T;
+  onChange: (value: T) => void;
+  options: SelectOption<T>[];
+  disabled: boolean;
+}
+
+const SelectField = <T extends string>({ id, label, icon, value, onChange, options, disabled }: SelectFieldProps<T>) => (
+  <label
+    htmlFor={id}
+    className="upload-language relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border-subtle bg-surface px-4 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent-border"
+  >
+    <svg className="h-4 w-4 shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {icon}
+    </svg>
+    <span className="text-sm text-text-secondary">{label}</span>
+    <select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      disabled={disabled}
+      className="ml-auto min-w-0 max-w-full cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value} className="bg-overlay text-text-primary">
+          {option.label}
+        </option>
+      ))}
+    </select>
+    <svg className="pointer-events-none absolute right-4 h-3 w-3 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  </label>
+);
 
 interface UploadZoneProps {
   file: File | null;
@@ -18,9 +57,12 @@ interface UploadZoneProps {
   handleButtonClick: () => void;
   fileUploadHandleChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   selectedLanguage: string;
-  handleLanguageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onLanguageChange: (language: string) => void;
   handleStartTranscriptionClick: () => void;
-  languageOptions: LanguageOption[];
+  languageOptions: SelectOption[];
+  selectedModel: WhisperModelChoice;
+  onModelChange: (model: WhisperModelChoice) => void;
+  modelOptions: SelectOption<WhisperModelChoice>[];
   children: React.ReactNode;
 }
 
@@ -35,9 +77,12 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
     handleButtonClick,
     fileUploadHandleChange,
     selectedLanguage,
-    handleLanguageChange,
+    onLanguageChange,
     handleStartTranscriptionClick,
     languageOptions,
+    selectedModel,
+    onModelChange,
+    modelOptions,
     children,
   }) => {
     const [showExample, setShowExample] = React.useState(false);
@@ -143,32 +188,29 @@ export const UploadZone: React.FC<UploadZoneProps> = React.memo(
                 </div>
               )}
 
-              <label
-                htmlFor="language-select"
-                className="upload-language relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border-subtle bg-surface px-4 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent-border"
-              >
-                <svg className="h-4 w-4 shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
-                </svg>
-                <span className="text-sm text-text-secondary">Spoken language</span>
-                <select
-                  id="language-select"
-                  value={selectedLanguage}
-                  onChange={handleLanguageChange}
-                  disabled={isTranscribing}
-                  className="ml-auto min-w-0 max-w-full cursor-pointer appearance-none border-0 bg-transparent pr-5 text-sm font-medium text-text-primary outline-none"
-                >
-                  {languageOptions.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-overlay text-text-primary">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <svg className="pointer-events-none absolute right-4 h-3 w-3 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </label>
+              <SelectField
+                id="language-select"
+                label="Spoken language"
+                icon={
+                  <>
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+                  </>
+                }
+                value={selectedLanguage}
+                onChange={onLanguageChange}
+                options={languageOptions}
+                disabled={isTranscribing}
+              />
+              <SelectField
+                id="model-select"
+                label="Model"
+                icon={<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" />}
+                value={selectedModel}
+                onChange={onModelChange}
+                options={modelOptions}
+                disabled={isTranscribing}
+              />
 
               {file && !isTranscribing && (
                 <button

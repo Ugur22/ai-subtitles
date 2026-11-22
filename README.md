@@ -5,7 +5,7 @@ AI video transcription with speaker diarization, multimodal search (transcript, 
 
 ## Features
 
-- **GPU Transcription** - faster-whisper `large-v3` on an L4 GPU worker (`small` on CPU in local mode)
+- **GPU Transcription** - faster-whisper `large-v3` or `large-v3-turbo` (chosen per upload) on an L4 GPU worker (`small` on CPU in local mode)
 - **Speaker Diarization & Recognition** - Chunked pyannote diarization plus saved speaker voiceprints
 - **Multi-format Support** - MP4, MP3, WAV, WebM, MKV, and more
 - **Multi-language** - Auto-detection and translation using MarianMT

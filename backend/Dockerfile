@@ -27,9 +27,8 @@ RUN mkdir -p /data/static/videos \
 # Fetch every baked model BEFORE requirements.txt, so dependency bumps don't
 # re-download several GB. This layer only changes when download_models.py does.
 RUN pip install --no-cache-dir huggingface-hub==0.36.2
-ARG WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
-COPY download_models.py /tmp/models/download_models.py
-RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/download_models.py
+COPY download_models.py whisper_models.py /tmp/models/
+RUN python /tmp/models/download_models.py
 
 RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 
@@ -56,7 +55,7 @@ print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| c
     && ! ldd "$@" | grep 'not found' | grep -v 'libcuda\.so'
 
 COPY verify_models.py /tmp/models/verify_models.py
-RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/verify_models.py && rm -rf /tmp/models
+RUN python /tmp/models/verify_models.py && rm -rf /tmp/models
 
 RUN test -f /root/panns_data/Cnn14_mAP=0.431.pth \
     && test -f /root/panns_data/class_labels_indices.csv \

@@ -10,7 +10,7 @@ import logging
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Callable, Any
+from typing import Optional, List, Callable, Any, Literal
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Request
@@ -18,6 +18,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import settings
+from whisper_models import DEFAULT_WHISPER_MODEL_CHOICE, WHISPER_MODEL_CHOICES
 from middleware.auth import require_auth, require_admin, optional_auth
 from services.media_storage import get_media_storage
 
@@ -56,6 +57,7 @@ class JobSubmitRequest(BaseModel):
     max_speakers: Optional[int] = None
     language: Optional[str] = None
     force_language: bool = False
+    model: Literal[tuple(WHISPER_MODEL_CHOICES)] = DEFAULT_WHISPER_MODEL_CHOICE
 
 
 class JobSubmitResponse(BaseModel):
@@ -353,7 +355,8 @@ async def submit_job(
             min_speakers=job_request.min_speakers,
             max_speakers=job_request.max_speakers,
             language=job_request.language,
-            force_language=job_request.force_language
+            force_language=job_request.force_language,
+            model=job_request.model,
         )
 
         # If not cached, trigger the Cloud Run Job worker (runs to completion outside the Service).

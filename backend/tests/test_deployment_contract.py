@@ -93,14 +93,18 @@ def test_download_models_imports_only_stdlib_and_huggingface_hub():
     import ast
     import sys
 
-    tree = ast.parse((BACKEND / "download_models.py").read_text())
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            imported.add(node.module.split(".")[0])
-    assert imported - set(sys.stdlib_module_names) == {"huggingface_hub"}
+    def third_party_imports(name):
+        imported = set()
+        for node in ast.walk(ast.parse((BACKEND / name).read_text())):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module.split(".")[0])
+        return imported - set(sys.stdlib_module_names)
+
+    assert third_party_imports("download_models.py") == {"huggingface_hub", "whisper_models"}
+    assert third_party_imports("whisper_models.py") == set()
+    assert "COPY download_models.py whisper_models.py /tmp/models/" in (BACKEND / "Dockerfile").read_text()
 
 
 def test_transformers_reads_the_cache_snapshot_download_writes():
