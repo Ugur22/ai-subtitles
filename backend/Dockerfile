@@ -1,16 +1,12 @@
-# (faster-whisper/CTranslate2 4.x and onnxruntime-gpu need CUDA 12 + cuDNN 9)
-
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
+# faster-whisper/CTranslate2 4.x and onnxruntime-gpu need CUDA 12 + cuDNN 9. Those come
+# from torch's cu126 pip wheels (registered with ldconfig below), not from this base image.
+FROM nvidia/cuda:12.6.3-base-ubuntu22.04
 
 WORKDIR /app
 
 # Don't set the transformers-specific cache variable: transformers 4.x would read it
 # instead of HF_HOME/hub, where snapshot_download bakes the models.
 ENV HF_HOME=/app/.cache/huggingface
-
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
 # No compiler: every pinned package ships a Linux wheel except docopt and moviepy,
 # which are pure Python.
@@ -36,8 +32,10 @@ ARG WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
 COPY download_models.py /tmp/models/download_models.py
 RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/download_models.py
 
-# Using CUDA 12.6 wheels (match the CUDA 12.6 / cuDNN 9 base image)
-RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126 \
+    && python -c "import glob, nvidia; print('\n'.join(d for p in nvidia.__path__ for d in sorted(glob.glob(p + '/*/lib'))))" \
+       > /etc/ld.so.conf.d/nvidia-pip.conf \
+    && ldconfig
 
 COPY requirements.txt constraints.txt ./
 
@@ -54,6 +52,14 @@ RUN python -c "import ctranslate2, torch, cv2, onnxruntime as ort; \
 assert 'CUDAExecutionProvider' in ort.get_available_providers(), ort.get_available_providers(); \
 print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda, \
 '| cv2', cv2.__version__, '| onnxruntime', ort.__version__)"
+
+# libcuda.so.1 is the driver, mounted by Cloud Run at runtime; every other library must resolve.
+# The TensorRT provider is skipped: TensorRT is not installed and never selected.
+RUN cd "$(python -c 'import os, onnxruntime; print(os.path.dirname(os.path.dirname(onnxruntime.__file__)))')" \
+    && missing=$( { find ctranslate2 ctranslate2.libs -name '*.so*'; \
+                    ls onnxruntime/capi/libonnxruntime_providers_cuda.so; } 2>/dev/null \
+                 | xargs ldd 2>/dev/null | grep 'not found' | grep -v 'libcuda\.so' | sort -u) \
+    && if [ -n "$missing" ]; then echo "Unresolved CUDA libraries:"; echo "$missing"; exit 1; fi
 
 COPY verify_models.py /tmp/models/verify_models.py
 RUN WHISPER_MODEL_REPO=${WHISPER_MODEL_REPO} python /tmp/models/verify_models.py && rm -rf /tmp/models

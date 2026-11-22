@@ -198,3 +198,11 @@ def test_image_swaps_in_gpu_onnxruntime_and_headless_opencv_from_the_lock():
     assert "onnxruntime-gpu" not in (BACKEND / "requirements.txt").read_text()
     for package in ("build-essential", "libgl1-mesa-glx", "python3-dev"):
         assert package not in dockerfile
+
+
+def test_cuda_libraries_come_from_torch_wheels():
+    # The cudnn-runtime base duplicated ~2 GB of CUDA libraries torch's cu126 wheels already ship.
+    dockerfile = (BACKEND / "Dockerfile").read_text()
+    assert "FROM nvidia/cuda:12.6.3-base-ubuntu22.04" in dockerfile
+    assert "/etc/ld.so.conf.d/nvidia-pip.conf" in dockerfile
+    assert "Unresolved CUDA libraries" in dockerfile
