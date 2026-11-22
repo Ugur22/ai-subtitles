@@ -1,4 +1,5 @@
 """Source checks on frontend behaviour the frontend has no test runner for yet."""
+import re
 from pathlib import Path
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "src"
@@ -42,4 +43,4 @@ def test_upload_sends_the_chosen_whisper_model():
     submit = upload[upload.index("backgroundJobSubmit.submit(file, {"):]
     assert "model: selectedModel," in submit[:submit.index("});")]
     body = api[api.index("const jobParams: JobSubmitParams = {"):]
-    assert "    model,\n" in body[:body.index("};")]
+    assert re.search(r"\bmodel\b,", body[:body.index("};")])

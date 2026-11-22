@@ -2,7 +2,7 @@
 """Fetch every model baked into the Docker image (source of truth for what is baked).
 
 Runs BEFORE `pip install -r requirements.txt` so dependency bumps don't invalidate this
-multi-GB layer: only huggingface_hub and the stdlib may be imported here
+multi-GB layer: only huggingface_hub, whisper_models and the stdlib may be imported here
 (enforced by tests/test_deployment_contract.py). Load checks live in verify_models.py.
 """
 import os
@@ -11,12 +11,13 @@ import zipfile
 
 from huggingface_hub import HfApi, snapshot_download
 
+from whisper_models import WHISPER_MODEL_CHOICES
+
 HF_HOME = '/app/.cache/huggingface'
 os.environ['HF_HOME'] = HF_HOME
 os.environ['XDG_CACHE_HOME'] = '/app/.cache'
 
-# Every value of config.WHISPER_MODEL_CHOICES (enforced by tests/test_deployment_contract.py)
-WHISPER_MODEL_REPOS = ("Systran/faster-whisper-large-v3", "dropbox-dash/faster-whisper-large-v3-turbo")
+WHISPER_MODEL_REPOS = tuple(WHISPER_MODEL_CHOICES.values())
 
 # Active chat embedding model + offline MiniLM comparison/rollback (both 384-dim)
 SENTENCE_TRANSFORMER_REPOS = ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2")

@@ -153,10 +153,6 @@ class JobCancelled(Exception):
     """Raised when a job is cancelled mid-pipeline so finally/except handlers can distinguish it from real failures."""
 
 
-def _transcription_param_key(model_name, language, force_language) -> str:
-    return f"{model_name}|{language}|{force_language}"
-
-
 def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
     link = linking_signature(settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD)
     return f"{num_speakers}_{min_speakers}_{max_speakers}|{link}"
@@ -357,13 +353,12 @@ class BackgroundWorker:
             video_hash = job["video_hash"]
 
             # Check what's already cached to decide what we need to download/process
-            cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, "transcription")
+            transcription_stage = "transcription:" + settings_key(
+                model=model_name, compute_type=settings.FASTWHISPER_COMPUTE_TYPE,
+                requested_language=language, force_language=force_language,
+            )
+            cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, transcription_stage)
             cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
-
-            transcription_param_key = _transcription_param_key(model_name, language, force_language)
-            if cached_transcription and cached_transcription.get("param_key") != transcription_param_key:
-                print(f"[Worker] Transcription cache param mismatch, invalidating")
-                cached_transcription = None
 
             diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
@@ -664,11 +659,10 @@ class BackgroundWorker:
                 normalized_lang = language_code_map.get(detected_language.lower(), detected_language.lower())
 
                 # Cache the merged result; the per-chunk rows are only needed until it exists
-                if PipelineCacheService.save_cache(user_id, video_hash, "transcription", {
+                if PipelineCacheService.save_cache(user_id, video_hash, transcription_stage, {
                     "formatted_segments": formatted_segments,
                     "detected_language": detected_language,
                     "normalized_lang": normalized_lang,
-                    "param_key": transcription_param_key,
                 }):
                     transcription_checkpoint.clear()
 

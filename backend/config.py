@@ -11,16 +11,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# Per-upload Whisper choices, all baked into the image by download_models.py.
-# LOCAL_MODE ignores the choice and uses Settings.FASTWHISPER_MODEL.
-WHISPER_MODEL_CHOICES = {
-    "large-v3": "Systran/faster-whisper-large-v3",
-    # faster-whisper maps "large-v3-turbo" to mobiuslabsgmbh/..., which redirects here.
-    "turbo": "dropbox-dash/faster-whisper-large-v3-turbo",
-}
-DEFAULT_WHISPER_MODEL_CHOICE = "large-v3"
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         case_sensitive=True,

@@ -90,6 +90,7 @@ export interface JobListResponse {
 }
 
 export type WhisperModelChoice = "large-v3" | "turbo";
+export const DEFAULT_WHISPER_MODEL: WhisperModelChoice = "large-v3";
 
 /**
  * Job submission parameters

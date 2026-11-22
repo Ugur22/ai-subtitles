@@ -6,7 +6,8 @@ import torch
 from typing import Optional
 from faster_whisper import WhisperModel
 
-from config import DEFAULT_WHISPER_MODEL_CHOICE, WHISPER_MODEL_CHOICES, settings
+from config import settings
+from whisper_models import DEFAULT_WHISPER_MODEL_CHOICE, WHISPER_MODEL_CHOICES
 
 # Import speaker diarization module
 try:
@@ -40,14 +41,12 @@ def resolve_whisper_compute_type() -> str:
 
 
 def resolve_whisper_model(choice: Optional[str]) -> str:
-    """Map a job's model choice to a baked repo; local dev always uses FASTWHISPER_MODEL."""
     if settings.LOCAL_MODE:
         return settings.FASTWHISPER_MODEL
     return WHISPER_MODEL_CHOICES[choice or DEFAULT_WHISPER_MODEL_CHOICE]
 
 
 def get_whisper_model(model_name: str) -> WhisperModel:
-    """Get or initialize the faster-whisper model, replacing a different one already loaded."""
     global _whisper_model, _whisper_model_name
     import os
 

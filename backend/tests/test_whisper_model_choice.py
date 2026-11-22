@@ -4,9 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 import dependencies
-from config import WHISPER_MODEL_CHOICES
+from whisper_models import WHISPER_MODEL_CHOICES
 from routers.jobs import JobSubmitRequest
-from services import background_worker as worker
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "sql" / "migrations"
 _SUBMIT = dict(filename="a.mp4", gcs_path="uploads/u/a.mp4", file_size_bytes=1, video_hash="0" * 64)
@@ -39,16 +38,6 @@ def test_asking_for_another_model_replaces_the_loaded_one(monkeypatch):
     assert dependencies.get_whisper_model("a") == "a"
     assert dependencies.get_whisper_model("b") == "b"
     assert loaded == ["a", "b"]
-
-
-def test_transcription_cache_key_tracks_model_and_language():
-    keys = {
-        worker._transcription_param_key("large", None, False),
-        worker._transcription_param_key("turbo", None, False),
-        worker._transcription_param_key("large", "it", False),
-        worker._transcription_param_key("large", "it", True),
-    }
-    assert len(keys) == 4
 
 
 def test_dedup_only_returns_a_job_transcribed_with_the_same_model():

@@ -27,7 +27,7 @@ RUN mkdir -p /data/static/videos \
 # Fetch every baked model BEFORE requirements.txt, so dependency bumps don't
 # re-download several GB. This layer only changes when download_models.py does.
 RUN pip install --no-cache-dir huggingface-hub==0.36.2
-COPY download_models.py /tmp/models/download_models.py
+COPY download_models.py whisper_models.py /tmp/models/
 RUN python /tmp/models/download_models.py
 
 RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126

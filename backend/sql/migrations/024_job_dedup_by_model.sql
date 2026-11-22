@@ -1,10 +1,3 @@
--- A re-upload of a known video returns its completed job only when it was
--- transcribed with the same Whisper model (jobs.params.model: 'large-v3' or
--- 'turbo'), so choosing the other model starts a new transcription. Jobs from
--- before the model choice have no params.model and count as 'large-v3'.
--- Everything else is create_job_secure from 005_job_upload_quota_security.sql, unchanged.
--- Rollback: 024_job_dedup_by_model_rollback.sql
-
 BEGIN;
 
 CREATE OR REPLACE FUNCTION create_job_secure(

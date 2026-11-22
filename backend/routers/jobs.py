@@ -18,6 +18,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import settings
+from whisper_models import DEFAULT_WHISPER_MODEL_CHOICE, WHISPER_MODEL_CHOICES
 from middleware.auth import require_auth, require_admin, optional_auth
 from services.media_storage import get_media_storage
 
@@ -56,7 +57,7 @@ class JobSubmitRequest(BaseModel):
     max_speakers: Optional[int] = None
     language: Optional[str] = None
     force_language: bool = False
-    model: Literal["large-v3", "turbo"] = "large-v3"
+    model: Literal[tuple(WHISPER_MODEL_CHOICES)] = DEFAULT_WHISPER_MODEL_CHOICE
 
 
 class JobSubmitResponse(BaseModel):

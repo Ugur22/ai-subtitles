@@ -243,7 +243,7 @@ def test_worker_checkpoints_each_chunk_and_hands_over_through_the_dispatcher():
         'transcription_checkpoint.before_unit("chunk", i)'
     ) < loop.index("_transcribe_chunk") < loop.index('transcription_checkpoint.save("chunk", i')
     assert "segment_duration=TRANSCRIPTION_CHUNK_SECONDS" in source
-    assert 'PipelineCacheService.save_cache(user_id, video_hash, "transcription"' in source
+    assert "PipelineCacheService.save_cache(user_id, video_hash, transcription_stage" in source
 
     handover = source[source.index("def _hand_over_to_continuation"):]
     handover = handover[:handover.index("async def _resume_finalization")]
