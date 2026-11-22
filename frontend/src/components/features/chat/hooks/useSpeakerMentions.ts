@@ -1,42 +1,34 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { getFaceTagSpeakers, listSpeakers } from "../../../../services/api";
+import { queryKeys } from "../../../../lib/queryKeys";
 
 export function useSpeakerMentions(videoHash: string | null, transcriptSpeakers: string[]) {
-  const [speakers, setSpeakers] = useState<string[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionIndex, setMentionIndex] = useState(0);
 
-  useEffect(() => {
-    if (!videoHash) return;
-    const fetchSpeakers = async () => {
-      try {
-        const [enrolled, faceTags] = await Promise.all([
-          listSpeakers().catch(() => ({ speakers: [] })),
-          getFaceTagSpeakers(videoHash).catch(() => ({ speakers: [] })),
-        ]);
-        const enrolledNames = enrolled.speakers.map((s) => s.name);
-        const faceNames = faceTags.speakers.map((s) => s.speaker_name);
-        setSpeakers(
-          [...new Set([...enrolledNames, ...faceNames])]
-            .filter(Boolean)
-            .sort()
-        );
-      } catch (e) {
-        console.error("Failed to fetch speakers:", e);
-      }
-    };
-    fetchSpeakers();
-  }, [videoHash]);
+  const enrolled = useQuery({
+    queryKey: queryKeys.speakers,
+    queryFn: listSpeakers,
+    enabled: Boolean(videoHash),
+  });
+  const faceTags = useQuery({
+    queryKey: queryKeys.faceTagSpeakers(videoHash),
+    queryFn: () => getFaceTagSpeakers(videoHash!),
+    enabled: Boolean(videoHash),
+  });
 
   const filteredSpeakers = useMemo(() => {
-    const names = [...new Set([...transcriptSpeakers, ...speakers])]
+    const enrolledNames = enrolled.data?.speakers.map((s) => s.name) ?? [];
+    const faceNames = faceTags.data?.speakers.map((s) => s.speaker_name) ?? [];
+    const names = [...new Set([...transcriptSpeakers, ...enrolledNames, ...faceNames])]
       .filter(Boolean)
       .sort();
     if (!mentionFilter) return names;
     const lower = mentionFilter.toLowerCase();
     return names.filter((s) => s.toLowerCase().includes(lower));
-  }, [transcriptSpeakers, speakers, mentionFilter]);
+  }, [transcriptSpeakers, enrolled.data, faceTags.data, mentionFilter]);
 
   return {
     showMentions,

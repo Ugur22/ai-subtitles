@@ -1,21 +1,9 @@
-import { useEffect, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
 import toast from "react-hot-toast";
-import { API_BASE_URL } from "../../config";
+import { getPlans, startCheckout, type Tier } from "../../services/billing";
 import { useAuth } from "../../hooks/useAuth";
-
-interface Tier {
-  id: string;
-  name: string;
-  price_eur_monthly: number;
-  price_eur_yearly?: number;
-  tagline: string;
-  features: string[];
-  missing: string[];
-  cta: string;
-  highlighted?: boolean;
-}
+import { queryKeys } from "../../lib/queryKeys";
 
 const Check = () => (
   <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -30,29 +18,38 @@ const Dash = () => (
 );
 
 export const PricingPage = () => {
-  const [tiers, setTiers] = useState<Tier[]>([]);
-  const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await axios.get(`${API_BASE_URL}/api/billing/plans`);
-        if (!cancelled) setTiers(res.data.tiers || []);
-      } catch (e) {
-        console.warn("Failed to load pricing", e);
-      } finally {
-        if (!cancelled) setLoading(false);
+  const plans = useQuery({
+    queryKey: queryKeys.billingPlans,
+    queryFn: getPlans,
+  });
+  const tiers = plans.data ?? [];
+  const loading = plans.isPending;
+
+  const checkout = useMutation({
+    mutationFn: startCheckout,
+    onSuccess: (url) => {
+      if (url) {
+        window.location.href = url;  // Stripe-hosted checkout
+      } else {
+        toast.error("Couldn't start checkout. Please try again.");
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    },
+    onError: (error) => {
+      // The shared client turns the backend's `detail` into the error message.
+      if (error.message.includes("not configured")) {
+        toast.error("Billing isn't configured yet. Try again shortly.");
+      } else {
+        toast.error("Checkout failed. Please try again.");
+      }
+      console.error("Checkout failed", error);
+    },
+  });
+  const checkoutLoading = checkout.isPending;
 
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-
-  const handleCta = async (tier: Tier) => {
+  const handleCta = (tier: Tier) => {
     if (tier.id === "free") {
       navigate(user ? "/" : "/register");
       return;
@@ -61,29 +58,7 @@ export const PricingPage = () => {
       navigate("/register?next=/pricing");
       return;
     }
-    setCheckoutLoading(true);
-    try {
-      const res = await axios.post(
-        `${API_BASE_URL}/api/billing/checkout`,
-        {},
-        { withCredentials: true }
-      );
-      if (res.data?.url) {
-        window.location.href = res.data.url;  // Stripe-hosted checkout
-      } else {
-        toast.error("Couldn't start checkout. Please try again.");
-      }
-    } catch (error: unknown) {
-      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
-      if (typeof detail === "string" && detail.includes("not configured")) {
-        toast.error("Billing isn't configured yet. Try again shortly.");
-      } else {
-        toast.error("Checkout failed. Please try again.");
-      }
-      console.error("Checkout failed", error);
-    } finally {
-      setCheckoutLoading(false);
-    }
+    checkout.mutate();
   };
 
   return (

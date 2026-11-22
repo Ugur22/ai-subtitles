@@ -4,7 +4,7 @@ import { generateFileHash } from '../utils/file';
 
 console.log('[API] Creating axios instance with baseURL:', API_BASE_URL);
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true, // Enable cookies for auth
 });
@@ -464,11 +464,36 @@ export const deleteFaceTag = async (
   return response.data;
 };
 
+export const indexVideo = async (videoHash: string): Promise<void> => {
+  await api.post('/api/index_video/', null, { params: { video_hash: videoHash } });
+};
+
 export const indexImages = async (videoHash: string, forceReindex: boolean = false): Promise<void> => {
   await api.post('/api/index_images/', null, {
     params: { video_hash: videoHash, force_reindex: forceReindex },
-    timeout: forceReindex ? 300000 : undefined, // 5 min for re-indexing
+    // A forced re-index only queues background work, so a slow reply means trouble.
+    timeout: forceReindex ? 15000 : undefined,
   });
+};
+
+export interface SummarySection {
+  title: string;
+  start: string;
+  end: string;
+  summary: string;
+  screenshot_url?: string | null;
+}
+
+export interface SummaryResponse {
+  summaries?: SummarySection[];
+  filename?: string;
+}
+
+export const generateSummary = async (videoHash?: string): Promise<SummaryResponse> => {
+  const response = await api.post<SummaryResponse>('/generate_summary/', null, {
+    params: videoHash ? { video_hash: videoHash } : undefined,
+  });
+  return response.data;
 };
 
 // ============================================================================

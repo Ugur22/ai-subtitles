@@ -4,18 +4,9 @@
  */
 
 import { useState } from "react";
-import axios from "axios";
+import { useMutation } from "@tanstack/react-query";
 import { timeToSeconds } from "../utils/time";
-import { API_BASE_URL } from "../config";
-import type { TranscriptionResponse } from "../services/api";
-
-interface SummarySection {
-  title: string;
-  start: string;
-  end: string;
-  summary: string;
-  screenshot_url?: string | null;
-}
+import { generateSummary, type SummarySection, type TranscriptionResponse } from "../services/api";
 
 interface UseSummariesOptions {
   transcription: TranscriptionResponse | null;
@@ -27,7 +18,6 @@ export const useSummaries = (options: UseSummariesOptions) => {
   const { transcription } = options;
 
   const [summaries, setSummaries] = useState<SummarySection[]>([]);
-  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const fetchScreenshotsForSummaries = async (
     summaryData: SummarySection[]
@@ -97,24 +87,15 @@ export const useSummaries = (options: UseSummariesOptions) => {
     }
   };
 
-  const generateSummaries = async () => {
-    setSummaryLoading(true);
-    try {
+  const generation = useMutation({
+    mutationFn: async () => {
       // Extract video_hash from transcription for stateless Cloud Run compatibility
       const videoHash = transcription?.video_hash;
       console.log("Generating summaries...", videoHash ? `for video_hash=${videoHash}` : "(no video_hash)");
 
-      // Build URL with video_hash query parameter if available
-      const url = videoHash
-        ? `${API_BASE_URL}/generate_summary/?video_hash=${encodeURIComponent(videoHash)}`
-        : `${API_BASE_URL}/generate_summary/`;
-
-      const response = await axios.post(url, null, {
-        withCredentials: true,
-      });
-
-      const summaryData = response.data.summaries || [];
-      const responseFilename = response.data.filename;
+      const response = await generateSummary(videoHash);
+      const summaryData = response.summaries || [];
+      const responseFilename = response.filename;
 
       // Filename validation
       if (
@@ -151,12 +132,11 @@ export const useSummaries = (options: UseSummariesOptions) => {
           screenshotError
         );
       }
-    } catch (error) {
-      console.error("Error generating summaries:", error);
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
+    },
+    onError: (error) => console.error("Error generating summaries:", error),
+  });
+
+  const generateSummaries = () => generation.mutate();
 
   const resetSummaries = () => {
     setSummaries([]);
@@ -165,7 +145,7 @@ export const useSummaries = (options: UseSummariesOptions) => {
   return {
     summaries,
     setSummaries,
-    summaryLoading,
+    summaryLoading: generation.isPending,
     generateSummaries,
     resetSummaries,
   };

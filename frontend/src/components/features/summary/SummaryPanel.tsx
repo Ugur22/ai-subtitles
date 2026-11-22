@@ -19,7 +19,7 @@ interface SummaryPanelProps {
   summaries: SummarySection[];
   setSummaries: React.Dispatch<React.SetStateAction<SummarySection[]>>;
   loading: boolean;
-  generateSummaries: () => Promise<void>;
+  generateSummaries: () => void;
   videoHash?: string | null;
 }
 

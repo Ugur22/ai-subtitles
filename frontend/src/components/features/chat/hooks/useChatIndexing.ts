@@ -1,72 +1,58 @@
-import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
-import { API_BASE_URL } from "../../../../config";
+import { useEffect } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { indexImages, indexVideo } from "../../../../services/api";
 
 export type IndexingStatus = {
   kind: "indexing" | "done" | "failed";
   message: string;
 };
 
+const indexForChat = async (videoHash: string): Promise<{ imagesIndexed: boolean }> => {
+  await indexVideo(videoHash);
+  try {
+    await indexImages(videoHash);
+    return { imagesIndexed: true };
+  } catch (imageError) {
+    console.warn("Failed to index images:", imageError);
+    return { imagesIndexed: false };
+  }
+};
+
 export function useChatIndexing(videoHash: string | null) {
-  const [indexingStatus, setIndexingStatus] = useState<IndexingStatus | null>(null);
-  const [reindexing, setReindexing] = useState(false);
-  const [reindexStatus, setReindexStatus] = useState<string | null>(null);
-
-  const indexVideo = useCallback(async () => {
-    if (!videoHash) return;
-
-    setIndexingStatus({ kind: "indexing", message: "Indexing video for chat…" });
-    try {
-      await axios.post(`${API_BASE_URL}/api/index_video/`, null, {
-        params: { video_hash: videoHash },
-        withCredentials: true,
-      });
-
-      try {
-        await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
-          params: { video_hash: videoHash },
-          withCredentials: true,
-        });
-        setIndexingStatus({ kind: "done", message: "Video and images indexed" });
-      } catch (imageError) {
-        console.warn("Failed to index images:", imageError);
-        setIndexingStatus({ kind: "done", message: "Video indexed, images skipped" });
-      }
-
-      setTimeout(() => setIndexingStatus(null), 3000);
-    } catch (error) {
-      console.error("Failed to index video:", error);
-      setIndexingStatus({ kind: "failed", message: "Indexing failed" });
-      setTimeout(() => setIndexingStatus(null), 3000);
-    }
-  }, [videoHash]);
+  const indexing = useMutation({
+    mutationFn: indexForChat,
+    onError: (error) => console.error("Failed to index video:", error),
+  });
+  const { mutate: startIndexing, reset: clearIndexing } = indexing;
 
   useEffect(() => {
-    if (videoHash) {
-      indexVideo();
-    }
-  }, [videoHash, indexVideo]);
+    if (!videoHash) return;
+    startIndexing(videoHash, { onSettled: () => setTimeout(clearIndexing, 3000) });
+  }, [videoHash, startIndexing, clearIndexing]);
 
-  const handleReindex = async () => {
-    if (!videoHash || reindexing) return;
-    setReindexing(true);
-    setReindexStatus(null);
-    try {
-      await axios.post(`${API_BASE_URL}/api/index_images/`, null, {
-        params: { video_hash: videoHash, force_reindex: true },
-        timeout: 15000,
-        withCredentials: true,
-      });
-      setReindexStatus("Re-indexing started — visual search will update in a few minutes.");
-      setTimeout(() => setReindexStatus(null), 8000);
-    } catch (error) {
-      console.error("Failed to re-index images:", error);
-      setReindexStatus("Re-indexing failed. Please try again.");
-      setTimeout(() => setReindexStatus(null), 5000);
-    } finally {
-      setReindexing(false);
-    }
+  const reindex = useMutation({
+    mutationFn: (videoHash: string) => indexImages(videoHash, true),
+    onError: (error) => console.error("Failed to re-index images:", error),
+  });
+
+  const indexingStatus: IndexingStatus | null =
+    indexing.isPending ? { kind: "indexing", message: "Indexing video for chat…" }
+    : indexing.isSuccess ? { kind: "done", message: indexing.data.imagesIndexed ? "Video and images indexed" : "Video indexed, images skipped" }
+    : indexing.isError ? { kind: "failed", message: "Indexing failed" }
+    : null;
+
+  const reindexStatus =
+    reindex.isSuccess ? "Re-indexing started — visual search will update in a few minutes."
+    : reindex.isError ? "Re-indexing failed. Please try again."
+    : null;
+
+  const handleReindex = () => {
+    if (!videoHash || reindex.isPending) return;
+    reindex.mutate(videoHash, {
+      onSuccess: () => setTimeout(reindex.reset, 8000),
+      onError: () => setTimeout(reindex.reset, 5000),
+    });
   };
 
-  return { indexingStatus, reindexing, reindexStatus, handleReindex };
+  return { indexingStatus, reindexing: reindex.isPending, reindexStatus, handleReindex };
 }
