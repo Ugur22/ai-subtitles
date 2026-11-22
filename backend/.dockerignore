@@ -15,8 +15,6 @@ venv/
 ENV/
 env/
 .env
-.env.local
-.env.*.local
 
 # IDE
 .idea/
@@ -64,3 +62,12 @@ tests/
 # Local development files
 docker-compose*.yml
 Makefile
+
+.env.*
+!.env.example
+api-key-transcribe
+*.key
+*.pem
+local_data/
+graphify-out/
+.claude/

@@ -34,8 +34,11 @@ local_data/
 
 # Local config
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+api-key-transcribe
+graphify-out/
+.claude/
 
 # Large media files (handled by .gcloudignore for Cloud Build)
 static/videos/
