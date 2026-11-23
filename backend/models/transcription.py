@@ -3,7 +3,7 @@ Transcription-related Pydantic models
 """
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-from models.audio_events import AudioEvent, SpeechEmotion, AudioAnalysis
+from models.audio_events import AudioEvent, AudioAnalysis
 
 
 class TranscriptionSegment(BaseModel):
@@ -20,7 +20,6 @@ class TranscriptionSegment(BaseModel):
     translation_error: Optional[str] = Field(None, description="Translation error message if any")
     is_silent: bool = Field(False, description="Whether this segment is a silent period")
     audio_events: Optional[List[AudioEvent]] = Field(None, description="Detected audio events in this segment")
-    speech_emotion: Optional[SpeechEmotion] = Field(None, description="Detected emotion in speech")
     audio_analysis: Optional[AudioAnalysis] = Field(None, description="Complete audio analysis for this segment")
 
     model_config = {

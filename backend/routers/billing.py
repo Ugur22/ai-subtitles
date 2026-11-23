@@ -87,7 +87,7 @@ PRICING_TIERS = [
             "15 hours / month transcription",
             "Chat with video (vision-aware)",
             "Visual scene search (CLIP)",
-            "Face tagging + emotion timeline",
+            "Face tagging",
             "All LLM providers (Grok, Groq, OpenAI…)",
             "3 concurrent jobs · files up to 3 hours",
             "Priority queue",

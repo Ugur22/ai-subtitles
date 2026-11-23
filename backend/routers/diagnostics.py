@@ -74,7 +74,7 @@ async def check_diarization_status(request: Request):
 @require_admin
 async def check_audio_analysis_status(request: Request):
     """
-    Check audio analysis status (PANNs, emotion detection, etc.).
+    Check audio analysis status (PANNs).
     """
     result = AudioAnalysisStatus(
         module_available=dependencies.AUDIO_ANALYSIS_AVAILABLE,

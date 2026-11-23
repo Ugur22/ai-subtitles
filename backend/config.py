@@ -140,8 +140,6 @@ class Settings(BaseSettings):
     ENABLE_AUDIO_ANALYSIS: bool = os.getenv("ENABLE_AUDIO_ANALYSIS", "true").lower() == "true"
     PANNS_MODEL: str = os.getenv("PANNS_MODEL", "Cnn14_mAP=0.431")
     AUDIO_EVENT_THRESHOLD: float = float(os.getenv("AUDIO_EVENT_THRESHOLD", "0.3"))
-    ENABLE_SPEECH_EMOTION: bool = os.getenv("ENABLE_SPEECH_EMOTION", "true").lower() == "true"
-    SER_MODEL: str = os.getenv("SER_MODEL", "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition")
 
     # VAD (Voice Activity Detection) Configuration
     VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"

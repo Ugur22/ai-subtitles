@@ -3,7 +3,7 @@
  * Displays job information, progress, and available actions based on status
  */
 
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
@@ -68,6 +68,8 @@ export const JobCard: React.FC<JobCardProps> = ({
   });
   const isCancelling = cancel.isPending || cancel.isSuccess;
   const handleCancel = () => cancel.mutate();
+  // A misclick on a running job throws away minutes of GPU work.
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   // The card disappears on click (the tracker hides the job), so it keeps
   // no "deleting" state of its own.
@@ -119,6 +121,36 @@ export const JobCard: React.FC<JobCardProps> = ({
             </p>
             {estimatedRemaining !== undefined && estimatedRemaining > 0 && (
               <p className="mt-1 text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>About {formatDuration(estimatedRemaining)} remaining</p>
+            )}
+            {job.status === "processing" && (
+              <div className="mt-2 flex items-center justify-end gap-3 text-xs">
+                {isCancelling ? (
+                  <span style={{ color: 'var(--text-tertiary)' }}>Stopping after the current step…</span>
+                ) : confirmingCancel ? (
+                  <>
+                    <span style={{ color: 'var(--text-secondary)' }}>Stop this job?</span>
+                    <button
+                      onClick={() => setConfirmingCancel(false)}
+                      style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      Keep running
+                    </button>
+                    <button
+                      onClick={handleCancel}
+                      style={{ color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                    >
+                      Stop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingCancel(true)}
+                    style={{ color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             )}
           </>
         )}

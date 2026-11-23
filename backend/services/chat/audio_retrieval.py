@@ -98,8 +98,9 @@ async def _retrieve_audio_context(
                         if confidence < 0.3:
                             continue
 
+                        # Videos indexed before emotion detection was removed still carry its random labels.
                         if event_type.startswith("emotion:"):
-                            event_type = event_type.replace("emotion:", "").strip()
+                            continue
 
                         audio_sources.append({
                             "start_time": f"{int(float(metadata['start']) // 3600):02d}:{int((float(metadata['start']) % 3600) // 60):02d}:{int(float(metadata['start']) % 60):02d}",

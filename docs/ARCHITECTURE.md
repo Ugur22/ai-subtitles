@@ -25,7 +25,7 @@ flowchart LR
         PY("pyannote<br/>chunked diarization")
         EMB("Sentence Transformers<br/>text + caption embeddings")
         CL("CLIP<br/>image embeddings")
-        PN("PANNs + wav2vec2<br/>audio events · emotion")
+        PN("PANNs<br/>audio events")
         MT("MarianMT<br/>translation")
     end
 

@@ -3,7 +3,6 @@ Audio Analysis Module for AI-Subs
 
 This module provides advanced audio analysis capabilities including:
 - Audio event detection using PANNs (Pretrained Audio Neural Networks)
-- Speech emotion recognition using wav2vec2
 - Energy level calculation using librosa
 
 All models are lazy-loaded to avoid memory issues at startup.
@@ -344,22 +343,10 @@ class AudioEvent:
 
 
 @dataclass
-class SpeechEmotion:
-    """Represents detected speech emotion"""
-    emotion: str
-    confidence: float
-    all_emotions: Dict[str, float]
-
-    def to_dict(self) -> Dict:
-        return asdict(self)
-
-
-@dataclass
 class AudioAnalysisResult:
     """Complete audio analysis result"""
     has_speech: bool
     audio_events: List[Dict]
-    speech_emotion: Optional[Dict]
     energy_level: float
     duration: float
 
@@ -367,7 +354,6 @@ class AudioAnalysisResult:
         return {
             "has_speech": self.has_speech,
             "audio_events": self.audio_events,
-            "speech_emotion": self.speech_emotion,
             "energy_level": self.energy_level,
             "duration": self.duration
         }
@@ -381,9 +367,6 @@ class ModelManager:
     """Manages lazy loading and caching of audio analysis models"""
 
     _panns_model = None
-    _emotion_model = None
-    _emotion_processor = None
-    _emotion_model_failed = False  # Track if loading failed to avoid repeated attempts
     _librosa = None
     _soundfile = None
 
@@ -418,48 +401,6 @@ class ModelManager:
                 raise
 
         return cls._panns_model
-
-    @classmethod
-    def get_emotion_model(cls):
-        """Lazy load wav2vec2 emotion recognition model.
-
-        Returns (None, None) if model fails to load, allowing graceful degradation.
-        """
-        # If already failed, don't retry
-        if cls._emotion_model_failed:
-            return None, None
-
-        if cls._emotion_model is None or cls._emotion_processor is None:
-            try:
-                logger.info("Loading wav2vec2 emotion model...")
-                from transformers import AutoModelForAudioClassification, AutoFeatureExtractor
-
-                # Using a popular emotion recognition model
-                model_name = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
-
-                logger.info(f"Loading feature extractor from {model_name}...")
-                cls._emotion_processor = AutoFeatureExtractor.from_pretrained(model_name)
-
-                logger.info(f"Loading model from {model_name}...")
-                cls._emotion_model = AutoModelForAudioClassification.from_pretrained(model_name)
-
-                # Move to GPU if available
-                if torch.cuda.is_available():
-                    logger.info("Moving emotion model to GPU...")
-                    cls._emotion_model = cls._emotion_model.cuda()
-
-                cls._emotion_model.eval()
-                logger.info("Emotion model loaded successfully")
-            except ImportError as e:
-                logger.warning(f"transformers not installed for emotion model: {e}")
-                cls._emotion_model_failed = True
-                return None, None
-            except Exception as e:
-                logger.warning(f"Failed to load emotion model (emotion detection will be skipped): {e}")
-                cls._emotion_model_failed = True
-                return None, None
-
-        return cls._emotion_model, cls._emotion_processor
 
     @classmethod
     def get_librosa(cls):
@@ -546,93 +487,6 @@ def detect_audio_events(audio_path: str, threshold: float = 0.2) -> List[AudioEv
         logger.error(f"Error detecting audio events: {e}")
         # Return empty list instead of crashing
         return []
-
-
-# ============================================================================
-# Speech Emotion Recognition using wav2vec2
-# ============================================================================
-
-def detect_speech_emotion(audio_path: str) -> Optional[SpeechEmotion]:
-    """
-    Detect emotion in speech using wav2vec2 model.
-
-    Args:
-        audio_path: Path to the audio file
-
-    Returns:
-        SpeechEmotion object or None if detection fails
-
-    Raises:
-        Exception: If model loading fails (caught internally)
-    """
-    try:
-        model, feature_extractor = ModelManager.get_emotion_model()
-
-        # Gracefully handle model loading failure
-        if model is None or feature_extractor is None:
-            return None
-
-        librosa = ModelManager.get_librosa()
-
-        # Load audio file at 16kHz (required for wav2vec2)
-        speech, sampling_rate = librosa.load(audio_path, sr=16000)
-
-        # Ensure audio is not empty
-        if len(speech) == 0:
-            logger.warning("Empty audio segment, cannot detect emotion")
-            return None
-
-        # Process audio with feature extractor
-        inputs = feature_extractor(
-            speech,
-            sampling_rate=16000,
-            return_tensors="pt",
-            padding=True
-        )
-
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-
-        # Run inference
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs.logits
-
-        # Get probabilities
-        probabilities = torch.nn.functional.softmax(logits, dim=-1)
-        probabilities = probabilities.cpu().numpy()[0]
-
-        # Emotion labels for this specific model
-        # Based on: ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition
-        emotion_labels = ['angry', 'calm', 'disgust', 'fearful', 'happy', 'neutral', 'sad', 'surprised']
-
-        # Ensure we have the right number of labels
-        if len(probabilities) != len(emotion_labels):
-            logger.warning(f"Mismatch between probabilities ({len(probabilities)}) and labels ({len(emotion_labels)})")
-            # Adjust labels if needed
-            emotion_labels = [f"emotion_{i}" for i in range(len(probabilities))]
-
-        # Create emotion dictionary
-        all_emotions = {emotion_labels[i]: float(probabilities[i]) for i in range(len(probabilities))}
-
-        # Get dominant emotion
-        dominant_emotion_idx = np.argmax(probabilities)
-        dominant_emotion = emotion_labels[dominant_emotion_idx]
-        confidence = float(probabilities[dominant_emotion_idx])
-
-        logger.info(f"Detected emotion: {dominant_emotion} (confidence: {confidence:.2f})")
-
-        return SpeechEmotion(
-            emotion=dominant_emotion,
-            confidence=confidence,
-            all_emotions=all_emotions
-        )
-
-    except Exception as e:
-        logger.error(f"Error detecting speech emotion: {e}", exc_info=True)
-        # Return None instead of crashing
-        return None
 
 
 # ============================================================================
@@ -799,7 +653,6 @@ def analyze_audio_segment(
 
     This is the main function that orchestrates all audio analysis:
     - Audio event detection using PANNs
-    - Speech emotion recognition using wav2vec2
     - Energy level calculation using librosa
 
     Args:
@@ -814,7 +667,6 @@ def analyze_audio_segment(
         {
             "has_speech": bool,
             "audio_events": [{"event_type": str, "confidence": float, "original_label": str}],
-            "speech_emotion": {"emotion": str, "confidence": float, "all_emotions": dict} or None,
             "energy_level": float (0-1),
             "duration": float
         }
@@ -855,13 +707,6 @@ def analyze_audio_segment(
         has_speech = any(event.event_type in ['speech', 'conversation', 'narration']
                         for event in audio_events)
 
-        # Detect speech emotion (only if speech is detected)
-        speech_emotion = None
-        if has_speech:
-            emotion_result = detect_speech_emotion(segment_path)
-            if emotion_result:
-                speech_emotion = emotion_result.to_dict()
-
         # Calculate energy level
         energy_level = calculate_energy_level(segment_path)
 
@@ -869,7 +714,6 @@ def analyze_audio_segment(
         result = AudioAnalysisResult(
             has_speech=has_speech,
             audio_events=[event.to_dict() for event in audio_events],
-            speech_emotion=speech_emotion,
             energy_level=energy_level,
             duration=duration
         )
@@ -885,7 +729,6 @@ def analyze_audio_segment(
         return {
             "has_speech": False,
             "audio_events": [],
-            "speech_emotion": None,
             "energy_level": 0.0,
             "duration": end - start
         }
@@ -911,7 +754,7 @@ def analyze_audio_segment_from_array(
     Analyze one segment of a preloaded audio array.
 
     Same downstream behavior as ``analyze_audio_segment`` (PANNs events +
-    wav2vec2 emotion + RMS energy), but slices from an in-memory array
+    RMS energy), but slices from an in-memory array
     instead of reloading the source file. Use this in per-segment loops on
     long audio: load the file once with ``load_audio_full`` then call this
     repeatedly to avoid OOM from repeated full-file decodes.
@@ -926,8 +769,7 @@ def analyze_audio_segment_from_array(
             return {
                 "has_speech": False,
                 "audio_events": [],
-                "speech_emotion": None,
-                "energy_level": 0.0,
+                    "energy_level": 0.0,
                 "duration": duration,
             }
 
@@ -938,18 +780,11 @@ def analyze_audio_segment_from_array(
             for event in audio_events
         )
 
-        speech_emotion = None
-        if has_speech:
-            emotion_result = detect_speech_emotion(segment_path)
-            if emotion_result:
-                speech_emotion = emotion_result.to_dict()
-
         energy_level = calculate_energy_level(segment_path)
 
         result = AudioAnalysisResult(
             has_speech=has_speech,
             audio_events=[event.to_dict() for event in audio_events],
-            speech_emotion=speech_emotion,
             energy_level=energy_level,
             duration=duration,
         )
@@ -966,7 +801,6 @@ def analyze_audio_segment_from_array(
         return {
             "has_speech": False,
             "audio_events": [],
-            "speech_emotion": None,
             "energy_level": 0.0,
             "duration": duration,
         }
@@ -1028,10 +862,6 @@ def format_analysis_summary(analysis_result: Dict) -> str:
     lines.append(f"Duration: {analysis_result['duration']:.2f}s")
     lines.append(f"Energy Level: {analysis_result['energy_level']:.2f}")
     lines.append(f"Speech Detected: {analysis_result['has_speech']}")
-
-    if analysis_result['speech_emotion']:
-        emotion = analysis_result['speech_emotion']
-        lines.append(f"Emotion: {emotion['emotion']} ({emotion['confidence']:.2f})")
 
     if analysis_result['audio_events']:
         top_events = get_simplified_events(analysis_result['audio_events'], top_n=3)
@@ -1117,8 +947,3 @@ if __name__ == "__main__":
         for event in result['audio_events'][:10]:  # Top 10
             print(f"  - {event['original_label']:40s} ({event['event_type']:15s}) {event['confidence']:.3f}")
 
-    # Print all emotions
-    if result['speech_emotion']:
-        print("\nAll Emotions:")
-        for emotion, conf in result['speech_emotion']['all_emotions'].items():
-            print(f"  - {emotion:12s}: {conf:.3f}")

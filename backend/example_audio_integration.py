@@ -45,17 +45,9 @@ def enhance_transcription_with_audio_analysis(
             'audio_analysis': {
                 'has_speech': analysis['has_speech'],
                 'energy_level': analysis['energy_level'],
-                'emotion': None,
                 'top_events': []
             }
         }
-
-        # Add emotion if detected
-        if analysis['speech_emotion']:
-            enhanced['audio_analysis']['emotion'] = {
-                'primary': analysis['speech_emotion']['emotion'],
-                'confidence': analysis['speech_emotion']['confidence']
-            }
 
         # Add top 3 audio events
         if analysis['audio_events']:
@@ -113,15 +105,6 @@ def detect_video_highlights(
             is_highlight = True
             highlight_type = 'high_energy'
             reason.append(f"High energy ({analysis['energy_level']:.2f})")
-
-        # Strong emotion
-        if analysis['speech_emotion']:
-            emotion = analysis['speech_emotion']['emotion']
-            confidence = analysis['speech_emotion']['confidence']
-            if emotion in ['happy', 'surprised', 'angry'] and confidence > 0.7:
-                is_highlight = True
-                highlight_type = 'emotional'
-                reason.append(f"Strong {emotion} ({confidence:.2f})")
 
         # Interesting events
         interesting_events = ['laughter', 'applause', 'cheering', 'screaming', 'music']
@@ -215,51 +198,6 @@ def categorize_video_content(
     if total_samples > 0:
         return {k: (v / total_samples) * 100 for k, v in categories.items()}
     return categories
-
-
-# ============================================================================
-# Example 4: Emotion Timeline
-# ============================================================================
-
-def create_emotion_timeline(
-    transcription_segments: List[Dict],
-    audio_path: str
-) -> List[Dict]:
-    """
-    Create a timeline of emotions throughout the video.
-
-    Args:
-        transcription_segments: Segments with timestamps
-        audio_path: Path to audio file
-
-    Returns:
-        Timeline of emotion changes
-    """
-    timeline = []
-    previous_emotion = None
-
-    for segment in transcription_segments:
-        analysis = analyze_audio_segment(
-            audio_path,
-            segment['start'],
-            segment['end']
-        )
-
-        if analysis['speech_emotion']:
-            current_emotion = analysis['speech_emotion']['emotion']
-            confidence = analysis['speech_emotion']['confidence']
-
-            # Only track if high confidence and emotion changed
-            if confidence > 0.6 and current_emotion != previous_emotion:
-                timeline.append({
-                    'timestamp': segment['start'],
-                    'emotion': current_emotion,
-                    'confidence': confidence,
-                    'text': segment.get('text', '')[:100]  # First 100 chars
-                })
-                previous_emotion = current_emotion
-
-    return timeline
 
 
 # ============================================================================
@@ -358,14 +296,12 @@ def calculate_audio_quality_metrics(
     metrics = {
         'average_energy': 0.0,
         'speech_percentage': 0.0,
-        'emotion_diversity': 0,
         'event_diversity': 0,
         'total_samples': 0
     }
 
     energy_sum = 0.0
     speech_count = 0
-    emotions = set()
     events = set()
 
     current_time = 0.0
@@ -384,9 +320,6 @@ def calculate_audio_quality_metrics(
         if analysis['has_speech']:
             speech_count += 1
 
-        if analysis['speech_emotion']:
-            emotions.add(analysis['speech_emotion']['emotion'])
-
         for event in analysis['audio_events']:
             events.add(event['event_type'])
 
@@ -397,7 +330,6 @@ def calculate_audio_quality_metrics(
         metrics['average_energy'] = energy_sum / metrics['total_samples']
         metrics['speech_percentage'] = (speech_count / metrics['total_samples']) * 100
 
-    metrics['emotion_diversity'] = len(emotions)
     metrics['event_diversity'] = len(events)
 
     return metrics
@@ -423,7 +355,6 @@ if __name__ == "__main__":
     # enhanced = enhance_transcription_with_audio_analysis(sample_segments, audio_file)
     # for seg in enhanced:
     #     print(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
-    #     print(f"  Emotion: {seg['audio_analysis']['emotion']}")
     #     print(f"  Events: {seg['audio_analysis']['top_events']}")
     #     print(f"  Energy: {seg['audio_analysis']['energy_level']:.2f}")
     print("(Uncomment code to run)")
@@ -443,14 +374,6 @@ if __name__ == "__main__":
     #     print(f"{category:15s}: {percentage:5.1f}%")
     print("(Uncomment code to run)")
 
-    print("\nExample 4: Emotion Timeline")
-    print("=" * 70)
-    # timeline = create_emotion_timeline(sample_segments, audio_file)
-    # for event in timeline:
-    #     print(f"[{event['timestamp']:.1f}s] {event['emotion']} ({event['confidence']:.2f})")
-    #     print(f"   '{event['text']}'")
-    print("(Uncomment code to run)")
-
     print("\nExample 5: Silent Segments")
     print("=" * 70)
     # silent = detect_silent_segments(audio_file, total_duration)
@@ -463,7 +386,6 @@ if __name__ == "__main__":
     # metrics = calculate_audio_quality_metrics(audio_file, total_duration)
     # print(f"Average Energy: {metrics['average_energy']:.2f}")
     # print(f"Speech Coverage: {metrics['speech_percentage']:.1f}%")
-    # print(f"Emotion Diversity: {metrics['emotion_diversity']} unique emotions")
     # print(f"Event Diversity: {metrics['event_diversity']} unique events")
     print("(Uncomment code to run)")
 

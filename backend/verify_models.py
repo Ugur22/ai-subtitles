@@ -47,14 +47,6 @@ def verify_bart():
     print(f"OK: {m.BART_REPO}")
 
 
-def verify_emotion():
-    from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
-
-    AutoFeatureExtractor.from_pretrained(m.EMOTION_REPO)
-    AutoModelForAudioClassification.from_pretrained(m.EMOTION_REPO)
-    print(f"OK: {m.EMOTION_REPO}")
-
-
 def verify_translation():
     from huggingface_hub import try_to_load_from_cache
     from transformers import MarianMTModel, MarianTokenizer
@@ -89,7 +81,6 @@ def main():
     verify_sentence_transformers()
     verify_bart()
     verify_panns()
-    verify_emotion()
     verify_translation()
     verify_insightface()
     print("All baked models verified offline.")
