@@ -219,7 +219,15 @@ build_and_push() {
         --region="${REGION}" --project="${PROJECT_ID}" \
         --format='value(spec.template.spec.containers[0].image)' 2>/dev/null || true)
     cache_from="${cache_from:-${IMAGE_REF}}"
-    print_info "Layer cache from ${cache_from}"
+    # Also the newest pushed image: a build that never reached the Service (an A/B
+    # job image, or a deploy that failed after the build) would otherwise be ignored,
+    # and a follow-up one-line requirements fix would rebuild every layer cold.
+    local cache_from_newest
+    cache_from_newest=$(gcloud artifacts docker images list "${IMAGE_REPO}" \
+        --project="${PROJECT_ID}" --sort-by=~CREATE_TIME --limit=1 \
+        --format='value[separator=@](package,version)' 2>/dev/null || true)
+    cache_from_newest="${cache_from_newest:-${cache_from}}"
+    print_info "Layer cache from ${cache_from} and ${cache_from_newest}"
 
     if gcloud builds submit "${BACKEND_DIR}" \
         --config="${BACKEND_DIR}/cloudbuild.yaml" \
@@ -228,7 +236,7 @@ build_and_push() {
         --service-account="projects/${PROJECT_ID}/serviceAccounts/${DEPLOYER_SERVICE_ACCOUNT}" \
         --gcs-source-staging-dir="${BUILD_STAGING_BUCKET}/source" \
         --gcs-log-dir="${BUILD_STAGING_BUCKET}/logs" \
-        --substitutions="_IMAGE=${IMAGE_REF},_CACHE_FROM=${cache_from}"; then
+        --substitutions="_IMAGE=${IMAGE_REF},_CACHE_FROM=${cache_from},_CACHE_FROM_NEWEST=${cache_from_newest}"; then
         print_info "Image built and pushed"
     else
         print_error "Failed to build and push ${IMAGE_REF}"
