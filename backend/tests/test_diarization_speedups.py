@@ -82,3 +82,15 @@ def test_screenshots_run_while_the_gpu_executor_is_busy(monkeypatch, tmp_path):
     assert asyncio.run(scenario()) == {1.0: "url1.0"}
     assert uploaded == {1.0: str(shot)}
     assert not shot.exists()
+
+
+def test_diarization_defaults_match_the_measured_settings():
+    import re
+    from pathlib import Path
+
+    config = (Path(__file__).resolve().parents[1] / "config.py").read_text(encoding="utf-8")
+    defaults = dict(re.findall(r'os\.getenv\("(DIARIZATION_CHUNK_DURATION|DIARIZATION_BATCH_SIZE)", "(\d+)"\)', config))
+    assert defaults == {"DIARIZATION_CHUNK_DURATION": "900", "DIARIZATION_BATCH_SIZE": "32"}, (
+        "v0.1.6 measured on a 45-min episode: one 2700 s pass did not finish in 18 min, "
+        "and batch 128 was no faster than 32"
+    )
