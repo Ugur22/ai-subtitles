@@ -33,7 +33,7 @@ from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory
 from utils.structured_log import log_exception
 from dependencies import get_whisper_model, get_speaker_diarizer, resolve_whisper_model, unload_whisper_model
 from routers.transcription import create_silent_segments_for_gaps
-from speaker_diarization import ChunkedSpeakerDiarizer, linking_signature
+from speaker_diarization import DIARIZATION_PIPELINE, ChunkedSpeakerDiarizer, linking_signature
 from services.audio_analysis_service import AudioAnalysisService
 from services.pipeline_cache_service import PipelineCacheService
 from services.transcription_checkpoint import (
@@ -719,7 +719,7 @@ class BackgroundWorker:
                             group_seconds=settings.DIARIZATION_CHUNK_DURATION,
                             chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
                             total_chunks=len(audio_chunks),
-                            pipeline="pyannote/speaker-diarization-3.1",
+                            pipeline=DIARIZATION_PIPELINE,
                             linking=linking_signature(
                                 settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
                             ),

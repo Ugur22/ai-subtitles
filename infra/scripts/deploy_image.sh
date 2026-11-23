@@ -61,6 +61,7 @@ WORKER_TASK_TIMEOUT="3600"
 # Cloud Run does not expose the task timeout to the container, so it is passed
 # as CLOUD_RUN_TASK_TIMEOUT. The worker stops ~10 min before it and continues
 # in a new execution (see docs/ARCHITECTURE.md, "Long files").
+WORKER_ARGS="-m,worker_main"
 WORKER_MAX_RETRIES="0"  # Don't auto-retry — leave it to our own retry endpoint.
 GPU_COUNT="1"
 GPU_TYPE="nvidia-l4"
@@ -285,7 +286,7 @@ deploy_worker_job() {
         --parallelism=1 \
         --tasks=1 \
         --command="python" \
-        --args="-m,worker_main" \
+        --args="${WORKER_ARGS}" \
         --set-env-vars="^@^ENABLE_GCS_UPLOADS=${ENABLE_GCS_UPLOADS}@GCS_BUCKET_NAME=${GCS_BUCKET_NAME}@SUPABASE_URL=${SUPABASE_URL}@XAI_MODEL=${XAI_MODEL}@ENVIRONMENT=${ENVIRONMENT}@MIN_SPEAKERS=${MIN_SPEAKERS}@MAX_SPEAKERS=${MAX_SPEAKERS}@FASTWHISPER_DEVICE=${FASTWHISPER_DEVICE}@FASTWHISPER_COMPUTE_TYPE=${FASTWHISPER_COMPUTE_TYPE}@CLOUD_RUN_TASK_TIMEOUT=${WORKER_TASK_TIMEOUT}@WORKER_JOB_PROJECT=${PROJECT_ID}@WORKER_JOB_REGION=${REGION}@WORKER_JOB_NAME=${WORKER_JOB_NAME}" \
         --set-secrets="^@^${WORKER_SECRETS}"; then
         print_info "Worker Job deployment successful"
