@@ -11,7 +11,7 @@ import os
 import threading
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from pyannote.audio import Inference
+from pyannote.audio import Inference, Model
 
 from services.supabase_service import SupabaseService
 
@@ -39,10 +39,7 @@ class SpeakerRecognitionSystem:
 
             print("Loading speaker embedding model...")
 
-            self.embedding_model = Inference(
-                "pyannote/embedding",
-                use_auth_token=hf_token
-            )
+            self.embedding_model = Inference(Model.from_pretrained("pyannote/embedding", token=hf_token))
             print("Speaker embedding model loaded successfully")
         except Exception as e:
             print(f"Error loading embedding model: {e}")
