@@ -200,9 +200,6 @@ def categorize_video_content(
     return categories
 
 
-# ============================================================================
-# Example 5: Silent Segment Detection
-# ============================================================================
 
 def detect_silent_segments(
     audio_path: str,
@@ -273,9 +270,6 @@ def detect_silent_segments(
     return silent_segments
 
 
-# ============================================================================
-# Example 6: Quality Metrics
-# ============================================================================
 
 def calculate_audio_quality_metrics(
     audio_path: str,
@@ -374,14 +368,14 @@ if __name__ == "__main__":
     #     print(f"{category:15s}: {percentage:5.1f}%")
     print("(Uncomment code to run)")
 
-    print("\nExample 5: Silent Segments")
+    print("\nExample 4: Silent Segments")
     print("=" * 70)
     # silent = detect_silent_segments(audio_file, total_duration)
     # for seg in silent:
     #     print(f"Silence: {seg['start']:.1f}s - {seg['end']:.1f}s ({seg['duration']:.1f}s)")
     print("(Uncomment code to run)")
 
-    print("\nExample 6: Quality Metrics")
+    print("\nExample 5: Quality Metrics")
     print("=" * 70)
     # metrics = calculate_audio_quality_metrics(audio_file, total_duration)
     # print(f"Average Energy: {metrics['average_energy']:.2f}")

@@ -1,6 +1,3 @@
-"""
-Audio event detection Pydantic models
-"""
 from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 

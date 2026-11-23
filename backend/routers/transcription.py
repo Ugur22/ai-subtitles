@@ -314,8 +314,6 @@ async def generate_summary(
 @require_auth
 async def analyze_audio_for_video(request: Request, video_hash: str, force_reindex: bool = False):
     """
-    Analyze audio events for an existing transcription.
-
     This allows adding audio analysis to videos that were transcribed before
     audio analysis was available, without needing to re-transcribe.
 

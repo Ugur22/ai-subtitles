@@ -34,9 +34,6 @@ class AudioAnalysisService:
         """
         Enrich transcription segments with audio analysis data.
 
-        This method takes transcription segments and adds audio event detection
-        and energy level analysis to each segment.
-
         Args:
             audio_path: Path to the audio file
             segments: List of transcription segments (dicts with 'start', 'end', 'text', etc.)
@@ -359,7 +356,6 @@ class AudioAnalysisService:
         # Calculate averages and top items
         average_energy = total_energy / energy_count if energy_count > 0 else 0.0
 
-        # Get top 5 events
         dominant_events = [
             {'event_type': event, 'count': count}
             for event, count in event_counter.most_common(5)

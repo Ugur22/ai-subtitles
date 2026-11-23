@@ -204,17 +204,12 @@ const CustomProgressBar: React.FC<CustomProgressBarProps> = ({
         onMouseUp={handleMouseUp}
         style={{ userSelect: "none", backgroundColor: 'var(--player-track)' }}
       >
-        {/* Ambient overlay — behind progress fill */}
         {showOverlay && hasOverlayData && (
           <div className="absolute inset-0 rounded overflow-hidden pointer-events-none">
             {segments?.map((seg) => {
-              let backgroundColor: string | null = null;
-              if (seg.audio_events?.length) {
-                const topEvent = seg.audio_events[0].event_type;
-                backgroundColor =
-                  AMBIENT_COLORS[topEvent] ?? "rgba(156,163,175,0.45)";
-              }
-              if (!backgroundColor) return null;
+              const topEvent = seg.audio_events?.[0]?.event_type;
+              if (!topEvent) return null;
+              const backgroundColor = AMBIENT_COLORS[topEvent] ?? "rgba(156,163,175,0.45)";
 
               const start = seg.start ?? timeToSeconds(seg.start_time);
               const end = seg.end ?? timeToSeconds(seg.end_time);

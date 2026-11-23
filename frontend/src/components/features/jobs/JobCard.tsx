@@ -7,7 +7,7 @@ import { Fragment, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Menu, Transition } from "@headlessui/react";
 import { formatDuration, formatRelativeTime } from "../../../utils/time";
-import { Job, JobStatus, isActiveJobStatus } from "../../../types/job";
+import { Job, JobStatus, isActiveJobStatus, isCancellableJobStatus } from "../../../types/job";
 import { cancelJob, retryJob } from "../../../services/api";
 
 interface JobCardProps {
@@ -42,6 +42,38 @@ const PENDING_STAGE_LABELS: Record<string, string> = {
   waiting_for_gpu: "Waiting for a free GPU slot",
 };
 
+const textButton = "cursor-pointer border-0 bg-transparent p-0";
+
+const CancelControl: React.FC<{ confirmBeforeCancel: boolean; isCancelling: boolean; onCancel: () => void }> = ({
+  confirmBeforeCancel,
+  isCancelling,
+  onCancel,
+}) => {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div className="mt-2 flex items-center justify-end gap-3 text-xs">
+      {isCancelling ? (
+        <span className="text-text-tertiary">{confirmBeforeCancel ? "Stopping after the current step…" : "Cancelling…"}</span>
+      ) : confirming ? (
+        <>
+          <span className="text-text-secondary">Stop this job?</span>
+          <button onClick={() => setConfirming(false)} className={`${textButton} text-text-secondary`}>
+            Keep running
+          </button>
+          <button onClick={onCancel} className={`${textButton} font-medium text-c-error`}>
+            Stop
+          </button>
+        </>
+      ) : (
+        <button onClick={confirmBeforeCancel ? () => setConfirming(true) : onCancel} className={`${textButton} text-c-error`}>
+          Cancel
+        </button>
+      )}
+    </div>
+  );
+};
+
 export const JobCard: React.FC<JobCardProps> = ({
   job,
   onViewTranscript,
@@ -68,8 +100,6 @@ export const JobCard: React.FC<JobCardProps> = ({
   });
   const isCancelling = cancel.isPending || cancel.isSuccess;
   const handleCancel = () => cancel.mutate();
-  // A misclick on a running job throws away minutes of GPU work.
-  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   // The card disappears on click (the tracker hides the job), so it keeps
   // no "deleting" state of its own.
@@ -122,36 +152,6 @@ export const JobCard: React.FC<JobCardProps> = ({
             {estimatedRemaining !== undefined && estimatedRemaining > 0 && (
               <p className="mt-1 text-xs tabular-nums" style={{ color: 'var(--text-tertiary)' }}>About {formatDuration(estimatedRemaining)} remaining</p>
             )}
-            {job.status === "processing" && (
-              <div className="mt-2 flex items-center justify-end gap-3 text-xs">
-                {isCancelling ? (
-                  <span style={{ color: 'var(--text-tertiary)' }}>Stopping after the current step…</span>
-                ) : confirmingCancel ? (
-                  <>
-                    <span style={{ color: 'var(--text-secondary)' }}>Stop this job?</span>
-                    <button
-                      onClick={() => setConfirmingCancel(false)}
-                      style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}
-                    >
-                      Keep running
-                    </button>
-                    <button
-                      onClick={handleCancel}
-                      style={{ color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
-                    >
-                      Stop
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={() => setConfirmingCancel(true)}
-                    style={{ color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            )}
           </>
         )}
 
@@ -166,14 +166,15 @@ export const JobCard: React.FC<JobCardProps> = ({
                 ? job.progress_message || PENDING_STAGE_LABELS[job.progress_stage]
                 : "Waiting to start…"}
             </span>
-            <button
-              onClick={handleCancel}
-              disabled={isCancelling}
-              style={{ fontSize: '12px', color: 'var(--c-error)', background: 'none', border: 'none', cursor: 'pointer', opacity: isCancelling ? 0.5 : 1 }}
-            >
-              {isCancelling ? "Cancelling…" : "Cancel"}
-            </button>
           </div>
+        )}
+
+        {isCancellableJobStatus(job.status) && (
+          <CancelControl
+            confirmBeforeCancel={job.status === "processing"}
+            isCancelling={isCancelling}
+            onCancel={handleCancel}
+          />
         )}
 
         {/* Completed */}

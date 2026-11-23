@@ -769,7 +769,7 @@ def analyze_audio_segment_from_array(
             return {
                 "has_speech": False,
                 "audio_events": [],
-                    "energy_level": 0.0,
+                "energy_level": 0.0,
                 "duration": duration,
             }
 

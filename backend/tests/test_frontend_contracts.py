@@ -46,11 +46,20 @@ def test_upload_sends_the_chosen_whisper_model():
     assert re.search(r"\bmodel\b,", body[:body.index("};")])
 
 
-def test_a_running_job_can_be_cancelled_after_confirming():
+def test_a_running_job_asks_before_cancelling():
     card = _read(JOBS / "JobCard.tsx")
-    running = card[card.index('{job.status === "processing" && ('):card.index("{/* Pending */}")]
+    assert 'confirmBeforeCancel={job.status === "processing"}' in card
+    assert "isCancellableJobStatus(job.status)" in card
+    assert "Stop this job?" in card
 
-    assert "setConfirmingCancel(true)" in running
-    assert "onClick={handleCancel}" in running
-    assert running.index("Stop this job?") < running.index("onClick={handleCancel}")
-    assert "mutationFn: () => cancelJob(job.job_id, job.access_token)" in card
+
+def test_frontend_and_backend_agree_on_which_jobs_can_be_cancelled():
+    import re
+
+    types = _read(FRONTEND / "types" / "job.ts")
+    helper = types[types.index("export const isCancellableJobStatus"):]
+    frontend = set(re.findall(r"status === '(\w+)'", helper[:helper.index(";")]))
+    service = (FRONTEND.parents[1] / "backend" / "services" / "job_queue_service.py").read_text(encoding="utf-8")
+    cancel = service[service.index("def cancel_job("):]
+    backend = set(re.findall(r'"(\w+)"', re.search(r'if job\["status"\] not in \(([^)]*)\)', cancel).group(1)))
+    assert frontend == backend == {"pending", "processing"}

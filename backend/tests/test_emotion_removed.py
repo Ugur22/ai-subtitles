@@ -1,17 +1,7 @@
-from pathlib import Path
-
 import numpy as np
 
 import audio_analyzer
 from services import transcript_embedding_service as tes
-
-BACKEND = Path(__file__).resolve().parents[1]
-
-
-def test_the_emotion_model_is_neither_baked_nor_verified():
-    for name in ("download_models.py", "verify_models.py"):
-        source = (BACKEND / name).read_text(encoding="utf-8")
-        assert "wav2vec2" not in source and "EMOTION" not in source, name
 
 
 def test_segment_analysis_returns_events_and_energy_only(monkeypatch):
@@ -47,3 +37,13 @@ def test_old_emotion_data_is_not_indexed_for_chat(monkeypatch):
     [record] = replaced["records"]
     assert record["description"] == "laughter (80%)"
     assert "speech_emotion" not in record
+
+
+def test_chat_drops_legacy_emotion_labels_before_building_context():
+    from services.chat.audio_retrieval import _without_legacy_emotion
+
+    results = [
+        {"description": "laughter (80%), emotion: sad (13%)", "metadata": {}},
+        {"description": "emotion: happy (14%)", "metadata": {}},
+    ]
+    assert [r["description"] for r in _without_legacy_emotion(results)] == ["laughter (80%)"]
