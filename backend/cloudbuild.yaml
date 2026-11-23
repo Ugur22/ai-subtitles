@@ -1,11 +1,15 @@
 # Submitted by infra/scripts/deploy_image.sh, which passes:
 #   _IMAGE       full image reference with its immutable git-SHA tag
-#   _CACHE_FROM  image whose layers seed the build cache (normally the one the Service runs now)
+#   _CACHE_FROM         image whose layers seed the build cache (normally the one the Service runs now)
+#   _CACHE_FROM_NEWEST  newest image in the repo, which may never have been deployed
 # The build runs as the deployer SA (--service-account), and its logs go to the
 # staging bucket (--gcs-log-dir), so it needs no project-level logging role.
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['pull', '${_CACHE_FROM}']
+    allowFailure: true
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['pull', '${_CACHE_FROM_NEWEST}']
     allowFailure: true
   # BuildKit only reuses --cache-from layers when the cached image carries inline
   # cache metadata; without BUILDKIT_INLINE_CACHE=1 every layer silently rebuilds.
@@ -16,6 +20,7 @@ steps:
       - '--build-arg'
       - 'BUILDKIT_INLINE_CACHE=1'
       - '--cache-from=${_CACHE_FROM}'
+      - '--cache-from=${_CACHE_FROM_NEWEST}'
       - '-t'
       - '${_IMAGE}'
       - '.'
@@ -26,6 +31,7 @@ images:
 substitutions:
   _IMAGE: ''
   _CACHE_FROM: ''
+  _CACHE_FROM_NEWEST: ''
 timeout: '2700s'
 options:
   machineType: 'E2_HIGHCPU_8'
