@@ -16,9 +16,98 @@
       if (s === 'dark' || (!s && d)) document.documentElement.classList.add('dark');
     })();
   </script>
+  <style>
+    :root {
+      --boot-bg: var(--bg-base, oklch(96.5% 0.006 250));
+      --boot-accent: var(--accent, oklch(42% 0.18 145));
+      --boot-text: var(--text-primary, oklch(13% 0.012 250));
+      --boot-muted: var(--text-tertiary, oklch(50% 0.010 250));
+    }
+    .dark {
+      --boot-bg: var(--bg-base, oklch(14% 0.012 250));
+      --boot-accent: var(--accent, oklch(70% 0.18 145));
+      --boot-text: var(--text-primary, oklch(93% 0.005 250));
+      --boot-muted: var(--text-tertiary, oklch(60% 0.008 250));
+    }
+    .boot-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--boot-bg);
+      font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+      opacity: 0;
+      animation: boot-fade 300ms ease-out forwards;
+      animation-delay: calc(var(--boot-t, 0ms) + 120ms);
+    }
+    .boot-loader__wave {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 32px;
+    }
+    .boot-loader__wave span {
+      width: 5px;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--boot-accent);
+      transform: scaleY(0.3);
+      animation: boot-bar 1.1s ease-in-out infinite;
+      animation-delay: calc(var(--boot-t, 0ms) + var(--bar-delay, 0ms));
+    }
+    .boot-loader__wave span:nth-child(2) { --bar-delay: 110ms; }
+    .boot-loader__wave span:nth-child(3) { --bar-delay: 220ms; }
+    .boot-loader__wave span:nth-child(4) { --bar-delay: 330ms; }
+    .boot-loader__wave span:nth-child(5) { --bar-delay: 440ms; }
+    .boot-loader__name {
+      margin-top: 18px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--boot-text);
+    }
+    .boot-loader__hint {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--boot-muted);
+      opacity: 0;
+      animation: boot-fade 400ms ease-out forwards;
+      animation-delay: calc(var(--boot-t, 0ms) + 3000ms);
+    }
+    .boot-loader__sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    @keyframes boot-bar {
+      0%, 100% { transform: scaleY(0.3); }
+      50% { transform: scaleY(1); }
+    }
+    @keyframes boot-fade {
+      to { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .boot-loader__wave span { animation: none; transform: scaleY(0.35); }
+      .boot-loader__wave span:nth-child(2),
+      .boot-loader__wave span:nth-child(4) { transform: scaleY(0.65); }
+      .boot-loader__wave span:nth-child(3) { transform: scaleY(1); }
+    }
+  </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-loader" role="status">
+        <div class="boot-loader__wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="boot-loader__name" aria-hidden="true">AI Subs</div>
+        <div class="boot-loader__hint" aria-hidden="true">Waking up the server…</div>
+        <span class="boot-loader__sr">Loading AI Subs</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
