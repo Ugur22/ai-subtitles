@@ -16,14 +16,19 @@ from google.cloud import storage
 from google.api_core.exceptions import NotFound
 from google.auth import default
 from google.auth.transport import requests as auth_requests
+from requests.adapters import HTTPAdapter
 
 from config import settings
 
 logger = logging.getLogger(__name__)
 
+GCS_SCREENSHOT_WORKERS = 16
+# requests' default pool of 10 discards the extra connections ("Connection pool is full")
+# and reopens TLS each time.
+GCS_HTTP_POOL_SIZE = 2 * GCS_SCREENSHOT_WORKERS
+
 
 class GCSService:
-    """Service for Google Cloud Storage operations."""
 
     _client: Optional[storage.Client] = None
     _bucket: Optional[storage.Bucket] = None
@@ -89,10 +94,14 @@ class GCSService:
 
     @classmethod
     def _get_client(cls) -> storage.Client:
-        """Get or create a GCS client (singleton)."""
         if cls._client is None:
             credentials = cls._get_credentials()
-            cls._client = storage.Client(credentials=credentials)
+            session = auth_requests.AuthorizedSession(credentials)
+            session.mount(
+                "https://",
+                HTTPAdapter(pool_connections=GCS_HTTP_POOL_SIZE, pool_maxsize=GCS_HTTP_POOL_SIZE),
+            )
+            cls._client = storage.Client(credentials=credentials, _http=session)
         return cls._client
 
     @classmethod
@@ -444,7 +453,7 @@ class GCSService:
         cls,
         screenshot_paths: Dict[float, str],
         video_hash: str,
-        max_workers: int = 16
+        max_workers: int = GCS_SCREENSHOT_WORKERS
     ) -> Dict[float, str]:
         """
         Batch upload screenshots to GCS in parallel and return signed URLs.

@@ -4,6 +4,7 @@ Handles persistent storage of CLIP embeddings for video screenshots
 """
 
 import asyncio
+import concurrent.futures
 import os
 import re
 import time
@@ -13,6 +14,7 @@ from PIL import Image
 from sentence_transformers import SentenceTransformer
 from services.supabase_service import supabase
 from services.media_storage import get_media_storage
+from services.gcs_service import GCS_SCREENSHOT_WORKERS
 from config import settings
 from services.index_errors import IncompleteIndexError
 
@@ -419,16 +421,8 @@ class ImageEmbeddingService:
                     "indexed images, completing the index"
                 )
 
-        # Upsert on (video_hash, segment_id) overwrites rows in place, so we intentionally
-        # do NOT pre-delete on force_reindex — partial progress is never destroyed if an
-        # insert fails partway through. force_reindex now only bypasses the early-return
-        # "already indexed" check above.
-
-        # Extract segments with screenshot URLs
-        segments_to_index = []
-        temp_files = []  # Track temp files for cleanup
-
-        for seg, object_key in resolved:
+        def fetch(item) -> Optional[Dict]:
+            seg, object_key = item
             try:
                 local_path = storage.materialize_screenshot(
                     object_key, user_id, video_hash, False
@@ -436,17 +430,23 @@ class ImageEmbeddingService:
                 screenshot_url = storage.generate_download_url(object_key)
             except (OSError, ValueError) as e:
                 print(f"[ImageEmbedding] Rejected screenshot {object_key}: {e}")
-                continue
-            temp_files.append(local_path)
-
-            segments_to_index.append({
+                return None
+            return {
                 'local_path': local_path,
                 'screenshot_url': screenshot_url,
                 'segment_id': seg.get('id', ''),
                 'start': seg.get('start', 0.0),
                 'end': seg.get('end', 0.0),
                 'speaker': seg.get('speaker', 'SPEAKER_00')
-            })
+            }
+
+        fetch_start = time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=GCS_SCREENSHOT_WORKERS) as executor:
+            segments_to_index = [s for s in executor.map(fetch, resolved) if s]
+        print(
+            f"[ImageEmbedding] Fetched {len(segments_to_index)}/{len(resolved)} screenshots "
+            f"in {time.monotonic() - fetch_start:.1f}s"
+        )
 
         if not segments_to_index:
             print("[ImageEmbedding] No valid screenshots found to index")
@@ -511,9 +511,9 @@ class ImageEmbeddingService:
 
         if not records:
             print("[ImageEmbedding] No embeddings generated")
-            for temp_path in temp_files:
+            for seg in segments_to_index:
                 try:
-                    os.unlink(temp_path)
+                    os.unlink(seg['local_path'])
                 except Exception:
                     pass
             return 0
@@ -560,9 +560,9 @@ class ImageEmbeddingService:
             if collect_segments is not None:
                 collect_segments.extend(segments_to_index)
             else:
-                for temp_path in temp_files:
+                for seg in segments_to_index:
                     try:
-                        os.unlink(temp_path)
+                        os.unlink(seg['local_path'])
                     except Exception:
                         pass
         if indexed_count < len(records):
