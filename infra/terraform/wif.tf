@@ -134,3 +134,11 @@ resource "google_storage_bucket_iam_member" "deployer_staging" {
   role   = each.value
   member = google_service_account.deployer.member
 }
+
+# Lets the Claude Code agent's read-only account run `gcloud builds log`;
+# the logs are GCS-only, so it can't see them otherwise.
+resource "google_storage_bucket_iam_member" "agent_staging_reader" {
+  bucket = google_storage_bucket.build_staging.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.agent_readonly_email}"
+}

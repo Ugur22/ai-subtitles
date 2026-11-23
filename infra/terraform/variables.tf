@@ -126,3 +126,9 @@ variable "artifact_registry_repository" {
   type        = string
   default     = "ai-subs-repo"
 }
+
+variable "agent_readonly_email" {
+  description = "Claude Code agent's read-only service account (not managed here)."
+  type        = string
+  default     = "agent-readonly@ai-subs-poc.iam.gserviceaccount.com"
+}
