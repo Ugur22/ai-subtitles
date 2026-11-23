@@ -73,9 +73,6 @@ async def check_diarization_status(request: Request):
 @router.get("/audio-analysis", response_model=AudioAnalysisStatus)
 @require_admin
 async def check_audio_analysis_status(request: Request):
-    """
-    Check audio analysis status (PANNs, emotion detection, etc.).
-    """
     result = AudioAnalysisStatus(
         module_available=dependencies.AUDIO_ANALYSIS_AVAILABLE,
         feature_enabled=settings.ENABLE_AUDIO_ANALYSIS,

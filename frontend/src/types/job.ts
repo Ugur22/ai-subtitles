@@ -17,6 +17,9 @@ export type JobStatus = ActiveJobStatus | 'completed' | 'failed' | 'cancelled';
 export const isActiveJobStatus = (status: JobStatus): status is ActiveJobStatus =>
   status === 'pending' || status === 'processing' || status === 'finalizing';
 
+export const isCancellableJobStatus = (status: JobStatus): boolean =>
+  status === 'pending' || status === 'processing';
+
 /**
  * Main job interface matching backend database schema
  */

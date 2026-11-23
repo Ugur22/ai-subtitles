@@ -319,7 +319,6 @@ class TranscriptEmbeddingService:
             segments_with_audio += 1
             event_descriptions = []
             primary_event = None
-            speech_emotion = None
             has_speech = False
 
             if audio_events:
@@ -338,13 +337,6 @@ class TranscriptEmbeddingService:
 
             if audio_analysis:
                 has_speech = audio_analysis.get('has_speech', False)
-                speech_emotion_data = audio_analysis.get('speech_emotion')
-                if speech_emotion_data and isinstance(speech_emotion_data, dict):
-                    speech_emotion = speech_emotion_data.get('emotion', 'unknown')
-                    emotion_confidence = speech_emotion_data.get('confidence', 0)
-                    event_descriptions.append(f"emotion: {speech_emotion} ({emotion_confidence*100:.0f}%)")
-                else:
-                    speech_emotion = None
 
             if has_speech and not event_descriptions:
                 event_descriptions.append("speech")
@@ -363,7 +355,6 @@ class TranscriptEmbeddingService:
                 'speaker': seg.get('speaker', 'SPEAKER_00'),
                 'has_speech': has_speech,
                 'primary_event': primary_event or 'unknown',
-                'speech_emotion': speech_emotion or 'unknown',
             })
 
         print(
@@ -394,7 +385,6 @@ class TranscriptEmbeddingService:
                 'speaker': item['speaker'],
                 'has_speech': item['has_speech'],
                 'primary_event': item['primary_event'],
-                'speech_emotion': item['speech_emotion'],
                 'description': item['text'],
                 'embedding': embedding,
             })
@@ -413,7 +403,7 @@ class TranscriptEmbeddingService:
 
         Args:
             video_hash: Unique hash of the video
-            query: Search query (e.g., "laughter", "applause", "sad emotion")
+            query: Search query (e.g., "laughter", "applause", "music")
             user_id: Owner ID for tenant isolation
             n_results: Number of results to return
 
@@ -455,7 +445,6 @@ class TranscriptEmbeddingService:
                     'speaker': item['speaker'],
                     'has_speech': item['has_speech'],
                     'primary_event': item['primary_event'],
-                    'speech_emotion': item['speech_emotion'],
                 },
                 'similarity': item['similarity'],
             })

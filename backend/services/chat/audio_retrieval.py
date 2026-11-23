@@ -3,6 +3,15 @@ from services.transcript_embedding_service import transcript_embedding_service
 from services.chat.context import _chat_user_id, _run_in_executor
 
 
+
+def _without_legacy_emotion(results):
+    cleaned = []
+    for result in results:
+        events = [e for e in result['description'].split(", ") if not e.startswith("emotion:")]
+        if events:
+            cleaned.append({**result, 'description': ", ".join(events)})
+    return cleaned
+
 async def _retrieve_audio_context(
     video_hash: str,
     question: str,
@@ -30,6 +39,7 @@ async def _retrieve_audio_context(
             user_id,
             n_results=20
         )
+        audio_results = _without_legacy_emotion(audio_results or [])
 
         if audio_results:
             temporal_anchors = []
@@ -97,9 +107,6 @@ async def _retrieve_audio_context(
 
                         if confidence < 0.3:
                             continue
-
-                        if event_type.startswith("emotion:"):
-                            event_type = event_type.replace("emotion:", "").strip()
 
                         audio_sources.append({
                             "start_time": f"{int(float(metadata['start']) // 3600):02d}:{int((float(metadata['start']) % 3600) // 60):02d}:{int(float(metadata['start']) % 60):02d}",

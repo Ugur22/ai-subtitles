@@ -308,14 +308,12 @@ async def generate_summary(
 @router.post(
     "/analyze_audio/{video_hash}",
     summary="Analyze audio for existing video",
-    description="Run audio analysis (events, emotions) on an already-transcribed video without re-transcribing",
+    description="Run audio event analysis on an already-transcribed video without re-transcribing",
     tags=["Transcription"]
 )
 @require_auth
 async def analyze_audio_for_video(request: Request, video_hash: str, force_reindex: bool = False):
     """
-    Analyze audio events and emotions for an existing transcription.
-
     This allows adding audio analysis to videos that were transcribed before
     audio analysis was available, without needing to re-transcribe.
 

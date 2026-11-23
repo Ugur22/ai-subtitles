@@ -12,7 +12,7 @@ AI video transcription with speaker diarization, multimodal search (transcript, 
 - **Semantic Search** - Transcript search by meaning with pgvector embeddings
 - **Visual Search** - CLIP image embeddings plus vision-model captions, searchable by describing what you see
 - **Face Tags** - Tag people and find where they appear
-- **Audio Analysis** - Detect laughter, applause, music (PANNs) and speech emotion
+- **Audio Analysis** - Detect laughter, applause, music and other sounds (PANNs)
 - **Chapters** - Auto-generated chapters and summaries
 - **RAG Chat** - Ask questions about your video with context-aware answers
 - **Background Jobs** - Async processing with live progress via Supabase Realtime, automatic stale-job recovery, and per-chunk checkpoints so multi-hour files resume across worker runs

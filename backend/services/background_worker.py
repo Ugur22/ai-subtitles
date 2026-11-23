@@ -832,7 +832,7 @@ class BackgroundWorker:
             try:
                 audio_for_analysis = full_audio_path
                 if audio_for_analysis and os.path.exists(audio_for_analysis):
-                    JobQueueService.update_progress(job_id, 76, "analyzing", "Analyzing audio events and emotions...")
+                    JobQueueService.update_progress(job_id, 76, "analyzing", "Analyzing audio events...")
                     formatted_segments = await _run_in_executor(
                         AudioAnalysisService.analyze_segments,
                         audio_for_analysis,

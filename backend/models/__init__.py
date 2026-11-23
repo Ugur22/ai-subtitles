@@ -4,7 +4,6 @@ Pydantic models for the API
 from models.common import ErrorResponse, SuccessResponse
 from models.audio_events import (
     AudioEvent,
-    SpeechEmotion,
     AudioAnalysis
 )
 from models.transcription import (
@@ -52,7 +51,6 @@ __all__ = [
     "SuccessResponse",
     # Audio Events
     "AudioEvent",
-    "SpeechEmotion",
     "AudioAnalysis",
     # Transcription
     "TranscriptionSegment",

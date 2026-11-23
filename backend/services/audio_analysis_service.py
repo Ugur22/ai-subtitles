@@ -34,9 +34,6 @@ class AudioAnalysisService:
         """
         Enrich transcription segments with audio analysis data.
 
-        This method takes transcription segments and adds audio event detection,
-        speech emotion recognition, and energy level analysis to each segment.
-
         Args:
             audio_path: Path to the audio file
             segments: List of transcription segments (dicts with 'start', 'end', 'text', etc.)
@@ -46,7 +43,6 @@ class AudioAnalysisService:
         Returns:
             List of segments enriched with audio analysis fields:
             - audio_events: List of detected audio events
-            - speech_emotion: Detected emotion in speech (if any)
             - energy_level: Audio energy level (0-1)
             - audio_analysis: Full analysis result dict
 
@@ -102,7 +98,6 @@ class AudioAnalysisService:
                         print(f"Warning: Invalid segment timing for segment {idx}: start={start}, end={end}")
                         # Add empty analysis
                         segment['audio_events'] = []
-                        segment['speech_emotion'] = None
                         segment['energy_level'] = 0.0
                         segment['audio_analysis'] = None
                         enriched_segments.append(segment)
@@ -120,7 +115,6 @@ class AudioAnalysisService:
 
                     # Add analysis fields to segment
                     segment['audio_events'] = analysis_result.get('audio_events', [])
-                    segment['speech_emotion'] = analysis_result.get('speech_emotion')
                     segment['energy_level'] = analysis_result.get('energy_level', 0.0)
                     segment['audio_analysis'] = analysis_result
 
@@ -137,7 +131,6 @@ class AudioAnalysisService:
 
                     # Add empty analysis on error
                     segment['audio_events'] = []
-                    segment['speech_emotion'] = None
                     segment['energy_level'] = 0.0
                     segment['audio_analysis'] = None
                     enriched_segments.append(segment)
@@ -297,8 +290,6 @@ class AudioAnalysisService:
             - segments_with_audio_events: Number of segments with detected events
             - event_counts: Counter of event types across all segments
             - dominant_events: Top N most common event types
-            - emotion_distribution: Distribution of speech emotions
-            - dominant_emotions: Top N most common emotions
             - average_energy: Average energy level across all segments
             - high_energy_segments: Count of segments with high energy (>0.7)
             - low_energy_segments: Count of segments with low energy (<0.3)
@@ -316,8 +307,6 @@ class AudioAnalysisService:
                 'segments_with_audio_events': 0,
                 'event_counts': {},
                 'dominant_events': [],
-                'emotion_distribution': {},
-                'dominant_emotions': [],
                 'average_energy': 0.0,
                 'high_energy_segments': 0,
                 'low_energy_segments': 0,
@@ -327,7 +316,6 @@ class AudioAnalysisService:
 
         # Initialize counters
         event_counter = Counter()
-        emotion_counter = Counter()
         total_energy = 0.0
         energy_count = 0
         high_energy_count = 0
@@ -345,13 +333,6 @@ class AudioAnalysisService:
                 for event in audio_events:
                     event_type = event.get('event_type', 'unknown')
                     event_counter[event_type] += 1
-
-            # Count speech emotions
-            speech_emotion = segment.get('speech_emotion')
-            if speech_emotion:
-                emotion = speech_emotion.get('emotion')
-                if emotion:
-                    emotion_counter[emotion] += 1
 
             # Aggregate energy levels
             energy_level = segment.get('energy_level', 0.0)
@@ -375,15 +356,9 @@ class AudioAnalysisService:
         # Calculate averages and top items
         average_energy = total_energy / energy_count if energy_count > 0 else 0.0
 
-        # Get top 5 events and emotions
         dominant_events = [
             {'event_type': event, 'count': count}
             for event, count in event_counter.most_common(5)
-        ]
-
-        dominant_emotions = [
-            {'emotion': emotion, 'count': count}
-            for emotion, count in emotion_counter.most_common(5)
         ]
 
         # Build summary
@@ -392,8 +367,6 @@ class AudioAnalysisService:
             'segments_with_audio_events': segments_with_events,
             'event_counts': dict(event_counter),
             'dominant_events': dominant_events,
-            'emotion_distribution': dict(emotion_counter),
-            'dominant_emotions': dominant_emotions,
             'average_energy': round(average_energy, 3),
             'high_energy_segments': high_energy_count,
             'low_energy_segments': low_energy_count,
@@ -417,11 +390,6 @@ class AudioAnalysisService:
             print("\nTop audio events:")
             for item in dominant_events[:3]:
                 print(f"  - {item['event_type']}: {item['count']} occurrences")
-
-        if dominant_emotions:
-            print("\nTop emotions:")
-            for item in dominant_emotions[:3]:
-                print(f"  - {item['emotion']}: {item['count']} occurrences")
 
         print(f"{'='*60}\n")
 

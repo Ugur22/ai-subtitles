@@ -1,8 +1,7 @@
 import type { IconType } from "react-icons";
-import { LuSmile, LuSpeech, LuAudioWaveform } from "react-icons/lu";
+import { LuSpeech, LuAudioWaveform } from "react-icons/lu";
 
 export const EVENT_CATEGORY_ICON: Record<string, IconType> = {
-  emotion: LuSmile,
   speech: LuSpeech,
   sound: LuAudioWaveform,
   other: LuAudioWaveform,
@@ -10,28 +9,6 @@ export const EVENT_CATEGORY_ICON: Record<string, IconType> = {
 
 export const getEventDetails = (eventType: string) => {
   const type = eventType.toLowerCase();
-
-  if (type.includes("happy") || type.includes("joy")) {
-    return { label: "Happy", category: "emotion" };
-  }
-  if (type.includes("sad") || type.includes("sadness")) {
-    return { label: "Sad", category: "emotion" };
-  }
-  if (type.includes("angry") || type.includes("anger")) {
-    return { label: "Angry", category: "emotion" };
-  }
-  if (type.includes("fear") || type.includes("scared")) {
-    return { label: "Fearful", category: "emotion" };
-  }
-  if (type.includes("neutral") || type.includes("calm")) {
-    return { label: "Neutral", category: "emotion" };
-  }
-  if (type.includes("surprise")) {
-    return { label: "Surprised", category: "emotion" };
-  }
-  if (type.includes("disgust")) {
-    return { label: "Disgust", category: "emotion" };
-  }
 
   if (type.includes("sigh")) {
     return { label: "Sigh", category: "speech" };

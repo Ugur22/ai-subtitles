@@ -87,10 +87,6 @@ export interface TranscriptionResponse {
       screenshot_url?: string;  // Optional since it's only present for video files
       speaker?: string;  // Speaker label from diarization
       is_silent?: boolean;  // True for visual-only segments (no speech)
-      speech_emotion?: {
-        emotion: string;
-        confidence: number;
-      } | null;
       audio_events?: Array<{ event_type: string; confidence: number }>;
       energy_level?: number;
     }>;
@@ -239,8 +235,7 @@ export const getJobs = async (
 };
 
 /**
- * Cancel a pending job
- * Only works for jobs with status 'pending' (not yet processing)
+ * Cancel a pending or processing job. A running worker stops at its next checkpoint.
  */
 export const cancelJob = async (jobId: string, token: string): Promise<Job> => {
   const response = await api.delete<Job>(`/api/jobs/${jobId}`, {

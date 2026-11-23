@@ -201,7 +201,6 @@ CLIP_MODEL=ViT-B/32
 ENABLE_AUDIO_ANALYSIS=true
 PANNS_MODEL=Cnn14_mAP=0.431.pth
 AUDIO_EVENT_THRESHOLD=0.3
-ENABLE_SPEECH_EMOTION=true
 
 # VAD (Voice Activity Detection)
 VAD_ENABLED=true
@@ -630,7 +629,7 @@ backend/
 │   ├── translation_service.py     # MarianMT translation
 │   ├── subtitle_service.py        # SRT/VTT generation
 │   ├── summarization_service.py   # AI summarization
-│   ├── audio_analysis_service.py  # PANNs + emotion detection
+│   ├── audio_analysis_service.py  # PANNs audio event detection
 │   ├── gcs_service.py             # Google Cloud Storage
 │   ├── job_queue_service.py       # Supabase job management
 │   └── supabase_service.py        # Supabase client
@@ -685,9 +684,6 @@ backend/
   - Speech, laughter, applause, music
   - Environmental sounds (wind, rain, traffic)
   - Alerts (alarms, sirens)
-
-- **Speech Emotion**: Detects emotional tone:
-  - Happy, sad, angry, neutral, fearful, surprised
 
 ## Performance Optimization
 

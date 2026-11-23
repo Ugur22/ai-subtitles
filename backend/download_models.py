@@ -23,7 +23,6 @@ WHISPER_MODEL_REPOS = tuple(WHISPER_MODEL_CHOICES.values())
 SENTENCE_TRANSFORMER_REPOS = ("BAAI/bge-small-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2")
 CLIP_REPO = "sentence-transformers/clip-ViT-B-32"
 BART_REPO = "facebook/bart-large-cnn"
-EMOTION_REPO = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
 # Common language models (source -> English), ~300MB each
 LANGUAGES = [
@@ -92,11 +91,10 @@ def fetch_sentence_transformers():
         print(f"  OK: {repo_id}")
 
 
-def fetch_transformers_models():
-    _banner("Fetching BART + emotion models...")
-    for repo_id in (BART_REPO, EMOTION_REPO):
-        _transformers_snapshot(repo_id)
-        print(f"  OK: {repo_id}")
+def fetch_bart():
+    _banner(f"Fetching {BART_REPO}...")
+    _transformers_snapshot(BART_REPO)
+    print(f"  OK: {BART_REPO}")
 
 
 def fetch_translation_models():
@@ -135,7 +133,7 @@ def fetch_insightface():
 def main():
     fetch_whisper()
     fetch_sentence_transformers()
-    fetch_transformers_models()
+    fetch_bart()
     fetch_panns()
     fetch_translation_models()
     fetch_insightface()
