@@ -8,7 +8,6 @@ import os
 import tempfile
 import numpy as np
 from typing import List, Dict, Optional, Tuple
-from PIL import Image
 
 
 class FaceService:
@@ -22,7 +21,6 @@ class FaceService:
         """Lazy-load InsightFace buffalo_l model"""
         if self._model is None:
             print("[FaceService] Loading InsightFace buffalo_l model...")
-            import insightface
             from insightface.app import FaceAnalysis
 
             self._model = FaceAnalysis(
@@ -119,7 +117,7 @@ class FaceService:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except:
+                except Exception:
                     pass
 
     def get_face_embedding(self, image_source: str, bbox: Tuple[float, float, float, float]) -> Optional[List[float]]:
@@ -205,7 +203,7 @@ class FaceService:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except:
+                except Exception:
                     pass
 
     @staticmethod

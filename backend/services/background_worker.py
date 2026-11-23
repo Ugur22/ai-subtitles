@@ -14,26 +14,6 @@ import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
-
-# Single worker executor for CPU/GPU-bound tasks
-# This prevents blocking the event loop while allowing other requests (auth, status) to be served
-_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
-_screenshot_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenshots")
-
-
-async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
-    """
-    Run a blocking function in a thread pool to avoid blocking the event loop.
-    This ensures that login/auth requests can be processed even during transcription.
-    """
-    loop = asyncio.get_event_loop()
-    if kwargs:
-        return await loop.run_in_executor(
-            _gpu_executor,
-            lambda: func(*args, **kwargs)
-        )
-    return await loop.run_in_executor(_gpu_executor, func, *args)
-
 from config import settings
 from services.db_retry import with_db_retry
 from services.index_errors import IncompleteIndexError
@@ -69,6 +49,25 @@ from services.transcription_checkpoint import (
     settings_key,
     stage_prefix,
 )
+
+
+_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
+_screenshot_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenshots")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """
+    Run a blocking function in a thread pool to avoid blocking the event loop.
+    This ensures that login/auth requests can be processed even during transcription.
+    """
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(
+            _gpu_executor,
+            lambda: func(*args, **kwargs)
+        )
+    return await loop.run_in_executor(_gpu_executor, func, *args)
+
 
 # First-unit estimates, used until this execution has timed a real one.
 INITIAL_TRANSCRIPTION_CHUNK_ESTIMATE = 120
@@ -372,7 +371,7 @@ class BackgroundWorker:
 
             diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
-                print(f"[Worker] Diarization cache param mismatch, invalidating")
+                print("[Worker] Diarization cache param mismatch, invalidating")
                 cached_diarization = None
 
             suffix = os.path.splitext(filename)[1].lower()
@@ -473,7 +472,7 @@ class BackgroundWorker:
                         if not is_video_format and os.path.exists(temp_video_path):
                             os.unlink(temp_video_path)
                             temp_files.remove(temp_video_path)
-                            print(f"[Worker] Deleted temp video to free disk space")
+                            print("[Worker] Deleted temp video to free disk space")
                     except Exception as e:
                         raise Exception(f"Failed to extract audio: {str(e)}")
 
@@ -498,10 +497,10 @@ class BackgroundWorker:
                         full_audio_path = None
                 else:
                     JobQueueService.update_progress(job_id, 30, "downloading", "Using cached results, skipping audio extraction")
-                    print(f"[Worker] Skipping download/extraction — transcription and diarization are cached")
+                    print("[Worker] Skipping download/extraction — transcription and diarization are cached")
             else:
                 JobQueueService.update_progress(job_id, 30, "downloading", "All stages cached, skipping download")
-                print(f"[Worker] Skipping download entirely — all stages are cached")
+                print("[Worker] Skipping download entirely — all stages are cached")
 
             # Step 3: Transcribe (30-50%)
             if cached_transcription:
@@ -761,7 +760,7 @@ class BackgroundWorker:
                         diarizer = get_speaker_diarizer()
 
                         if diarizer and full_audio_path:
-                            print(f"[Worker] Performing speaker diarization on full video...")
+                            print("[Worker] Performing speaker diarization on full video...")
 
                             formatted_segments = await _run_in_executor(
                                 SpeakerService.add_speaker_labels,
@@ -888,7 +887,7 @@ class BackgroundWorker:
 
                         # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
                         JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
-                        print(f"[Worker] Detecting timeline gaps and creating silent segments...")
+                        print("[Worker] Detecting timeline gaps and creating silent segments...")
                         log_all_memory("Worker:BeforeSilentSegments")
 
                         formatted_segments = create_silent_segments_for_gaps(
@@ -1081,7 +1080,7 @@ class BackgroundWorker:
                         normalized_lang,
                         progress_callback=translation_progress
                     )
-                    print(f"[Worker] Translation completed")
+                    print("[Worker] Translation completed")
                 except Exception as e:
                     print(f"[Worker] Translation failed: {e}")
                     # If translation fails, set placeholder translations

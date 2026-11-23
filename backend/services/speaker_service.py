@@ -104,7 +104,7 @@ class SpeakerService:
                     speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
 
                 print(f"\n{'='*60}")
-                print(f"Speaker diarization complete!")
+                print("Speaker diarization complete!")
                 print(f"Found {len(unique_speakers)} unique speakers:")
                 for spk in sorted(unique_speakers):
                     if SPEAKER_DIARIZATION_AVAILABLE:
@@ -128,7 +128,7 @@ class SpeakerService:
         except Exception as e:
             error_msg = str(e)
             print(f"\n{'='*60}")
-            print(f"SPEAKER DIARIZATION FAILED")
+            print("SPEAKER DIARIZATION FAILED")
             print(f"{'='*60}")
             print(f"Error: {error_msg}")
 

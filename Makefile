@@ -10,10 +10,8 @@ check-fast: lint-backend lint-frontend
 
 check: check-fast test-backend typecheck-frontend test-frontend
 
-# Syntax-only (ast.parse): the backend has no linter configured and this writes no .pyc files.
 lint-backend:
-	@find backend -name '*.py' -not -path 'backend/venv/*' -not -path '*/node_modules/*' -print0 \
-		| xargs -0 $(PY) -c "import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]"
+	@$(PY) -m ruff check backend
 
 lint-frontend:
 	@cd frontend && npx eslint .

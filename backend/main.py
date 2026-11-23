@@ -4,64 +4,27 @@ Refactored with organized structure, Pydantic models, and proper documentation
 """
 import os
 import asyncio
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-from config import settings as app_settings
-# Import routers
-from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing, features
-
-# Import LLM module (optional)
-try:
-    from llm_providers import llm_manager
-    LLM_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: LLM features not available: {str(e)}")
-    LLM_AVAILABLE = False
+from config import settings as app_settings  # noqa: E402
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing, features  # noqa: E402
+from middleware.csrf import CSRFProtectionMiddleware  # noqa: E402
+from middleware.token_refresh import TokenRefreshMiddleware  # noqa: E402
+from utils.structured_log import install_excepthooks, log_exception  # noqa: E402
 
 # Disable docs in production for security
 is_production = os.getenv("ENVIRONMENT", "development") == "production"
 
-# Initialize FastAPI app with proper OpenAPI configuration
-app = FastAPI(
-    title=app_settings.API_TITLE,
-    version=app_settings.API_VERSION,
-    description=app_settings.API_DESCRIPTION,
-    # Disable automatic trailing slash redirects to prevent HTTP redirect issues
-    # (Cloud Run generates http:// redirect URLs instead of https://)
-    redirect_slashes=False,
-    # Disable Swagger UI and ReDoc in production to prevent unauthorized API access
-    docs_url=None if is_production else "/docs",
-    redoc_url=None if is_production else "/redoc",
-    openapi_url=None if is_production else "/openapi.json",
-    openapi_tags=[
-        {
-            "name": "Transcription",
-            "description": "Video transcription with Whisper and speaker diarization"
-        },
-        {
-            "name": "Speaker Recognition",
-            "description": "Speaker enrollment and identification using voice biometrics"
-        },
-        {
-            "name": "Chat & RAG",
-            "description": "Chat with videos using LLM and RAG (Retrieval-Augmented Generation)"
-        },
-        {
-            "name": "Video & Utilities",
-            "description": "Video serving, subtitle generation, and utility functions"
-        }
-    ]
-)
 
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Validate runtime configuration."""
     app_settings.validate_runtime()
     print("Application initialized successfully")
@@ -95,10 +58,40 @@ async def startup_event():
         except Exception as e:
             print(f"- GCS cleanup failed (non-critical): {e}")
 
+    yield
 
-from fastapi import Request
-from fastapi.responses import PlainTextResponse
-from utils.structured_log import install_excepthooks, log_exception
+
+app = FastAPI(
+    lifespan=lifespan,
+    title=app_settings.API_TITLE,
+    version=app_settings.API_VERSION,
+    description=app_settings.API_DESCRIPTION,
+    # Disable automatic trailing slash redirects to prevent HTTP redirect issues
+    # (Cloud Run generates http:// redirect URLs instead of https://)
+    redirect_slashes=False,
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
+    openapi_tags=[
+        {
+            "name": "Transcription",
+            "description": "Video transcription with Whisper and speaker diarization"
+        },
+        {
+            "name": "Speaker Recognition",
+            "description": "Speaker enrollment and identification using voice biometrics"
+        },
+        {
+            "name": "Chat & RAG",
+            "description": "Chat with videos using LLM and RAG (Retrieval-Augmented Generation)"
+        },
+        {
+            "name": "Video & Utilities",
+            "description": "Video serving, subtitle generation, and utility functions"
+        }
+    ]
+)
+
 
 install_excepthooks("api")
 
@@ -114,7 +107,6 @@ async def log_unhandled_exception(request: Request, exc: Exception):
 
 # CSRF protection. Added before CORS so it sits inside it: CORS answers
 # preflight requests first and the rest reach this check.
-from middleware.csrf import CSRFProtectionMiddleware
 app.add_middleware(CSRFProtectionMiddleware, allowed_origins=app_settings.CORS_ORIGINS)
 
 # CORS middleware
@@ -131,7 +123,6 @@ app.add_middleware(
 
 # Token refresh middleware - sets refreshed auth cookies on response
 # Must be added after CORS middleware so cookies are properly handled
-from middleware.token_refresh import TokenRefreshMiddleware
 app.add_middleware(TokenRefreshMiddleware)
 
 

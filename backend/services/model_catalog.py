@@ -3,7 +3,7 @@
 import hashlib
 import os
 import time
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Tuple
 
 import httpx
 

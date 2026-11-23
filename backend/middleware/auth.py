@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from fastapi import Request, HTTPException, Response
+from fastapi import Request, HTTPException
 from config import settings
 from services.supabase_service import SupabaseService
 

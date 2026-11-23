@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr
 
 from services.supabase_service import SupabaseService
+from services.email import send_welcome_email
+from middleware.auth import require_auth, clear_token_cache, _get_user_profile
 
 
 # Executor for non-blocking auth database operations
@@ -27,10 +29,6 @@ async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
     if kwargs:
         return await loop.run_in_executor(_auth_executor, lambda: func(*args, **kwargs))
     return await loop.run_in_executor(_auth_executor, func, *args)
-
-
-from services.email import send_welcome_email
-from middleware.auth import require_auth, clear_token_cache, _get_user_profile
 
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])

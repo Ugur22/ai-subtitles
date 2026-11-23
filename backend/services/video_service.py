@@ -36,7 +36,7 @@ class VideoService:
                 '-y'  # Overwrite if exists
             ]
             print(f"Running FFmpeg command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
 
             # Verify output file was created
             if os.path.exists(output_path):
@@ -97,7 +97,7 @@ class VideoService:
                 '-loglevel', 'error'          # Reduce log verbosity
             ]
 
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
 
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                 return True
@@ -188,7 +188,7 @@ class VideoService:
         Returns True if conversion successful, False otherwise
         """
         try:
-            print(f"\nConverting MKV to MP4 for browser compatibility...")
+            print("\nConverting MKV to MP4 for browser compatibility...")
             print(f"Input: {input_path}")
             print(f"Output: {output_path}")
 
@@ -211,11 +211,11 @@ class VideoService:
                 '-y'  # Overwrite if exists
             ]
 
-            print(f"Running conversion command...")
+            print("Running conversion command...")
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if result.returncode != 0:
-                print(f"ERROR: FFmpeg conversion failed")
+                print("ERROR: FFmpeg conversion failed")
                 print(f"Return code: {result.returncode}")
                 print(f"Stderr: {result.stderr}")
                 return False
@@ -230,7 +230,7 @@ class VideoService:
                 return False
 
         except Exception as e:
-            print(f"ERROR: Failed to convert MKV to MP4")
+            print("ERROR: Failed to convert MKV to MP4")
             print(f"Error type: {type(e).__name__}")
             print(f"Error details: {str(e)}")
             traceback.print_exc()

@@ -11,7 +11,6 @@ import os
 import threading
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-import torch
 from pyannote.audio import Inference
 
 from services.supabase_service import SupabaseService

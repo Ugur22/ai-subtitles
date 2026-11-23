@@ -1257,29 +1257,6 @@ button.badge-default:hover { color: var(--text-primary); }
   border-top: 1px solid var(--border-subtle);
   flex-wrap: wrap;
 }
-.comp-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-}
-.comp-chip:hover { border-color: var(--border-default); }
-.comp-chip svg { width: 11px; height: 11px; color: var(--text-quaternary); }
-.comp-chip.active {
-  background: var(--accent-dim);
-  color: var(--accent);
-  border-color: var(--accent-border);
-}
-.comp-chip.active svg { color: var(--accent); }
 .send-btn {
   margin-left: auto;
   width: 28px;

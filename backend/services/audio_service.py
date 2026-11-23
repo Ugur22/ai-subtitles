@@ -5,7 +5,6 @@ import os
 import subprocess
 import shutil
 import math
-import tempfile
 from typing import List
 from moviepy.editor import VideoFileClip
 import ffmpeg
@@ -50,7 +49,7 @@ class AudioService:
             # Generate output file pattern
             output_pattern = os.path.join(output_dir, "audio_%03d.wav")
 
-            print(f"Starting streaming audio extraction from URL...")
+            print("Starting streaming audio extraction from URL...")
             print(f"Source: {source_url[:100]}...")  # Log first 100 chars of URL
             print(f"Output directory: {output_dir}")
             print(f"Segment duration: {segment_duration} seconds")
@@ -204,7 +203,7 @@ class AudioService:
         # Check if this is an MKV file - use ffmpeg directly for better codec support
         file_ext = os.path.splitext(video_path)[1].lower()
         if file_ext == '.mkv':
-            print(f"Detected MKV file, using ffmpeg for audio extraction...")
+            print("Detected MKV file, using ffmpeg for audio extraction...")
             return AudioService.extract_audio_with_ffmpeg(video_path, chunk_duration, overlap)
 
         try:
@@ -240,7 +239,7 @@ class AudioService:
                         audio_chunks.append(compressed_chunk_path)
         except Exception as e:
             print(f"ERROR in extract_audio: {str(e)}")
-            print(f"Falling back to ffmpeg for audio extraction...")
+            print("Falling back to ffmpeg for audio extraction...")
             return AudioService.extract_audio_with_ffmpeg(video_path, chunk_duration, overlap)
 
         return audio_chunks

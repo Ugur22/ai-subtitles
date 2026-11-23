@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { convertTimeToSeconds, timeToSeconds } from "../../../../utils/time";
+import { timeToSeconds } from "../../../../utils/time";
 import type { TranscriptSegment } from "../segments";
 
 const SCROLL_TOP_OFFSET_PX = 100;
@@ -14,10 +14,14 @@ interface TranscriptPlaybackOptions {
   play: () => void;
 }
 
-function findSegmentIndexAt(segments: TranscriptSegment[], seconds: number): number {
-  return segments.findIndex(
-    (segment) => seconds >= timeToSeconds(segment.start_time) && seconds <= timeToSeconds(segment.end_time),
-  );
+interface SegmentBounds {
+  id: string;
+  start: number;
+  end: number;
+}
+
+function findSegmentAt(bounds: SegmentBounds[], seconds: number): SegmentBounds | undefined {
+  return bounds.find((segment) => seconds >= segment.start && seconds <= segment.end);
 }
 
 export function useTranscriptPlayback({
@@ -29,10 +33,18 @@ export function useTranscriptPlayback({
 }: TranscriptPlaybackOptions) {
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
 
-  const displayedSegmentsRef = useRef(displayedSegments);
+  const segmentBounds = useMemo(
+    () => displayedSegments.map((segment) => ({
+      id: segment.id,
+      start: timeToSeconds(segment.start_time),
+      end: timeToSeconds(segment.end_time),
+    })),
+    [displayedSegments],
+  );
+  const segmentBoundsRef = useRef(segmentBounds);
   useEffect(() => {
-    displayedSegmentsRef.current = displayedSegments;
-  }, [displayedSegments]);
+    segmentBoundsRef.current = segmentBounds;
+  }, [segmentBounds]);
 
   const scrollSegmentIntoView = useCallback((segmentId: string, fallbackToPage: boolean) => {
     const segmentElement = document.getElementById(`transcript-segment-${segmentId}`);
@@ -49,17 +61,12 @@ export function useTranscriptPlayback({
   useEffect(() => {
     if (!videoRef) return;
     const handleTimeUpdate = () => {
-      if (displayedSegments.length === 0) return;
-      const currentSegment = displayedSegments.find(
-        (segment) =>
-          videoRef.currentTime >= convertTimeToSeconds(segment.start_time) &&
-          videoRef.currentTime <= convertTimeToSeconds(segment.end_time),
-      );
-      setActiveSegmentId(currentSegment?.id ?? null);
+      if (segmentBounds.length === 0) return;
+      setActiveSegmentId(findSegmentAt(segmentBounds, videoRef.currentTime)?.id ?? null);
     };
     videoRef.addEventListener("timeupdate", handleTimeUpdate);
     return () => videoRef.removeEventListener("timeupdate", handleTimeUpdate);
-  }, [videoRef, displayedSegments]);
+  }, [videoRef, segmentBounds]);
 
   const seekToTimestamp = useCallback((timeString: string) => {
     if (!timeString) return;
@@ -68,21 +75,19 @@ export function useTranscriptPlayback({
     seek(seconds);
     play();
 
-    const index = findSegmentIndexAt(displayedSegments, seconds);
-    if (index === -1) return;
-    const matchingSegment = displayedSegments[index];
+    const matchingSegment = findSegmentAt(segmentBounds, seconds);
+    if (!matchingSegment) return;
     setActiveSegmentId(matchingSegment.id);
     setTimeout(() => scrollSegmentIntoView(matchingSegment.id, true), ACTIVE_SEGMENT_RENDER_DELAY_MS);
-  }, [displayedSegments, seek, play, scrollSegmentIntoView]);
+  }, [segmentBounds, seek, play, scrollSegmentIntoView]);
 
   useEffect(() => {
     if (!videoRef) return;
     const handleSeeked = () => {
-      const segments = displayedSegmentsRef.current;
-      const index = findSegmentIndexAt(segments, videoRef.currentTime);
-      if (index === -1) return;
-      setActiveSegmentId(segments[index].id);
-      scrollSegmentIntoView(segments[index].id, false);
+      const matchingSegment = findSegmentAt(segmentBoundsRef.current, videoRef.currentTime);
+      if (!matchingSegment) return;
+      setActiveSegmentId(matchingSegment.id);
+      scrollSegmentIntoView(matchingSegment.id, false);
     };
     videoRef.addEventListener("seeked", handleSeeked);
     return () => videoRef.removeEventListener("seeked", handleSeeked);

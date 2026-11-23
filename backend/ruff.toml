@@ -1,0 +1,7 @@
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+"{worker_main.py,speaker_diarization.py}" = ["E402"]

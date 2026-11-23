@@ -20,7 +20,6 @@ from models import (
 from services.video_service import VideoService
 from services.translation_service import TranslationService
 from services.summarization_service import SummarizationService
-from services.audio_analysis_service import AudioAnalysisService
 from services.media_storage import get_media_storage
 from services.transcription_access import (
     authenticated_user_id,
@@ -115,7 +114,7 @@ async def translate_local_endpoint(http_request: Request, request: TranslationRe
 
         try:
             tokenizer, model = TranslationService.get_marian_model(source_lang)
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=400, detail=f"Unsupported or unavailable language model: {source_lang}")
 
         # MarianMT expects a list of sentences
@@ -531,7 +530,7 @@ async def regenerate_screenshots_for_video(request: Request, video_hash: str):
         # Update result_json in Supabase
         result_json["transcription"]["segments"] = segments
 
-        update_response = (
+        (
             client.table("jobs")
             .update({"result_json": result_json})
             .eq("id", job_id)

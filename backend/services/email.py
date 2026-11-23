@@ -288,12 +288,12 @@ async def send_welcome_email(email: str, display_name: Optional[str] = None) -> 
 
     # Fallback to console
     print(f"\n{'='*60}")
-    print(f"WELCOME EMAIL")
+    print("WELCOME EMAIL")
     print(f"{'='*60}")
     print(f"To: {email}")
     print(f"\nWelcome to AI-Subs, {name}!")
-    print(f"\nYour account has been created successfully.")
-    print(f"You can now upload videos and use AI-powered transcription.")
+    print("\nYour account has been created successfully.")
+    print("You can now upload videos and use AI-powered transcription.")
     print(f"{'='*60}\n")
 
     return True

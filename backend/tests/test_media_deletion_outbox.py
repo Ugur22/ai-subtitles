@@ -411,7 +411,6 @@ def test_worker_and_local_startup_drain_pending_media_contract():
     backend = Path(__file__).parents[1]
     worker_main = (backend / "worker_main.py").read_text()
     worker = (backend / "services" / "background_worker.py").read_text()
-    main = (backend / "main.py").read_text()
 
     worker_run = worker_main[worker_main.index("async def _run"):worker_main.index("def main")]
     assert worker_run.index("drain_media_deletions_best_effort") < worker_run.index(
@@ -429,7 +428,10 @@ def test_worker_and_local_startup_drain_pending_media_contract():
     settle_index = resume.index("JobQueueService.settle_finalization(job_id, user_id)")
     assert resume.index("drain_media_deletions_best_effort", settle_index) > settle_index
 
-    startup = main[main.index("async def startup_event"):main.index("# CORS middleware")]
+    import inspect
+    import main as api_main
+
+    startup = inspect.getsource(api_main.lifespan)
     local_index = startup.index("if app_settings.LOCAL_MODE:")
     drain_index = startup.index("drain_media_deletions_best_effort")
     assert local_index < drain_index

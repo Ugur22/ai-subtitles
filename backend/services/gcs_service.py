@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict
 from urllib.parse import parse_qs, urlsplit
 from google.cloud import storage
-from google.cloud.storage import Blob
 from google.api_core.exceptions import NotFound
 from google.auth import default
 from google.auth.transport import requests as auth_requests

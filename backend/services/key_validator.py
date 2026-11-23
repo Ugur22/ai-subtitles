@@ -3,7 +3,6 @@ API key validation service for async background validation.
 
 Tests API keys against provider endpoints and updates validation status in database.
 """
-import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional

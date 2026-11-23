@@ -75,7 +75,6 @@ def _robust_mean_embedding(embeddings: list, min_sim: float) -> tuple[Any, int]:
 def _load_speaker_reference_embedding(video_hash: str, speaker_name: str) -> Optional[list[float]]:
     """Load the normalized average manual face-tag embedding for one person."""
     try:
-        import numpy as np
         import json as _json
         from services.supabase_service import supabase as get_supabase
         user_id = _chat_user_id.get()

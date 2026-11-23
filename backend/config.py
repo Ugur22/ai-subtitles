@@ -39,7 +39,7 @@ class Settings(BaseSettings):
                 if isinstance(origins, list):
                     return origins
                 else:
-                    print(f"Warning: CORS_ORIGINS is not a list, using default")
+                    print("Warning: CORS_ORIGINS is not a list, using default")
                     return ["http://localhost:5173"]
             except json.JSONDecodeError as e:
                 print(f"Warning: Failed to parse CORS_ORIGINS as JSON: {e}, using default")
