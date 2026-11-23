@@ -36,8 +36,26 @@ def _even_group_size(count: int, max_per_group: int) -> int:
     return math.ceil(count / math.ceil(count / max_per_group))
 
 
+DIARIZATION_PIPELINE = "pyannote/speaker-diarization-3.1"
+
+
+def concatenate_audio_files(audio_files: List[str], output_path: str):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        for audio_file in audio_files:
+            escaped_path = audio_file.replace("'", "'\\''")
+            f.write(f"file '{escaped_path}'\n")
+        list_file = f.name
+    try:
+        subprocess.run(
+            ['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', list_file, '-c', 'copy', output_path],
+            check=True, capture_output=True,
+        )
+    finally:
+        os.unlink(list_file)
+
+
 def load_diarization_pipeline(auth_token: Optional[str]):
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=auth_token)
+    pipeline = Pipeline.from_pretrained(DIARIZATION_PIPELINE, use_auth_token=auth_token)
     # Batch size changes speed only, not the diarization result.
     pipeline.segmentation_batch_size = settings.DIARIZATION_BATCH_SIZE
     pipeline.embedding_batch_size = settings.DIARIZATION_BATCH_SIZE
@@ -744,38 +762,7 @@ class ChunkedSpeakerDiarizer:
                 except Exception as e:
                     print(f"  Warning: Could not delete temp file {concat_audio_path}: {e}")
 
-    def _concatenate_audio_files(self, audio_files: List[str], output_path: str):
-        """
-        Concatenate multiple audio files using ffmpeg.
-
-        Args:
-            audio_files: List of audio file paths to concatenate
-            output_path: Output path for concatenated audio
-        """
-        # Create a temporary file list for ffmpeg concat demuxer
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            for audio_file in audio_files:
-                # Escape single quotes and use absolute path
-                escaped_path = audio_file.replace("'", "'\\''")
-                f.write(f"file '{escaped_path}'\n")
-            list_file = f.name
-
-        try:
-            # Use ffmpeg concat demuxer
-            cmd = [
-                'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
-                '-i', list_file,
-                '-c', 'copy',
-                output_path
-            ]
-            subprocess.run(cmd, check=True, capture_output=True)
-        finally:
-            # Clean up list file
-            try:
-                import os
-                os.unlink(list_file)
-            except Exception:
-                pass
+    _concatenate_audio_files = staticmethod(concatenate_audio_files)
 
     @staticmethod
     def _embedding_segments(speaker_segments: List[Dict]) -> List[Dict]:

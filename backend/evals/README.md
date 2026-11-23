@@ -97,7 +97,7 @@ To compare models on the same video, build each model's index with `--model` and
 
 ## Diarization A/B across pyannote versions
 
-`diarization_ab.py` diarizes one clip with the worker's own diarization path (full-audio below `USE_CHUNKED_DIARIZATION_ABOVE`, 900 s groups above) and records speaker count, speech turns, wall time and peak GPU memory. pyannote 3.1 and 4.x need different torch versions, so each side is its own image, run on the `ai-subs-diarization-ab` GPU job rather than the prod worker. No Supabase reads or writes; results go to `ab-results/<label>/` in the uploads bucket.
+`diarization_ab.py` diarizes one clip, choosing full-audio or 900 s-group diarization the way the worker does (`USE_CHUNKED_DIARIZATION_ABOVE`), and records the raw diarizer turns, wall time and peak GPU memory. pyannote 3.1 and 4.x need different torch versions, so each side is its own image, run on the `ai-subs-diarization-ab` GPU job rather than the prod worker. No Supabase reads or writes; results go to `ab-results/<label>/` in the uploads bucket.
 
 From your own terminal with Owner credentials, once per image (copy clips to `ab-clips/` first; `uploads/` expires after 30 days):
 
@@ -111,7 +111,7 @@ infra/scripts/diarization_ab.sh fetch pyannote-3.1 /tmp/ab/pyannote-3.1
 Then compare offline:
 
 ```bash
-python evals/diarization_ab.py compare /tmp/ab/pyannote-3.1/meeting.json /tmp/ab/community-1/meeting.json
+python evals/diarization_compare.py /tmp/ab/pyannote-3.1/meeting.json /tmp/ab/community-1/meeting.json
 ```
 
-`label_disagreement` is the share of shared speech time whose labels don't correspond under the best one-to-one speaker mapping. Neither side is ground truth, so it says how much the versions differ, not which is right; listen to the disagreeing stretches to judge.
+`unmatched_shared_speech` is the share of shared speech time whose labels don't correspond under the best one-to-one speaker mapping. Neither side is ground truth, so it says how much the versions differ, not which is right; listen to the disagreeing stretches to judge.
