@@ -129,3 +129,21 @@ def test_failed_batches_raise_incomplete_index_error(monkeypatch, tmp_path):
         service.index_video_images(VIDEO, segments, USER)
 
     assert (raised.value.indexed, raised.value.expected) == (0, 5)
+
+
+def test_rejected_screenshot_is_skipped_and_order_is_kept(monkeypatch, tmp_path):
+    service, segments, client, _ = _setup(
+        monkeypatch, tmp_path, segments=6, screenshots=6, existing_rows=0
+    )
+    storage = image_module.get_media_storage()
+    materialize = storage.materialize_screenshot
+
+    def reject_third(key, *args):
+        if key.endswith("/3.00.jpg"):
+            raise ValueError("not owned")
+        return materialize(key, *args)
+
+    storage.materialize_screenshot = reject_third
+
+    assert service.index_video_images(VIDEO, segments, USER) == 5
+    assert [r["segment_id"] for r in client.written] == ["0", "1", "3", "4", "5"]
