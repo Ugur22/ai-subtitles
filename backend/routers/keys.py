@@ -4,7 +4,7 @@ API Keys management router.
 Handles user API keys for LLM providers (groq, xai, openai, anthropic, deepseek).
 Keys are encrypted at rest using AES-256-GCM.
 """
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -12,7 +12,7 @@ from datetime import datetime
 from middleware.auth import require_auth
 from services.supabase_service import SupabaseService
 from services.encryption import encrypt_api_key, get_encryption_key, get_key_suffix
-from services.key_validator import validate_api_key_async, test_provider_key_sync
+from services.key_validator import test_provider_key
 
 
 router = APIRouter(prefix="/api/keys", tags=["API Keys"])
@@ -42,10 +42,8 @@ class AddKeyRequest(BaseModel):
 
 
 class AddKeyResponse(BaseModel):
-    """Response after adding API key."""
     provider: str
     key_suffix: str
-    is_valid: Optional[bool]  # Always None (pending validation)
     message: str
 
 
@@ -112,41 +110,45 @@ async def list_keys(request: Request):
 
 @router.post("", response_model=AddKeyResponse)
 @require_auth
-async def add_key(request: Request, body: AddKeyRequest, background_tasks: BackgroundTasks):
+async def add_key(request: Request, body: AddKeyRequest):
     """
     Add or update API key for a provider.
 
-    Key is encrypted and stored. Validation happens asynchronously in background.
+    The key is checked against the provider first and only stored if it works.
+    Rejected keys are never written, so an existing working key stays in place.
 
     Raises:
-        400: Invalid provider or empty key
+        400: Invalid provider, empty key, or key rejected by the provider
     """
     try:
-        # Validate provider
         if body.provider not in SUPPORTED_PROVIDERS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid provider. Must be one of: {', '.join(SUPPORTED_PROVIDERS)}"
             )
 
-        # Validate key not empty
         if not body.api_key or not body.api_key.strip():
             raise HTTPException(
                 status_code=400,
                 detail="API key cannot be empty"
             )
 
+        is_valid, validation_error = await test_provider_key(body.provider, body.api_key)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Key not saved: {validation_error or 'the provider rejected it'}. Check the key or use another one."
+            )
+
         user_id = request.state.user["id"]
         client = SupabaseService.get_client()
+        validated_at = datetime.utcnow().isoformat()
 
-        # Get encryption key
         encryption_key = await get_encryption_key()
 
-        # Encrypt API key
         encrypted_key = encrypt_api_key(body.api_key, encryption_key)
         key_suffix = get_key_suffix(body.api_key)
 
-        # Check if key already exists for this provider
         existing = (
             client.table("user_api_keys")
             .select("id")
@@ -155,45 +157,31 @@ async def add_key(request: Request, body: AddKeyRequest, background_tasks: Backg
             .execute()
         )
 
-        if existing.data and len(existing.data) > 0:
-            # Update existing key
-            client.table("user_api_keys").update({
-                "encrypted_key": encrypted_key,
-                "key_suffix": key_suffix,
-                "is_valid": None,  # Reset validation status
-                "validation_error": None,
-                "validated_at": None,
-                "updated_at": datetime.utcnow().isoformat()
-            }).eq("user_id", user_id).eq("provider", body.provider).execute()
+        key_fields = {
+            "encrypted_key": encrypted_key,
+            "key_suffix": key_suffix,
+            "is_valid": True,
+            "validation_error": None,
+            "validated_at": validated_at,
+        }
+
+        if existing.data:
+            client.table("user_api_keys").update(
+                {**key_fields, "updated_at": validated_at}
+            ).eq("user_id", user_id).eq("provider", body.provider).execute()
 
             print(f"[Keys] Updated key for user {user_id}, provider {body.provider}")
         else:
-            # Insert new key
-            client.table("user_api_keys").insert({
-                "user_id": user_id,
-                "provider": body.provider,
-                "encrypted_key": encrypted_key,
-                "key_suffix": key_suffix,
-                "is_valid": None,  # Pending validation
-                "validation_error": None,
-                "validated_at": None
-            }).execute()
+            client.table("user_api_keys").insert(
+                {**key_fields, "user_id": user_id, "provider": body.provider}
+            ).execute()
 
             print(f"[Keys] Added new key for user {user_id}, provider {body.provider}")
-
-        # Trigger async validation in background
-        background_tasks.add_task(
-            validate_api_key_async,
-            user_id,
-            body.provider,
-            encrypted_key
-        )
 
         return AddKeyResponse(
             provider=body.provider,
             key_suffix=key_suffix,
-            is_valid=None,  # Pending validation
-            message=f"{body.provider.upper()} API key saved. Validation in progress..."
+            message=f"{body.provider.upper()} API key verified and saved."
         )
 
     except HTTPException:
@@ -306,7 +294,7 @@ async def test_key(request: Request, provider: str, body: Optional[TestKeyReques
             test_key_value = decrypt_api_key(response.data["encrypted_key"], encryption_key)
 
         # Test the key
-        is_valid, error = await test_provider_key_sync(provider, test_key_value)
+        is_valid, error = await test_provider_key(provider, test_key_value)
 
         return TestKeyResponse(
             provider=provider,
