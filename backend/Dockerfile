@@ -12,6 +12,7 @@ ENV HF_HOME=/app/.cache/huggingface
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 \
+    libpython3.10 \
     python3-pip \
     ffmpeg \
     libglib2.0-0 \
