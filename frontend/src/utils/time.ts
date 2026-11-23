@@ -75,39 +75,26 @@ export const secondsToTimeString = (seconds: number): string => {
 };
 
 /**
- * Converts HH:MM:SS time string to seconds
- * @param timeString - Time string in HH:MM:SS format
- * @returns Number of seconds
- */
-export const convertTimeToSeconds = (timeString: string): number => {
-  const [hours, minutes, seconds] = timeString.split(":").map(Number);
-  return hours * 3600 + minutes * 60 + seconds;
-};
-
-/**
  * Converts HH:MM:SS or HH:MM:SS.mmm time string to seconds
  * @param timeStr - Time string
- * @returns Number of seconds (including fractional seconds)
+ * @returns Number of seconds (including fractional seconds), or 0 if malformed
  */
 export const timeToSeconds = (timeStr: string): number => {
-  try {
-    // Handle different time formats: HH:MM:SS or HH:MM:SS.mmm
-    const parts = timeStr.split(":");
-    if (parts.length !== 3) {
-      console.error(`Invalid time format: ${timeStr}`);
-      return 0;
-    }
-
-    const hours = parseInt(parts[0], 10);
-    const minutes = parseInt(parts[1], 10);
-    // Handle seconds with milliseconds
-    const seconds = parseFloat(parts[2]);
-
-    return hours * 3600 + minutes * 60 + seconds;
-  } catch (error) {
-    console.error(`Error converting time ${timeStr} to seconds:`, error);
+  const parts = timeStr.split(":");
+  if (parts.length !== 3) {
+    console.error(`Invalid time format: ${timeStr}`);
     return 0;
   }
+
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  const seconds = parseFloat(parts[2]);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  if (Number.isNaN(total)) {
+    console.error(`Invalid time format: ${timeStr}`);
+    return 0;
+  }
+  return total;
 };
 
 /**

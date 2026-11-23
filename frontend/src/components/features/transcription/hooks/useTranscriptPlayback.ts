@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { convertTimeToSeconds, timeToSeconds } from "../../../../utils/time";
+import { timeToSeconds } from "../../../../utils/time";
 import type { TranscriptSegment } from "../segments";
 
 const SCROLL_TOP_OFFSET_PX = 100;
@@ -52,8 +52,8 @@ export function useTranscriptPlayback({
       if (displayedSegments.length === 0) return;
       const currentSegment = displayedSegments.find(
         (segment) =>
-          videoRef.currentTime >= convertTimeToSeconds(segment.start_time) &&
-          videoRef.currentTime <= convertTimeToSeconds(segment.end_time),
+          videoRef.currentTime >= timeToSeconds(segment.start_time) &&
+          videoRef.currentTime <= timeToSeconds(segment.end_time),
       );
       setActiveSegmentId(currentSegment?.id ?? null);
     };

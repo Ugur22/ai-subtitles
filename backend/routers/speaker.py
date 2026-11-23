@@ -407,7 +407,7 @@ async def update_speaker_name(request: Request, video_hash: str) -> Dict:
                 job_id = job["id"]
 
                 # Update result_json with new speaker names
-                update_response = (
+                (
                     client.table("jobs")
                     .update({"result_json": transcription_data})
                     .eq("id", job_id)

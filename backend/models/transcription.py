@@ -1,7 +1,7 @@
 """
 Transcription-related Pydantic models
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from models.audio_events import AudioEvent, AudioAnalysis
 

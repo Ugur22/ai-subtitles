@@ -29,7 +29,6 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
 }) => {
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [citeOn, setCiteOn] = useState(true);
   const {
     showMentions,
     setShowMentions,
@@ -233,18 +232,6 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             disabled={loading}
           />
           <div className="composer-row">
-            <button
-              type="button"
-              className={`comp-chip ${citeOn ? 'active' : ''}`}
-              onClick={() => setCiteOn(!citeOn)}
-              title="Cite timestamps automatically"
-            >
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Cite
-            </button>
             <button
               onClick={onSend}
               disabled={loading || !input.trim()}

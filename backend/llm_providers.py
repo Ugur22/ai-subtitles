@@ -10,7 +10,7 @@ import base64
 import io
 import copy
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Dict, List, Optional, Union, Any
+from typing import AsyncIterator, Dict, List, Optional, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from PIL import Image
@@ -194,7 +194,7 @@ class OllamaProvider(BaseLLMProvider):
         try:
             response = httpx.get(f"{self.base_url}/api/tags", timeout=5.0)
             return response.status_code == 200
-        except:
+        except Exception:
             return False
 
 

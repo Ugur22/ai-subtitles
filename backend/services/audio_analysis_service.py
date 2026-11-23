@@ -11,7 +11,6 @@ from config import settings
 
 try:
     from audio_analyzer import (
-        analyze_audio_segment,
         analyze_audio_segment_from_array,
         get_simplified_events,
         load_audio_full,
@@ -142,7 +141,7 @@ class AudioAnalysisService:
 
         # Print summary statistics
         print(f"\n{'='*60}")
-        print(f"Audio analysis complete!")
+        print("Audio analysis complete!")
         print(f"Successful: {successful_analyses}/{len(segments)} segments")
         print(f"Failed: {failed_analyses}/{len(segments)} segments")
         print(f"{'='*60}\n")
@@ -267,7 +266,7 @@ class AudioAnalysisService:
             gc.collect()
 
         print(f"\n{'='*60}")
-        print(f"Silent segment analysis complete!")
+        print("Silent segment analysis complete!")
         print(f"Processed: {processed_count}/{len(silent_segments)} silent segments")
         print(f"{'='*60}\n")
 

@@ -14,7 +14,6 @@ import tempfile
 import warnings
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -40,12 +39,10 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Chuckle, chortle": "laughter",
     "Belly laugh": "laughter",
     "Snicker": "laughter",
-    "Snort": "laughter",
     "Crying, sobbing": "crying",
     "Baby crying, infant cry": "crying",
     "Whimper": "crying",
     "Wail, moan": "moan",  # Separated from crying
-    "Groan": "groan",
     "Screaming": "screaming",
     "Scream": "screaming",
     "Shout": "screaming",
@@ -141,8 +138,6 @@ AUDIOSET_CATEGORY_MAPPING = {
     "White noise": "ambient",
     "Pink noise": "ambient",
     "Static": "ambient",
-    "Hiss": "ambient",
-    "Buzz": "buzz",
     "Hum": "hum",
     "Rumble": "rumble",
 
@@ -161,7 +156,6 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Crash": "crash",
     "Smash, crash": "crash",
     "Shatter": "breaking",
-    "Crackle": "crackle",
 
     # Weather
     "Thunder": "thunder",
@@ -172,7 +166,6 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Wind": "wind",
     "Wind noise (microphone)": "wind",
     "Gust, wind": "wind",
-    "Howl": "howl",
     "Lightning": "thunder",
 
     # Fire and water
@@ -199,7 +192,6 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Ringtone": "phone",
     "Dial tone": "phone",
     "Busy signal": "phone",
-    "Beep, bleep": "beep",
     "Click": "click",
     "Tick": "tick",
     "Tick-tock": "tick",
@@ -262,7 +254,6 @@ AUDIOSET_CATEGORY_MAPPING = {
     "Chirp, tweet": "animal",
     "Squawk": "animal",
     "Pigeon, dove": "animal",
-    "Crow": "animal",
     "Caw": "animal",
     "Owl": "animal",
     "Hoot": "animal",
@@ -376,7 +367,6 @@ class ModelManager:
         if cls._panns_model is None:
             try:
                 logger.info("Loading PANNs model for audio event detection...")
-                import panns_inference
                 from panns_inference import AudioTagging
 
                 # Check if pre-downloaded checkpoint exists

@@ -51,6 +51,6 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
                 path="/"
             )
 
-            print(f"[TokenRefreshMiddleware] Set refreshed tokens in response cookies")
+            print("[TokenRefreshMiddleware] Set refreshed tokens in response cookies")
 
         return response

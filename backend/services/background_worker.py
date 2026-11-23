@@ -372,7 +372,7 @@ class BackgroundWorker:
 
             diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
-                print(f"[Worker] Diarization cache param mismatch, invalidating")
+                print("[Worker] Diarization cache param mismatch, invalidating")
                 cached_diarization = None
 
             suffix = os.path.splitext(filename)[1].lower()
@@ -473,7 +473,7 @@ class BackgroundWorker:
                         if not is_video_format and os.path.exists(temp_video_path):
                             os.unlink(temp_video_path)
                             temp_files.remove(temp_video_path)
-                            print(f"[Worker] Deleted temp video to free disk space")
+                            print("[Worker] Deleted temp video to free disk space")
                     except Exception as e:
                         raise Exception(f"Failed to extract audio: {str(e)}")
 
@@ -498,10 +498,10 @@ class BackgroundWorker:
                         full_audio_path = None
                 else:
                     JobQueueService.update_progress(job_id, 30, "downloading", "Using cached results, skipping audio extraction")
-                    print(f"[Worker] Skipping download/extraction — transcription and diarization are cached")
+                    print("[Worker] Skipping download/extraction — transcription and diarization are cached")
             else:
                 JobQueueService.update_progress(job_id, 30, "downloading", "All stages cached, skipping download")
-                print(f"[Worker] Skipping download entirely — all stages are cached")
+                print("[Worker] Skipping download entirely — all stages are cached")
 
             # Step 3: Transcribe (30-50%)
             if cached_transcription:
@@ -761,7 +761,7 @@ class BackgroundWorker:
                         diarizer = get_speaker_diarizer()
 
                         if diarizer and full_audio_path:
-                            print(f"[Worker] Performing speaker diarization on full video...")
+                            print("[Worker] Performing speaker diarization on full video...")
 
                             formatted_segments = await _run_in_executor(
                                 SpeakerService.add_speaker_labels,
@@ -888,7 +888,7 @@ class BackgroundWorker:
 
                         # Step 4.6: Create silent segments for timeline gaps (visual moments without speech)
                         JobQueueService.update_progress(job_id, 79, "extracting", "Detecting silent visual moments...")
-                        print(f"[Worker] Detecting timeline gaps and creating silent segments...")
+                        print("[Worker] Detecting timeline gaps and creating silent segments...")
                         log_all_memory("Worker:BeforeSilentSegments")
 
                         formatted_segments = create_silent_segments_for_gaps(
@@ -1081,7 +1081,7 @@ class BackgroundWorker:
                         normalized_lang,
                         progress_callback=translation_progress
                     )
-                    print(f"[Worker] Translation completed")
+                    print("[Worker] Translation completed")
                 except Exception as e:
                     print(f"[Worker] Translation failed: {e}")
                     # If translation fails, set placeholder translations

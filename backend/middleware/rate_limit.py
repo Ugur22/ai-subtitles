@@ -4,7 +4,6 @@ Rate limiting middleware for upload quotas.
 Implements per-user daily upload limits (50/day) and file size validation (4GB max).
 """
 from datetime import datetime, timedelta
-from typing import Optional
 from fastapi import HTTPException
 from services.supabase_service import SupabaseService
 from utils.time_utils import parse_db_timestamp

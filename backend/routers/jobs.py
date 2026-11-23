@@ -755,7 +755,7 @@ async def delete_job_permanent(
     user_id = request.state.user["id"]
 
     # Verify access via ownership OR token (also fetches job)
-    job = require_job_owner(job_id, user_id)
+    require_job_owner(job_id, user_id)
 
     try:
         deleted_resources = {
@@ -953,7 +953,7 @@ async def refresh_screenshot_urls(request: Request):
     never more than ~24 hours old, keeping screenshots reachable for the full
     `URL_REFRESH_CUTOFF_DAYS` window without any user-side refresh.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta, timezone
 
     cutoff_days = settings.URL_REFRESH_CUTOFF_DAYS
 

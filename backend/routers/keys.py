@@ -4,7 +4,6 @@ API Keys management router.
 Handles user API keys for LLM providers (groq, xai, openai, anthropic, deepseek).
 Keys are encrypted at rest using AES-256-GCM.
 """
-import asyncio
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, List

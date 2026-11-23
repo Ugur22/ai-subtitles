@@ -429,7 +429,7 @@ def test_worker_and_local_startup_drain_pending_media_contract():
     settle_index = resume.index("JobQueueService.settle_finalization(job_id, user_id)")
     assert resume.index("drain_media_deletions_best_effort", settle_index) > settle_index
 
-    startup = main[main.index("async def startup_event"):main.index("# CORS middleware")]
+    startup = main[main.index("async def lifespan"):main.index("app = FastAPI(")]
     local_index = startup.index("if app_settings.LOCAL_MODE:")
     drain_index = startup.index("drain_media_deletions_best_effort")
     assert local_index < drain_index

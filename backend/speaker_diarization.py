@@ -23,7 +23,6 @@ def _patched_torch_load(*args, **kwargs):
 torch.load = _patched_torch_load
 
 from pyannote.audio import Pipeline, Model, Inference
-from pyannote.audio.pipelines.utils import get_devices
 from pyannote.core import Segment
 from typing import List, Dict, Tuple, Optional
 import numpy as np
@@ -576,7 +575,7 @@ class ChunkedSpeakerDiarizer:
                 diarization_params["max_speakers"] = max_speakers
 
         # Run diarization
-        print(f"  Running diarization...")
+        print("  Running diarization...")
         from utils.memory_utils import log_all_memory
         log_all_memory("BeforeDiarization")
 
@@ -639,7 +638,7 @@ class ChunkedSpeakerDiarizer:
             if max_speakers is not None:
                 diarization_params["max_speakers"] = max_speakers
 
-        print(f"  Running diarization on pre-concatenated audio...")
+        print("  Running diarization on pre-concatenated audio...")
         from utils.memory_utils import log_all_memory
         log_all_memory("BeforeDiarization")
 
@@ -713,7 +712,7 @@ class ChunkedSpeakerDiarizer:
                     diarization_params["max_speakers"] = max_speakers
 
             # Run diarization
-            print(f"  Running diarization...")
+            print("  Running diarization...")
             diarization = self.pipeline(concat_audio_path, **diarization_params)
 
             # Convert to segments list

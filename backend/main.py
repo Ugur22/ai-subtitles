@@ -4,6 +4,7 @@ Refactored with organized structure, Pydantic models, and proper documentation
 """
 import os
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ from routers import video, chat, speaker, transcription, upload, jobs, diagnosti
 
 # Import LLM module (optional)
 try:
-    from llm_providers import llm_manager
+    from llm_providers import llm_manager  # noqa: F401 -- import probe for LLM_AVAILABLE
     LLM_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: LLM features not available: {str(e)}")
@@ -26,42 +27,9 @@ except ImportError as e:
 # Disable docs in production for security
 is_production = os.getenv("ENVIRONMENT", "development") == "production"
 
-# Initialize FastAPI app with proper OpenAPI configuration
-app = FastAPI(
-    title=app_settings.API_TITLE,
-    version=app_settings.API_VERSION,
-    description=app_settings.API_DESCRIPTION,
-    # Disable automatic trailing slash redirects to prevent HTTP redirect issues
-    # (Cloud Run generates http:// redirect URLs instead of https://)
-    redirect_slashes=False,
-    # Disable Swagger UI and ReDoc in production to prevent unauthorized API access
-    docs_url=None if is_production else "/docs",
-    redoc_url=None if is_production else "/redoc",
-    openapi_url=None if is_production else "/openapi.json",
-    openapi_tags=[
-        {
-            "name": "Transcription",
-            "description": "Video transcription with Whisper and speaker diarization"
-        },
-        {
-            "name": "Speaker Recognition",
-            "description": "Speaker enrollment and identification using voice biometrics"
-        },
-        {
-            "name": "Chat & RAG",
-            "description": "Chat with videos using LLM and RAG (Retrieval-Augmented Generation)"
-        },
-        {
-            "name": "Video & Utilities",
-            "description": "Video serving, subtitle generation, and utility functions"
-        }
-    ]
-)
 
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Validate runtime configuration."""
     app_settings.validate_runtime()
     print("Application initialized successfully")
@@ -94,6 +62,42 @@ async def startup_event():
                 print(f"- Cleaned up {deleted} old GCS uploads")
         except Exception as e:
             print(f"- GCS cleanup failed (non-critical): {e}")
+
+    yield
+
+
+# Initialize FastAPI app with proper OpenAPI configuration
+app = FastAPI(
+    lifespan=lifespan,
+    title=app_settings.API_TITLE,
+    version=app_settings.API_VERSION,
+    description=app_settings.API_DESCRIPTION,
+    # Disable automatic trailing slash redirects to prevent HTTP redirect issues
+    # (Cloud Run generates http:// redirect URLs instead of https://)
+    redirect_slashes=False,
+    # Disable Swagger UI and ReDoc in production to prevent unauthorized API access
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
+    openapi_tags=[
+        {
+            "name": "Transcription",
+            "description": "Video transcription with Whisper and speaker diarization"
+        },
+        {
+            "name": "Speaker Recognition",
+            "description": "Speaker enrollment and identification using voice biometrics"
+        },
+        {
+            "name": "Chat & RAG",
+            "description": "Chat with videos using LLM and RAG (Retrieval-Augmented Generation)"
+        },
+        {
+            "name": "Video & Utilities",
+            "description": "Video serving, subtitle generation, and utility functions"
+        }
+    ]
+)
 
 
 from fastapi import Request

@@ -2,9 +2,8 @@
 Video and utility endpoints
 """
 import os
-import glob
 import uuid
-from typing import Dict, Optional
+from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, Request, Query
 from fastapi.responses import RedirectResponse, Response

@@ -53,7 +53,8 @@ class _Store:
         }
         if 'transcript' in name:
             scope['index_config'] = params['target_index_config']
-        matching = lambda row: row['table'] == table and all(row.get(key) == value for key, value in scope.items())
+        def matching(row):
+            return row['table'] == table and all(row.get(key) == value for key, value in scope.items())
 
         def execute():
             if name.startswith('replace_'):
