@@ -2,7 +2,7 @@
 from typing import List, Optional
 from fastapi import HTTPException, Request
 from services.model_catalog import ReasoningEffort
-from services.provider_http import is_credit_exhausted
+from services.provider_http import VisionTimeoutError, is_credit_exhausted
 
 # Import LLM module
 try:
@@ -57,6 +57,11 @@ def _provider_error_message(err: Optional[BaseException], provider_name: Optiona
     if code == "llm_config":
         return f"{provider_label} is not configured correctly. Check the API key for this provider."
     if code == "llm_unavailable":
+        if isinstance(err, VisionTimeoutError):
+            return (
+                f"{provider_label} took too long to answer. Visual answers with several images "
+                "can be slow; retry or pick a faster model."
+            )
         return f"{provider_label} is temporarily unavailable. Please retry in a few moments."
     if code == "llm_image_403":
         return "The screenshots needed for visual chat are no longer accessible. Re-index images and retry."

@@ -12,6 +12,16 @@ from services.chat.providers import _get_chat_provider, llm_manager
 from services.chat.segments import _format_segment_time, _segment_bounds, _segment_text
 from services.chat.visual_refs import _load_speaker_reference_embedding
 
+def _thin_evenly(rows: list[dict], limit: int) -> list[dict]:
+    if limit <= 0:
+        return []
+    if len(rows) <= limit:
+        return rows
+    if limit == 1:
+        return [rows[0]]
+    step = (len(rows) - 1) / (limit - 1)
+    return [rows[round(i * step)] for i in range(limit)]
+
 
 def _transcript_window_context(video_hash: str, timestamps: list[float], window_seconds: float = 15.0) -> str:
     transcription = get_transcription_from_any_source(video_hash)
@@ -242,6 +252,8 @@ async def _run_person_comparison_llm(
     if not provider.supports_vision():
         provider = await _get_chat_provider(request, "grok")
         provider_name = "grok"
+    if provider.max_vision_images is not None:
+        intermediates = _thin_evenly(intermediates, provider.max_vision_images - 2)
 
     system_message = (
         "You compare two video frames involving a tagged person. "

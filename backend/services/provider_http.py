@@ -2,6 +2,15 @@
 
 import httpx
 
+
+class VisionGenerationError(Exception):
+    pass
+
+
+class VisionTimeoutError(VisionGenerationError):
+    pass
+
+
 CREDIT_MARKERS = (
     "credit",
     "insufficient balance",
