@@ -10,15 +10,14 @@ import os
 import time
 import torch
 
-# Fix for PyTorch 2.6+ which changed weights_only default to True
-# This is required because pyannote uses lightning_fabric which calls torch.load()
-# with the default weights_only=True, but pyannote models contain pickled objects
+# torch >= 2.6 defaults torch.load to weights_only=True. pyannote 4 opts out itself, but
+# panns_inference (audio_analyzer) still calls torch.load bare on a pickled checkpoint, and
+# this module is imported first in the worker, so the process-wide override stays.
 os.environ.setdefault("TORCH_FORCE_WEIGHTS_ONLY_LOAD", "0")
 
-# Monkey-patch torch.load to use weights_only=False for pyannote compatibility
 _original_torch_load = torch.load
 def _patched_torch_load(*args, **kwargs):
-    kwargs['weights_only'] = False  # Force override - lightning_fabric passes it explicitly
+    kwargs['weights_only'] = False
     return _original_torch_load(*args, **kwargs)
 torch.load = _patched_torch_load
 
@@ -36,7 +35,7 @@ def _even_group_size(count: int, max_per_group: int) -> int:
     return math.ceil(count / math.ceil(count / max_per_group))
 
 
-DIARIZATION_PIPELINE = "pyannote/speaker-diarization-3.1"
+DIARIZATION_PIPELINE = "pyannote/speaker-diarization-community-1"
 
 
 def concatenate_audio_files(audio_files: List[str], output_path: str):
@@ -55,7 +54,7 @@ def concatenate_audio_files(audio_files: List[str], output_path: str):
 
 
 def load_diarization_pipeline(auth_token: Optional[str]):
-    pipeline = Pipeline.from_pretrained(DIARIZATION_PIPELINE, use_auth_token=auth_token)
+    pipeline = Pipeline.from_pretrained(DIARIZATION_PIPELINE, token=auth_token)
     # Batch size changes speed only, not the diarization result.
     pipeline.segmentation_batch_size = settings.DIARIZATION_BATCH_SIZE
     pipeline.embedding_batch_size = settings.DIARIZATION_BATCH_SIZE
@@ -146,7 +145,7 @@ class SpeakerDiarizer:
 
         # Convert diarization result to list of segments
         speaker_segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
             speaker_segments.append({
                 "start": turn.start,
                 "end": turn.end,
@@ -279,10 +278,7 @@ class ChunkedSpeakerDiarizer:
             print(f"[ChunkedDiarizer] Loading speaker embedding model {self.link_model}...")
             log_gpu_memory("ChunkedDiarizer:BeforeEmbedding")
 
-            self.embedding_model = Model.from_pretrained(
-                self.link_model,
-                use_auth_token=self.use_auth_token
-            )
+            self.embedding_model = Model.from_pretrained(self.link_model, token=self.use_auth_token)
 
             # Ensure device is set (in case embedding model is loaded before pipeline)
             if self.device is None:
@@ -603,7 +599,7 @@ class ChunkedSpeakerDiarizer:
 
         # Convert to segments list
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
             segments.append({
                 "start": turn.start + time_offset,  # Adjust for global timeline
                 "end": turn.end + time_offset,
@@ -665,7 +661,7 @@ class ChunkedSpeakerDiarizer:
         log_all_memory("AfterDiarization")
 
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
             segments.append({
                 "start": turn.start + time_offset,
                 "end": turn.end + time_offset,
@@ -735,7 +731,7 @@ class ChunkedSpeakerDiarizer:
 
             # Convert to segments list
             segments = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
+            for turn, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
                 segments.append({
                     "start": turn.start + time_offset,  # Adjust for global timeline
                     "end": turn.end + time_offset,

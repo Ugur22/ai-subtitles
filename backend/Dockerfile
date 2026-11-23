@@ -12,6 +12,7 @@ ENV HF_HOME=/app/.cache/huggingface
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 \
+    libpython3.10 \
     python3-pip \
     ffmpeg \
     libglib2.0-0 \
@@ -30,7 +31,7 @@ RUN pip install --no-cache-dir huggingface-hub==0.36.2
 COPY download_models.py whisper_models.py /tmp/models/
 RUN python /tmp/models/download_models.py
 
-RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu126
 
 COPY requirements.txt constraints.txt ./
 
@@ -47,6 +48,7 @@ RUN cd /usr/local/lib/python3*/dist-packages \
     && ls -d "$PWD"/nvidia/*/lib > /etc/ld.so.conf.d/nvidia-pip.conf \
     && ldconfig \
     && python -c "import ctranslate2, torch, cv2, onnxruntime as ort; \
+from torchcodec.decoders import AudioDecoder; \
 assert 'CUDAExecutionProvider' in ort.get_available_providers(), ort.get_available_providers(); \
 print('ctranslate2', ctranslate2.__version__, '| torch', torch.__version__, '| cuda', torch.version.cuda, \
 '| cv2', cv2.__version__, '| onnxruntime', ort.__version__)" \

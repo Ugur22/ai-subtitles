@@ -97,7 +97,7 @@ def embed_segments(work: Path, groups: list, embedder: str, token: str) -> list:
             out.append({int(k): data["vectors"][n] for n, k in enumerate(data["index"])})
             continue
         if inference is None:
-            model = Model.from_pretrained(embedder, use_auth_token=token)
+            model = Model.from_pretrained(embedder, token=token)
             inference = Inference(model, window="whole", device=torch.device("cpu"))
         wanted = []
         for label, idx in by_speaker(group["segments"]).items():
