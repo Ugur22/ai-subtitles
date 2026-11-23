@@ -28,16 +28,18 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
     if (!inputValue.trim()) return;
 
     setIsSaving(true);
+    setSaveError(null);
     try {
       await onSave(inputValue);
       setInputValue('');
-    } catch {
-      // Error handled by parent
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save API key');
     } finally {
       setIsSaving(false);
     }
@@ -100,22 +102,30 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
           )}
         </div>
       ) : (
-        <div className="flex gap-2">
-          <input
-            type="password"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            placeholder={provider.placeholder}
-            className="input-base flex-1"
-            disabled={isSaving || isLoading}
-          />
-          <button
-            onClick={handleSave}
-            disabled={!inputValue.trim() || isSaving || isLoading}
-            className="btn-primary"
-          >
-            {isSaving ? 'Saving...' : 'Save'}
-          </button>
+        <div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={inputValue}
+              onChange={(e) => {
+                setInputValue(e.target.value);
+                setSaveError(null);
+              }}
+              placeholder={provider.placeholder}
+              className="input-base flex-1"
+              disabled={isSaving || isLoading}
+            />
+            <button
+              onClick={handleSave}
+              disabled={!inputValue.trim() || isSaving || isLoading}
+              className="btn-primary"
+            >
+              {isSaving ? 'Verifying...' : 'Save'}
+            </button>
+          </div>
+          {saveError && (
+            <p className="text-xs mt-2" style={{ color: 'var(--c-error)' }}>{saveError}</p>
+          )}
         </div>
       )}
     </div>

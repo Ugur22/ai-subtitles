@@ -20,7 +20,6 @@ export interface AddKeyResponse {
   id: string;
   provider: LLMProvider;
   key_suffix: string;
-  is_valid: null; // Always null on creation (async validation)
 }
 
 export interface TestKeyResponse {
@@ -44,10 +43,6 @@ export const getAPIKeys = async (): Promise<APIKey[]> => {
   return response.json();
 };
 
-/**
- * Add a new API key
- * Triggers async validation in the background
- */
 export const addAPIKey = async (
   provider: LLMProvider,
   apiKey: string

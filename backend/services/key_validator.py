@@ -1,31 +1,15 @@
-"""
-API key validation service for async background validation.
-
-Tests API keys against provider endpoints and updates validation status in database.
-"""
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional
 import httpx
 from services.supabase_service import SupabaseService
-from services.encryption import get_encryption_key, decrypt_api_key
 from services.provider_http import is_credit_exhausted, provider_error_detail
 
 
-# After this many seconds a key still pending validation is considered stuck.
-# Background validation is fire-and-forget (FastAPI BackgroundTasks) and the Cloud Run
-# instance can be reclaimed before it runs, leaving is_valid = NULL forever. The frontend
-# polls /api/keys every 2s while any key is null, so a stuck key = perpetual traffic.
-PENDING_KEY_STALE_SECONDS = 600  # 10 minutes
+PENDING_KEY_STALE_SECONDS = 600
 
 
 def sweep_stuck_pending_keys() -> int:
-    """Mark keys stuck in 'pending' validation (is_valid IS NULL) as invalid.
-
-    Guarantees every key reaches a terminal state so the frontend stops polling.
-    Intended to be called from the check-stale Cloud Scheduler job. Returns the
-    number of rows updated.
-    """
     try:
         client = SupabaseService.get_client()
         cutoff = (datetime.now(timezone.utc) - timedelta(seconds=PENDING_KEY_STALE_SECONDS)).isoformat()
@@ -51,63 +35,6 @@ def sweep_stuck_pending_keys() -> int:
     except Exception as e:
         print(f"[KeyValidator] Failed to sweep stuck pending keys: {e}")
         return 0
-
-
-async def validate_api_key_async(user_id: str, provider: str, encrypted_key: str) -> None:
-    """
-    Validate API key in background and update database.
-
-    This runs asynchronously after the key is saved. Updates the is_valid field
-    and validation_error in user_api_keys table.
-
-    Args:
-        user_id: User UUID
-        provider: Provider name (groq, xai, openai, anthropic, deepseek)
-        encrypted_key: Encrypted API key from database
-    """
-    try:
-        # Decrypt the key
-        encryption_key = await get_encryption_key()
-        api_key = decrypt_api_key(encrypted_key, encryption_key)
-
-        # Test the key
-        is_valid, error = await test_provider_key(provider, api_key)
-
-        # Update database
-        client = SupabaseService.get_client()
-
-        update_data = {
-            "is_valid": is_valid,
-            "validation_error": error,
-            "validated_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat()
-        }
-
-        client.table("user_api_keys").update(update_data).eq(
-            "user_id", user_id
-        ).eq("provider", provider).execute()
-
-        if is_valid:
-            print(f"[KeyValidator] Key validated successfully for user {user_id}, provider {provider}")
-        else:
-            print(f"[KeyValidator] Key validation failed for user {user_id}, provider {provider}: {error}")
-
-    except Exception as e:
-        print(f"[KeyValidator] Validation error for user {user_id}, provider {provider}: {e}")
-
-        # Update with error
-        try:
-            client = SupabaseService.get_client()
-
-            client.table("user_api_keys").update({
-                "is_valid": False,
-                "validation_error": f"Validation error: {str(e)}",
-                "validated_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
-            }).eq("user_id", user_id).eq("provider", provider).execute()
-
-        except Exception as db_error:
-            print(f"[KeyValidator] Failed to update error in database: {db_error}")
 
 
 async def test_provider_key(provider: str, api_key: str) -> Tuple[bool, Optional[str]]:
@@ -308,19 +235,3 @@ async def _test_deepseek(api_key: str, timeout: httpx.Timeout) -> Tuple[bool, Op
         return False, "Could not connect to DeepSeek API"
     except Exception as e:
         return False, f"Test error: {str(e)}"
-
-
-async def test_provider_key_sync(provider: str, api_key: str) -> Tuple[bool, Optional[str]]:
-    """
-    Synchronous version of test_provider_key for immediate validation.
-
-    Used by the POST /api/keys/:provider/test endpoint.
-
-    Args:
-        provider: Provider name
-        api_key: Plain text API key
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    return await test_provider_key(provider, api_key)
