@@ -36,6 +36,7 @@ export function useChatConversation({
     textToSend: string,
     history: Array<{ role: string; content: string }>,
     assistantId: string,
+    signal: AbortSignal,
   ) => {
     const updateAssistant = (update: (message: Message) => Message) => updateMessage(assistantId, update);
     try {
@@ -54,6 +55,7 @@ export function useChatConversation({
           conversation_history: history.length > 0 ? history : undefined,
         },
         {
+          signal,
           adapter: "fetch",
           responseType: "stream",
           headers: { Accept: "text/event-stream" },
@@ -133,6 +135,7 @@ export function useChatConversation({
         reader.releaseLock();
       }
     } catch (error: unknown) {
+      if (signal.aborted) return;
       if (axios.isAxiosError<unknown>(error) && error.response?.data instanceof ReadableStream) {
         try {
           const body: unknown = await new Response(error.response.data).json();
@@ -155,6 +158,7 @@ export function useChatConversation({
     updateMessage(messageId, (m) => ({ ...m, swap, ...(content !== undefined && { content }) }));
 
   const swapControllers = useRef(new Map<string, AbortController>());
+  const streamController = useRef<AbortController | null>(null);
 
   const swapComparisonFrame = async (
     messageId: string,
@@ -252,15 +256,29 @@ export function useChatConversation({
     setLoading(true);
 
     const history = buildConversationHistory(messages, retryQuestion);
+    const controller = new AbortController();
+    streamController.current = controller;
 
     void (async () => {
       try {
-        await sendViaStream(textToSend, history, placeholderAssistant.id);
+        await sendViaStream(textToSend, history, placeholderAssistant.id, controller.signal);
       } finally {
-        setLoading(false);
+        const isLatestSend = streamController.current === controller;
+        if (isLatestSend) {
+          streamController.current = null;
+          setLoading(false);
+        }
       }
     })();
     return true;
+  };
+
+  const newChat = () => {
+    streamController.current?.abort();
+    for (const controller of swapControllers.current.values()) controller.abort();
+    swapControllers.current.clear();
+    setMessages([]);
+    setLoading(false);
   };
 
   return {
@@ -270,5 +288,6 @@ export function useChatConversation({
     retryMessage: useStableCallback((question: string) => sendMessage(question, { retry: true })),
     swapComparisonFrame: useStableCallback(swapComparisonFrame),
     dismissSwapError: useStableCallback(dismissSwapError),
+    newChat: useStableCallback(newChat),
   };
 }

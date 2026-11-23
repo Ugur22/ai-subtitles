@@ -128,3 +128,51 @@ describe("useChatConversation swap races", () => {
     expect(assistants[1].swap).toBeUndefined();
   });
 });
+
+describe("useChatConversation newChat", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("clears messages so the next question sends no history", async () => {
+    mockApi([
+      sseStream({ type: "token", content: "first answer" }, { type: "done" }),
+      sseStream({ type: "token", content: "fresh answer" }, { type: "done" }),
+    ]);
+    const { result } = renderConversation();
+    await askFirstQuestion(result);
+    expect(result.current.messages).toHaveLength(2);
+
+    act(() => result.current.newChat());
+    expect(result.current.messages).toEqual([]);
+
+    act(() => {
+      result.current.sendMessage("Who is speaking?");
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const lastBody = vi.mocked(axios.post).mock.calls.at(-1)?.[1] as { conversation_history?: unknown };
+    expect(lastBody.conversation_history).toBeUndefined();
+    expect(result.current.messages.map((m) => m.content)).toEqual(["Who is speaking?", "fresh answer"]);
+  });
+
+  it("aborts an in-flight answer without writing an error", async () => {
+    let streamSignal: AbortSignal | undefined;
+    vi.spyOn(axios, "post").mockImplementation(((_url: string, _body: unknown, config?: { signal?: AbortSignal }) => {
+      streamSignal = config?.signal;
+      return new Promise((_resolve, reject) => {
+        config?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }) as typeof axios.post);
+    const { result } = renderConversation();
+
+    act(() => {
+      result.current.sendMessage("Compare Tokyo");
+    });
+    expect(result.current.loading).toBe(true);
+
+    await act(async () => result.current.newChat());
+
+    expect(streamSignal?.aborted).toBe(true);
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.loading).toBe(false);
+  });
+});
