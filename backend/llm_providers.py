@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from PIL import Image
 from services.model_catalog import ReasoningEffort, reasoning_effort_options
+from services.provider_http import VisionGenerationError, VisionTimeoutError
 
 load_dotenv()
 
@@ -86,8 +87,35 @@ def _load_image_as_base64(img_path: str) -> Optional[tuple[str, str]]:
         return None
 
 
+async def _load_images_as_base64(paths: List[str]) -> tuple[List[tuple[str, str]], List[str]]:
+    """Load images off the event loop, in parallel; returns (loaded, failed_paths) in input order."""
+    results = await asyncio.gather(*(asyncio.to_thread(_load_image_as_base64, path) for path in paths))
+    loaded = [result for result in results if result]
+    failed = [path for path, result in zip(paths, results) if not result]
+    return loaded, failed
+
+
+def _vision_retry_failure(
+    provider_label: str,
+    exc: BaseException,
+    *,
+    timeout_seconds: float,
+    model: str,
+    image_count: int,
+) -> VisionGenerationError:
+    # str(asyncio.TimeoutError()) is "", which hid the cause and defeated error classification.
+    context = f"(model {model}, {image_count} images)"
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+        return VisionTimeoutError(f"{provider_label} vision request timed out after {timeout_seconds:.0f}s {context}")
+    return VisionGenerationError(
+        f"{provider_label} vision request failed: {type(exc).__name__}: {str(exc) or 'no detail'} {context}"
+    )
+
+
 class BaseLLMProvider(ABC):
     """Base class for all LLM providers"""
+
+    max_vision_images: Optional[int] = None
 
     @abstractmethod
     async def generate(
@@ -314,17 +342,11 @@ class OpenAIProvider(BaseLLMProvider):
         if not self.api_key or self.api_key == "your_openai_api_key_here":
             raise Exception("OpenAI API key not configured")
 
+        request_timeout = 240.0
         try:
             # Convert images to base64 (supports both URLs and local paths)
-            image_data = []
-            failed_images = []
-            for img_path in image_paths:
-                result = _load_image_as_base64(img_path)
-                if result:
-                    encoded_image, _ = result
-                    image_data.append(encoded_image)
-                else:
-                    failed_images.append(img_path)
+            loaded, failed_images = await _load_images_as_base64(image_paths)
+            image_data = [encoded for encoded, _ in loaded]
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
@@ -354,7 +376,7 @@ class OpenAIProvider(BaseLLMProvider):
                 else:
                     formatted_messages.append(msg)
 
-            async with httpx.AsyncClient(timeout=240.0) as client:  # Longer timeout for vision requests with multiple images
+            async with httpx.AsyncClient(timeout=request_timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -367,7 +389,9 @@ class OpenAIProvider(BaseLLMProvider):
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
-            raise Exception(f"OpenAI vision generation failed: {str(e)}")
+            raise _vision_retry_failure(
+                "OpenAI", e, timeout_seconds=request_timeout, model=self.model, image_count=len(image_paths)
+            ) from e
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -447,20 +471,11 @@ class AnthropicProvider(BaseLLMProvider):
         if not self.api_key or self.api_key == "your_anthropic_api_key_here":
             raise Exception("Anthropic API key not configured")
 
+        request_timeout = 120.0
         try:
             # Convert images to base64 (supports both URLs and local paths)
-            image_data = []
-            failed_images = []
-            for img_path in image_paths:
-                result = _load_image_as_base64(img_path)
-                if result:
-                    encoded_image, media_type = result
-                    image_data.append({
-                        "data": encoded_image,
-                        "media_type": media_type
-                    })
-                else:
-                    failed_images.append(img_path)
+            loaded, failed_images = await _load_images_as_base64(image_paths)
+            image_data = [{"data": encoded, "media_type": media_type} for encoded, media_type in loaded]
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
@@ -499,7 +514,7 @@ class AnthropicProvider(BaseLLMProvider):
                         "content": msg["content"]
                     })
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=request_timeout) as client:
                 payload = {
                     "model": self.model,
                     "messages": user_messages,
@@ -523,7 +538,9 @@ class AnthropicProvider(BaseLLMProvider):
                 result = response.json()
                 return result["content"][0]["text"]
         except Exception as e:
-            raise Exception(f"Anthropic vision generation failed: {str(e)}")
+            raise _vision_retry_failure(
+                "Anthropic", e, timeout_seconds=request_timeout, model=self.model, image_count=len(image_paths)
+            ) from e
 
 
 class GrokProvider(BaseLLMProvider):
@@ -631,6 +648,10 @@ class GrokProvider(BaseLLMProvider):
         """Grok supports vision with grok-vision models"""
         return True
 
+    @property
+    def max_vision_images(self) -> int:
+        return int(os.getenv("XAI_VISION_MAX_IMAGES", "6"))
+
     async def generate_with_images(
         self,
         messages: List[Dict[str, Any]],
@@ -644,15 +665,9 @@ class GrokProvider(BaseLLMProvider):
 
         try:
             # Convert images to base64 (supports both URLs and local paths)
-            image_data = []
-            failed_images = []
-            for img_path in image_paths:
-                result = _load_image_as_base64(img_path)
-                if result:
-                    encoded_image, _ = result
-                    image_data.append(encoded_image)
-                else:
-                    failed_images.append(img_path)
+            image_paths = image_paths[: self.max_vision_images]
+            loaded, failed_images = await _load_images_as_base64(image_paths)
+            image_data = [encoded for encoded, _ in loaded]
 
             if failed_images:
                 print(f"Note: {len(failed_images)} of {len(image_paths)} images could not be loaded. "
@@ -661,11 +676,6 @@ class GrokProvider(BaseLLMProvider):
             if not image_data:
                 # No images could be loaded, fall back to text-only
                 return await self.generate(messages, temperature, max_tokens)
-
-            max_images = int(os.getenv("XAI_VISION_MAX_IMAGES", "6"))
-            if len(image_data) > max_images:
-                print(f"Limiting xAI vision request from {len(image_data)} to {max_images} images")
-                image_data = image_data[:max_images]
 
             # Format messages for Grok Vision API (OpenAI-compatible format)
             formatted_messages = []
@@ -690,8 +700,9 @@ class GrokProvider(BaseLLMProvider):
             vision_model = self.model
             print(f"Using vision model: {vision_model} (thinking effort: {self.reasoning_effort or 'provider-default'})")
 
-            request_timeout = float(os.getenv("XAI_VISION_TIMEOUT_SECONDS", "45"))
-            max_retries = int(os.getenv("XAI_VISION_MAX_RETRIES", "1"))
+            # Reasoning models (grok-4.6+) with several images routinely need more than 45s.
+            request_timeout = float(os.getenv("XAI_VISION_TIMEOUT_SECONDS", "120"))
+            max_retries = max(1, int(os.getenv("XAI_VISION_MAX_RETRIES", "1")))
             last_exception = None
             for attempt in range(max_retries):
                 try:
@@ -734,10 +745,18 @@ class GrokProvider(BaseLLMProvider):
                         last_exception = e
                         continue
                     error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
-                    raise Exception(f"Grok vision generation failed: {str(e)}\nResponse: {error_detail}")
-            raise Exception(f"Grok vision generation failed after {max_retries} attempts: {str(last_exception)}")
+                    raise VisionGenerationError(f"Grok vision generation failed: {str(e)}\nResponse: {error_detail}")
+            raise _vision_retry_failure(
+                "Grok",
+                last_exception,
+                timeout_seconds=request_timeout,
+                model=vision_model,
+                image_count=len(image_data),
+            )
+        except VisionGenerationError:
+            raise
         except Exception as e:
-            raise Exception(f"Grok vision generation failed: {str(e)}")
+            raise Exception(f"Grok vision generation failed: {type(e).__name__}: {str(e)}")
 
 
     async def caption_image(
@@ -752,7 +771,7 @@ class GrokProvider(BaseLLMProvider):
         if not self.api_key or self.api_key == "your_xai_api_key_here":
             return None
 
-        result = _load_image_as_base64(image_path)
+        result = await asyncio.to_thread(_load_image_as_base64, image_path)
         if not result:
             return None
         encoded_image, _ = result
@@ -917,99 +936,6 @@ class DeepSeekProvider(BaseLLMProvider):
     def is_available(self) -> bool:
         """Check if DeepSeek API key is configured."""
         return bool(self.api_key and self.api_key != "your_deepseek_api_key_here")
-
-    def supports_vision(self) -> bool:
-        """DeepSeek's direct API currently rejects OpenAI-style image_url content."""
-        return False
-
-    async def generate_with_images(
-        self,
-        messages: List[Dict[str, Any]],
-        image_paths: List[str],
-        temperature: float = 0.7,
-        max_tokens: int = 2000
-    ) -> str:
-        """Generate response with images using OpenAI-compatible image_url content."""
-        if not self.api_key or self.api_key == "your_deepseek_api_key_here":
-            raise Exception("deepseek_api_key_missing: DeepSeek API key not configured")
-
-        try:
-            image_data = []
-            failed_images = []
-            for img_path in image_paths:
-                result = _load_image_as_base64(img_path)
-                if result:
-                    encoded_image, _ = result
-                    image_data.append(encoded_image)
-                else:
-                    failed_images.append(img_path)
-
-            if failed_images:
-                print(f"Note: {len(failed_images)} of {len(image_paths)} DeepSeek vision images could not be loaded.")
-
-            if not image_data:
-                return await self.generate(messages, temperature, max_tokens)
-
-            formatted_messages = []
-            for msg in messages:
-                if msg["role"] == "user" and image_data:
-                    content = [{"type": "text", "text": msg["content"]}]
-                    for img_b64 in image_data:
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img_b64}"
-                            }
-                        })
-                    formatted_messages.append({
-                        "role": msg["role"],
-                        "content": content
-                    })
-                else:
-                    formatted_messages.append(msg)
-
-            max_retries = 2
-            last_exception = None
-            for attempt in range(max_retries):
-                try:
-                    async with httpx.AsyncClient(timeout=240.0) as client:
-                        print(
-                            f"Calling DeepSeek vision API with {len(image_data)} images "
-                            f"(attempt {attempt + 1}/{max_retries})"
-                        )
-                        response = await client.post(
-                            f"{self.base_url}/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
-                                "model": self.model,
-                                "messages": formatted_messages,
-                                "temperature": temperature,
-                                "max_tokens": max_tokens
-                            }
-                        )
-                        response.raise_for_status()
-                        result = response.json()
-                        return result["choices"][0]["message"]["content"]
-                except (httpx.TimeoutException, httpx.ConnectError) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        print(f"DeepSeek vision timeout/connection error (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
-                        await asyncio.sleep(3)
-                    continue
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (502, 503, 504) and attempt < max_retries - 1:
-                        print(f"DeepSeek vision returned {e.response.status_code} (attempt {attempt + 1}/{max_retries}), retrying in 3s...")
-                        await asyncio.sleep(3)
-                        last_exception = e
-                        continue
-                    error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
-                    raise Exception(f"DeepSeek vision generation failed: {str(e)}\nResponse: {error_detail}")
-            raise Exception(f"DeepSeek vision generation failed after {max_retries} attempts: {str(last_exception)}")
-        except Exception as e:
-            raise Exception(f"DeepSeek vision generation failed: {str(e)}")
 
 
 class LLMManager:

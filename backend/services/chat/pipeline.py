@@ -181,10 +181,18 @@ async def retrieve(ctx: ChatContext) -> AsyncIterator[Union[dict, EarlyAnswer, R
 
     comparison_intent = _detect_comparison_intent(question, video_hash)
     if comparison_intent:
+        comparison = _handle_person_comparison(
+            ctx.request, req.copy(update={"video_hash": video_hash}), comparison_intent
+        )
         if ctx.report_progress:
-            yield phase("comparing", "Comparing person states")
-        comparison_request = req.copy(update={"video_hash": video_hash})
-        response = await _handle_person_comparison(ctx.request, comparison_request, comparison_intent)
+            comparing = phase("comparing", "Comparing person states")
+            yield comparing
+            task = asyncio.create_task(comparison)
+            async for beat in _await_with_heartbeat(task, comparing):
+                yield beat
+            response = task.result()
+        else:
+            response = await comparison
         yield EarlyAnswer(response=response, metered=True)
         return
 
