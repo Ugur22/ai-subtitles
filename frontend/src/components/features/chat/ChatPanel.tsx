@@ -49,6 +49,12 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
     if (conversation.sendMessage(text)) setInput("");
   };
 
+  const startNewChat = () => {
+    conversation.newChat();
+    setInput("");
+    setScreenshotModal(null);
+  };
+
   // Message transitions
   const messageTransitions = useTransition(messages, {
     from: { opacity: 0, transform: "translate3d(0, 10px, 0)" },
@@ -124,6 +130,19 @@ const ChatPanelInner: React.FC<ChatPanelProps> = ({
           <h3>Ask this transcript anything</h3>
           <p>Every answer cites the exact moment in the video — click to jump there.</p>
         </div>
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={startNewChat}
+            aria-label="Start a new chat"
+            className="btn-ghost flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+            </svg>
+            New chat
+          </button>
+        )}
       </div>
 
       <ChatSettingsPanel
