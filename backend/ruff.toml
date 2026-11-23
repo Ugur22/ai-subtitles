@@ -1,9 +1,7 @@
 target-version = "py311"
-extend-exclude = ["venv"]
 
 [lint]
 select = ["E4", "E7", "E9", "F"]
 
 [lint.per-file-ignores]
-# These load .env / extend sys.path before importing the modules that read it.
-"{main.py,worker_main.py,speaker_diarization.py,routers/auth_new.py,services/background_worker.py}" = ["E402"]
+"{worker_main.py,speaker_diarization.py}" = ["E402"]

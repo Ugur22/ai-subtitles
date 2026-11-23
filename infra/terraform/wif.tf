@@ -140,5 +140,5 @@ resource "google_storage_bucket_iam_member" "deployer_staging" {
 resource "google_storage_bucket_iam_member" "agent_staging_reader" {
   bucket = google_storage_bucket.build_staging.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${var.agent_readonly_email}"
+  member = "serviceAccount:agent-readonly@${var.project_id}.iam.gserviceaccount.com"
 }

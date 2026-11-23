@@ -14,26 +14,6 @@ import httpx
 from typing import Optional, Dict, Callable, Any
 from concurrent.futures import ThreadPoolExecutor
 
-
-# Single worker executor for CPU/GPU-bound tasks
-# This prevents blocking the event loop while allowing other requests (auth, status) to be served
-_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
-_screenshot_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenshots")
-
-
-async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
-    """
-    Run a blocking function in a thread pool to avoid blocking the event loop.
-    This ensures that login/auth requests can be processed even during transcription.
-    """
-    loop = asyncio.get_event_loop()
-    if kwargs:
-        return await loop.run_in_executor(
-            _gpu_executor,
-            lambda: func(*args, **kwargs)
-        )
-    return await loop.run_in_executor(_gpu_executor, func, *args)
-
 from config import settings
 from services.db_retry import with_db_retry
 from services.index_errors import IncompleteIndexError
@@ -69,6 +49,25 @@ from services.transcription_checkpoint import (
     settings_key,
     stage_prefix,
 )
+
+
+_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
+_screenshot_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenshots")
+
+
+async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """
+    Run a blocking function in a thread pool to avoid blocking the event loop.
+    This ensures that login/auth requests can be processed even during transcription.
+    """
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        return await loop.run_in_executor(
+            _gpu_executor,
+            lambda: func(*args, **kwargs)
+        )
+    return await loop.run_in_executor(_gpu_executor, func, *args)
+
 
 # First-unit estimates, used until this execution has timed a real one.
 INITIAL_TRANSCRIPTION_CHUNK_ESTIMATE = 120

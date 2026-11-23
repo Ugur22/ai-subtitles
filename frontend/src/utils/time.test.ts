@@ -12,14 +12,8 @@ describe("timeToSeconds", () => {
     expect(timeToSeconds("00:00:05.250")).toBeCloseTo(5.25);
   });
 
-  it("returns 0 for the wrong number of parts", () => {
+  it.each(["02:03", "", "01:02:03:04", "aa:bb:cc"])("returns 0 for malformed %j", (input) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(timeToSeconds("02:03")).toBe(0);
-    expect(timeToSeconds("")).toBe(0);
-  });
-
-  it("returns 0 instead of NaN for non-numeric parts", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(timeToSeconds("aa:bb:cc")).toBe(0);
+    expect(timeToSeconds(input)).toBe(0);
   });
 });

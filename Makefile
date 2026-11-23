@@ -10,7 +10,6 @@ check-fast: lint-backend lint-frontend
 
 check: check-fast test-backend typecheck-frontend test-frontend
 
-# Rules and excludes live in backend/ruff.toml.
 lint-backend:
 	@$(PY) -m ruff check backend
 
