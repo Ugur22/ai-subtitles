@@ -175,7 +175,7 @@ def parse_gh(command):
         return m.group(1), {"unparsable": True}
     opts, i = {"draft": False, "undo": False}, 0
     names = {"-t": "title", "--title": "title", "-b": "body", "--body": "body", "-F": "body_file",
-             "--body-file": "body_file"}
+             "--body-file": "body_file", "-H": "head", "--head": "head"}
     while i < len(tokens):
         t = tokens[i]
         key, val = (t.split("=", 1) + [None])[:2] if t.startswith("--") and "=" in t else (t, None)
@@ -191,7 +191,29 @@ def parse_gh(command):
         elif key in ("-f", "--fill", "--fill-first", "--fill-verbose", "-w", "--web"):
             opts["fill"] = True
         i += 1
+    cds = _CD.findall(command[:m.start()])
+    if cds:
+        opts["cd"] = cds[-1].strip("'\"")
     return m.group(1), opts
+
+
+_CD = re.compile(r"(?:^|[;&|(]\s*|\s)cd\s+(\"[^\"]*\"|'[^']*'|[^\s;&|)]+)")
+
+
+def elsewhere(root, cwd, opts):
+    """Why the command would act on another checkout or branch than the one the hooks see, or None. Hooks get
+    the session's working directory; a `cd` elsewhere or `--head` of another branch would be judged by the
+    wrong code (seen: `cd <worktree> && gh pr create` passed on the main checkout's reviews)."""
+    if opts.get("cd"):
+        target = ledger.repo_root(os.path.join(cwd, os.path.expanduser(opts["cd"])))
+        if not target or os.path.realpath(target) != os.path.realpath(root):
+            return (f"run gh pr from this session's checkout ({root}), not after `cd {opts['cd']}`: the review "
+                    "gate and the ledger only see this checkout. One session, one checkout, no worktrees.")
+    branch = ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if opts.get("head") and opts["head"].split(":")[-1] != branch:
+        return (f"--head {opts['head']} is not the checked-out branch ({branch}); switch to it in this checkout "
+                "and run gh pr from there, so the gate judges that branch's code.")
+    return None
 
 
 def pr_gate(payload):
@@ -204,6 +226,10 @@ def pr_gate(payload):
     root = ledger.repo_root(payload.get("cwd") or ".")
     if not root:
         return None
+    wrong_place = elsewhere(root, payload.get("cwd") or root, opts)
+    if wrong_place:
+        ledger.log(root, payload, "gate", point="pr", action=action, decision="deny", missing=[wrong_place[:120]])
+        return wrong_place
     req = requirements(root)
     if req["tier"] == risk.ORDINARY:
         return None

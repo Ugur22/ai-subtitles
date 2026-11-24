@@ -6,6 +6,18 @@ if ! /usr/local/bin/agent-checks.sh; then
   echo "agent-session: a critical isolation check failed; Claude Code was NOT started." >&2
   exit 1
 fi
+
+# One session per container: sessions share the one checkout, so a second session's refresh or branch switch
+# moves the first one's work (seen: two parallel sessions, and one session's commit landed on the other's
+# branch). Taken before the refresh below. fd 9 is inherited through exec, so Claude Code holds the lock until it
+# exits (background processes it leaves running hold it too; `bin/agent down` clears them).
+LOCK=/work/.agent-session.lock
+if ! { exec 9>"$LOCK" && flock -n 9; }; then
+  echo "agent-session: another session is already running in this container; Claude Code was NOT started." >&2
+  echo "agent-session: finish or /exit that session first (one checkout, one session)." >&2
+  exit 1
+fi
+
 cd /work/ai-subtitles || { echo "agent-session: /work/ai-subtitles missing; run bin/agent up" >&2; exit 1; }
 
 # The clone lives in a volume and outlives image rebuilds. Without this, a session reads the CLAUDE.md,

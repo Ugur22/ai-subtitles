@@ -320,3 +320,18 @@ def test_diff_files_counts_and_added_lines(repo):
     assert files["backend/config.py"]["changes"] == 2 and files["backend/config.py"]["added"] == ["B = 2", "+++ not a header"]
     assert files["frontend/src/utils/time.ts"] == {"path": "frontend/src/utils/time.ts", "old": "", "status": "D",
                                                    "changes": 1, "added": []}
+
+
+def test_pr_commands_must_run_from_the_sessions_checkout(repo, tmp_path):
+    """Seen in the Phase C run: `cd <worktree> && gh pr create` was judged on the main checkout's reviews."""
+    wt = tmp_path / "wt"
+    repo.git("worktree", "add", "-q", "-b", "agent/other", str(wt))
+    reason = pre(repo, f'cd {wt} && gh pr create --title x --body-file pr.md')
+    assert "this session's checkout" in reason and "no worktrees" in reason
+    assert "this session's checkout" in pre(repo, f'cd "{wt}" && gh pr edit 3 --body-file pr.md')
+    assert pre(repo, 'cd backend && gh pr create --title "Fix" --body small') is None, "a subdirectory is fine"
+    assert "--head agent/other is not the checked-out branch" in pre(repo, "gh pr create -H agent/other -t x -b y")
+    assert pre(repo, "gh pr create --head agent/x --title x --body y") is None
+    assert pre(repo, "gh pr create --head Ugur22:agent/x --title x --body y") is None
+    events = [json.loads(x) for x in repo.ledger_file.read_text().splitlines()]
+    assert [e["decision"] for e in events if e["event"] == "gate"] == ["deny", "deny", "deny"]

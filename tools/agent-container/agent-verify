@@ -39,6 +39,18 @@ ip link add agentprobe0 type dummy 2>/dev/null && { ip link del agentprobe0; fai
 ( : >> /run/agent-token/token ) 2>/dev/null && fail "write token" || pass "write token refused"
 npm install -g --prefix /usr/local left-pad >/dev/null 2>&1 && fail "replace global npm packages" || pass "global npm install refused"
 
+echo "== one session per container"
+flock /work/.agent-session.lock sleep 120 &
+holder=$!
+sleep 1
+out=$(/usr/local/bin/agent-session --version 2>&1) && rc=0 || rc=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "another session is already running"; then
+  pass "second concurrent session refused"
+else
+  fail "second concurrent session refused (rc=$rc)"
+fi
+
 echo "== positive: ordinary development"
 cd "$WORK" || { fail "workspace missing"; exit 1; }
 make check >"$VERIFY_TMP/make-check.log" 2>&1 && pass "make check (ruff, pytest, eslint, tsc, vitest)" || { fail "make check"; tail -30 "$VERIFY_TMP/make-check.log"; }
