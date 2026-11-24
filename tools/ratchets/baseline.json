@@ -1,4 +1,28 @@
 {
   "version": 1,
-  "rules": {}
+  "rules": {
+    "route-access": {
+      "allow": {
+        "GET /": "public: health check, returns no user data",
+        "GET /api/billing/plans": "public: static price list for the pricing page",
+        "GET /api/jobs/{job_id}/download/{format}": "job-token: require_token, the job's share token in ?token=",
+        "GET /api/jobs/{job_id}/screenshot_url": "job-token-or-owner: optional_auth + require_job_access (share token or owner)",
+        "GET /api/jobs/{job_id}/video": "job-token: require_token, the job's share token in ?token=",
+        "GET /api/jobs/{job_id}/video_url": "job-token-or-owner: optional_auth + require_job_access (share token or owner)",
+        "GET /api/preload-status": "public: model preload health check, returns no user data",
+        "GET /docs": "framework: FastAPI docs, disabled when ENVIRONMENT=production",
+        "GET /docs/oauth2-redirect": "framework: FastAPI docs helper, disabled when ENVIRONMENT=production",
+        "GET /openapi.json": "framework: FastAPI schema, disabled when ENVIRONMENT=production",
+        "GET /redoc": "framework: FastAPI docs, disabled when ENVIRONMENT=production",
+        "POST /api/auth/forgot-password": "public: password reset request",
+        "POST /api/auth/login": "public: sign-in with email and password",
+        "POST /api/auth/logout": "public: revokes only the caller's own session (test_auth_session_isolation)",
+        "POST /api/auth/register": "public: account creation, invite-gated in the handler",
+        "POST /api/auth/resend-verification": "public: resends a verification email, rate-limited by Supabase",
+        "POST /api/auth/reset-password": "public: password reset with a one-time code (test_auth_session_isolation)",
+        "POST /api/auth/verify-email": "public: email verification with a one-time code",
+        "POST /api/billing/webhook": "webhook: Stripe-Signature verified with STRIPE_WEBHOOK_SECRET before any write"
+      }
+    }
+  }
 }

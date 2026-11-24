@@ -12,11 +12,11 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parent / "rules")]
 import ratchet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-RULES = {}  # rule name -> "module:function", filled as rules are added (D2, D3)
+RULES = {"route-access": "route_access:collect"}  # rule name -> "module:function" (modules in rules/)
 
 
 def collector(spec):

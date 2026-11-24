@@ -1,3 +1,130 @@
 {
-  "mutations": []
+  "mutations": [
+    {
+      "id": "route-without-require-auth",
+      "file": "backend/routers/jobs.py",
+      "find": "@router.post(\"/submit\", response_model=JobSubmitResponse)\n@require_auth\n",
+      "replace": "@router.post(\"/submit\", response_model=JobSubmitResponse)\n",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "protected_or_classified"
+      ],
+      "why": "a new route without a decorator must fail the ratchet"
+    },
+    {
+      "id": "admin-check-removed",
+      "file": "backend/middleware/auth.py",
+      "find": "if not profile.get(\"is_admin\", False):",
+      "replace": "if False:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "admin_routes"
+      ],
+      "why": "a normal user must not reach admin routes"
+    },
+    {
+      "id": "internal-key-not-compared",
+      "file": "backend/middleware/auth.py",
+      "find": "hmac.compare_digest(provided_key, internal_key)",
+      "replace": "True",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "admin_routes"
+      ],
+      "why": "a wrong X-Internal-Key must not grant admin access"
+    },
+    {
+      "id": "email-verification-skipped",
+      "file": "backend/middleware/auth.py",
+      "find": "if not user.get(\"email_confirmed_at\"):",
+      "replace": "if False:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "user_routes"
+      ],
+      "why": "an unverified account must not get a session"
+    },
+    {
+      "id": "job-token-not-checked",
+      "file": "backend/routers/jobs.py",
+      "find": "if not verify_token(job_id, token):",
+      "replace": "if False:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "job_token_routes"
+      ],
+      "why": "another job's token must not open this job's download or video"
+    },
+    {
+      "id": "job-access-without-ownership",
+      "file": "backend/routers/jobs.py",
+      "find": "if user_id and job.get(\"user_id\") == user_id:",
+      "replace": "if user_id:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "job_token_or_owner"
+      ],
+      "why": "any signed-in user must not get another user's video or screenshot URL"
+    },
+    {
+      "id": "webhook-signature-skipped",
+      "file": "backend/routers/billing.py",
+      "find": "        event = stripe.Webhook.construct_event(\n            payload=payload,\n            sig_header=sig_header,\n            secret=webhook_secret,\n        )",
+      "replace": "        event = __import__(\"json\").loads(payload)",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_route_access.py",
+        "-k",
+        "webhook"
+      ],
+      "why": "a forged Stripe event must be rejected before it is processed"
+    }
+  ]
 }
