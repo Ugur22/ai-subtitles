@@ -1,12 +1,12 @@
 """Fetch the chat models a provider currently offers, so model IDs are not hardcoded."""
 
 import hashlib
-import os
 import time
 from typing import Dict, List, Literal, Tuple
 
 import httpx
 
+from config import settings
 from services.provider_http import provider_error_detail
 
 CACHE_TTL_SECONDS = 300
@@ -34,8 +34,14 @@ _ENDPOINTS = {
     "anthropic": ["https://api.anthropic.com/v1/models?limit=100"],
     "xai": ["https://api.x.ai/v1/language-models", "https://api.x.ai/v1/models"],
     "groq": ["https://api.groq.com/openai/v1/models"],
-    "deepseek": [os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/models"],
 }
+
+
+def _endpoints(provider: str) -> List[str]:
+    # Resolved per call so the DeepSeek URL always comes from settings (env, then backend/.env).
+    if provider == "deepseek":
+        return [settings.DEEPSEEK_BASE_URL.rstrip("/") + "/models"]
+    return _ENDPOINTS.get(provider, [])
 
 
 class ModelListError(Exception):
@@ -72,7 +78,7 @@ def filter_chat_models(provider: str, ids: List[str]) -> List[str]:
 
 async def list_models(provider: str, api_key: str, timeout: float = 10.0) -> List[str]:
     """Return chat-capable model IDs, cached briefly. Raises on upstream failure."""
-    urls = _ENDPOINTS.get(provider)
+    urls = _endpoints(provider)
     if not urls or not api_key:
         raise ValueError(f"No model listing for provider '{provider}'")
 

@@ -33,9 +33,9 @@ _audio_analyzer: Optional['AudioAnalyzer'] = None
 
 def resolve_whisper_compute_type() -> str:
     """int8 (the config default) is a CPU setting; default to float16 on CUDA unless set explicitly."""
-    import os
-
-    if settings.FASTWHISPER_DEVICE == "cuda" and "FASTWHISPER_COMPUTE_TYPE" not in os.environ:
+    # model_fields_set holds fields set from the environment or backend/.env, not defaults.
+    # Assigning a field on the instance also marks it set, so tests build a fresh Settings.
+    if settings.FASTWHISPER_DEVICE == "cuda" and "FASTWHISPER_COMPUTE_TYPE" not in settings.model_fields_set:
         return "float16"
     return settings.FASTWHISPER_COMPUTE_TYPE
 
