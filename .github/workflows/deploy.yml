@@ -19,7 +19,8 @@ concurrency:
 
 jobs:
   check:
-    uses: ./.github/workflows/check.yml
+    # main's definition of the checks, run against the deployed commit: a tag can't bring weaker checks.
+    uses: Ugur22/ai-subtitles/.github/workflows/check.yml@main
 
   deploy:
     needs: check
@@ -34,6 +35,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The environment admits any v* tag; only commits already on main may ship.
+      - name: Require the commit to be on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       # Keyless: the OIDC token of this job, in the production environment, is
       # exchanged for ai-subs-deployer (infra/terraform/wif.tf).

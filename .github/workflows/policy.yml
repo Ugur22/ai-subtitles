@@ -1,0 +1,51 @@
+name: policy
+
+# Trusted static policy, kept apart from check.yml (which runs the PR's own code). pull_request_target and
+# pull_request_review jobs here check out main's revision only; the PR is read as data through the API and
+# nothing from it is installed or executed. The verdict is a commit status on the PR's exact head SHA, so a
+# later push has no passing "policy" status until this runs again, and an approval of an older commit
+# doesn't count. Require the "policy" status (source: GitHub Actions) in the main ruleset.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Not named "policy": the required context is the commit status below, and a check run of the same name
+  # would be a second, ambiguous signal. tools/policy/test_workflows.py keeps it that way.
+  trusted-policy-judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.repo.default_branch }}
+          persist-credentials: false
+      - name: Judge the PR with main's policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --jq '.[]' | jq -s . > "$RUNNER_TEMP/reviews.json"
+          if python3 -I tools/policy/check_pr.py "$RUNNER_TEMP/files.jsonl" "$RUNNER_TEMP/reviews.json" "$AUTHOR" "$HEAD_SHA"; then
+            state=success
+          else
+            state=failure
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" -f context=policy \
+            -f description="trusted policy from $(git rev-parse --short HEAD)"
+          [ "$state" = success ]

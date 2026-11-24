@@ -1,0 +1,8 @@
+# System git config (root-owned). The only GitHub credential is the short-lived GitHub App token that
+# bin/agent writes to /run/agent-token; it is scoped to this repository.
+[credential "https://github.com"]
+	helper = /usr/local/bin/git-credential-agent
+[init]
+	defaultBranch = main
+[push]
+	autoSetupRemote = true
