@@ -23,6 +23,8 @@ SENSITIVE_PATHS = [
     (re.compile(r"^backend/(services/(encryption|key_validator)|routers/keys)\.py$"), "API keys and encryption"),
     (re.compile(r"^backend/(config|dependencies)\.py$"), "config and secrets loading"),
     (re.compile(r"^infra/"), "infra"),
+    # Locked once merged (add-only for agents), so a wrong one gives lasting false assurance: advisor first.
+    (re.compile(r"^backend/tests/invariants/"), "protected invariant tests"),
 ]
 SENSITIVE_CONTENT = [
     (re.compile(r"^\s*@(router|app)\.(get|post|put|patch|delete|api_route)\("), "backend/", "route added or changed (auth)"),
