@@ -2,7 +2,6 @@
 FastAPI Application - Video Transcription API
 Refactored with organized structure, Pydantic models, and proper documentation
 """
-import os
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -15,7 +14,7 @@ from middleware.token_refresh import TokenRefreshMiddleware
 from utils.structured_log import install_excepthooks, log_exception
 
 # Disable docs in production for security
-is_production = os.getenv("ENVIRONMENT", "development") == "production"
+is_production = app_settings.is_production
 
 
 @asynccontextmanager

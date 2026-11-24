@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_ROOT: str = os.path.join(os.path.dirname(__file__), "local_data", "media")
     LOCAL_API_BASE_URL: str = "http://localhost:8000"
 
+    # "production" disables the interactive API docs (see main.py).
+    ENVIRONMENT: str = "development"
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
+
     # Directory Configuration - Support Railway persistent volumes via env vars
     # Railway mounts volumes to /data, local dev uses relative paths
     VIDEOS_DIR: str = os.path.join("static", "videos")
