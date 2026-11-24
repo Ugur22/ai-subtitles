@@ -8,16 +8,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-from config import settings as app_settings  # noqa: E402
-from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing, features  # noqa: E402
-from middleware.csrf import CSRFProtectionMiddleware  # noqa: E402
-from middleware.token_refresh import TokenRefreshMiddleware  # noqa: E402
-from utils.structured_log import install_excepthooks, log_exception  # noqa: E402
+from config import settings as app_settings
+from routers import video, chat, speaker, transcription, upload, jobs, diagnostics, auth_new, keys, admin, settings, face_tags, chapters, billing, features
+from middleware.csrf import CSRFProtectionMiddleware
+from middleware.token_refresh import TokenRefreshMiddleware
+from utils.structured_log import install_excepthooks, log_exception
 
 # Disable docs in production for security
 is_production = os.getenv("ENVIRONMENT", "development") == "production"

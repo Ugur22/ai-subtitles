@@ -3,28 +3,35 @@ Configuration management using Pydantic Settings
 """
 import os
 import json
+from pathlib import Path
 from typing import Optional, List
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# backend/.env, resolved from this file rather than the working directory so the
+# API and the worker read the same file wherever they are started from.
+ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 class Settings(BaseSettings):
+    """Application settings: process environment first, then backend/.env, then the defaults below."""
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
-        env_file=".env",
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8",
         extra="ignore",
     )
-    """Application settings loaded from environment variables"""
 
     # API Configuration
     API_TITLE: str = "Video Transcription API"
     API_VERSION: str = "1.0.0"
     API_DESCRIPTION: str = "API for video transcription with Whisper, speaker diarization, and LLM features"
 
-    # CORS Configuration
+    # CORS Configuration. Raw JSON from the CORS_ORIGINS variable; the property
+    # below parses it and falls back to localhost when it is missing or invalid.
+    cors_origins_json: Optional[str] = Field(default=None, validation_alias="CORS_ORIGINS")
+
     @property
     def CORS_ORIGINS(self) -> List[str]:
         """
@@ -32,7 +39,7 @@ class Settings(BaseSettings):
         Expects a JSON array string, e.g., CORS_ORIGINS='["https://myapp.vercel.app","https://app.example.com"]'
         Defaults to localhost for development if not set.
         """
-        cors_env = os.getenv("CORS_ORIGINS")
+        cors_env = self.cors_origins_json
         if cors_env:
             try:
                 origins = json.loads(cors_env)
@@ -51,150 +58,148 @@ class Settings(BaseSettings):
 
     # Runtime mode is explicit: production uses GCS + Cloud Run Jobs, while
     # local development uses filesystem media + detached worker processes.
-    LOCAL_MODE: bool = os.getenv("LOCAL_MODE", "false").lower() == "true"
-    LOCAL_STORAGE_ROOT: str = os.getenv(
-        "LOCAL_STORAGE_ROOT", os.path.join(os.path.dirname(__file__), "local_data", "media")
-    )
-    LOCAL_API_BASE_URL: str = os.getenv("LOCAL_API_BASE_URL", "http://localhost:8000")
+    LOCAL_MODE: bool = False
+    LOCAL_STORAGE_ROOT: str = os.path.join(os.path.dirname(__file__), "local_data", "media")
+    LOCAL_API_BASE_URL: str = "http://localhost:8000"
 
     # Directory Configuration - Support Railway persistent volumes via env vars
     # Railway mounts volumes to /data, local dev uses relative paths
-    VIDEOS_DIR: str = os.getenv("VIDEOS_DIR", os.path.join("static", "videos"))
-    SCREENSHOTS_DIR: str = os.getenv("SCREENSHOTS_DIR", os.path.join("static", "screenshots"))
-    STATIC_DIR: str = os.getenv("STATIC_DIR", "static")
+    VIDEOS_DIR: str = os.path.join("static", "videos")
+    SCREENSHOTS_DIR: str = os.path.join("static", "screenshots")
+    STATIC_DIR: str = "static"
 
     # Whisper Model Configuration
-    FASTWHISPER_MODEL: str = os.getenv("FASTWHISPER_MODEL", "small")
-    FASTWHISPER_DEVICE: str = os.getenv("FASTWHISPER_DEVICE", "cpu")
-    FASTWHISPER_COMPUTE_TYPE: str = os.getenv("FASTWHISPER_COMPUTE_TYPE", "int8")
+    FASTWHISPER_MODEL: str = "small"
+    FASTWHISPER_DEVICE: str = "cpu"
+    FASTWHISPER_COMPUTE_TYPE: str = "int8"
 
     # Speaker Diarization Configuration
-    ENABLE_SPEAKER_DIARIZATION: bool = os.getenv("ENABLE_SPEAKER_DIARIZATION", "true").lower() == "true"
-    HUGGINGFACE_TOKEN: Optional[str] = os.getenv("HUGGINGFACE_TOKEN")
-    MIN_SPEAKERS: int = int(os.getenv("MIN_SPEAKERS", "1"))
-    MAX_SPEAKERS: int = int(os.getenv("MAX_SPEAKERS", "0"))  # 0 = unlimited/auto-detect
+    ENABLE_SPEAKER_DIARIZATION: bool = True
+    HUGGINGFACE_TOKEN: Optional[str] = None
+    MIN_SPEAKERS: int = 1
+    MAX_SPEAKERS: int = 0  # 0 = unlimited/auto-detect
 
     # Chunked Diarization Configuration
     # For long videos, process diarization in chunks to reduce memory usage
-    DIARIZATION_CHUNK_DURATION: int = int(os.getenv("DIARIZATION_CHUNK_DURATION", "900"))
-    DIARIZATION_BATCH_SIZE: int = int(os.getenv("DIARIZATION_BATCH_SIZE", "32"))
-    DIARIZATION_LINK_MODEL: str = os.getenv("DIARIZATION_LINK_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
-    DIARIZATION_SIMILARITY_THRESHOLD: float = float(os.getenv("DIARIZATION_SIMILARITY_THRESHOLD", "0.5"))
-    USE_CHUNKED_DIARIZATION_ABOVE: int = int(os.getenv("USE_CHUNKED_DIARIZATION_ABOVE", "1800"))  # 30 minutes - use chunked processing for videos longer than this
+    DIARIZATION_CHUNK_DURATION: int = 900
+    DIARIZATION_BATCH_SIZE: int = 32
+    DIARIZATION_LINK_MODEL: str = "pyannote/wespeaker-voxceleb-resnet34-LM"
+    DIARIZATION_SIMILARITY_THRESHOLD: float = 0.5
+    USE_CHUNKED_DIARIZATION_ABOVE: int = 1800  # 30 minutes - use chunked processing for videos longer than this
 
     # Memory Management Configuration
-    EMBEDDING_SEGMENTS_PER_SPEAKER: int = int(os.getenv("EMBEDDING_SEGMENTS_PER_SPEAKER", "5"))
-    ENABLE_MEMORY_LOGGING: bool = os.getenv("ENABLE_MEMORY_LOGGING", "true").lower() == "true"
+    EMBEDDING_SEGMENTS_PER_SPEAKER: int = 5
+    ENABLE_MEMORY_LOGGING: bool = True
 
     # LLM Configuration
-    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "grok")
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
-    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
-    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
-    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
-    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
-    XAI_API_KEY: Optional[str] = os.getenv("XAI_API_KEY")
-    XAI_MODEL: str = os.getenv("XAI_MODEL", "grok-beta")
-    DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
-    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEFAULT_LLM_PROVIDER: str = "grok"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-5.6-terra"
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_MODEL: str = "claude-sonnet-5-5"
+    XAI_API_KEY: Optional[str] = None
+    XAI_MODEL: str = "grok-beta"
+    DEEPSEEK_API_KEY: Optional[str] = None
+    DEEPSEEK_MODEL: str = "deepseek-v4-pro"
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     # CLIP Visual Search Configuration
-    ENABLE_VISUAL_SEARCH: bool = os.getenv("ENABLE_VISUAL_SEARCH", "true").lower() == "true"
-    CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
+    ENABLE_VISUAL_SEARCH: bool = True
+    CLIP_MODEL: str = "clip-ViT-B-32"
 
-    TEXT_EMBEDDING_MODEL: str = os.getenv("TEXT_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-    ENABLE_VISION_CAPTIONS: bool = os.getenv("ENABLE_VISION_CAPTIONS", "true").lower() == "true"
-    XAI_CAPTION_MODEL: str = os.getenv("XAI_CAPTION_MODEL", "grok-4.3")
-    XAI_CAPTION_CONCURRENCY: int = int(os.getenv("XAI_CAPTION_CONCURRENCY", "4"))
-    CAPTION_MAX_FRAMES: int = int(os.getenv("CAPTION_MAX_FRAMES", "300"))
-    CAPTION_BACKFILL_MAX_FRAMES: int = int(os.getenv("CAPTION_BACKFILL_MAX_FRAMES", "8"))
-    CAPTION_BACKFILL_TIMEOUT_SECONDS: float = float(os.getenv("CAPTION_BACKFILL_TIMEOUT_SECONDS", "180"))
-    CAPTION_MIN_SIMILARITY: float = float(os.getenv("CAPTION_MIN_SIMILARITY", "0.30"))
-    DENSE_FRAME_INTERVAL_SECONDS: float = float(os.getenv("DENSE_FRAME_INTERVAL_SECONDS", "10"))
-    DENSE_FRAME_MIN_GAP_SECONDS: float = float(os.getenv("DENSE_FRAME_MIN_GAP_SECONDS", "2"))
-    DENSE_FRAME_MAX_COUNT: int = int(os.getenv("DENSE_FRAME_MAX_COUNT", "360"))
+    TEXT_EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    ENABLE_VISION_CAPTIONS: bool = True
+    XAI_CAPTION_MODEL: str = "grok-4.3"
+    XAI_CAPTION_CONCURRENCY: int = 4
+    CAPTION_MAX_FRAMES: int = 300
+    CAPTION_BACKFILL_MAX_FRAMES: int = 8
+    CAPTION_BACKFILL_TIMEOUT_SECONDS: float = 180
+    CAPTION_MIN_SIMILARITY: float = 0.30
+    DENSE_FRAME_INTERVAL_SECONDS: float = 10
+    DENSE_FRAME_MIN_GAP_SECONDS: float = 2
+    DENSE_FRAME_MAX_COUNT: int = 360
 
     # Face Presence Index Configuration
     # Cosine similarity threshold for matching a detected face against a
     # speaker's reference embedding. 0.5 is a reasonable default for ArcFace.
-    FACE_PRESENCE_SIMILARITY_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_SIMILARITY_THRESHOLD", "0.5"))
+    FACE_PRESENCE_SIMILARITY_THRESHOLD: float = 0.5
 
     # A mis-tag can skew the person reference enough to make later matches drift.
-    FACE_TAG_OUTLIER_MIN_SIMILARITY: float = float(os.getenv("FACE_TAG_OUTLIER_MIN_SIMILARITY", "0.5"))
+    FACE_TAG_OUTLIER_MIN_SIMILARITY: float = 0.5
 
     # Relaxed cosine threshold used ONLY for the A/B person-comparison candidate
     # pool, so faint faces (low light, profile, distance - e.g. dim/intimate
     # scenes) still surface as selectable "other moments". Lower than the global
     # 0.5 on purpose; auto-pick still favors confident frames via avg_identity.
-    FACE_PRESENCE_COMPARISON_THRESHOLD: float = float(os.getenv("FACE_PRESENCE_COMPARISON_THRESHOLD", "0.38"))
+    FACE_PRESENCE_COMPARISON_THRESHOLD: float = 0.38
 
     # Verbose per-query debug logging from the chat retrieval pipeline
     # (overlap_score=0 diagnostics, per-result hybrid score dumps). Off in prod.
-    CHAT_DEBUG_LOGS: bool = os.getenv("CHAT_DEBUG_LOGS", "false").lower() == "true"
+    CHAT_DEBUG_LOGS: bool = False
 
     # Audio Analysis Configuration
-    ENABLE_AUDIO_ANALYSIS: bool = os.getenv("ENABLE_AUDIO_ANALYSIS", "true").lower() == "true"
-    PANNS_MODEL: str = os.getenv("PANNS_MODEL", "Cnn14_mAP=0.431")
-    AUDIO_EVENT_THRESHOLD: float = float(os.getenv("AUDIO_EVENT_THRESHOLD", "0.3"))
+    ENABLE_AUDIO_ANALYSIS: bool = True
+    PANNS_MODEL: str = "Cnn14_mAP=0.431"
+    AUDIO_EVENT_THRESHOLD: float = 0.3
 
     # VAD (Voice Activity Detection) Configuration
-    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
-    VAD_THRESHOLD: float = float(os.getenv("VAD_THRESHOLD", "0.2"))  # Lower = more permissive (default was 0.5, too aggressive)
-    VAD_MIN_SILENCE_DURATION_MS: int = int(os.getenv("VAD_MIN_SILENCE_DURATION_MS", "500"))
+    VAD_ENABLED: bool = True
+    VAD_THRESHOLD: float = 0.2  # Lower = more permissive (default was 0.5, too aggressive)
+    VAD_MIN_SILENCE_DURATION_MS: int = 500
 
     # GCS Upload Configuration
-    ENABLE_GCS_UPLOADS: bool = os.getenv("ENABLE_GCS_UPLOADS", "false").lower() == "true"
-    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "ai-subs-uploads")
-    GCS_UPLOAD_PREFIX: str = os.getenv("GCS_UPLOAD_PREFIX", "uploads/")
-    GCS_PROCESSED_PREFIX: str = os.getenv("GCS_PROCESSED_PREFIX", "processed/")
-    GCS_SCREENSHOTS_PREFIX: str = os.getenv("GCS_SCREENSHOTS_PREFIX", "screenshots/")
-    GCS_SIGNED_URL_EXPIRY: int = int(os.getenv("GCS_SIGNED_URL_EXPIRY", "3600"))  # 1 hour for uploads
-    GCS_DOWNLOAD_URL_EXPIRY: int = int(os.getenv("GCS_DOWNLOAD_URL_EXPIRY", "604800"))  # 7 days for playback
+    ENABLE_GCS_UPLOADS: bool = False
+    GCS_BUCKET_NAME: str = "ai-subs-uploads"
+    GCS_UPLOAD_PREFIX: str = "uploads/"
+    GCS_PROCESSED_PREFIX: str = "processed/"
+    GCS_SCREENSHOTS_PREFIX: str = "screenshots/"
+    GCS_SIGNED_URL_EXPIRY: int = 3600  # 1 hour for uploads
+    GCS_DOWNLOAD_URL_EXPIRY: int = 604800  # 7 days for playback
     # 30-day target retention is achieved via daily refresh-screenshot-urls cron;
     # the underlying V4 sign call clamps to 7 days per GCS limit.
-    GCS_SCREENSHOT_URL_EXPIRY: int = int(os.getenv("GCS_SCREENSHOT_URL_EXPIRY", "2592000"))
+    GCS_SCREENSHOT_URL_EXPIRY: int = 2592000
     # Background URL refresh job: V4 signed URLs cap at 7 days, so a daily
     # scheduler call re-signs URLs in jobs.result_json and image_embeddings
     # so anything completed within the cutoff window never goes stale at rest.
-    URL_REFRESH_CUTOFF_DAYS: int = int(os.getenv("URL_REFRESH_CUTOFF_DAYS", "30"))
-    URL_REFRESH_BATCH_SIZE: int = int(os.getenv("URL_REFRESH_BATCH_SIZE", "100"))
+    URL_REFRESH_CUTOFF_DAYS: int = 30
+    URL_REFRESH_BATCH_SIZE: int = 100
 
     # Supabase Configuration
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_KEY: str = ""
 
     # App Password Protection
     # Generate hash with: python -c "import hashlib; print(hashlib.sha256('your_password'.encode()).hexdigest())"
     # Leave empty to disable password protection
-    APP_PASSWORD_HASH: Optional[str] = os.getenv("APP_PASSWORD_HASH")
+    APP_PASSWORD_HASH: Optional[str] = None
 
     # Internal service-to-service key. Cloud Scheduler (refresh-screenshot-urls,
     # check-stale) sends this in the X-Internal-Key header so it can hit
     # @require_admin endpoints without a Supabase session JWT. Leave empty to
     # disable the bypass.
-    INTERNAL_API_KEY: Optional[str] = os.getenv("INTERNAL_API_KEY")
+    INTERNAL_API_KEY: Optional[str] = None
 
     # Flagsmith server-side environment key ("ser.…"). Unset = every flag off.
-    FLAGSMITH_SERVER_KEY: Optional[str] = os.getenv("FLAGSMITH_SERVER_KEY")
+    FLAGSMITH_SERVER_KEY: Optional[str] = None
 
     # Cloud Run Worker Job (background pipeline lives here, not in this Service)
-    WORKER_JOB_PROJECT: str = os.getenv("WORKER_JOB_PROJECT", "ai-subs-poc")
-    WORKER_JOB_REGION: str = os.getenv("WORKER_JOB_REGION", "us-central1")
-    WORKER_JOB_NAME: str = os.getenv("WORKER_JOB_NAME", "ai-subs-worker")
+    WORKER_JOB_PROJECT: str = "ai-subs-poc"
+    WORKER_JOB_REGION: str = "us-central1"
+    WORKER_JOB_NAME: str = "ai-subs-worker"
 
     # Long-job continuations. One worker execution works until its time budget is
     # used, checkpoints, and hands the job to a fresh execution.
     # 0 = derive from CLOUD_RUN_TASK_TIMEOUT minus a safety margin (about 50 min).
-    WORKER_TIME_BUDGET_SECONDS: int = int(os.getenv("WORKER_TIME_BUDGET_SECONDS", "0"))
-    CLOUD_RUN_TASK_TIMEOUT: int = int(os.getenv("CLOUD_RUN_TASK_TIMEOUT", "0"))
-    MAX_JOB_CONTINUATIONS: int = int(os.getenv("MAX_JOB_CONTINUATIONS", "12"))
+    WORKER_TIME_BUDGET_SECONDS: int = 0
+    CLOUD_RUN_TASK_TIMEOUT: int = 0
+    MAX_JOB_CONTINUATIONS: int = 12
     # Rough whole-pipeline processing seconds per second of media on the L4
     # worker. Only used to warn about files that look too long to finish.
-    PROCESSING_REALTIME_FACTOR: float = float(os.getenv("PROCESSING_REALTIME_FACTOR", "0.35"))
+    PROCESSING_REALTIME_FACTOR: float = 0.35
 
     def validate_runtime(self) -> None:
         """Reject ambiguous or incomplete runtime modes before accepting work."""
