@@ -48,7 +48,39 @@ jobs:
       - run: |
           grep -viE '^(onnxruntime-gpu|insightface)' backend/requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
           pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest==9.1.1 ruff==0.12.0
-      - run: make lint-backend test-backend PY=python
+      - run: make lint-backend test-backend test-ratchets PY=python
+
+  # Mutation controls (tools/ratchets/mutations.json): each critical test must fail when the protection it guards
+  # is removed. Its own job so the other checks don't wait for it; skips the installs while the list is empty.
+  mutation-controls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - id: count
+        run: echo "n=$(python3 -c 'import json; print(len(json.load(open("tools/ratchets/mutations.json"))["mutations"]))')" >> "$GITHUB_OUTPUT"
+      - if: steps.count.outputs.n != '0'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - if: steps.count.outputs.n != '0'
+        run: pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+      - if: steps.count.outputs.n != '0'
+        run: |
+          grep -viE '^(onnxruntime-gpu|insightface)' backend/requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
+          pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest==9.1.1
+      - if: steps.count.outputs.n != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - if: steps.count.outputs.n != '0'
+        run: npm ci
+        working-directory: frontend
+      - run: make mutation-check PY=python
 
   # The policy checker and the agent-container scripts are tested here like any code; policy.yml is what
   # enforces them, from main's revision.
@@ -61,7 +93,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install pytest==9.1.1 pyyaml==6.0.2
-      - run: python -m pytest -q -p no:cacheprovider tools/policy tools/harness
+      - run: python -m pytest -q -p no:cacheprovider tools/policy tools/harness tools/ratchets/test_framework.py
       - run: |
           shellcheck -S warning bin/agent tools/agent-container/init-firewall.sh tools/agent-container/agent-checks.sh \
             tools/agent-container/agent-session tools/agent-container/agent-verify \

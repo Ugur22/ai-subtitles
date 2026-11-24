@@ -25,12 +25,15 @@ OWNER = "Ugur22"
 MIGRATIONS = "backend/sql/migrations/"
 # Paths that decide whether a change is acceptable, or how the agent is confined: only the owner changes them.
 GUARD = re.compile(
-    r"^(\.github/|tools/policy/|tools/agent-container/|tools/harness/|bin/agent$|scripts/hooks/|scripts/githooks/|\.claude/|"
+    r"^(\.github/|tools/policy/|tools/agent-container/|tools/harness/|tools/ratchets/|bin/agent$|scripts/hooks/|scripts/githooks/|\.claude/|"
     r"skills/|\.agents/|infra/|Makefile$|CLAUDE\.md$|AGENTS\.md$|skills-lock\.json$|pytest\.ini$|"
     r"backend/ruff\.toml$|frontend/eslint\.config\.js$|frontend/tsconfig[^/]*\.json$|frontend/vite\.config\.ts$|"
     r"frontend/package\.json$|backend/evals/[^/]*cases[^/]*\.json$)"
 )
 TEST = re.compile(r"^backend/tests/.*\.py$|\.test\.tsx?$")
+# Protected behavioural tests: agents may add files here, never change or remove one, so a later change can't
+# weaken the test that guards it.
+INVARIANTS = "backend/tests/invariants/"
 
 
 def file_violations(files, author):
@@ -47,6 +50,9 @@ def file_violations(files, author):
             out.append(f"{name}: guard path; only {OWNER} may change it")
         if author != OWNER and TEST.search(old or name) and status in ("removed", "renamed"):
             out.append(f"{old or name}: test {status}; only {OWNER} may remove tests")
+        if author != OWNER and (old or name).startswith(INVARIANTS) and status != "added":
+            out.append(f"{old or name}: protected invariant test {status}; agents may add invariant tests, "
+                       f"only {OWNER} may change them")
     return out
 
 

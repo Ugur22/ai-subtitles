@@ -26,7 +26,7 @@ def test_app_change_by_agent_passes_file_rules():
 
 def test_agent_cannot_change_any_guard_path():
     for p in [".github/workflows/check.yml", "tools/policy/check_pr.py", "tools/agent-container/agent-checks.sh",
-              "bin/agent", "tools/harness/stop_check.py", "Makefile", "CLAUDE.md", "pytest.ini", "frontend/tsconfig.app.json", "frontend/package.json",
+              "bin/agent", "tools/harness/stop_check.py", "tools/ratchets/baseline.json", "Makefile", "CLAUDE.md", "pytest.ini", "frontend/tsconfig.app.json", "frontend/package.json",
               ".claude/settings.json", "backend/evals/chat_cases.json", "infra/scripts/deploy_image.sh",
               "infra/terraform/iam.tf", "scripts/githooks/pre-commit"]:
         assert cp.file_violations([f(p)], AGENT), p
@@ -143,3 +143,12 @@ def test_policy_loads_only_pure_rules():
     out = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).with_name("check_pr.py"))],
                          capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]"
+
+
+def test_invariant_tests_are_add_only_for_agents():
+    inv = "backend/tests/invariants/test_ownership.py"
+    assert cp.file_violations([f(inv, "added")], AGENT) == []
+    for status in ("modified", "removed"):
+        assert any("protected invariant test" in v for v in cp.file_violations([f(inv, status)], AGENT)), status
+    assert cp.file_violations([f("backend/tests/x.py", "renamed", old=inv)], AGENT)
+    assert cp.file_violations([f(inv, "modified")], OWNER) == []

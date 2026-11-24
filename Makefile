@@ -4,11 +4,12 @@
 
 PY ?= backend/venv/bin/python
 
-.PHONY: check check-fast lint-backend lint-frontend test-backend test-frontend typecheck-frontend
+.PHONY: check check-fast lint-backend lint-frontend test-backend test-frontend typecheck-frontend test-ratchets \
+	ratchet-tighten mutation-check
 
 check-fast: lint-backend lint-frontend
 
-check: check-fast test-backend typecheck-frontend test-frontend
+check: check-fast test-backend test-ratchets typecheck-frontend test-frontend
 
 lint-backend:
 	@$(PY) -m ruff check backend
@@ -25,3 +26,17 @@ typecheck-frontend:
 
 test-frontend:
 	@cd frontend && npx vitest run
+
+# Owner-only engineering rules that may not get worse (tools/ratchets/ratchet.py). Agents fix the code, never the
+# baseline; CI runs the same files, which agent PRs can't change.
+# Exit 5 is "no tests collected": fine until the first rule exists.
+test-ratchets:
+	@env -u TEST_DATABASE_URL $(PY) -m pytest -q -p no:cacheprovider tools/ratchets/rules || [ $$? -eq 5 ]
+
+# Owner: drop stale ratchet exceptions (never adds). Add one: make ratchet-tighten ARGS='--rule R --add FP --reason "..."'
+ratchet-tighten:
+	@$(PY) tools/ratchets/tighten.py $(ARGS)
+
+# Proof that the critical tests catch the bugs they exist for (tools/ratchets/mutations.json). Needs a clean tree.
+mutation-check:
+	@env -u TEST_DATABASE_URL $(PY) tools/ratchets/run_mutations.py

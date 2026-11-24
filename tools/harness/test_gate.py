@@ -27,7 +27,7 @@ def test_ordinary_small_change():
 def test_sensitive_paths_and_content_raise_the_tier_without_size():
     for path in ("backend/config.py", "backend/middleware/auth.py", "backend/sql/migrations/025_x.sql",
                  "backend/services/job_queue_service.py", "backend/routers/billing.py", "infra/terraform/iam.tf",
-                 "backend/services/encryption.py"):
+                 "backend/services/encryption.py", "backend/tests/invariants/test_ownership.py"):
         assert risk.classify_files([f(path)])["tier"] == "sensitive", path
     content = [
         ("backend/routers/video.py", '@router.get("/api/x")'),

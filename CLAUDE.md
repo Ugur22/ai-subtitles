@@ -74,6 +74,11 @@ Reverting the commit only undoes code. A migration needs its `_rollback.sql` app
 - The hook and the ledger it writes (`.harness/ledger.jsonl` on the host, `/work/.harness/` in the container; summarise with `ai-subs-agent ledger`) are telemetry for retrospectives, not proof: their state is writable by the session it observes.
 - `reviewer` and `advisor` report each finding on one line as `R1 [severity][category:pattern] file:line - summary` (`A1` for advisor), or `No findings.`; the ledger and the gates parse that line, so keep the format.
 
+### Engineering rules (ratchets) and invariant tests
+- `tools/ratchets/` holds rules that may not get worse (run by `make check` and CI). When one fails, fix the code. Never edit `tools/ratchets/` (owner-only; the `policy` check rejects it); if you think an exception is right, say why in the PR description and the user decides.
+- `backend/tests/invariants/` holds protected behavioural tests (ownership, worker lifecycle and the like). Add new test files there for invariants; never change or remove an existing one (the `policy` check rejects it). Work there is Sensitive.
+- A behavioural test for a critical protection needs a mutation control: in the PR description, give the file, the exact text to remove or change, and the test that must then fail. The user adds it to `tools/ratchets/mutations.json` (`make mutation-check`).
+
 ### Releases
 After backend changes, propose the release: merge to `main`, apply any new SQL migration first (only after explicit approval), push a `v*` tag, approve the `deploy` job in GitHub Actions. Suggest the next tag; the user runs these steps. Frontend-only changes need no tag: Netlify deploys on push to `main`. Local `backend/deploy.sh` is an emergency fallback when GitHub Actions is unavailable, run by the user.
 
@@ -81,7 +86,7 @@ After backend changes, propose the release: merge to `main`, apply any new SQL m
 
 ## Verify your work
 
-Run `make check` (offline, about 15 seconds: lint, pytest, tsc, vitest) before reporting a task done; the Stop hook enforces it (see Verification loop). Paid LLM evals are manual: see `backend/evals/README.md`.
+Run `make check` (offline, about 30 seconds: lint, pytest, the ratchets, tsc, vitest) before reporting a task done; the Stop hook enforces it (see Verification loop). Paid LLM evals are manual: see `backend/evals/README.md`.
 
 ## Deployment
 
