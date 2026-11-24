@@ -65,23 +65,40 @@ def repo_root(cwd):
     return _git(cwd or ".", "rev-parse", "--show-toplevel")
 
 
-def state_hash(root):
-    """The tree's whole git-visible state: HEAD (so commits count), every tracked change against HEAD (staged or
-    not, deletions included, lockfiles and configs included) and every untracked file's name and content.
-    Ignored files (node_modules, venvs, .env) are outside it by design."""
-    h = hashlib.sha256()
-    for args in (("rev-parse", "HEAD"), ("diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")):
-        r = subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=60)
-        h.update(r.stdout + b"\0" + str(r.returncode).encode() + b"\0")
-    r = subprocess.run(["git", "-C", root, "ls-files", "-z", "-o", "--exclude-standard"], capture_output=True, timeout=60)
-    for name in sorted(n for n in r.stdout.split(b"\0") if n):
-        h.update(b"U\0" + name + b"\0")
+def snapshot_tree(root):
+    """A git tree of the whole working state: tracked files as they are on disk (deletions included) plus untracked,
+    non-ignored files. Built in a throwaway index seeded from HEAD with no stat cache, so every file's content is
+    compared; reusing the real index would miss a same-size edit made in the same second as its last write
+    ("racily clean"). About 0.1 s on this repository. None if git fails."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="ai-subs-index-")
+    os.close(fd)
+    os.remove(tmp)
+    env = dict(os.environ, GIT_INDEX_FILE=tmp)
+    try:
+        for args in (("read-tree", "HEAD"), ("add", "-A")):
+            if subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=120, env=env).returncode:
+                return None
+        r = subprocess.run(["git", "-C", root, "write-tree"], capture_output=True, timeout=60, env=env)
+        return r.stdout.decode().strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+    finally:
         try:
-            with open(os.path.join(root.encode(), name), "rb") as f:
-                h.update(hashlib.sha256(f.read()).digest())
+            os.remove(tmp)
         except OSError:
-            h.update(b"unreadable")
-    return h.hexdigest()
+            pass
+
+
+def state_hash(root):
+    """The tree's whole git-visible state: HEAD (so commits count) and the exact working tree content
+    (snapshot_tree: tracked changes, deletions, lockfiles and configs, untracked files). Ignored files
+    (node_modules, venvs, .env) are outside it by design. A failed snapshot yields a value that never matches."""
+    tree = snapshot_tree(root)
+    head = _git(root, "rev-parse", "HEAD")
+    if not tree:
+        return "unavailable-" + os.urandom(8).hex()
+    return hashlib.sha256(f"{head}\0{tree}".encode()).hexdigest()
 
 
 def ledger_path(root):
@@ -225,7 +242,9 @@ def handle(payload):
         rec.update(event="subagent", agent=agent)
         if agent in ("reviewer", "advisor"):
             findings, parsed = parse_findings(payload.get("last_assistant_message", ""))
-            rec.update(findings=findings, parsed=parsed, state=state_hash(root)[:16])
+            tree = snapshot_tree(root)
+            rec.update(findings=findings, parsed=parsed, tree=tree,
+                       state=hashlib.sha256(f"{_git(root, 'rev-parse', 'HEAD')}\0{tree}".encode()).hexdigest()[:16])
     elif event in ("PostToolUse", "PostToolUseFailure") and payload.get("tool_name") == "Bash":
         cmd = str((payload.get("tool_input") or {}).get("command", ""))
         if not MAKE_CHECK.search(cmd):

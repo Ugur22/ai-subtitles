@@ -32,12 +32,14 @@ RUN python3 -m venv /opt/graphify \
 # --chmod (0644, so nobody could enter it), and a tar context carries the builder's uid into the image.
 RUN install -d -o root -g root -m 0755 /etc/claude-code
 COPY --chown=root:root --chmod=0755 tools/agent-container/agent-session tools/agent-container/agent-checks.sh tools/agent-container/agent-verify \
-    tools/agent-container/init-firewall.sh tools/agent-container/git-credential-agent tools/agent-container/gh /usr/local/bin/
+    tools/agent-container/init-firewall.sh tools/agent-container/git-credential-agent tools/agent-container/gh \
+    tools/agent-container/ai-risk /usr/local/bin/
 COPY --chown=root:root --chmod=0644 tools/agent-container/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --chown=root:root --chmod=0644 tools/agent-container/gitconfig /etc/gitconfig
 # The Stop hook and ledger that managed-settings.json registers: root-owned, so the agent can't edit what runs.
 RUN install -d -o root -g root -m 0755 /usr/local/lib/ai-subs-harness
 COPY --chown=root:root --chmod=0644 tools/harness/ledger.py tools/harness/stop_check.py tools/harness/ledger_report.py \
+    tools/harness/risk.py tools/harness/gate.py tools/harness/prbody.py \
     /usr/local/lib/ai-subs-harness/
 RUN sha256sum /etc/claude-code/managed-settings.json | cut -d' ' -f1 > /etc/claude-code/managed-settings.sha256 \
     && echo "${SOURCE_COMMIT}" > /etc/agent-image-commit \

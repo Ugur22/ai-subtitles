@@ -87,17 +87,20 @@ def test_committed_work_is_checked(env):
     assert code == 2 and env.runs() == 2 and "lint-frontend:@typescript-eslint/no-unused-vars" in err
 
 
-def test_state_covers_deletions_untracked_and_staged_but_not_ignored(env):
+def test_state_covers_deletions_untracked_and_same_size_edits_but_not_ignored(env):
     env.stop()
     runs = 1
     for change in (lambda: (env.root / "tracked.txt").unlink(),
                    lambda: (env.root / "new.txt").write_text("a"),
                    lambda: (env.root / "new.txt").write_text("b"),
-                   lambda: git(env.root, "add", "-A")):
+                   lambda: (env.root / "new.txt").write_text("c")):  # same size, same second: still seen
         change()
         env.stop()
         runs += 1
         assert env.runs() == runs
+    git(env.root, "add", "-A")  # staging changes no content, so there is nothing new to verify
+    env.stop()
+    assert env.runs() == runs
     (env.root / "ignored").mkdir()
     (env.root / "ignored" / "x").write_text("x")
     env.stop()

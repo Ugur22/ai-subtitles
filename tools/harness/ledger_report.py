@@ -14,14 +14,13 @@ import argparse
 import collections
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ledger  # noqa: E402
+import prbody  # noqa: E402
 
 ACTIONABLE = ("blocker", "should-fix")
-_RESOLUTION = re.compile(r"\b([RA]\d{1,3})\b[^\n]*?\b(fixed|rejected|deferred)\b", re.I)
 
 
 def load(paths):
@@ -51,35 +50,53 @@ def s(v, n=120):
     return ledger.sanitize("" if v is None else v, n)
 
 
-def classify_reviews(events):
-    """Each reviewer/advisor run as productive (actionable findings), clean (parsed, none actionable), redundant
-    (none actionable and the tree state equals an earlier review by the same agent on the same branch) or
-    unparsed (output not in the agreed format)."""
+def classify_reviews(events, dispositions=None, branch=None):
+    """Each reviewer/advisor run as one of:
+    confirmed-productive  an actionable finding (blocker/should-fix) was fixed, per the PR's ## Review
+    rejected-only         every actionable finding was rejected (the review found nothing that held up)
+    unresolved            an actionable finding has no disposition, or a blocker was deferred
+    deferred              actionable findings were deferred, none fixed
+    productive?           actionable findings, but no PR description to confirm what happened to them
+    clean                 parsed, nothing actionable
+    redundant             nothing actionable and the code equals an earlier review by the same agent on the branch
+    unparsed              output not in the agreed format
+    Dispositions (from --pr-body) apply only to runs on --branch."""
     seen, out = set(), []
     for e in events:
         if e.get("event") != "subagent" or e.get("agent") not in ("reviewer", "advisor"):
             continue
         findings = [f for f in e.get("findings") or [] if isinstance(f, dict)]
         actionable = [f for f in findings if f.get("severity") in ACTIONABLE]
-        key = (e.get("agent"), e.get("branch"), e.get("state"))
+        key = (e.get("agent"), e.get("branch"), e.get("tree") or e.get("state"))
+        known = dispositions is not None and e.get("branch") == branch
         if not e.get("parsed"):
             kind = "unparsed"
+        elif actionable and known:
+            disp = [dispositions.get(str(f.get("id", "")).upper(), {}) for f in actionable]
+            states = [d.get("disposition") for d in disp]
+            if None in states or any(f.get("severity") == "blocker" and d.get("disposition") == "deferred"
+                                     for f, d in zip(actionable, disp)):
+                kind = "unresolved"
+            elif "fixed" in states:
+                kind = "confirmed-productive"
+            elif all(st == "rejected" for st in states):
+                kind = "rejected-only"
+            else:
+                kind = "deferred"
         elif actionable:
-            kind = "productive"
-        elif e.get("state") and key in seen:
+            kind = "productive?"
+        elif key[2] and key in seen:
             kind = "redundant"
         else:
             kind = "clean"
-        if e.get("state"):
+        if key[2]:
             seen.add(key)
         out.append((kind, e, findings, actionable))
     return out
 
 
-def resolutions(body):
-    """ID -> fixed|rejected|deferred, from the `## Review` section of a PR description."""
-    m = re.search(r"^##\s*Review\b.*?$(.*?)(?=^##\s|\Z)", body or "", re.M | re.S | re.I)
-    return {i.upper(): st.lower() for i, st in _RESOLUTION.findall(m.group(1))} if m else {}
+KINDS = ("confirmed-productive", "rejected-only", "unresolved", "deferred", "productive?", "clean", "redundant",
+         "unparsed")
 
 
 def report(events, bad, errors, pr_body=None, branch=None):
@@ -134,15 +151,28 @@ def report(events, bad, errors, pr_body=None, branch=None):
     w("\n## Agents")
     agents = collections.Counter(s(e.get("agent"), 40) for e in events if e.get("event") == "subagent")
     w(", ".join(f"{k} {v}" for k, v in sorted(agents.items())) or "no subagent runs")
-    reviews = classify_reviews(events)
+    disp, disp_problems = (prbody.dispositions(pr_body) if pr_body is not None else (None, []))
+    reviews = classify_reviews(events, disp or {} if pr_body is not None else None, branch)
     kinds = collections.Counter(k for k, *_ in reviews)
     if reviews:
-        w("Reviews: " + ", ".join(f"{k} {kinds.get(k, 0)}" for k in ("productive", "clean", "redundant", "unparsed")))
+        w("Reviews: " + ", ".join(f"{k} {kinds[k]}" for k in KINDS if kinds.get(k)))
     for kind, e, findings, actionable in reviews:
         w(f"  {s(e.get('agent'), 20)} {s(e.get('branch'), 60)} @{s(e.get('head'), 12)}: {kind}, "
           f"{len(actionable)} actionable / {len(findings)} findings")
         for f in findings:
             w(f"    {s(f.get('id'), 5)} [{s(f.get('severity'), 10)}][{s(f.get('pattern'), 50)}] {s(f.get('summary'))}")
+
+    # Risk and gates.
+    w("\n## Risk and review gates")
+    rises = [e for e in events if e.get("event") == "risk"]
+    for e in rises:
+        w(f"  risk rose to {s(e.get('tier'), 10)} on {s(e.get('branch'), 60)}: {s('; '.join(e.get('reasons') or []))}")
+    for e in events:
+        if e.get("event") == "risk_escalation":
+            w(f"  escalated to {s(e.get('tier'), 10)} on {s(e.get('branch'), 60)}: {s(e.get('reason'))}")
+    gates = collections.Counter(f"{s(e.get('point'), 10)} {s(e.get('decision'), 20)}" for e in events
+                                if e.get("event") == "gate")
+    w("  gates: " + (", ".join(f"{k} {v}" for k, v in sorted(gates.items())) or "none fired"))
 
     # Recurring patterns: the same specific id in two or more sessions.
     w("\n## Recurring (same pattern id in 2+ sessions)")
@@ -159,7 +189,7 @@ def report(events, bad, errors, pr_body=None, branch=None):
     # Resolution against the PR.
     if pr_body is not None and branch:
         w(f"\n## Findings vs PR review section (branch {s(branch, 60)})")
-        res = resolutions(pr_body)
+        res = {k: v["disposition"] for k, v in (disp or {}).items()}
         latest, ambiguous = {}, set()
         for _, e, findings, _ in reviews:
             if e.get("branch") != branch:
@@ -178,6 +208,8 @@ def report(events, bad, errors, pr_body=None, branch=None):
             w(f"  {fid} [{s(f.get('severity'), 10)}][{s(f.get('pattern'), 50)}]: {status}")
         for fid in sorted(set(res) - set(latest)):
             w(f"  {s(fid, 5)}: in the PR but not in the ledger ({res[fid]})")
+        for p in disp_problems:
+            w(f"  PR format: {s(p)}")
         if ambiguous:
             w(f"  note: {', '.join(sorted(ambiguous))} appear in more than one review; matched to the latest")
     return "\n".join(lines)

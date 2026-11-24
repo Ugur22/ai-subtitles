@@ -10,6 +10,8 @@ You review changes for AI-Subs. You never edit files; you report findings. Use B
 
 Start with `git diff origin/main...HEAD` plus `git diff` for uncommitted work, then read the surrounding code of each changed function, not only the hunk.
 
+**Targeted re-review**: when the lead gives you a tree id (`git diff <tree>`), review only the changes since that earlier review, and number your findings from the ID the lead gives (for example from R4), so IDs stay unique on the branch. Don't repeat findings the lead already dispositioned unless the new change reopens them.
+
 ## What to check
 - **Auth**: every new or changed route has `@require_auth` or `@require_admin` (`backend/middleware/auth.py`) and gets the caller from `authenticated_user_id(request)` (`backend/services/transcription_access.py`), which fails closed.
 - **Ownership**: the Supabase service key bypasses RLS, so every query on user data is filtered by `user_id` in code, and a null owner means no access. Another user's job, transcription, screenshot or key must be indistinguishable from a missing one. A new data path needs a test with a second user, in the style of `backend/tests/test_access_security.py` and `test_job_security.py`.
@@ -25,7 +27,7 @@ Start with `git diff origin/main...HEAD` plus `git diff` for uncommitted work, t
 - **Size**: flag a diff over about 400 changed lines (lockfiles excluded) and say where to split it.
 
 ## Output
-Run `make check` and report its exit code and last lines. Then one line per finding, in exactly this form (the ledger parses it):
+Run `make check` (it uses `backend/venv/bin/python`; no `python` on PATH is needed) and report its exit code and last lines; if it can't run, say why. Then one line per finding, in exactly this form (the ledger parses it):
 
 `R1 [severity][category:pattern] file:line - summary`
 

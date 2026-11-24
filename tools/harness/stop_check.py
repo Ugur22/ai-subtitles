@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import gate  # noqa: E402
 import ledger  # noqa: E402
 
 CAP = 3
@@ -111,7 +112,7 @@ def decide(payload):
         if blocks:
             log(outcome="recovered", n=blocks, via="known-green-state")
             remove(counter, flag)
-        return 0, "", None
+        return review_stage(root, sd, session, payload, path, base)
 
     ok, out = run_check(root)
     if ok:
@@ -119,7 +120,7 @@ def decide(payload):
         remove(counter, flag)
         if ledger.state_hash(root) == current:
             write(stamp, current)
-        return 0, "", None
+        return review_stage(root, sd, session, payload, path, base)
 
     step, pattern = ledger.check_failure(out)
     if blocks >= CAP:
@@ -153,6 +154,49 @@ def decide(payload):
                      "state the remaining failure, what you tried and whether you consulted the advisor agent.")
     lines.append(tail(out, 60))
     return 2, "\n".join(lines), None
+
+
+def review_stage(root, sd, session, payload, path, base):
+    """After a green check: the review requirements for review/sensitive changes (gate.py). The fallback for a
+    lead that skipped them; bounded by its own cap of 3 blocks, then NOT READY like a red check."""
+    if not gate.enabled():
+        return 0, "", None
+    req = gate.requirements(root, session)
+    counter, flag = os.path.join(sd, f"review-blocks-{session}"), os.path.join(sd, f"review-status-{session}")
+    if not req["missing"] and not req["limit_reached"]:
+        remove(counter, flag)
+        return 0, "", None
+
+    def log(**kw):
+        ledger.append(path, {**base, "event": "gate", "point": "stop", "tier": req["tier"],
+                             "missing": [ledger.sanitize(m, 120) for m in req["missing"][:6]], **kw})
+
+    unmet = list(req["missing"])
+    if req["limit_reached"]:
+        unmet.append(f"{gate.MAX_ROUNDS} review rounds used; changes since the last review are unreviewed: "
+                     + "; ".join(req["delta"]))
+    blocks = int(read(counter)) if read(counter).isdigit() else 0
+    if req["limit_reached"] or blocks >= CAP:
+        last = str(payload.get("last_assistant_message") or "")
+        if not STATUS.search(last) and not os.path.exists(flag):
+            write(flag, "1")
+            log(decision="status-demanded", n=blocks)
+            return 2, (f"The review requirements for this {req['tier']} change are still not met. Do not start "
+                       "another review round. Your final message must start with `NOT READY:` and list what is "
+                       "unreviewed or unresolved, what the reviews found, and whether you consulted the advisor. "
+                       "If a PR is open it must stay a draft. Then stop.\n- " + "\n- ".join(unmet)), None
+        pr = draft_pr(root)
+        log(decision="giveup", n=blocks, status_given=bool(STATUS.search(last)), pr=pr)
+        remove(counter, flag)
+        note = {"drafted": " Its PR was converted to a draft.", "already-draft": " Its PR is a draft."}.get(pr, "")
+        return 0, "", {"systemMessage": f"Review requirements for this {req['tier']} change are not met: the work is "
+                                        f"NOT ready to merge.{note}\n- " + "\n- ".join(unmet)}
+    n = blocks + 1
+    write(counter, str(n))
+    log(decision="block", n=n)
+    return 2, (f"`make check` is green, but this is a {req['tier']} change and its review requirements are not met "
+               f"(review block {n}/{CAP}). Reasons: {'; '.join(req['classification']['reasons'][:4]) or 'escalated'}."
+               "\n- " + "\n- ".join(unmet) + "\nRun `ai-risk status` to check. See CLAUDE.md (Risk lifecycle)."), None
 
 
 def main():
