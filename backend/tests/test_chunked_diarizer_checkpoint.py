@@ -155,7 +155,8 @@ def test_fully_cached_run_needs_no_models_or_audio(diarizer):
     assert diarizer.calls["concat"] == []
 
 
-def test_worker_keeps_groups_until_final_save_and_then_uses_final_cache(monkeypatch, diarizer):
+@pytest.fixture
+def worker_stage(monkeypatch, diarizer):
     from services import background_worker as worker
 
     cache = FakeCache()
@@ -164,23 +165,37 @@ def test_worker_keeps_groups_until_final_save_and_then_uses_final_cache(monkeypa
     monkeypatch.setattr(worker.settings, "ENABLE_SPEAKER_DIARIZATION", True)
     monkeypatch.setattr(worker.settings, "USE_CHUNKED_DIARIZATION_ABOVE", 600)
     monkeypatch.setattr(worker.settings, "DIARIZATION_CHUNK_DURATION", 600)
+    monkeypatch.setattr(worker.settings, "DIARIZATION_LINK_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
+    monkeypatch.setattr(worker.settings, "DIARIZATION_SIMILARITY_THRESHOLD", 0.5)
+    monkeypatch.setattr(worker, "DIARIZATION_PIPELINE", "pyannote/speaker-diarization-community-1")
     monkeypatch.setattr(worker, "_check_cancelled", lambda job_id: None)
     monkeypatch.setattr(worker.JobQueueService, "update_progress", lambda *args: None)
 
-    def run(budget, cached=None):
+    def run(budget):
+        bounds = dict(num_speakers=None, min_speakers=None, max_speakers=None)
+        param_key = worker._diarization_param_key(**bounds)
         return asyncio.run(worker._run_diarization_stage(
             job_id="job", user_id="user", video_hash="hash", audio_chunks=_chunks(),
             full_audio_path=None, formatted_segments=[{"start": 0, "end": 1, "text": "Hi"}],
-            cached_diarization=cached, speaker_bounds={},
-            diarization_param_key=worker._diarization_param_key(None, None, None), budget=budget,
+            cached_diarization=worker._get_cached_diarization("user", "hash", param_key),
+            speaker_bounds=bounds, diarization_param_key=param_key, budget=budget,
         ))
 
+    return cache, run
+
+
+def test_worker_keeps_groups_until_final_save_and_then_uses_final_cache(monkeypatch, diarizer, worker_stage):
+    cache, run = worker_stage
     budget = TimeBudget(3600)
     monkeypatch.setattr(budget, "fits", lambda *args: budget.units_done < 2)
     with pytest.raises(ContinuationRequested):
         run(budget)
     assert diarizer.calls["diarize"] == [0, 1]
-    assert len(cache.rows) == 2
+    # These are the keys an in-flight community-1 job wrote before final cache versioning.
+    assert {stage for _, _, stage in cache.rows} == {
+        "diarization_group:9c391d8638bee505:segments:0000",
+        "diarization_group:9c391d8638bee505:segments:0001",
+    }
 
     with monkeypatch.context() as patch:
         save = cache.save_cache
@@ -200,6 +215,26 @@ def test_worker_keeps_groups_until_final_save_and_then_uses_final_cache(monkeypa
     final_key = ("user", "hash", "diarization")
     assert set(cache.rows) == {final_key}
     assert expected[0]["speaker"] == cache.rows[final_key]["speaker_segments"][0]["speaker"]
-    assert run(TimeBudget(0), cached=cache.rows[final_key]) == expected
+    assert run(TimeBudget(0)) == expected
     assert diarizer.calls["diarize"] == [0, 1, 2]
     assert diarizer.calls["embed"] == [0, 1, 2]
+
+
+def test_worker_recomputes_legacy_final_cache_then_reuses_current_pipeline(worker_stage, diarizer, monkeypatch):
+    from services import background_worker as worker
+
+    cache, run = worker_stage
+    legacy_key = "None_None_None|pyannote/wespeaker-voxceleb-resnet34-LM@0.5/min1.0"
+    cache.save_cache("user", "hash", "diarization", {
+        "param_key": legacy_key,
+        "speaker_segments": [{"start": 0, "end": 1, "speaker": "LEGACY"}],
+    })
+
+    fresh = run(TimeBudget(3600))
+    assert fresh[0]["speaker"] != "LEGACY"
+    assert diarizer.calls["diarize"] == [0, 1, 2]
+    assert run(TimeBudget(0)) == fresh
+    assert diarizer.calls["diarize"] == [0, 1, 2]
+
+    monkeypatch.setattr(worker, "DIARIZATION_PIPELINE", "other-pipeline")
+    assert worker._get_cached_diarization("user", "hash", worker._diarization_param_key(None, None, None)) is None

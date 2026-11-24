@@ -8,6 +8,9 @@ class FakeCache:
         self.rows = {}
         self.fail_saves = False
 
+    def get_cached(self, user_id, video_hash, stage):
+        return self.rows.get((user_id, video_hash, stage))
+
     def get_cached_prefix(self, user_id, video_hash, prefix):
         return {
             stage: data for (owner, media, stage), data in self.rows.items()
