@@ -215,6 +215,7 @@ def test_job_token_or_owner_routes(table):
 
 def test_webhook_rejects_an_invalid_signature(app, monkeypatch):
     import httpx
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     (fp,) = classified("webhook")
     method, path = fp.split(" ", 1)
