@@ -262,6 +262,132 @@ def assign_speakers_to_segments(transcription_segments: list, speaker_segments: 
     return segments
 
 
+async def _run_diarization_stage(
+    *, job_id: str, user_id: str, video_hash: str, formatted_segments: list,
+    audio_chunks: list, full_audio_path: Optional[str], cached_diarization: Optional[dict],
+    speaker_bounds: dict, diarization_param_key: str, budget: TimeBudget,
+) -> list:
+    if cached_diarization:
+        speaker_segments = cached_diarization["speaker_segments"]
+        formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+        print(f"[Worker] Using cached diarization: {len(speaker_segments)} speaker segments")
+        JobQueueService.update_progress(job_id, 75, "diarizing", "Diarization loaded from cache")
+        return formatted_segments
+
+    if not settings.ENABLE_SPEAKER_DIARIZATION:
+        print("[Worker] Speaker diarization disabled")
+        for seg in formatted_segments:
+            seg['speaker'] = "SPEAKER_00"
+        JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
+        return formatted_segments
+
+    _check_cancelled(job_id)
+    JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
+    diarization_checkpoint = None
+    try:
+        total_duration = len(audio_chunks) * TRANSCRIPTION_CHUNK_SECONDS
+
+        if total_duration > settings.USE_CHUNKED_DIARIZATION_ABOVE:
+            print(f"[Worker] Using chunked diarization for {total_duration}s ({total_duration/60:.1f} min) video")
+            JobQueueService.update_progress(job_id, 60, "diarizing", "Using chunked diarization for long video...")
+
+            chunked_diarizer = ChunkedSpeakerDiarizer(
+                chunk_duration=settings.DIARIZATION_CHUNK_DURATION,
+                similarity_threshold=settings.DIARIZATION_SIMILARITY_THRESHOLD,
+                use_auth_token=settings.HUGGINGFACE_TOKEN,
+                link_model=settings.DIARIZATION_LINK_MODEL,
+            )
+
+            diarization_key = settings_key(
+                speakers=diarization_param_key,
+                group_seconds=settings.DIARIZATION_CHUNK_DURATION,
+                chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
+                total_chunks=len(audio_chunks),
+                pipeline=DIARIZATION_PIPELINE,
+                linking=linking_signature(
+                    settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
+                ),
+            )
+            group_seconds = min(total_duration, settings.DIARIZATION_CHUNK_DURATION)
+            diarization_checkpoint = BudgetedCheckpoint(
+                PipelineCacheService, user_id, video_hash,
+                stage_prefix(DIARIZATION_PREFIX, diarization_key),
+                budget=budget,
+                initial_estimates={
+                    "segments": INITIAL_DIARIZATION_SECONDS_PER_AUDIO_SECOND * group_seconds,
+                    "embeddings": INITIAL_EMBEDDING_SECONDS_PER_AUDIO_SECOND * group_seconds,
+                },
+                check_cancelled=lambda: _check_cancelled(job_id),
+            )
+
+            try:
+                speaker_segments = await _run_in_executor(
+                    chunked_diarizer.diarize_chunked,
+                    audio_chunks=audio_chunks,
+                    chunk_duration=TRANSCRIPTION_CHUNK_SECONDS,
+                    checkpoint=diarization_checkpoint,
+                    **speaker_bounds,
+                )
+            finally:
+                chunked_diarizer.unload_pipeline()
+                del chunked_diarizer
+                clear_gpu_memory("Worker:AfterChunkedDiarization")
+
+            formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
+
+        else:
+            print(f"[Worker] Using standard full-video diarization for {total_duration}s ({total_duration/60:.1f} min) video")
+
+            diarizer = get_speaker_diarizer()
+
+            if diarizer and full_audio_path:
+                print("[Worker] Performing speaker diarization on full video...")
+
+                formatted_segments = await _run_in_executor(
+                    SpeakerService.add_speaker_labels,
+                    audio_path=full_audio_path,
+                    segments=formatted_segments,
+                    diarizer=diarizer,
+                    **speaker_bounds,
+                )
+
+                clear_gpu_memory("Worker:AfterStandardDiarization")
+
+                # Extract speaker_segments for caching
+                speaker_segments = [
+                    {"start": s["start"], "end": s["end"], "speaker": s.get("speaker", "UNKNOWN")}
+                    for s in formatted_segments
+                    if not s.get("is_silent")
+                ]
+            else:
+                print("[Worker] Speaker diarization not available, skipping")
+                for seg in formatted_segments:
+                    seg['speaker'] = "SPEAKER_00"
+                speaker_segments = None
+
+        # Cache diarization results
+        if speaker_segments is not None:
+            saved = PipelineCacheService.save_cache(user_id, video_hash, "diarization", {
+                "speaker_segments": speaker_segments,
+                "param_key": diarization_param_key,
+            })
+            if saved and diarization_checkpoint is not None:
+                diarization_checkpoint.clear()
+
+        JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
+
+    except (JobCancelled, ContinuationRequested):
+        # Must not fall into the "label everything SPEAKER_00" fallback below.
+        raise
+    except Exception as e:
+        print(f"[Worker] Speaker diarization failed: {e}")
+        traceback.print_exc()
+        for seg in formatted_segments:
+            seg['speaker'] = "SPEAKER_00"
+        JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (error)")
+    return formatted_segments
+
+
 class BackgroundWorker:
     """Worker for processing transcription jobs in the background"""
 
@@ -349,9 +475,9 @@ class BackgroundWorker:
                 raise RuntimeError("Job has no owner; refusing unscoped processing")
             params = job.get("params", {})
 
-            num_speakers = params.get("num_speakers")
-            min_speakers = params.get("min_speakers")
-            max_speakers = params.get("max_speakers")
+            speaker_bounds = {
+                name: params.get(name) for name in ("num_speakers", "min_speakers", "max_speakers")
+            }
             language = params.get("language")
             force_language = params.get("force_language", False)
             model_name = resolve_whisper_model(params.get("model"))
@@ -369,7 +495,7 @@ class BackgroundWorker:
             cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, transcription_stage)
             cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
 
-            diarization_param_key = _diarization_param_key(num_speakers, min_speakers, max_speakers)
+            diarization_param_key = _diarization_param_key(**speaker_bounds)
             if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
                 print("[Worker] Diarization cache param mismatch, invalidating")
                 cached_diarization = None
@@ -691,127 +817,13 @@ class BackgroundWorker:
                     max_workers=2,
                 ))
 
-            if cached_diarization:
-                speaker_segments = cached_diarization["speaker_segments"]
-                formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
-                print(f"[Worker] Using cached diarization: {len(speaker_segments)} speaker segments")
-                JobQueueService.update_progress(job_id, 75, "diarizing", "Diarization loaded from cache")
-            elif settings.ENABLE_SPEAKER_DIARIZATION:
-                _check_cancelled(job_id)
-                JobQueueService.update_progress(job_id, 55, "diarizing", "Starting speaker diarization...")
-                diarization_checkpoint_to_clear = None
-                try:
-                    total_duration = len(audio_chunks) * TRANSCRIPTION_CHUNK_SECONDS
-
-                    if total_duration > settings.USE_CHUNKED_DIARIZATION_ABOVE:
-                        print(f"[Worker] Using chunked diarization for {total_duration}s ({total_duration/60:.1f} min) video")
-                        JobQueueService.update_progress(job_id, 60, "diarizing", "Using chunked diarization for long video...")
-
-                        chunked_diarizer = ChunkedSpeakerDiarizer(
-                            chunk_duration=settings.DIARIZATION_CHUNK_DURATION,
-                            similarity_threshold=settings.DIARIZATION_SIMILARITY_THRESHOLD,
-                            use_auth_token=settings.HUGGINGFACE_TOKEN,
-                            link_model=settings.DIARIZATION_LINK_MODEL,
-                        )
-
-                        diarization_key = settings_key(
-                            speakers=diarization_param_key,
-                            group_seconds=settings.DIARIZATION_CHUNK_DURATION,
-                            chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
-                            total_chunks=len(audio_chunks),
-                            pipeline=DIARIZATION_PIPELINE,
-                            linking=linking_signature(
-                                settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD
-                            ),
-                        )
-                        group_seconds = min(total_duration, settings.DIARIZATION_CHUNK_DURATION)
-                        diarization_checkpoint = BudgetedCheckpoint(
-                            PipelineCacheService, user_id, video_hash,
-                            stage_prefix(DIARIZATION_PREFIX, diarization_key),
-                            budget=budget,
-                            initial_estimates={
-                                "segments": INITIAL_DIARIZATION_SECONDS_PER_AUDIO_SECOND * group_seconds,
-                                "embeddings": INITIAL_EMBEDDING_SECONDS_PER_AUDIO_SECOND * group_seconds,
-                            },
-                            check_cancelled=lambda: _check_cancelled(job_id),
-                        )
-
-                        try:
-                            speaker_segments = await _run_in_executor(
-                                chunked_diarizer.diarize_chunked,
-                                audio_chunks=audio_chunks,
-                                chunk_duration=TRANSCRIPTION_CHUNK_SECONDS,
-                                num_speakers=num_speakers,
-                                min_speakers=min_speakers,
-                                max_speakers=max_speakers,
-                                checkpoint=diarization_checkpoint,
-                            )
-                        finally:
-                            chunked_diarizer.unload_pipeline()
-                            del chunked_diarizer
-                            clear_gpu_memory("Worker:AfterChunkedDiarization")
-
-                        formatted_segments = assign_speakers_to_segments(formatted_segments, speaker_segments)
-                        diarization_checkpoint_to_clear = diarization_checkpoint
-
-                    else:
-                        print(f"[Worker] Using standard full-video diarization for {total_duration}s ({total_duration/60:.1f} min) video")
-
-                        diarizer = get_speaker_diarizer()
-
-                        if diarizer and full_audio_path:
-                            print("[Worker] Performing speaker diarization on full video...")
-
-                            formatted_segments = await _run_in_executor(
-                                SpeakerService.add_speaker_labels,
-                                audio_path=full_audio_path,
-                                segments=formatted_segments,
-                                diarizer=diarizer,
-                                num_speakers=num_speakers,
-                                min_speakers=min_speakers,
-                                max_speakers=max_speakers
-                            )
-
-                            clear_gpu_memory("Worker:AfterStandardDiarization")
-
-                            # Extract speaker_segments for caching
-                            speaker_segments = [
-                                {"start": s["start"], "end": s["end"], "speaker": s.get("speaker", "UNKNOWN")}
-                                for s in formatted_segments
-                                if not s.get("is_silent")
-                            ]
-                        else:
-                            print("[Worker] Speaker diarization not available, skipping")
-                            for seg in formatted_segments:
-                                seg['speaker'] = "SPEAKER_00"
-                            speaker_segments = None
-
-                    # Cache diarization results
-                    if speaker_segments is not None:
-                        saved = PipelineCacheService.save_cache(user_id, video_hash, "diarization", {
-                            "speaker_segments": speaker_segments,
-                            "param_key": diarization_param_key,
-                        })
-                        if saved and diarization_checkpoint_to_clear is not None:
-                            diarization_checkpoint_to_clear.clear()
-
-                    JobQueueService.update_progress(job_id, 75, "diarizing", "Speaker diarization completed")
-
-                except (JobCancelled, ContinuationRequested):
-                    # Must not fall into the "label everything SPEAKER_00" fallback below.
-                    raise
-                except Exception as e:
-                    print(f"[Worker] Speaker diarization failed: {e}")
-                    traceback.print_exc()
-                    for seg in formatted_segments:
-                        seg['speaker'] = "SPEAKER_00"
-                    JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (error)")
-            else:
-                print("[Worker] Speaker diarization disabled")
-                for seg in formatted_segments:
-                    seg['speaker'] = "SPEAKER_00"
-                JobQueueService.update_progress(job_id, 75, "diarizing", "Skipped (disabled)")
-
+            formatted_segments = await _run_diarization_stage(
+                job_id=job_id, user_id=user_id, video_hash=video_hash,
+                formatted_segments=formatted_segments, audio_chunks=audio_chunks,
+                full_audio_path=full_audio_path, cached_diarization=cached_diarization,
+                speaker_bounds=speaker_bounds, diarization_param_key=diarization_param_key,
+                budget=budget,
+            )
             _drop_word_timings(formatted_segments)
 
             # The remaining stages are not checkpointed. If this execution already
