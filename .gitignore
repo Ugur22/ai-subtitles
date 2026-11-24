@@ -62,6 +62,8 @@ ENV/
 static/screenshots/
 *.jpg
 *.png
+!docs/images/architecture.png
+!docs/images/architecture-dark.png
 
 # Database files
 *.db
