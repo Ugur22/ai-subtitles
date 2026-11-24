@@ -5,7 +5,7 @@
 # (uid 1000). bin/agent starts the container with every capability dropped, no-new-privileges and no sudo,
 # so the agent can't change the firewall (applied from a separate short-lived container), the managed
 # settings, the Claude Code install or these scripts. Pin the base image by digest before relying on it.
-FROM node:20-bookworm-slim
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 
 ARG CLAUDE_CODE_VERSION=2.1.331
 ARG GRAPHIFY_VERSION=0.9.110

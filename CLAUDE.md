@@ -13,6 +13,30 @@ Pick the tier from what the change touches. When unsure, use the higher tier.
 - **Irreversible or production** (the user only): applying a migration to Supabase, deploys, `terraform apply`/`destroy`, tags and releases, secrets and IAM, approving a deployment. Prepare the files and the exact commands, then stop. Agents have no credentials for these.
 - **Guard paths** (the user only): `.github/`, `tools/policy/`, `tools/agent-container/`, `bin/agent`, `.claude/`, `CLAUDE.md`, hooks, the `Makefile`, lint/test/type-check configs and eval cases. Propose the change in the PR description; never edit them to make a check pass. The trusted `policy` check rejects agent PRs that touch them.
 
+### Agents
+- **Lead**: the main session plans, makes small edits itself, delegates scoped work, runs `make check`, commits and opens the PR. Subagents never commit or push.
+- `backend-developer` (`backend/`), `frontend-developer` (`frontend/`), `bug-fixer` (a failing test or error): scoped changes. Work that spans both starts with the API shape (route, request and response fields) fixed in the plan.
+- `reviewer` (Sonnet, read-only): reviews the diff before the push. Required for every Sensitive change and for any diff a subagent wrote.
+- `advisor` (Opus, read-only): before implementing a Sensitive plan, and after the same failure twice. It advises; the lead decides.
+- Repo-wide searches: the built-in Explore agent.
+- Scale to the task. A small Ordinary change (one module, the lead's own edit) needs no delegation and no review agent; delegate and review when work spans modules or touches a Sensitive area.
+- Every delegation prompt states, so nothing depends on the agent guessing:
+  - **Goal**: one sentence.
+  - **Constraints**: the rules from the plan and this file that apply.
+  - **Scope**: the files or folders to touch.
+  - **Done when**: the exact command(s) and the expected result.
+  - **Earlier attempts**: what was tried and how it failed, or "none".
+  - **Report**: changed files, the last lines of `make check` and its exit code, and what was not verified.
+- In the PR description, under `## Review`, list each `reviewer`/`advisor` finding by its ID with what you did: fixed (commit), rejected (why), or deferred. Write "none run" when no review agent ran.
+
+### Substantial features
+For a feature that spans backend and frontend, adds a table or a family of endpoints, or changes how jobs flow (not for fixes or ordinary features), write a short spec at the top of the PR description before delegating. It is not an approval step: write it, then build it.
+- **Terms**: names for the new concepts, used the same way in code, API and UI.
+- **Acceptance criteria**: observable behavior, each mapped to the test that proves it.
+- **Decisions**: what was chosen and the rejected alternative, one line each. Add a file in `docs/adr/` only when later work must respect the decision.
+- **Slices**: independently testable steps in order, each leaving `make check` green. A Sensitive slice (for example a migration) goes first and alone.
+Prototype only when an unknown (library behavior, performance) decides the design, and throw the prototype away.
+
 ### Releases
 After backend changes, propose the release: merge to `main`, apply any new SQL migration first (only after explicit approval), push a `v*` tag, approve the `deploy` job in GitHub Actions. Suggest the next tag; the user runs these steps. Frontend-only changes need no tag: Netlify deploys on push to `main`. Local `backend/deploy.sh` is an emergency fallback when GitHub Actions is unavailable, run by the user.
 

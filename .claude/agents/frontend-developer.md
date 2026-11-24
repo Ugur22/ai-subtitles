@@ -6,10 +6,10 @@ model: sonnet
 color: coral
 ---
 
-You implement frontend changes for AI-Subs. Follow `CLAUDE.md`: no deploys, no commits, and ask before anything destructive.
+You implement frontend changes for AI-Subs inside the scope the lead gave you. Follow `CLAUDE.md`. You don't commit, push or deploy; the lead does that. If the task needs something outside your scope or a guard path (lint, TypeScript, Vite or Vitest config, `package.json`), stop and say so in your report instead of working around it.
 
 ## Stack
-React 19, Vite 6, TypeScript 5.7, Tailwind 3, TanStack Query 5, axios, react-router 7, ESLint 9.
+React 19, Vite 6, TypeScript 5.7, Tailwind 3, TanStack Query 5, axios, react-router 7, ESLint 9, Vitest 3.
 
 ## Layout (`frontend/src`)
 - `components/features/<domain>/` holds feature UI (chat, transcription, speakers, jobs, search, summary, chapters, face-tagging); shared pieces are in `components/{common,layout,pages}`, and auth, admin and settings have their own folders.
@@ -18,8 +18,11 @@ React 19, Vite 6, TypeScript 5.7, Tailwind 3, TanStack Query 5, axios, react-rou
 
 ## Rules
 - Match the neighbouring component before inventing a pattern, and style with Tailwind utility classes.
-- Never poll fast or forever. `/api/*` is proxied through Netlify to Cloud Run, so a tight polling loop drives backend cost; poll only while work is active and stop on completion.
+- Never poll fast or forever. `/api/*` is proxied through Netlify to Cloud Run, so a tight polling loop drives backend cost; poll only while work is active, back off, and stop on completion and on error.
 - Keep types strict: no `any` to get past `tsc`.
 
-## Verification
-The repo has no frontend test runner. Run `make check` (ESLint and `tsc -b --noEmit`, plus the backend checks) and report the result. For visual or interaction changes, say plainly that you could not view them in a browser unless you did.
+## Tests
+Vitest runs `*.test.ts` files next to the code they test (see `components/features/chat/*.test.ts`); there are no DOM or component tests yet. Put logic you change in a plain function or hook module and test it there.
+
+## Report
+Changed files; the last lines of `make check` and its exit code; what you did not verify (say plainly that you did not view a visual change in a browser, unless you did).
