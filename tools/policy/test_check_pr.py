@@ -131,3 +131,15 @@ def test_main_reads_pr_json_and_puts_fixable_violations_first(tmp_path, capsys):
     assert cp.main(str(files), str(reviews), AGENT, HEAD, str(pr)) == 1
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("risk sensitive") and "approving review" in lines[-2]
+
+
+def test_policy_loads_only_pure_rules():
+    """The trusted check imports risk and prbody, never the git- and file-touching harness modules."""
+    import subprocess
+    import sys
+    code = ("import importlib.util, sys; p = sys.argv[1]; s = importlib.util.spec_from_file_location('c', p); "
+            "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+            "print(sorted(n for n in ('ledger', 'gate', 'stop_check', 'subprocess') if n in sys.modules))")
+    out = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).with_name("check_pr.py"))],
+                         capture_output=True, text=True, check=True).stdout
+    assert out.strip() == "[]"

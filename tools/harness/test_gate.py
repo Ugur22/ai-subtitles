@@ -193,13 +193,13 @@ def test_review_rounds_are_bounded_and_end_as_not_ready(repo, monkeypatch):
     assert "review rounds are used up" in reason and "--draft" in reason
     name = write_body(repo, "NOT READY: m9.py is unreviewed\n\n" + RISK + "\n## Review\nNo findings.\n", "pr2.md")
     assert pre(repo, f'gh pr create --draft --title "[sensitive] x" --body-file {name}') is None
-    monkeypatch.setattr(gate, "_pr_view", lambda root: {"title": "[sensitive] x", "body": RISK + "\n## Review\nNo findings.\n"})
+    monkeypatch.setattr(gate, "pr_view", lambda root, fields: {"title": "[sensitive] x", "body": RISK + "\n## Review\nNo findings.\n"})
     assert "stays a draft" in pre(repo, "gh pr ready 5")
 
 
 def test_ready_is_gated_and_undo_is_not(repo, monkeypatch):
     (repo / "backend/config.py").write_text("A = 2\n")
-    monkeypatch.setattr(gate, "_pr_view", lambda root: {"title": "x", "body": ""})
+    monkeypatch.setattr(gate, "pr_view", lambda root, fields: {"title": "x", "body": ""})
     assert "reviewer:" in pre(repo, "gh pr ready 7")
     assert pre(repo, "gh pr ready 7 --undo") is None
     assert pre(repo, "gh pr edit 7 --add-label x") is None
@@ -290,3 +290,33 @@ def test_hook_protocol_deny_and_context(repo):
     assert ctx["hookEventName"] == "PostToolUse" and "SENSITIVE" in ctx["additionalContext"]
     events = [json.loads(x)["event"] for x in repo.ledger_file.read_text().splitlines()]
     assert events == ["gate", "selfcheck", "risk"]
+
+
+def test_reassess_skips_work_when_the_tree_is_unchanged(repo, monkeypatch):
+    payload = {"hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": str(repo), "session_id": "s"}
+    gate.reassess(payload)
+    calls = []
+    monkeypatch.setattr(gate, "diff_files", lambda *a: calls.append(a) or [])
+    assert gate.reassess(payload) is None and calls == [], "no reclassification without a change"
+
+
+def test_cli_plan_status_escalate(repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    assert gate.cli(["plan", "backend/config.py"]) == 0
+    assert "risk: sensitive" in capsys.readouterr().out
+    (repo / "frontend/src/utils/time.ts").write_text("export const a = 3;\n")
+    gate.cli(["status"])
+    assert "risk: ordinary" in capsys.readouterr().out
+    gate.cli(["escalate", "review", "--reason", "touches the upload flow"])
+    gate.cli(["status"])
+    out = capsys.readouterr().out
+    assert "risk: review (escalated from ordinary)" in out and "still missing: reviewer" in out
+
+
+def test_diff_files_counts_and_added_lines(repo):
+    (repo / "backend/config.py").write_text("A = 1\nB = 2\n+++ not a header\n")
+    (repo / "frontend/src/utils/time.ts").unlink()
+    files = {f["path"]: f for f in gate.diff_files(str(repo), gate.merge_base(str(repo)), ledger.snapshot_tree(str(repo)))}
+    assert files["backend/config.py"]["changes"] == 2 and files["backend/config.py"]["added"] == ["B = 2", "+++ not a header"]
+    assert files["frontend/src/utils/time.ts"] == {"path": "frontend/src/utils/time.ts", "old": "", "status": "D",
+                                                   "changes": 1, "added": []}

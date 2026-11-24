@@ -1,4 +1,5 @@
-"""Risk-based review gates for the agent container (enabled by AI_SUBS_REVIEW_GATE=1 in managed settings).
+"""Risk-based review gates for the agent container (enabled by AI_SUBS_REVIEW_GATE=1 in managed settings), and
+the `ai-risk` CLI. risk.py holds the pure rules; this module applies them to git and the ledger.
 
 Three moments, one set of requirements (requirements()):
 - PostToolUse (Edit/Write/Bash): reclassify the branch; the first time a session's tier rises, tell the agent
@@ -13,8 +14,14 @@ changes make the work NOT READY instead of asking for a fourth review.
 
 All of this reads the agent-writable ledger: it catches workflow slips, it does not prove a review happened.
 The trusted check is `policy` in CI plus the owner's approval of the exact commit.
+
+CLI (`ai-risk` in the container):
+  plan PATH...                 tier and required steps for the files you intend to touch (path signals only)
+  status                       tier of the branch against origin/main, and what is still required
+  escalate review|sensitive --reason TEXT
 """
 
+import argparse
 import json
 import os
 import re
@@ -29,25 +36,57 @@ import risk  # noqa: E402
 
 MAX_ROUNDS = 3
 DELTA_LINES = 80
-ACTIONABLE = ("blocker", "should-fix")
 
 
 def enabled():
     return os.environ.get("AI_SUBS_REVIEW_GATE") == "1"
 
 
-def _branch_events(events, branch, agent):
-    return [e for e in events if e.get("event") == "subagent" and e.get("agent") == agent
-            and e.get("branch") == branch]
+# --- git side ----------------------------------------------------------------------------------------------------
+
+def merge_base(root):
+    for ref in ("origin/main", "main"):
+        mb = ledger._git(root, "merge-base", "HEAD", ref)
+        if mb:
+            return mb
+    return ledger._git(root, "rev-parse", "HEAD")
 
 
-def significant_delta(root, reviewed_tree, tree):
+def diff_files(root, base, target):
+    """risk.classify_files input for the change from base (commit or tree) to target (tree)."""
+    status = ledger._git(root, "diff", "--name-status", "-M", base, target, strip=False, timeout=120)
+    patch = ledger._git(root, "diff", "-U0", "--no-color", "-M", base, target, strip=False, timeout=120)
+    added, changes, current, in_hunk = {}, {}, None, False
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            current, in_hunk = line.rsplit(" b/", 1)[-1], False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and current and line[:1] in "+-":
+            changes[current] = changes.get(current, 0) + 1
+            if line[:1] == "+":
+                added.setdefault(current, []).append(line[1:])
+    files = []
+    for line in status.splitlines():
+        parts = line.split("\t")
+        if parts[0][:1] == "R" and len(parts) >= 3:
+            f = {"path": parts[2], "old": parts[1], "status": "R"}
+        elif len(parts) >= 2:
+            f = {"path": parts[1], "old": "", "status": parts[0][:1]}
+        else:
+            continue
+        f.update(changes=changes.get(f["path"], 0), added=added.get(f["path"], []))
+        files.append(f)
+    return files
+
+
+def significant_delta(root, base, reviewed_tree, tree):
     """Reasons the change since the reviewed tree needs another review; [] when it doesn't."""
     if not reviewed_tree or reviewed_tree == tree:
         return []
-    d = risk.classify_delta(root, reviewed_tree, tree)
-    reviewed_files = set((risk._run(root, "diff", "--name-only", risk.merge_base(root), reviewed_tree) or "").split())
-    reasons = [r for r in d["sensitive_content"]]
+    d = risk.classify_files(diff_files(root, reviewed_tree, tree))
+    reviewed_files = set(ledger._git(root, "diff", "--name-only", base, reviewed_tree, timeout=120).split())
+    reasons = list(d["sensitive_content"])
     reasons += [r for r in d["sensitive_paths"] if r.split(": ", 1)[-1] not in reviewed_files]
     if d["lines"] > DELTA_LINES:
         reasons.append(f"{d['lines']} changed lines outside tests since the review (limit {DELTA_LINES})")
@@ -56,59 +95,62 @@ def significant_delta(root, reviewed_tree, tree):
     return reasons
 
 
-def requirements(root, session="", tree=None, events=None):
-    res, tree = risk.classify_branch(root, tree)
+def runs(events, branch, agent):
+    return [e for e in events if e.get("event") == "subagent" and e.get("agent") == agent and e.get("branch") == branch]
+
+
+def requirements(root, tree=None, events=None):
+    tree = tree or ledger.snapshot_tree(root)
+    base = merge_base(root)
+    if tree:
+        res = risk.classify_files(diff_files(root, base, tree))
+    else:
+        res = dict(risk.classify_files([]), reasons=["could not read the working tree"])
     branch = ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD")
-    events = risk._events(root) if events is None else events
+    events = ledger.events(root) if events is None else events
     tier = risk.effective(res["tier"], events, branch)
-    reviews = [e for e in _branch_events(events, branch, "reviewer") if e.get("tree")]
-    advisors = _branch_events(events, branch, "advisor")
+    reviews = [e for e in runs(events, branch, "reviewer") if e.get("tree")]
+    advisors = runs(events, branch, "advisor")
     missing, delta, limit = [], [], False
     if risk.RANK[tier] >= risk.RANK[risk.REVIEW]:
         if not reviews:
             missing.append("reviewer: no `reviewer` run on this branch yet; have it review the diff against origin/main")
         else:
             last = reviews[-1]
-            delta = significant_delta(root, last["tree"], tree)
-            if delta:
-                if len(reviews) >= MAX_ROUNDS:
-                    limit = True
-                else:
-                    nxt = 1 + max((int(f["id"][1:]) for e in reviews for f in e.get("findings") or []
-                                   if str(f.get("id", "")).startswith("R") and str(f["id"][1:]).isdigit()), default=0)
-                    missing.append(
-                        f"re-review: the changes since the review are significant ({'; '.join(delta)}). Targeted "
-                        f"re-review: give `reviewer` only `git diff {last['tree'][:12]}` and ask it to number findings "
-                        f"from R{nxt} (round {len(reviews) + 1} of {MAX_ROUNDS})")
+            delta = significant_delta(root, base, last["tree"], tree)
+            if delta and len(reviews) >= MAX_ROUNDS:
+                limit = True
+            elif delta:
+                nxt = 1 + max((int(f["id"][1:]) for f in ledger.latest_findings(reviews).values()
+                               if str(f["id"]).upper().startswith("R") and str(f["id"])[1:].isdigit()), default=0)
+                missing.append(
+                    f"re-review: the changes since the review are significant ({'; '.join(delta)}). Targeted "
+                    f"re-review: give `reviewer` only `git diff {last['tree'][:12]}` and ask it to number findings "
+                    f"from R{nxt} (round {len(reviews) + 1} of {MAX_ROUNDS})")
     if tier == risk.SENSITIVE and not advisors:
         missing.append("advisor: sensitive work needs an `advisor` run on the plan (before implementing it)")
     return {"tier": tier, "classification": res, "tree": tree, "branch": branch, "missing": missing,
             "reviews": reviews, "advisors": advisors, "delta": delta, "limit_reached": limit}
 
 
-def latest_findings(req):
-    """ID -> finding over every reviewer/advisor run on the branch, the latest run winning on a repeated ID."""
-    out = {}
-    for e in req["advisors"] + req["reviews"]:
-        for f in e.get("findings") or []:
-            if isinstance(f, dict) and f.get("id"):
-                out[str(f["id"]).upper()] = f
+def body_problems(req, body, title):
+    """prbody's rules for the tier, plus: every actionable finding logged on the branch has a disposition."""
+    out = prbody.problems(req["tier"], title, body)
+    found = prbody.dispositions(body)[0] or {}
+    for fid, f in sorted(ledger.latest_findings(req["advisors"] + req["reviews"]).items()):
+        if f.get("severity") in prbody.ACTIONABLE and fid not in found:
+            out.append(f"## Review: {fid} [{f.get('severity')}] ({ledger.sanitize(f.get('pattern', ''), 50)}) "
+                       "has no disposition")
     return out
 
 
-def body_problems(req, body, title):
-    problems = []
-    found, dprobs = prbody.dispositions(body)
-    problems += dprobs
-    for fid, f in sorted(latest_findings(req).items()):
-        if f.get("severity") in ACTIONABLE and (found is None or fid not in found):
-            problems.append(f"## Review: {fid} [{f.get('severity')}] ({ledger.sanitize(f.get('pattern', ''), 50)}) "
-                            "has no disposition")
-    if req["tier"] == risk.SENSITIVE:
-        problems += prbody.risk_problems(body)
-        if title is not None and "[sensitive]" not in title.lower():
-            problems.append("the PR title must start with [sensitive]")
-    return problems
+def pr_view(root, fields):
+    """`gh pr view --json <fields>` for the current branch's PR, or None."""
+    try:
+        r = subprocess.run(["gh", "pr", "view", "--json", fields], cwd=root, capture_output=True, timeout=20)
+        return json.loads(r.stdout or "{}") if r.returncode == 0 else None
+    except Exception:
+        return None
 
 
 # --- PreToolUse: gh pr create | edit | ready ------------------------------------------------------------------
@@ -121,9 +163,8 @@ def parse_gh(command):
     m = _GH_PR.search(command)
     if not m:
         return None, None
-    rest = command[m.end():]
     try:
-        lex = shlex.shlex(rest, posix=True, punctuation_chars=";&|")
+        lex = shlex.shlex(command[m.end():], posix=True, punctuation_chars=";&|")
         lex.whitespace_split = True
         tokens = []
         for t in lex:
@@ -153,52 +194,40 @@ def parse_gh(command):
     return m.group(1), opts
 
 
-def _pr_view(root):
-    try:
-        r = subprocess.run(["gh", "pr", "view", "--json", "body,title"], cwd=root, capture_output=True, timeout=20)
-        return json.loads(r.stdout) if r.returncode == 0 else None
-    except Exception:
-        return None
-
-
 def pr_gate(payload):
     """None to allow, or the reason to deny."""
-    command = str((payload.get("tool_input") or {}).get("command", ""))
-    action, opts = parse_gh(command)
+    action, opts = parse_gh(str((payload.get("tool_input") or {}).get("command", "")))
     if action is None or opts.get("undo"):
+        return None
+    if action == "edit" and not ({"body", "body_file", "title"} & set(opts)):
         return None
     root = ledger.repo_root(payload.get("cwd") or ".")
     if not root:
         return None
-    req = requirements(root, payload.get("session_id", ""))
+    req = requirements(root)
     if req["tier"] == risk.ORDINARY:
         return None
-    if action == "edit" and not ({"body", "body_file", "title"} & set(opts)):
-        return None
-    head = (f"Risk tier {req['tier']} ({'; '.join(req['classification']['reasons'][:4]) or 'escalated'}). "
-            "Before this PR command can run:")
     problems = list(req["missing"])
-    sets_body = action == "create" or (action == "edit" and ("body" in opts or "body_file" in opts))
+    sets_body = action == "create" or "body" in opts or "body_file" in opts
     if sets_body and (opts.get("unparsable") or opts.get("fill") or "body" in opts
                       or opts.get("body_file") in (None, "-")):
         problems.append("write the description to a file and pass it with `--body-file <path>` (not --body, "
                         "--fill or stdin), so it can be checked")
     body, title = None, opts.get("title")
     if action == "ready":
-        pr = _pr_view(root)
+        pr = pr_view(root, "body,title")
         if pr is None:
             problems.append("could not read the PR description with `gh pr view`")
         else:
-            body, title = pr.get("body", ""), pr.get("title", "")
+            body, title = pr.get("body") or "", pr.get("title") or ""
     elif opts.get("body_file") not in (None, "-"):
-        path = os.path.join(payload.get("cwd") or root, opts["body_file"])
         try:
-            with open(path, errors="replace") as f:
+            with open(os.path.join(payload.get("cwd") or root, opts["body_file"]), errors="replace") as f:
                 body = f.read()
         except OSError:
             problems.append(f"cannot read --body-file {opts['body_file']}")
     if body is not None:
-        problems += body_problems(req, body, title if action != "edit" or title is not None else None)
+        problems += body_problems(req, body, title)
     if req["limit_reached"]:
         if action == "ready":
             problems.append(f"{MAX_ROUNDS} review rounds are used up and the latest changes are unreviewed: the "
@@ -207,36 +236,44 @@ def pr_gate(payload):
             problems.append(f"{MAX_ROUNDS} review rounds are used up and the latest changes are unreviewed "
                             f"({'; '.join(req['delta'])}). Open the PR with --draft and a description that starts "
                             "with `NOT READY:` saying what is unreviewed")
-    log(root, payload, "gate", point="pr", action=action, decision="deny" if problems else "allow",
-        tier=req["tier"], missing=[ledger.sanitize(p, 120) for p in problems[:8]])
-    return (head + "\n- " + "\n- ".join(problems)) if problems else None
+    ledger.log(root, payload, "gate", point="pr", action=action, decision="deny" if problems else "allow",
+               tier=req["tier"], missing=[ledger.sanitize(p, 120) for p in problems[:8]])
+    if not problems:
+        return None
+    why = "; ".join(req["classification"]["reasons"][:4]) or "escalated"
+    return f"Risk tier {req['tier']} ({why}). Before this PR command can run:\n- " + "\n- ".join(problems)
 
 
 # --- PostToolUse: reassess the tier while working ----------------------------------------------------------------
 
 def reassess(payload):
-    """additionalContext text the first time this session's tier rises, else None."""
+    """additionalContext text the first time this session's tier rises, else None. Cheap when nothing changed:
+    the marker remembers the tier and the tree it was computed for."""
     root = ledger.repo_root(payload.get("cwd") or ".")
     if not root:
         return None
-    session = re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("session_id", ""))) or "default"
-    git_dir = ledger._git(root, "rev-parse", "--path-format=absolute", "--git-dir")
-    sd = os.path.join(git_dir, "ai-subs-harness")
-    os.makedirs(sd, exist_ok=True)
-    marker = os.path.join(sd, f"tier-{session}")
+    marker = os.path.join(ledger.state_dir(root), f"tier-{ledger.session_id(payload)}")
     try:
         with open(marker) as f:
-            before = f.read().strip()
+            before, _, seen_tree = f.read().strip().partition(" ")
     except OSError:
-        before = risk.ORDINARY
-    branch = ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD")
-    res, _ = risk.classify_branch(root)
-    tier = risk.effective(res["tier"], risk._events(root), branch)
-    if risk.RANK.get(tier, 0) <= risk.RANK.get(before, 0):
+        before, seen_tree = risk.ORDINARY, ""
+    if before == risk.SENSITIVE:
         return None
+    tree = ledger.snapshot_tree(root)
+    if not tree or tree == seen_tree:
+        return None
+    res = risk.classify_files(diff_files(root, merge_base(root), tree))
+    tier = res["tier"]
+    if risk.RANK[tier] <= risk.RANK.get(before, 0):  # escalations can still raise it
+        tier = risk.effective(tier, ledger.events(root), ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD"))
+    rose = risk.RANK[tier] > risk.RANK.get(before, 0)
     with open(marker, "w") as f:
-        f.write(tier)
-    log(root, payload, "risk", tier=tier, previous=before, reasons=[ledger.sanitize(r, 120) for r in res["reasons"][:6]])
+        f.write(f"{tier if rose else before} {tree}")
+    if not rose:
+        return None
+    ledger.log(root, payload, "risk", tier=tier, previous=before,
+               reasons=[ledger.sanitize(r, 120) for r in res["reasons"][:6]])
     why = "; ".join(res["reasons"][:4]) or "escalated"
     if tier == risk.SENSITIVE:
         return (f"Risk is now SENSITIVE ({why}). Before implementing further, consult the `advisor` agent on your "
@@ -247,11 +284,9 @@ def reassess(payload):
             "and give every finding a disposition in ## Review. `ai-risk status` shows what is still missing.")
 
 
-def log(root, payload, event, **fields):
-    ledger.append(ledger.ledger_path(root), {**ledger.base_fields(payload, root), "event": event, **fields})
+# --- entry points ------------------------------------------------------------------------------------------------
 
-
-def main():
+def hook():
     if ledger.shadowed_by_image():
         return 0
     try:
@@ -260,8 +295,7 @@ def main():
         return 0
     event = payload.get("hook_event_name")
     try:
-        if event == "PostToolUse":
-            ledger.handle(payload)  # selfcheck logging for Bash `make check`
+        ledger.handle(payload)  # selfcheck logging for Bash `make check` (PostToolUse and PostToolUseFailure)
     except Exception:
         pass
     if not enabled():
@@ -285,5 +319,45 @@ def main():
     return 0
 
 
+def cli(argv):
+    ap = argparse.ArgumentParser(prog="ai-risk")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("plan").add_argument("paths", nargs="+")
+    sub.add_parser("status")
+    e = sub.add_parser("escalate")
+    e.add_argument("tier", choices=[risk.REVIEW, risk.SENSITIVE])
+    e.add_argument("--reason", required=True)
+    a = ap.parse_args(argv)
+    root = ledger.repo_root(".")
+    if not root:
+        print("not inside a git repository", file=sys.stderr)
+        return 2
+    if a.cmd == "escalate":
+        ok = ledger.log(root, {}, "risk_escalation", tier=a.tier, reason=ledger.sanitize(a.reason))
+        print(f"risk escalated to {a.tier}" + ("" if ok else " (WARNING: ledger write failed)"))
+        return 0
+    if a.cmd == "plan":
+        rel = [os.path.relpath(os.path.abspath(p), root) for p in a.paths]
+        res = risk.classify_files([{"path": p, "status": "M" if os.path.exists(os.path.join(root, p)) else "A"}
+                                   for p in rel])
+        tier = risk.effective(res["tier"], ledger.events(root), ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD"))
+        missing = []
+    else:
+        req = requirements(root)
+        res, tier, missing = req["classification"], req["tier"], req["missing"]
+    print(f"risk: {tier}" + (f" (escalated from {res['tier']})" if tier != res["tier"] else ""))
+    for r in res["reasons"]:
+        print(f"  - {r}")
+    if a.cmd == "plan":
+        print("  (path signals only; the diff can still raise the tier: added routes, Supabase queries in routers, "
+              "deletions, environment loading, size, scope)")
+    print("required:")
+    for s in risk.required_steps(tier):
+        print(f"  - {s}")
+    for m in missing:
+        print(f"still missing: {m}")
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli(sys.argv[1:]) if sys.argv[1:] else hook())

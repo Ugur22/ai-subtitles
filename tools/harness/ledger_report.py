@@ -12,7 +12,6 @@ section, and every actionable finding missing there is reported as unresolved.
 
 import argparse
 import collections
-import json
 import os
 import sys
 
@@ -20,30 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ledger  # noqa: E402
 import prbody  # noqa: E402
 
-ACTIONABLE = ("blocker", "should-fix")
-
-
-def load(paths):
-    events, bad = [], 0
-    for p in paths:
-        try:
-            with open(p, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        bad += 1
-                        continue
-                    if isinstance(e, dict) and isinstance(e.get("event"), str):
-                        events.append(e)
-                    else:
-                        bad += 1
-        except OSError:
-            pass
-    events.sort(key=lambda e: str(e.get("ts", "")))
-    return events, bad
+ACTIONABLE = prbody.ACTIONABLE
+load = ledger.load_events
 
 
 def s(v, n=120):
@@ -72,10 +49,9 @@ def classify_reviews(events, dispositions=None, branch=None):
         if not e.get("parsed"):
             kind = "unparsed"
         elif actionable and known:
-            disp = [dispositions.get(str(f.get("id", "")).upper(), {}) for f in actionable]
-            states = [d.get("disposition") for d in disp]
-            if None in states or any(f.get("severity") == "blocker" and d.get("disposition") == "deferred"
-                                     for f, d in zip(actionable, disp)):
+            states = [dispositions.get(str(f.get("id", "")).upper(), {}).get("disposition") for f in actionable]
+            if None in states or any(f.get("severity") == "blocker" and st == "deferred"
+                                     for f, st in zip(actionable, states)):
                 kind = "unresolved"
             elif "fixed" in states:
                 kind = "confirmed-productive"
@@ -151,8 +127,11 @@ def report(events, bad, errors, pr_body=None, branch=None):
     w("\n## Agents")
     agents = collections.Counter(s(e.get("agent"), 40) for e in events if e.get("event") == "subagent")
     w(", ".join(f"{k} {v}" for k, v in sorted(agents.items())) or "no subagent runs")
-    disp, disp_problems = (prbody.dispositions(pr_body) if pr_body is not None else (None, []))
-    reviews = classify_reviews(events, disp or {} if pr_body is not None else None, branch)
+    disp, disp_problems = None, []
+    if pr_body is not None:
+        found, disp_problems = prbody.dispositions(pr_body)
+        disp = found or {}
+    reviews = classify_reviews(events, disp, branch)
     kinds = collections.Counter(k for k, *_ in reviews)
     if reviews:
         w("Reviews: " + ", ".join(f"{k} {kinds[k]}" for k in KINDS if kinds.get(k)))
@@ -189,16 +168,12 @@ def report(events, bad, errors, pr_body=None, branch=None):
     # Resolution against the PR.
     if pr_body is not None and branch:
         w(f"\n## Findings vs PR review section (branch {s(branch, 60)})")
-        res = {k: v["disposition"] for k, v in (disp or {}).items()}
-        latest, ambiguous = {}, set()
-        for _, e, findings, _ in reviews:
-            if e.get("branch") != branch:
-                continue
-            for f in findings:
-                fid = s(f.get("id"), 5)
-                if fid in latest:
-                    ambiguous.add(fid)
-                latest[fid] = f
+        res = {k: v["disposition"] for k, v in disp.items()}
+        on_branch = [e for _, e, _, _ in reviews if e.get("branch") == branch]
+        latest = {s(k, 5): f for k, f in ledger.latest_findings(on_branch).items()}
+        ids = collections.Counter(str(f.get("id", "")).upper() for e in on_branch for f in e.get("findings") or []
+                                  if isinstance(f, dict))
+        ambiguous = {k for k, n in ids.items() if n > 1}
         if not latest:
             w("  no reviewer/advisor findings logged on this branch")
         for fid, f in sorted(latest.items()):

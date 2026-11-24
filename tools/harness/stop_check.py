@@ -70,16 +70,14 @@ def tail(text, n):
 def draft_pr(root):
     if os.environ.get("AI_SUBS_DRAFT_ON_GIVEUP") != "1":
         return "not-attempted"
+    pr = gate.pr_view(root, "number,isDraft,state")
+    if pr is None:
+        return "no-pr"
+    if pr.get("state") != "OPEN":
+        return "no-open-pr"
+    if pr.get("isDraft"):
+        return "already-draft"
     try:
-        r = subprocess.run(["gh", "pr", "view", "--json", "number,isDraft,state"], cwd=root, capture_output=True,
-                           timeout=20)
-        if r.returncode != 0:
-            return "no-pr"
-        pr = json.loads(r.stdout or "{}")
-        if pr.get("state") != "OPEN":
-            return "no-open-pr"
-        if pr.get("isDraft"):
-            return "already-draft"
         r = subprocess.run(["gh", "pr", "ready", str(pr["number"]), "--undo"], cwd=root, capture_output=True,
                            timeout=20)
         return "drafted" if r.returncode == 0 else "draft-failed"
@@ -87,116 +85,114 @@ def draft_pr(root):
         return "draft-failed"
 
 
+_DRAFT_NOTE = {"drafted": " Its PR was converted to a draft.", "already-draft": " Its PR is a draft."}
+
+
+def bounded(kind, ctx, log, block_text, demand_text, final_text, exhausted=False):
+    """The bounded block loop shared by the check and the review stage: block up to CAP times, then demand an
+    explicit NOT READY status once, then let the session end with a systemMessage (and the PR made a draft).
+    block_text(n) and final_text(note) build the messages; log(state, **fields) writes the ledger event."""
+    counter = os.path.join(ctx["sd"], f"{kind}-blocks-{ctx['session']}")
+    flag = os.path.join(ctx["sd"], f"{kind}-status-{ctx['session']}")
+    blocks = int(read(counter)) if read(counter).isdigit() else 0
+    if exhausted or blocks >= CAP:
+        last = str(ctx["payload"].get("last_assistant_message") or "")
+        if not STATUS.search(last) and not os.path.exists(flag):
+            write(flag, "1")
+            log("status-demanded", n=blocks)
+            return 2, demand_text, None
+        pr = draft_pr(ctx["root"])
+        log("giveup", n=blocks, status_given=bool(STATUS.search(last)), pr=pr)
+        remove(counter, flag)
+        return 0, "", {"systemMessage": final_text(_DRAFT_NOTE.get(pr, ""))}
+    write(counter, str(blocks + 1))
+    log("block", n=blocks + 1)
+    return 2, block_text(blocks + 1), None
+
+
+def reset(kind, ctx):
+    """Clears a kind's streak; returns the number of blocks it had."""
+    counter = os.path.join(ctx["sd"], f"{kind}-blocks-{ctx['session']}")
+    blocks = int(read(counter)) if read(counter).isdigit() else 0
+    remove(counter, os.path.join(ctx["sd"], f"{kind}-status-{ctx['session']}"))
+    return blocks
+
+
 def decide(payload):
     """Returns (exit code, stderr text, stdout JSON or None)."""
     root = ledger.repo_root(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or ".")
     if not root or not has_check_target(root):
         return 0, "", None
-    git_dir = ledger._git(root, "rev-parse", "--path-format=absolute", "--git-dir")
-    sd = os.path.join(git_dir or os.path.join(root, ".git"), "ai-subs-harness")
-    os.makedirs(sd, exist_ok=True)
-    session = re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("session_id", ""))) or "default"
-    counter, flag, stamp = (os.path.join(sd, f"blocks-{session}"), os.path.join(sd, f"status-{session}"),
-                            os.path.join(sd, "green"))
-    path = ledger.ledger_path(root)
-    base = ledger.base_fields(payload, root)
-
-    def log(**kw):
-        ledger.append(path, {**base, "event": "check", **kw})
-
+    ctx = {"root": root, "sd": ledger.state_dir(root), "session": ledger.session_id(payload), "payload": payload}
+    stamp = os.path.join(ctx["sd"], "green")
     # Taken before the check, so an edit made while it runs is never stamped green.
-    current = ledger.state_hash(root)
-    blocks = int(read(counter)) if read(counter).isdigit() else 0
+    current, tree = ledger.state(root)
 
     if read(stamp) == current:
+        blocks = reset("check", ctx)
         if blocks:
-            log(outcome="recovered", n=blocks, via="known-green-state")
-            remove(counter, flag)
-        return review_stage(root, sd, session, payload, path, base)
+            ledger.log(root, payload, "check", outcome="recovered", n=blocks, via="known-green-state")
+        return review_stage(ctx, tree)
 
     ok, out = run_check(root)
     if ok:
-        log(outcome="recovered" if blocks else "pass", n=blocks)
-        remove(counter, flag)
+        blocks = reset("check", ctx)
+        ledger.log(root, payload, "check", outcome="recovered" if blocks else "pass", n=blocks)
         if ledger.state_hash(root) == current:
             write(stamp, current)
-        return review_stage(root, sd, session, payload, path, base)
+        return review_stage(ctx, tree)
 
     step, pattern = ledger.check_failure(out)
-    if blocks >= CAP:
-        last = str(payload.get("last_assistant_message") or "")
-        if not STATUS.search(last) and not os.path.exists(flag):
-            write(flag, "1")
-            log(outcome="status-demanded", n=blocks, step=step, pattern=pattern)
-            return 2, (
-                f"make check is still red after {CAP} blocked attempts ({pattern}). Do not attempt another fix. "
-                "Your final message must start with `NOT READY:` and state the remaining failure (quote it), what "
-                "you tried, whether you consulted the advisor agent, and that this must not be merged. Then stop.\n"
-                + tail(out, 30)
-            ), None
-        pr = draft_pr(root)
-        log(outcome="giveup", n=blocks, step=step, pattern=pattern, status_given=bool(STATUS.search(last)), pr=pr)
-        remove(counter, flag)
-        note = {"drafted": " Its PR was converted to a draft.", "already-draft": " Its PR is a draft."}.get(pr, "")
-        msg = (f"make check is still red after {CAP} blocked attempts ({pattern}): the work is NOT done and must "
-               f"not be merged.{note} Last output:\n{tail(out, 20)}")
-        return 0, "", {"systemMessage": msg}
 
-    n = blocks + 1
-    write(counter, str(n))
-    log(outcome="block", n=n, step=step, pattern=pattern)
-    lines = [f"make check failed (block {n}/{CAP}, {pattern}); fix it before finishing."]
-    if n == 2:
-        lines.append("Second red attempt in a row: if it is the same failure, ask the advisor agent with this "
-                     "output before another attempt.")
-    if n == CAP:
-        lines.append("Last attempt. If you cannot fix it, your final message must start with `NOT READY:` and "
-                     "state the remaining failure, what you tried and whether you consulted the advisor agent.")
-    lines.append(tail(out, 60))
-    return 2, "\n".join(lines), None
+    def block_text(n):
+        lines = [f"make check failed (block {n}/{CAP}, {pattern}); fix it before finishing."]
+        if n == 2:
+            lines.append("Second red attempt in a row: if it is the same failure, ask the advisor agent with this "
+                         "output before another attempt.")
+        if n == CAP:
+            lines.append("Last attempt. If you cannot fix it, your final message must start with `NOT READY:` and "
+                         "state the remaining failure, what you tried and whether you consulted the advisor agent.")
+        return "\n".join(lines + [tail(out, 60)])
+
+    return bounded(
+        "check", ctx,
+        lambda state, **kw: ledger.log(root, payload, "check", outcome=state, step=step, pattern=pattern, **kw),
+        block_text,
+        f"make check is still red after {CAP} blocked attempts ({pattern}). Do not attempt another fix. Your final "
+        "message must start with `NOT READY:` and state the remaining failure (quote it), what you tried, whether "
+        "you consulted the advisor agent, and that this must not be merged. Then stop.\n" + tail(out, 30),
+        lambda note: (f"make check is still red after {CAP} blocked attempts ({pattern}): the work is NOT done and "
+                      f"must not be merged.{note} Last output:\n{tail(out, 20)}"))
 
 
-def review_stage(root, sd, session, payload, path, base):
+def review_stage(ctx, tree):
     """After a green check: the review requirements for review/sensitive changes (gate.py). The fallback for a
-    lead that skipped them; bounded by its own cap of 3 blocks, then NOT READY like a red check."""
+    lead that skipped them; bounded like a red check, then NOT READY."""
     if not gate.enabled():
         return 0, "", None
-    req = gate.requirements(root, session)
-    counter, flag = os.path.join(sd, f"review-blocks-{session}"), os.path.join(sd, f"review-status-{session}")
+    req = gate.requirements(ctx["root"], tree=tree)
     if not req["missing"] and not req["limit_reached"]:
-        remove(counter, flag)
+        reset("review", ctx)
         return 0, "", None
-
-    def log(**kw):
-        ledger.append(path, {**base, "event": "gate", "point": "stop", "tier": req["tier"],
-                             "missing": [ledger.sanitize(m, 120) for m in req["missing"][:6]], **kw})
-
     unmet = list(req["missing"])
     if req["limit_reached"]:
         unmet.append(f"{gate.MAX_ROUNDS} review rounds used; changes since the last review are unreviewed: "
                      + "; ".join(req["delta"]))
-    blocks = int(read(counter)) if read(counter).isdigit() else 0
-    if req["limit_reached"] or blocks >= CAP:
-        last = str(payload.get("last_assistant_message") or "")
-        if not STATUS.search(last) and not os.path.exists(flag):
-            write(flag, "1")
-            log(decision="status-demanded", n=blocks)
-            return 2, (f"The review requirements for this {req['tier']} change are still not met. Do not start "
-                       "another review round. Your final message must start with `NOT READY:` and list what is "
-                       "unreviewed or unresolved, what the reviews found, and whether you consulted the advisor. "
-                       "If a PR is open it must stay a draft. Then stop.\n- " + "\n- ".join(unmet)), None
-        pr = draft_pr(root)
-        log(decision="giveup", n=blocks, status_given=bool(STATUS.search(last)), pr=pr)
-        remove(counter, flag)
-        note = {"drafted": " Its PR was converted to a draft.", "already-draft": " Its PR is a draft."}.get(pr, "")
-        return 0, "", {"systemMessage": f"Review requirements for this {req['tier']} change are not met: the work is "
-                                        f"NOT ready to merge.{note}\n- " + "\n- ".join(unmet)}
-    n = blocks + 1
-    write(counter, str(n))
-    log(decision="block", n=n)
-    return 2, (f"`make check` is green, but this is a {req['tier']} change and its review requirements are not met "
-               f"(review block {n}/{CAP}). Reasons: {'; '.join(req['classification']['reasons'][:4]) or 'escalated'}."
-               "\n- " + "\n- ".join(unmet) + "\nRun `ai-risk status` to check. See CLAUDE.md (Risk lifecycle)."), None
+    listing = "\n- " + "\n- ".join(unmet)
+    tier, why = req["tier"], "; ".join(req["classification"]["reasons"][:4]) or "escalated"
+    return bounded(
+        "review", ctx,
+        lambda state, **kw: ledger.log(ctx["root"], ctx["payload"], "gate", point="stop", decision=state, tier=tier,
+                                       missing=[ledger.sanitize(m, 120) for m in unmet[:6]], **kw),
+        lambda n: (f"`make check` is green, but this is a {tier} change and its review requirements are not met "
+                   f"(review block {n}/{CAP}). Reasons: {why}.{listing}\nRun `ai-risk status` to check. See CLAUDE.md "
+                   "(Risk lifecycle)."),
+        f"The review requirements for this {tier} change are still not met. Do not start another review round. Your "
+        "final message must start with `NOT READY:` and list what is unreviewed or unresolved, what the reviews found, "
+        "and whether you consulted the advisor. If a PR is open it must stay a draft. Then stop." + listing,
+        lambda note: f"Review requirements for this {tier} change are not met: the work is NOT ready to merge.{note}"
+                     + listing,
+        exhausted=req["limit_reached"])
 
 
 def main():

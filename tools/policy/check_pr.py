@@ -5,7 +5,8 @@ data: the files API list and the reviews API list. Stdlib only; never imports or
 Usage: check_pr.py <files.jsonl> <reviews.json> <author-login> <head-sha> [<pr.json>]
 Exit 1 with one line per violation.
 
-Agent PRs are also judged by risk (tools/harness/risk.py, from main like this file): review and sensitive changes
+Agent PRs are also judged by risk (tools/harness/risk.py and prbody.py, pure rules from main like this file; neither
+touches git or the filesystem): review and sensitive changes
 need a well-formed ## Review section (a disposition per finding, no deferred blocker), sensitive ones also
 [sensitive] in the title and a complete ## Risk section. This checks the form of what the owner will read,
 not that a review really happened; the owner's approval of the exact commit stays the decision.
@@ -83,18 +84,8 @@ def risk_violations(files, author, title, body):
     if author == OWNER:
         return []
     res = risk.classify_files(risk_files(files))
-    tier, out = res["tier"], []
-    if tier == risk.ORDINARY:
-        if prbody.section(body, "Review") is not None:
-            out += [p for p in prbody.dispositions(body)[1] if "No findings" not in p]
-    else:
-        out += prbody.dispositions(body)[1]
-        if tier == risk.SENSITIVE:
-            if "[sensitive]" not in (title or "").lower():
-                out.append("the title must start with [sensitive]")
-            out += prbody.risk_problems(body)
     why = "; ".join(res["reasons"][:3])
-    return [f"risk {tier} ({why}): {p}" for p in out]
+    return [f"risk {res['tier']} ({why}): {p}" for p in prbody.problems(res["tier"], title or "", body)]
 
 
 def main(files_path, reviews_path, author, head_sha, pr_path=None):

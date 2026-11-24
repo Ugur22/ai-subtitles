@@ -17,10 +17,11 @@ import re
 RISK_FIELDS = ("Impact", "Verification", "Rollback", "Reversibility", "Uncertainty")
 REVERSIBILITY = ("code-only", "rollback migration", "data repair", "irreversible")
 SEVERITIES = ("blocker", "should-fix", "nit")
+ACTIONABLE = ("blocker", "should-fix")
 DISPOSITIONS = ("fixed", "rejected", "deferred")
 
 _DISPOSITION = re.compile(
-    r"^\s*[-*]\s*\**([RA]\d{1,3})\**\s*\[(blocker|should-fix|nit)\]\s*\**(fixed|rejected|deferred)\**\s*:\s*(.*?)\s*$",
+    rf"^\s*[-*]\s*\**([RA]\d{{1,3}})\**\s*\[({'|'.join(SEVERITIES)})\]\s*\**({'|'.join(DISPOSITIONS)})\**\s*:\s*(.*?)\s*$",
     re.I,
 )
 _ID_ITEM = re.compile(r"^\s*[-*]\s*\**[RA]\d{1,3}\b")
@@ -73,3 +74,16 @@ def dispositions(body):
     if not found and not _NO_FINDINGS.search(s):
         problems.append("## Review: list every finding with its disposition, or write 'No findings.'")
     return found, problems
+
+
+def problems(tier, title, body):
+    """What the description of an agent PR of this tier (risk.ORDINARY/REVIEW/SENSITIVE as strings) gets wrong.
+    Ordinary PRs need nothing, but a ## Review they do have must be well-formed. Title None: not checked."""
+    if tier == "ordinary":
+        return [p for p in dispositions(body)[1] if "No findings" not in p] if section(body, "Review") is not None else []
+    out = list(dispositions(body)[1])
+    if tier == "sensitive":
+        if title is not None and "[sensitive]" not in title.lower():
+            out.append("the title must start with [sensitive]")
+        out += risk_problems(body)
+    return out

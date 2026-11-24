@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl python3 -I /usr/local/lib/ai-subs-harness/ledger.py",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl AI_SUBS_REVIEW_GATE=1 python3 -I /usr/local/lib/ai-subs-harness/gate.py",
             "timeout": 30
           }
         ]
