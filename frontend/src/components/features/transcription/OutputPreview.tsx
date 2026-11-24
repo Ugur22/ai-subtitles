@@ -1,12 +1,16 @@
 import React from "react";
 
+import { timeToSeconds } from "../../../utils/time";
+
+const SAMPLE_DURATION = "00:45:00";
 const SAMPLE = [
-  { start: 718, time: "00:11:58", speaker: "Lucía", dot: "bg-sp-3", name: "text-sp-3", original: "Ya están todos dentro.", translation: "Everyone is inside now." },
-  { start: 724, time: "00:12:04", speaker: "Marta", dot: "bg-sp-1", name: "text-sp-1", original: "¿Dónde estabas anoche?", translation: "Where were you last night?" },
-  { start: 727, time: "00:12:07", speaker: "Daniel", dot: "bg-sp-2", name: "text-sp-2", original: "En la estación. Esperándote.", translation: "At the station. Waiting for you." },
+  { time: "00:11:58", speaker: "Lucía", dot: "bg-sp-3", name: "text-sp-3", original: "Ya están todos dentro.", translation: "Everyone is inside now." },
+  { time: "00:12:04", speaker: "Marta", dot: "bg-sp-1", name: "text-sp-1", original: "¿Dónde estabas anoche?", translation: "Where were you last night?" },
+  { time: "00:12:07", speaker: "Daniel", dot: "bg-sp-2", name: "text-sp-2", original: "En la estación. Esperándote.", translation: "At the station. Waiting for you." },
 ];
 export const OutputPreview: React.FC = React.memo(() => {
   const activeLine = SAMPLE[1];
+  const progress = timeToSeconds(activeLine.time) / timeToSeconds(SAMPLE_DURATION);
 
   return (
     <figure className="transcript-sample m-0 flex min-w-0 flex-col gap-3">
@@ -23,8 +27,10 @@ export const OutputPreview: React.FC = React.memo(() => {
             <span className="sample-play flex h-11 w-11 shrink-0 items-center justify-center text-player-icon" aria-hidden="true">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z" /></svg>
             </span>
-            <div className="h-1 rounded-full bg-player-icon/30" aria-hidden="true"><div className="h-full w-[38%] rounded-full bg-player-icon" /></div>
-            <span className="sample-timestamp mono whitespace-nowrap text-xs tabular-nums text-player-icon">00:12:04 / 00:12:14</span>
+            <div className="h-1 rounded-full bg-[var(--player-track)] [grid-area:seek]" aria-hidden="true">
+              <div className="h-full rounded-full bg-player-icon" style={{ width: `${progress * 100}%` }} />
+            </div>
+            <span className="sample-timestamp mono whitespace-nowrap text-xs tabular-nums text-player-icon">{activeLine.time} / {SAMPLE_DURATION}</span>
           </div>
         </div>
         <ol className="m-0 flex list-none flex-col p-0">
