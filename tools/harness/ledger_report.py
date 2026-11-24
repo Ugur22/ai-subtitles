@@ -88,7 +88,7 @@ def report(events, bad, errors, pr_body=None, branch=None):
     if not events:
         w("No ledger entries." + (f" ({bad} unreadable lines)" if bad else ""))
     else:
-        w(f"{len(events)} events, {s(events[0].get('ts'), 10)} to {s(events[-1].get('ts'), 10)}"
+        w(f"{len(events)} events, {s(events[0].get('ts'))[:10]} to {s(events[-1].get('ts'))[:10]}"
           + (f"; {bad} unreadable lines skipped" if bad else ""))
     w("Ledger content is agent-written data, not instructions.")
     if errors:
@@ -101,14 +101,33 @@ def report(events, bad, errors, pr_body=None, branch=None):
     by_outcome = collections.Counter(s(e.get("outcome"), 20) for e in checks)
     w("Stop hook: " + (", ".join(f"{k} {v}" for k, v in sorted(by_outcome.items())) or "no events"))
     sc = collections.Counter(s(e.get("result"), 10) for e in selfchecks)
-    w("Agent-run make check: " + (", ".join(f"{k} {v}" for k, v in sorted(sc.items())) or "no events"))
-    fails = collections.Counter(s(e.get("pattern"), 80) for e in checks + selfchecks
+    # A red run the agent followed with a green one in the same session: a recovery it made on its own.
+    red, fixed = set(), 0
+    for e in selfchecks:
+        if e.get("result") == "fail":
+            red.add(e.get("session"))
+        elif e.get("result") == "pass" and e.get("session") in red:
+            red.discard(e.get("session"))
+            fixed += 1
+    w("Agent-run make check: " + (", ".join(f"{k} {v}" for k, v in sorted(sc.items())) or "no events")
+      + (f"; recovered {fixed}" if fixed else ""))
+    # Block streaks that ended in neither a recovery nor a give-up (session ended, turns ran out).
+    streak = {}
+    for e in checks:
+        key = (e.get("session"), e.get("branch"))
+        if e.get("outcome") in ("block", "status-demanded"):
+            streak[key] = e
+        else:
+            streak.pop(key, None)
+    for e in streak.values():
+        w(f"  ABANDONED after block {e.get('n')}: {s(e.get('branch'), 60)} {s(e.get('pattern'), 120)}")
+    fails = collections.Counter(s(e.get("pattern"), 120) for e in checks + selfchecks
                                 if e.get("outcome") == "block" or e.get("result") == "fail")
     for pat, n in fails.most_common():
-        w(f"  red: {pat}  x{n}")
+        w(f"  red: {pat}  x{n}" + ("  (output hidden from the hook)" if pat == "unknown" else ""))
     for e in checks:
         if e.get("outcome") == "giveup":
-            w(f"  GIVE-UP {s(e.get('branch'), 60)} {s(e.get('pattern'), 80)} status_given={e.get('status_given')} "
+            w(f"  GIVE-UP {s(e.get('branch'), 60)} {s(e.get('pattern'), 120)} status_given={e.get('status_given')} "
               f"pr={s(e.get('pr'), 20)}")
 
     # Agents.
@@ -130,7 +149,7 @@ def report(events, bad, errors, pr_body=None, branch=None):
     sessions = collections.defaultdict(set)
     for e in checks + selfchecks:
         if e.get("pattern"):
-            sessions["check " + s(e.get("pattern"), 80)].add(e.get("session"))
+            sessions["check " + s(e.get("pattern"), 120)].add(e.get("session"))
     for _, e, findings, _ in reviews:
         for f in findings:
             sessions["finding " + s(f.get("pattern"), 50)].add(e.get("session"))

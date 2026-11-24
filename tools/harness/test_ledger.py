@@ -46,7 +46,7 @@ def test_check_failure_pattern_ids_per_step():
         "/w/a.tsx\n  30:3  error  'setVideoUrl' is defined but never used  @typescript-eslint/no-unused-vars\n"
         "make: *** [Makefile:17: lint-frontend] Error 1": "lint-frontend:@typescript-eslint/no-unused-vars",
         "FAILED backend/tests/test_jobs.py::test_owner_scoped - AssertionError\n"
-        "make: *** [Makefile:21: test-backend] Error 1": "test-backend:backend/tests/test_jobs.py::test_owner_scoped",
+        "make: *** [Makefile:21: test-backend] Error 1": "test-backend:test_jobs.py::test_owner_scoped",
         "src/a.ts(3,1): error TS2345: Argument...\nmake: *** [Makefile:24: typecheck-frontend] Error 2":
             "typecheck-frontend:TS2345",
         " FAIL  src/utils/time.test.ts > parses\nmake: *** [Makefile:27: test-frontend] Error 1":
@@ -187,3 +187,19 @@ def test_project_copy_is_silent_when_the_image_copy_exists(tmp_path, monkeypatch
     assert ledger.shadowed_by_image() is False
     monkeypatch.setattr(ledger, "IMAGE_COPY", str(tmp_path / "absent"))
     assert ledger.shadowed_by_image() is False
+
+
+def test_report_counts_agent_recoveries_and_abandoned_streaks():
+    events = [
+        ev(event="selfcheck", result="fail", pattern="test-backend:test_x.py::t", ts="2026-11-24T11:28:46Z"),
+        ev(event="selfcheck", result="pass"),
+        ev(event="check", outcome="block", n=1, pattern="lint-backend:F401", session="s9", branch="main"),
+        ev(event="check", outcome="block", n=2, pattern="lint-backend:F401", session="s9", branch="main"),
+        ev(event="check", outcome="block", n=1, pattern="lint-backend:E402", session="s8"),
+        ev(event="check", outcome="recovered", n=1, session="s8"),
+    ]
+    out = ledger_report.report(events, 0, [])
+    assert "2026-11-24 to 2026-11-24" in out
+    assert "fail 1, pass 1; recovered 1" in out
+    abandoned = [line for line in out.splitlines() if "ABANDONED" in line]
+    assert abandoned == ["  ABANDONED after block 2: main lint-backend:F401"]
