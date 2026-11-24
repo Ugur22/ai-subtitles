@@ -1,5 +1,4 @@
-import type { RefObject } from "react";
-import { getJobVideoUrl, type TranscriptionResponse } from "../../../services/api";
+import { type TranscriptionResponse } from "../../../services/api";
 import { formatScreenshotUrl } from "../../../utils/url";
 import { timeToSeconds } from "../../../utils/time";
 import type { useSubtitles } from "../../../hooks/useSubtitles";
@@ -11,15 +10,13 @@ import type { TranscriptSegment } from "./segments";
 interface VideoPlayerPanelProps {
   transcription: TranscriptionResponse;
   videoUrl: string | null;
-  setVideoUrl: (url: string | null) => void;
   videoPlayer: ReturnType<typeof useVideoPlayer>;
   subtitles: ReturnType<typeof useSubtitles>;
   displayedSegments: TranscriptSegment[];
   videoDuration: number;
   setVideoDuration: (seconds: number) => void;
   showTranslation: boolean;
-  currentJobRef: RefObject<{ jobId: string; accessToken?: string } | null>;
-  videoRetriedRef: RefObject<boolean>;
+  onVideoError: () => void;
   chapters: { start: number; title: string }[];
   jumpModalOpen: boolean;
   setJumpModalOpen: (open: boolean) => void;
@@ -28,15 +25,13 @@ interface VideoPlayerPanelProps {
 export const VideoPlayerPanel: React.FC<VideoPlayerPanelProps> = ({
   transcription,
   videoUrl,
-  setVideoUrl,
   videoPlayer,
   subtitles,
   displayedSegments,
   videoDuration,
   setVideoDuration,
   showTranslation,
-  currentJobRef,
-  videoRetriedRef,
+  onVideoError,
   chapters,
   jumpModalOpen,
   setJumpModalOpen,
@@ -65,19 +60,7 @@ export const VideoPlayerPanel: React.FC<VideoPlayerPanelProps> = ({
           src={videoUrl}
           className="w-full h-full max-h-[70vh] xl:max-h-[80vh] object-contain"
           onLoadedMetadata={(e) => setVideoDuration(e.currentTarget.duration)}
-          onError={async () => {
-            if (videoRetriedRef.current || !currentJobRef.current) return;
-            videoRetriedRef.current = true;
-            try {
-              const { download_url } = await getJobVideoUrl(
-                currentJobRef.current.jobId,
-                currentJobRef.current.accessToken
-              );
-              setVideoUrl(download_url);
-            } catch (e) {
-              console.error("Failed to refresh video URL", e);
-            }
-          }}
+          onError={onVideoError}
         >
           {subtitleTrackUrl && (
             <track
