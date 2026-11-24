@@ -43,7 +43,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       # The default torch wheel on Linux bundles CUDA (multiple GB); the tests only need the CPU build.
-      - run: pip install torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
       # onnxruntime-gpu and insightface are not imported by any test and fail to install on a plain runner.
       - run: |
           grep -viE '^(onnxruntime-gpu|insightface)' backend/requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
