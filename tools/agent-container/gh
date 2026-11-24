@@ -1,0 +1,5 @@
+#!/bin/sh
+# gh wrapper: reads the current installation token on every call, so a rotation mid-session just works.
+GH_TOKEN=$(cat /run/agent-token/token 2>/dev/null)
+export GH_TOKEN
+exec /usr/bin/gh "$@"

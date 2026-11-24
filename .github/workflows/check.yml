@@ -50,6 +50,24 @@ jobs:
           pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest==9.1.1 ruff==0.12.0
       - run: make lint-backend test-backend PY=python
 
+  # The policy checker and the agent-container scripts are tested here like any code; policy.yml is what
+  # enforces them, from main's revision.
+  tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest==9.1.1 pyyaml==6.0.2
+      - run: python -m pytest -q -p no:cacheprovider tools/policy
+      - run: |
+          shellcheck -S warning bin/agent tools/agent-container/init-firewall.sh tools/agent-container/agent-checks.sh \
+            tools/agent-container/agent-session tools/agent-container/agent-verify \
+            tools/agent-container/git-credential-agent tools/agent-container/gh
+          python -m json.tool tools/agent-container/managed-settings.json >/dev/null
+
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 10

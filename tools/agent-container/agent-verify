@@ -1,0 +1,108 @@
+#!/bin/bash
+# Boundary regression suite (root-owned in the image; run by `bin/agent verify` as the agent user).
+# Positive tests: ordinary development works. Negative tests: what must be refused is refused.
+# GitHub negative tests only target sacrificial refs (branches guard-canary and guard-canary-personal, tags
+# guard-canary-tag-*), so a missing protection changes nothing that matters; what a failing test creates is
+# cleaned up. Runs with a throwaway HOME and no global git or gh config, so nothing a session left behind
+# (an insteadOf rewrite, a curlrc, a gh alias) can change what these tests observe.
+set -u
+REPO_SLUG=${AGENT_REPO_SLUG:-Ugur22/ai-subtitles}
+WORK=/work/ai-subtitles
+CANARY_BRANCH=guard-canary
+PERSONAL_CANARY=guard-canary-personal
+ts=$(date +%s)
+fails=0
+VERIFY_TMP=$(mktemp -d)
+export HOME=$VERIFY_TMP/home GIT_CONFIG_GLOBAL=/dev/null GH_CONFIG_DIR=$VERIFY_TMP/gh
+mkdir -p "$HOME" "$GH_CONFIG_DIR"
+pass() { echo "PASS $1"; }
+fail() { echo "FAIL $1"; fails=$((fails + 1)); }
+auth() { printf 'Authorization: Bearer %s\n' "$(cat /run/agent-token/token)"; }
+api() { # method path [json] -> http status
+  local data=()
+  [ -n "${3:-}" ] && data=(-d "$3")
+  curl -q -s -o "$VERIFY_TMP/api.out" -w '%{http_code}' --max-time 20 -X "$1" -H @<(auth) \
+    -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO_SLUG$2" "${data[@]}"
+}
+denied() { case $1 in 401|403|404|405|409|422) return 0 ;; *) return 1 ;; esac; }
+
+echo "== isolation checks"
+/usr/local/bin/agent-checks.sh || fails=$((fails + 1))
+
+echo "== negative: the agent cannot alter its enforcement"
+( : >> /etc/claude-code/managed-settings.json ) 2>/dev/null && fail "write managed settings" || pass "write managed settings refused"
+mkdir /etc/claude-code/managed-settings.d 2>/dev/null && { rmdir /etc/claude-code/managed-settings.d; fail "add managed drop-in"; } || pass "add managed drop-in refused"
+( : >> /usr/local/bin/agent-checks.sh ) 2>/dev/null && fail "write startup checks" || pass "write startup checks refused"
+( : >> /etc/gitconfig ) 2>/dev/null && fail "write system gitconfig" || pass "write system gitconfig refused"
+iptables -F 2>/dev/null && fail "flush firewall" || pass "flush firewall refused"
+ip link add agentprobe0 type dummy 2>/dev/null && { ip link del agentprobe0; fail "change network config"; } || pass "change network config refused"
+( : >> /run/agent-token/token ) 2>/dev/null && fail "write token" || pass "write token refused"
+npm install -g --prefix /usr/local left-pad >/dev/null 2>&1 && fail "replace global npm packages" || pass "global npm install refused"
+
+echo "== positive: ordinary development"
+cd "$WORK" || { fail "workspace missing"; exit 1; }
+make check >"$VERIFY_TMP/make-check.log" 2>&1 && pass "make check (ruff, pytest, eslint, tsc, vitest)" || { fail "make check"; tail -30 "$VERIFY_TMP/make-check.log"; }
+(cd frontend && npm run build >"$VERIFY_TMP/build.log" 2>&1) && pass "frontend build" || { fail "frontend build"; tail -20 "$VERIFY_TMP/build.log"; }
+
+tmp=$VERIFY_TMP
+git clone -q --depth 5 "https://github.com/$REPO_SLUG.git" "$tmp/r" && cd "$tmp/r" || { fail "clone"; exit 1; }
+git config user.name "ai-subs-agent verify"; git config user.email "agent-verify@invalid"
+branch="agent/verify-$ts"
+git switch -qc "$branch" && echo "$ts" > .agent-verify && git add .agent-verify && git commit -qm "agent verify $ts"
+git push -q origin "$branch" 2>"$VERIFY_TMP/push.err" && pass "push feature branch" || { fail "push feature branch"; cat "$VERIFY_TMP/push.err"; }
+pr=$(gh pr create --repo "$REPO_SLUG" --draft --base main --head "$branch" --title "agent verify $ts (auto-closed)" \
+     --body "Created by bin/agent verify; closed automatically." 2>"$VERIFY_TMP/pr.err") && pass "open PR" || { fail "open PR"; cat "$VERIFY_TMP/pr.err"; }
+gh run list --repo "$REPO_SLUG" --limit 1 >/dev/null 2>&1 && pass "read CI runs" || fail "read CI runs"
+[ -n "${pr:-}" ] && { gh pr view "$pr" --repo "$REPO_SLUG" --json statusCheckRollup >/dev/null 2>&1 && pass "read PR checks" || fail "read PR checks"; }
+
+echo "== negative: GitHub refuses protected operations"
+# A --depth clone is single-branch, so name the remote-tracking ref explicitly.
+git fetch -q --depth 5 origin "+refs/heads/$CANARY_BRANCH:refs/remotes/origin/$CANARY_BRANCH" 2>/dev/null \
+  || fail "canary branch $CANARY_BRANCH missing (create it from main; see setup)"
+git switch -qc canary-attempt "origin/$CANARY_BRANCH" 2>/dev/null && echo "$ts" > .agent-verify && git add .agent-verify && git commit -qm "canary $ts"
+git push -q origin "HEAD:refs/heads/$CANARY_BRANCH" 2>/dev/null && fail "direct push to protected branch ACCEPTED" || pass "direct push to protected branch refused"
+
+git switch -q "$branch" && git switch -qc "agent/verify-wf-$ts"
+echo "# $ts" >> .github/workflows/check.yml && git commit -qam "workflow change $ts"
+if git push -q origin "agent/verify-wf-$ts" 2>/dev/null; then fail "push workflow change ACCEPTED"; git push -q origin --delete "agent/verify-wf-$ts"
+else pass "push workflow change refused"; fi
+
+git tag "guard-canary-tag-$ts" origin/main 2>/dev/null
+if git push -q origin "refs/tags/guard-canary-tag-$ts" 2>/dev/null; then fail "create protected tag ACCEPTED"; git push -q origin --delete "refs/tags/guard-canary-tag-$ts"
+else pass "create protected tag refused"; fi
+
+# Agents write only agent/** (mandatory ruleset): your other branches can't be created, moved or deleted.
+git fetch -q --depth 5 origin "+refs/heads/$PERSONAL_CANARY:refs/remotes/origin/$PERSONAL_CANARY" 2>/dev/null \
+  || fail "canary branch $PERSONAL_CANARY missing (create it from main; see setup)"
+git switch -qc personal-attempt "origin/$PERSONAL_CANARY" 2>/dev/null && echo "$ts" > .agent-verify && git add .agent-verify && git commit -qm "personal $ts"
+git push -q origin "HEAD:refs/heads/$PERSONAL_CANARY" 2>/dev/null && fail "update non-agent branch ACCEPTED" || pass "update non-agent branch refused"
+git push -q origin --delete "$PERSONAL_CANARY" 2>/dev/null && fail "delete non-agent branch ACCEPTED (recreate $PERSONAL_CANARY)" || pass "delete non-agent branch refused"
+if git push -q origin "HEAD:refs/heads/verify-nonagent-$ts" 2>/dev/null; then fail "create non-agent branch ACCEPTED"; git push -q origin --delete "verify-nonagent-$ts"
+else pass "create non-agent branch refused"; fi
+
+sha=$(git rev-parse "$branch")
+denied "$(api POST "/statuses/$sha" '{"state":"success","context":"policy"}')" && pass "post commit status refused" || fail "post commit status ACCEPTED"
+denied "$(api POST /check-runs "{\"name\":\"policy\",\"head_sha\":\"$sha\",\"status\":\"completed\",\"conclusion\":\"success\"}")" \
+  && pass "create check run refused" || fail "create check run ACCEPTED"
+denied "$(api POST /actions/workflows/check.yml/dispatches '{"ref":"main"}')" && pass "dispatch workflow refused" || fail "dispatch workflow ACCEPTED"
+denied "$(api POST /deployments "{\"ref\":\"$sha\",\"environment\":\"guard-canary\",\"auto_merge\":false,\"required_contexts\":[]}")" \
+  && pass "create deployment refused" || fail "create deployment ACCEPTED"
+denied "$(api PATCH "" '{}')" && pass "administer repository refused" || fail "administer repository ACCEPTED"
+denied "$(api GET /actions/secrets)" && pass "read repository secrets refused" || fail "read repository secrets ACCEPTED"
+denied "$(api GET /environments/production/secrets)" && pass "read environment secrets refused" || fail "read environment secrets ACCEPTED"
+
+# Merging its own PR: a PR into the canary branch, then the merge API. Needs approval + checks + bypass.
+code=$(api POST /pulls "{\"title\":\"agent verify merge $ts\",\"head\":\"$branch\",\"base\":\"$CANARY_BRANCH\",\"body\":\"auto-closed\"}")
+canary_pr=$(jq -r '.number // empty' "$VERIFY_TMP/api.out")
+if [ -n "$canary_pr" ]; then
+  denied "$(api PUT "/pulls/$canary_pr/merge" '{"merge_method":"merge"}')" && pass "merge own PR refused" || fail "merge own PR ACCEPTED"
+  api PATCH "/pulls/$canary_pr" '{"state":"closed"}' >/dev/null
+else fail "could not open canary PR (http $code)"; fi
+
+echo "== cleanup"
+[ -n "${pr:-}" ] && gh pr close "$pr" --repo "$REPO_SLUG" >/dev/null 2>&1
+git push -q origin --delete "$branch" 2>/dev/null && pass "delete own agent branch" || fail "delete own agent branch"
+cd / && rm -rf "$VERIFY_TMP"
+
+echo "agent-verify: fails=$fails"
+[ "$fails" -eq 0 ]

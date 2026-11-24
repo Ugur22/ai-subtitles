@@ -1,0 +1,3 @@
+# Everything is owned by the maintainer; agent PRs need Ugur22's approval of their exact head commit
+# (enforced by the trusted policy check, .github/workflows/policy.yml).
+* @Ugur22

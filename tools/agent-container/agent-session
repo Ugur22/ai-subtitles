@@ -1,0 +1,10 @@
+#!/bin/bash
+# Session entrypoint (root-owned): the isolation checks must pass before Claude Code starts.
+# Arguments go to claude only; nothing a caller passes can skip the checks.
+set -u
+if ! /usr/local/bin/agent-checks.sh; then
+  echo "agent-session: a critical isolation check failed; Claude Code was NOT started." >&2
+  exit 1
+fi
+cd /work/ai-subtitles || { echo "agent-session: /work/ai-subtitles missing; run bin/agent up" >&2; exit 1; }
+exec claude "$@"

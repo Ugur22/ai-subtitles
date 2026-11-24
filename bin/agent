@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# Host CLI for the isolated agent container. Trusted: it holds the GitHub App key. Run it from your own
+# terminal, never inside Claude Code, and run the copy installed from origin/main (`self-install`), not the
+# working tree: a checked-out agent branch could otherwise change the code that handles your key.
+#
+#   ai-subs-agent self-install               install origin/main's bin/agent as ~/.local/bin/ai-subs-agent
+#   ai-subs-agent build [--from-worktree]    build the image from origin/main (reviewed); worktree = unreviewed
+#   ai-subs-agent up [--allow-unreviewed]    start the container, apply the firewall, clone, install deps
+#   ai-subs-agent [session] [claude args]    rotate the GitHub token, run the isolation checks, start Claude Code
+#   ai-subs-agent verify [--allow-unreviewed] recreate the container and run the boundary tests
+#   ai-subs-agent shell | down | destroy     debug shell / stop (revokes the token) / remove everything
+#
+# Config, outside the repo: ~/.config/ai-subs-agent/config with APP_ID=, INSTALLATION_ID= and optionally
+# REPO_DIR= (default ~/projects/ai-subs); the App's private key at ~/.config/ai-subs-agent/app.pem (mode 600).
+# The key never enters the container: the host mints 1-hour installation tokens for this repository only,
+# passes them on stdin (never argv, env or disk on the host) and revokes them when they're no longer needed.
+# Claude auth for sessions: export CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or log in inside.
+set -euo pipefail
+
+NAME=ai-subs-agent
+NET=ai-subs-agent-net
+REPO_SLUG=Ugur22/ai-subtitles
+REPO_NAME=${REPO_SLUG#*/}
+CONF_DIR=${AI_SUBS_AGENT_CONFIG:-$HOME/.config/ai-subs-agent}
+# Exactly what the agent gets; minting fails unless GitHub grants precisely this.
+PERMISSIONS='{"contents":"write","pull_requests":"write","actions":"read","checks":"read","statuses":"read","metadata":"read"}'
+
+die() { echo "agent: $*" >&2; exit 1; }
+[ -z "${CLAUDECODE:-}" ] || die "run this from your own terminal, not inside a Claude Code session"
+command -v docker >/dev/null || die "docker not found"
+
+conf_value() { [ -f "$CONF_DIR/config" ] && sed -n "s/^$1=\(.*\)$/\1/p" "$CONF_DIR/config" | tail -1; }
+ROOT=$(conf_value REPO_DIR || true); ROOT=${ROOT:-$HOME/projects/ai-subs}
+[ -d "$ROOT/.git" ] || die "REPO_DIR $ROOT is not a git checkout"
+case "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/" in
+  "$(cd "$ROOT" && pwd -P)/"*) echo "agent: WARNING: running the working-tree copy; after review use ai-subs-agent (self-install)" >&2 ;;
+esac
+
+conf() {
+  APP_ID=$(conf_value APP_ID || true); INSTALLATION_ID=$(conf_value INSTALLATION_ID || true)
+  KEY=$CONF_DIR/app.pem
+  [[ "$APP_ID" =~ ^[0-9]+$ && "$INSTALLATION_ID" =~ ^[0-9]+$ ]] || die "set numeric APP_ID and INSTALLATION_ID in $CONF_DIR/config"
+  [ -f "$KEY" ] || die "missing GitHub App private key $KEY"
+  [ "$(stat -f %Lp "$KEY" 2>/dev/null || stat -c %a "$KEY")" = 600 ] || die "$KEY must be mode 600"
+}
+
+# The image to run is the one `build` recorded, never "whatever has the label".
+image_state() { [ -f "$CONF_DIR/image" ] || die "no image recorded; run build"; read -r IMG IMG_MODE < "$CONF_DIR/image"; }
+require_reviewed() { # [--allow-unreviewed]
+  image_state
+  [ "$IMG_MODE" = reviewed ] || [ "${1:-}" = --allow-unreviewed ] || die "$IMG is an unreviewed build; pass --allow-unreviewed (verify only) or run build"
+}
+
+cmd_self_install() {
+  git -C "$ROOT" fetch -q origin main
+  mkdir -p "$HOME/.local/bin"
+  git -C "$ROOT" show origin/main:bin/agent > "$HOME/.local/bin/ai-subs-agent.new" || die "origin/main has no bin/agent yet"
+  chmod 0755 "$HOME/.local/bin/ai-subs-agent.new" && mv "$HOME/.local/bin/ai-subs-agent.new" "$HOME/.local/bin/ai-subs-agent"
+  echo "agent: installed ~/.local/bin/ai-subs-agent from origin/main $(git -C "$ROOT" rev-parse --short origin/main)"
+}
+
+cmd_build() {
+  local sha mode
+  mkdir -p "$CONF_DIR" && chmod 700 "$CONF_DIR"
+  if [ "${1:-}" = --from-worktree ]; then
+    echo "agent: building from the working tree: UNREVIEWED (verify only, disposable credentials)" >&2
+    sha="worktree-$(git -C "$ROOT" rev-parse --short HEAD)"; mode=unreviewed
+    tar -C "$ROOT/tools/agent-container" -cf - . | docker build --pull -t "$NAME:$sha" --build-arg SOURCE_COMMIT="$sha" -
+  else
+    git -C "$ROOT" fetch -q origin main
+    sha=$(git -C "$ROOT" rev-parse origin/main); mode=reviewed
+    # git archive of a tree applies no filters or hooks from the checkout: only origin/main's bytes.
+    git -C "$ROOT" archive --format=tar "$sha:tools/agent-container" \
+      | docker build --pull -t "$NAME:${sha:0:12}" --build-arg SOURCE_COMMIT="$sha" -
+    sha=${sha:0:12}
+  fi
+  echo "$NAME:$sha $mode" > "$CONF_DIR/image"
+  echo "agent: built $NAME:$sha ($mode)"
+}
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+mint_token() {
+  local now header payload unsigned sig jwt resp
+  now=$(date +%s)
+  header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+  payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now - 60)) $((now + 540)) "$APP_ID" | b64url)
+  unsigned="$header.$payload"
+  sig=$(printf '%s' "$unsigned" | openssl dgst -sha256 -sign "$KEY" | b64url)
+  jwt="$unsigned.$sig"
+  resp=$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -q -fsS --max-time 20 -X POST -H @- \
+    -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" \
+    -d "{\"repositories\":[\"$REPO_NAME\"],\"permissions\":$PERMISSIONS}") || return 1
+  # Refuse anything broader or narrower than asked for: a misconfigured App must stop the session.
+  printf '%s' "$resp" | python3 -I -c '
+import json, sys
+r, want = json.load(sys.stdin), json.loads(sys.argv[1])
+repos = [x["full_name"] for x in r.get("repositories", [])]
+got = r.get("permissions")
+if got != want or repos != [sys.argv[2]]:
+    sys.exit("token scope mismatch: permissions=%s repositories=%s" % (got, repos))
+print(r["token"])' "$PERMISSIONS" "$REPO_SLUG"
+}
+
+install_token() { # [container]
+  local t
+  t=$(mint_token) || die "could not mint a correctly scoped GitHub token"
+  printf '%s' "$t" | docker exec -i -u root "${1:-$NAME}" sh -c 'umask 022; cat > /run/agent-token/.t && mv /run/agent-token/.t /run/agent-token/token'
+}
+
+revoke_token() { # [container]: best effort; a token that can't be revoked still expires within the hour
+  docker exec -u root "${1:-$NAME}" cat /run/agent-token/token 2>/dev/null \
+    | sed 's/^/Authorization: Bearer /' \
+    | curl -q -s -o /dev/null --max-time 15 -X DELETE -H @- https://api.github.com/installation/token || true
+}
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ]; }
+
+run_container() { # name image [extra docker run args...]
+  local n=$1 img=$2; shift 2
+  docker run -d --name "$n" --hostname "$n" --network "$NET" --init \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --sysctl net.ipv6.conf.all.disable_ipv6=1 --pids-limit 4096 \
+    --mount type=tmpfs,dst=/run/agent-token,tmpfs-mode=0755 \
+    "$@" "$img" >/dev/null
+}
+
+firewall() { # container image
+  docker run --rm --network "container:$1" --cap-drop ALL --cap-add NET_ADMIN --cap-add NET_RAW \
+    --user root --entrypoint /usr/local/bin/init-firewall.sh "$2"
+}
+
+cmd_up() { # [--allow-unreviewed]
+  require_reviewed "${1:-}"
+  docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
+  if running && [ "$(docker inspect -f '{{.Config.Image}}' "$NAME")" != "$IMG" ]; then
+    echo "agent: container runs an older image; recreating" >&2; cmd_down
+  fi
+  if ! running; then
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    run_container "$NAME" "$IMG" \
+      --mount type=volume,src=$NAME-work,dst=/work \
+      --mount type=volume,src=$NAME-claude,dst=/home/node/.claude
+    firewall "$NAME" "$IMG" || { docker rm -f "$NAME" >/dev/null; die "firewall setup failed; container removed"; }
+  fi
+  docker exec -u node "$NAME" bash -euc '
+    cd /work
+    [ -d ai-subtitles/.git ] || git clone -q "https://github.com/'"$REPO_SLUG"'.git" ai-subtitles
+    cd ai-subtitles
+    # Markers are written only after a complete install, so an interrupted one is redone on the next up.
+    if [ ! -f backend/venv/.agent-deps-ok ]; then
+      # Same toolchain as .github/workflows/check.yml, with torch at the version requirements.txt pins.
+      # PyPI stays an index: torch'"'"'s own dependencies may need build tools the CPU index lacks.
+      tv=$(sed -n "s/^torch==\([0-9.]*\).*/\1/p" backend/requirements.txt)
+      rm -rf backend/venv && python3 -m venv backend/venv
+      backend/venv/bin/pip install -q "torch==$tv" "torchaudio==$tv" \
+        --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      grep -viE "^(onnxruntime-gpu|insightface)" backend/requirements.txt > /tmp/requirements-agent.txt
+      backend/venv/bin/pip install -q -r /tmp/requirements-agent.txt pytest==9.1.1 ruff==0.12.0
+      touch backend/venv/.agent-deps-ok
+    fi
+    if [ ! -f frontend/node_modules/.agent-deps-ok ]; then
+      (cd frontend && npm ci --no-audit && touch node_modules/.agent-deps-ok)
+    fi
+    echo "agent: workspace ready at /work/ai-subtitles ($(git rev-parse --abbrev-ref HEAD))"'
+}
+
+cmd_down() { revoke_token; docker rm -f "$NAME" >/dev/null 2>&1 || true; echo "agent: stopped (volumes kept, token revoked)"; }
+
+cmd_token_check() { # setup check: mint, confirm the exact scope, revoke; never prints the token
+  local t code
+  conf
+  t=$(mint_token) || die "token check FAILED (see the scope line above)"
+  echo "agent: token OK: $REPO_SLUG only, permissions exactly $PERMISSIONS"
+  code=$(printf 'Authorization: Bearer %s\n' "$t" | curl -q -s -o /dev/null -w '%{http_code}' --max-time 15 -X DELETE -H @- https://api.github.com/installation/token)
+  [ "$code" = 204 ] && echo "agent: token revoked" || die "token revoke returned HTTP $code"
+}
+
+cmd_session() {
+  conf; require_reviewed
+  running || cmd_up
+  install_token
+  local parent=$$
+  # Rotates until the session ends; also stops if this shell is gone (terminal closed, SIGKILL).
+  ( while sleep 2700; do kill -0 "$parent" 2>/dev/null || exit 0; install_token || echo "agent: token rotation failed" >&2; done ) &
+  local refresher=$!
+  trap 'kill $refresher 2>/dev/null' EXIT HUP INT TERM
+  docker exec -it -u node -e CLAUDE_CODE_OAUTH_TOKEN "$NAME" /usr/local/bin/agent-session "$@"
+}
+
+cmd_verify() { # [--allow-unreviewed]
+  local allow="" fails=0 variant n=$NAME-negtest expect out rc
+  [ "${1:-}" = --allow-unreviewed ] && allow=1
+  conf; require_reviewed "${1:-}"
+  ok() { echo "PASS $1"; }; bad() { echo "FAIL $1"; fails=$((fails + 1)); }
+  # A fresh container: nothing a previous session left in the writable layer or in running processes can
+  # touch the results. Only short-lived, revoked-at-exit tokens; no Claude credential is ever passed.
+  # The EXIT trap runs after this function returns, so it can't use its locals: names are spelled out.
+  cleanup() { revoke_token "$NAME-negtest"; docker rm -f "$NAME-negtest" >/dev/null 2>&1 || true; revoke_token "$NAME"; }
+  trap cleanup EXIT HUP INT TERM
+  cmd_down >/dev/null; cmd_up "${1:-}"; install_token
+
+  docker inspect "$NAME" | python3 -I -c '
+import json, sys
+c = json.load(sys.stdin)[0]; h = c["HostConfig"]
+checks = {
+  "inspect:not-privileged": not h["Privileged"],
+  "inspect:cap-drop-all": h["CapDrop"] == ["ALL"] and not h["CapAdd"],
+  "inspect:no-new-privileges": "no-new-privileges:true" in (h["SecurityOpt"] or []),
+  "inspect:only-volumes-and-tmpfs": all(m["Type"] in ("volume", "tmpfs") for m in c["Mounts"]) and not h["Binds"],
+  "inspect:no-docker-socket": not any("docker.sock" in (m.get("Source") or "") for m in c["Mounts"]),
+  "inspect:own-network": h["NetworkMode"] == sys.argv[1],
+  "inspect:no-host-pid-ipc": h["PidMode"] in ("", "private") and h["IpcMode"] in ("private", "shareable", ""),
+  "inspect:runs-recorded-image": c["Config"]["Image"] == sys.argv[2],
+}
+for k, v in checks.items(): print(("PASS " if v else "FAIL ") + k)
+sys.exit(0 if all(checks.values()) else 1)' "$NET" "$IMG" || fails=$((fails + 1))
+  if [ -z "$allow" ]; then
+    git -C "$ROOT" fetch -q origin main
+    [ "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMG")" = "$(git -C "$ROOT" rev-parse origin/main)" ] \
+      && ok "image:built-from-origin-main" || bad "image:built-from-origin-main (rebuild)"
+  fi
+
+  docker exec -u node -e AGENT_ALLOW_UNREVIEWED_IMAGE="$allow" "$NAME" /usr/local/bin/agent-verify || fails=$((fails + 1))
+
+  # A failed critical check must stop the session before Claude starts. Each variant breaks exactly one
+  # property of an otherwise correct container (real token, firewall applied) and expects that check to fail.
+  for variant in no-firewall extra-cap; do
+    docker rm -f "$n" >/dev/null 2>&1 || true
+    if [ "$variant" = extra-cap ]; then
+      run_container "$n" "$IMG" --cap-add NET_ADMIN; expect="FAIL caps:bounding-none"
+      firewall "$n" "$IMG" >/dev/null
+    else
+      run_container "$n" "$IMG"; expect="FAIL net:blocked:example.com"
+    fi
+    install_token "$n"
+    out=$(docker exec -u node -e AGENT_ALLOW_UNREVIEWED_IMAGE="$allow" "$n" /usr/local/bin/agent-session --version 2>&1) && rc=0 || rc=$?
+    revoke_token "$n"; docker rm -f "$n" >/dev/null
+    if [ "$rc" -ne 0 ] && grep -qF "$expect" <<<"$out" && grep -q 'Claude Code was NOT started' <<<"$out" \
+       && ! grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+ \(Claude Code\)' <<<"$out"; then
+      ok "startup-blocked:$variant"
+    else bad "startup-blocked:$variant (rc=$rc, expected '$expect')"; fi
+  done
+
+  echo "agent verify: fails=$fails"
+  [ "$fails" -eq 0 ]
+}
+
+case "${1:-session}" in
+  self-install) cmd_self_install ;;
+  token-check) cmd_token_check ;;
+  build) shift; cmd_build "$@" ;;
+  up) shift; cmd_up "$@" ;;
+  session) shift; cmd_session "$@" ;;
+  verify) shift; cmd_verify "$@" ;;
+  shell) docker exec -it -u node "$NAME" bash ;;
+  down) cmd_down ;;
+  destroy) cmd_down >/dev/null
+           docker volume rm "$NAME-work" "$NAME-claude" 2>/dev/null || true
+           docker network rm "$NET" 2>/dev/null || true; echo "agent: removed container, volumes and network" ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -*) cmd_session "$@" ;;
+  *) die "unknown command: $1 (see help)" ;;
+esac
