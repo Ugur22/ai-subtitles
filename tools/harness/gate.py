@@ -1,0 +1,363 @@
+"""Risk-based review gates for the agent container (enabled by AI_SUBS_REVIEW_GATE=1 in managed settings), and
+the `ai-risk` CLI. risk.py holds the pure rules; this module applies them to git and the ledger.
+
+Three moments, one set of requirements (requirements()):
+- PostToolUse (Edit/Write/Bash): reclassify the branch; the first time a session's tier rises, tell the agent
+  what that tier requires (advisor before implementing sensitive work, reviewer before the PR). Never blocks.
+- PreToolUse on `gh pr create|edit|ready`: deny until the requirements hold and the description is complete.
+- Stop (stop_check.py, after `make check` is green): the fallback; blocks at most 3 times, then NOT READY.
+
+Requirements for tier review or sensitive: a `reviewer` run tied to the current code (a git tree snapshot), or
+a later change since that review small enough not to need another look; for sensitive also an `advisor` run on
+the branch. Re-review is targeted (only the delta) and bounded: after MAX_ROUNDS reviews, further significant
+changes make the work NOT READY instead of asking for a fourth review.
+
+All of this reads the agent-writable ledger: it catches workflow slips, it does not prove a review happened.
+The trusted check is `policy` in CI plus the owner's approval of the exact commit.
+
+CLI (`ai-risk` in the container):
+  plan PATH...                 tier and required steps for the files you intend to touch (path signals only)
+  status                       tier of the branch against origin/main, and what is still required
+  escalate review|sensitive --reason TEXT
+"""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import ledger  # noqa: E402
+import prbody  # noqa: E402
+import risk  # noqa: E402
+
+MAX_ROUNDS = 3
+DELTA_LINES = 80
+
+
+def enabled():
+    return os.environ.get("AI_SUBS_REVIEW_GATE") == "1"
+
+
+# --- git side ----------------------------------------------------------------------------------------------------
+
+def merge_base(root):
+    for ref in ("origin/main", "main"):
+        mb = ledger._git(root, "merge-base", "HEAD", ref)
+        if mb:
+            return mb
+    return ledger._git(root, "rev-parse", "HEAD")
+
+
+def diff_files(root, base, target):
+    """risk.classify_files input for the change from base (commit or tree) to target (tree)."""
+    status = ledger._git(root, "diff", "--name-status", "-M", base, target, strip=False, timeout=120)
+    patch = ledger._git(root, "diff", "-U0", "--no-color", "-M", base, target, strip=False, timeout=120)
+    added, changes, current, in_hunk = {}, {}, None, False
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            current, in_hunk = line.rsplit(" b/", 1)[-1], False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and current and line[:1] in "+-":
+            changes[current] = changes.get(current, 0) + 1
+            if line[:1] == "+":
+                added.setdefault(current, []).append(line[1:])
+    files = []
+    for line in status.splitlines():
+        parts = line.split("\t")
+        if parts[0][:1] == "R" and len(parts) >= 3:
+            f = {"path": parts[2], "old": parts[1], "status": "R"}
+        elif len(parts) >= 2:
+            f = {"path": parts[1], "old": "", "status": parts[0][:1]}
+        else:
+            continue
+        f.update(changes=changes.get(f["path"], 0), added=added.get(f["path"], []))
+        files.append(f)
+    return files
+
+
+def significant_delta(root, base, reviewed_tree, tree):
+    """Reasons the change since the reviewed tree needs another review; [] when it doesn't."""
+    if not reviewed_tree or reviewed_tree == tree:
+        return []
+    d = risk.classify_files(diff_files(root, reviewed_tree, tree))
+    reviewed_files = set(ledger._git(root, "diff", "--name-only", base, reviewed_tree, timeout=120).split())
+    reasons = list(d["sensitive_content"])
+    reasons += [r for r in d["sensitive_paths"] if r.split(": ", 1)[-1] not in reviewed_files]
+    if d["lines"] > DELTA_LINES:
+        reasons.append(f"{d['lines']} changed lines outside tests since the review (limit {DELTA_LINES})")
+    if d["new_code_files"]:
+        reasons.append("new files: " + ", ".join(d["new_code_files"][:5]))
+    return reasons
+
+
+def runs(events, branch, agent):
+    return [e for e in events if e.get("event") == "subagent" and e.get("agent") == agent and e.get("branch") == branch]
+
+
+def requirements(root, tree=None, events=None):
+    tree = tree or ledger.snapshot_tree(root)
+    base = merge_base(root)
+    if tree:
+        res = risk.classify_files(diff_files(root, base, tree))
+    else:
+        res = dict(risk.classify_files([]), reasons=["could not read the working tree"])
+    branch = ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    events = ledger.events(root) if events is None else events
+    tier = risk.effective(res["tier"], events, branch)
+    reviews = [e for e in runs(events, branch, "reviewer") if e.get("tree")]
+    advisors = runs(events, branch, "advisor")
+    missing, delta, limit = [], [], False
+    if risk.RANK[tier] >= risk.RANK[risk.REVIEW]:
+        if not reviews:
+            missing.append("reviewer: no `reviewer` run on this branch yet; have it review the diff against origin/main")
+        else:
+            last = reviews[-1]
+            delta = significant_delta(root, base, last["tree"], tree)
+            if delta and len(reviews) >= MAX_ROUNDS:
+                limit = True
+            elif delta:
+                nxt = 1 + max((int(f["id"][1:]) for f in ledger.latest_findings(reviews).values()
+                               if str(f["id"]).upper().startswith("R") and str(f["id"])[1:].isdigit()), default=0)
+                missing.append(
+                    f"re-review: the changes since the review are significant ({'; '.join(delta)}). Targeted "
+                    f"re-review: give `reviewer` only `git diff {last['tree'][:12]}` and ask it to number findings "
+                    f"from R{nxt} (round {len(reviews) + 1} of {MAX_ROUNDS})")
+    if tier == risk.SENSITIVE and not advisors:
+        missing.append("advisor: sensitive work needs an `advisor` run on the plan (before implementing it)")
+    return {"tier": tier, "classification": res, "tree": tree, "branch": branch, "missing": missing,
+            "reviews": reviews, "advisors": advisors, "delta": delta, "limit_reached": limit}
+
+
+def body_problems(req, body, title):
+    """prbody's rules for the tier, plus: every actionable finding logged on the branch has a disposition."""
+    out = prbody.problems(req["tier"], title, body)
+    found = prbody.dispositions(body)[0] or {}
+    for fid, f in sorted(ledger.latest_findings(req["advisors"] + req["reviews"]).items()):
+        if f.get("severity") in prbody.ACTIONABLE and fid not in found:
+            out.append(f"## Review: {fid} [{f.get('severity')}] ({ledger.sanitize(f.get('pattern', ''), 50)}) "
+                       "has no disposition")
+    return out
+
+
+def pr_view(root, fields):
+    """`gh pr view --json <fields>` for the current branch's PR, or None."""
+    try:
+        r = subprocess.run(["gh", "pr", "view", "--json", fields], cwd=root, capture_output=True, timeout=20)
+        return json.loads(r.stdout or "{}") if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+# --- PreToolUse: gh pr create | edit | ready ------------------------------------------------------------------
+
+_GH_PR = re.compile(r"\bgh\s+pr\s+(create|edit|ready)\b")
+
+
+def parse_gh(command):
+    """(action, options) for the first `gh pr create|edit|ready` in the command, or (None, None)."""
+    m = _GH_PR.search(command)
+    if not m:
+        return None, None
+    try:
+        lex = shlex.shlex(command[m.end():], posix=True, punctuation_chars=";&|")
+        lex.whitespace_split = True
+        tokens = []
+        for t in lex:
+            if t and set(t) <= set(";&|"):
+                break
+            tokens.append(t)
+    except ValueError:
+        return m.group(1), {"unparsable": True}
+    opts, i = {"draft": False, "undo": False}, 0
+    names = {"-t": "title", "--title": "title", "-b": "body", "--body": "body", "-F": "body_file",
+             "--body-file": "body_file"}
+    while i < len(tokens):
+        t = tokens[i]
+        key, val = (t.split("=", 1) + [None])[:2] if t.startswith("--") and "=" in t else (t, None)
+        if key in names:
+            if val is None:
+                i += 1
+                val = tokens[i] if i < len(tokens) else ""
+            opts[names[key]] = val
+        elif key in ("-d", "--draft"):
+            opts["draft"] = True
+        elif key == "--undo":
+            opts["undo"] = True
+        elif key in ("-f", "--fill", "--fill-first", "--fill-verbose", "-w", "--web"):
+            opts["fill"] = True
+        i += 1
+    return m.group(1), opts
+
+
+def pr_gate(payload):
+    """None to allow, or the reason to deny."""
+    action, opts = parse_gh(str((payload.get("tool_input") or {}).get("command", "")))
+    if action is None or opts.get("undo"):
+        return None
+    if action == "edit" and not ({"body", "body_file", "title"} & set(opts)):
+        return None
+    root = ledger.repo_root(payload.get("cwd") or ".")
+    if not root:
+        return None
+    req = requirements(root)
+    if req["tier"] == risk.ORDINARY:
+        return None
+    problems = list(req["missing"])
+    sets_body = action == "create" or "body" in opts or "body_file" in opts
+    if sets_body and (opts.get("unparsable") or opts.get("fill") or "body" in opts
+                      or opts.get("body_file") in (None, "-")):
+        problems.append("write the description to a file and pass it with `--body-file <path>` (not --body, "
+                        "--fill or stdin), so it can be checked")
+    body, title = None, opts.get("title")
+    if action == "ready":
+        pr = pr_view(root, "body,title")
+        if pr is None:
+            problems.append("could not read the PR description with `gh pr view`")
+        else:
+            body, title = pr.get("body") or "", pr.get("title") or ""
+    elif opts.get("body_file") not in (None, "-"):
+        try:
+            with open(os.path.join(payload.get("cwd") or root, opts["body_file"]), errors="replace") as f:
+                body = f.read()
+        except OSError:
+            problems.append(f"cannot read --body-file {opts['body_file']}")
+    if body is not None:
+        problems += body_problems(req, body, title)
+    if req["limit_reached"]:
+        if action == "ready":
+            problems.append(f"{MAX_ROUNDS} review rounds are used up and the latest changes are unreviewed: the "
+                            "work stays a draft (NOT READY) for the owner to review")
+        elif not opts.get("draft") or "NOT READY" not in (body or ""):
+            problems.append(f"{MAX_ROUNDS} review rounds are used up and the latest changes are unreviewed "
+                            f"({'; '.join(req['delta'])}). Open the PR with --draft and a description that starts "
+                            "with `NOT READY:` saying what is unreviewed")
+    ledger.log(root, payload, "gate", point="pr", action=action, decision="deny" if problems else "allow",
+               tier=req["tier"], missing=[ledger.sanitize(p, 120) for p in problems[:8]])
+    if not problems:
+        return None
+    why = "; ".join(req["classification"]["reasons"][:4]) or "escalated"
+    return f"Risk tier {req['tier']} ({why}). Before this PR command can run:\n- " + "\n- ".join(problems)
+
+
+# --- PostToolUse: reassess the tier while working ----------------------------------------------------------------
+
+def reassess(payload):
+    """additionalContext text the first time this session's tier rises, else None. Cheap when nothing changed:
+    the marker remembers the tier and the tree it was computed for."""
+    root = ledger.repo_root(payload.get("cwd") or ".")
+    if not root:
+        return None
+    marker = os.path.join(ledger.state_dir(root), f"tier-{ledger.session_id(payload)}")
+    try:
+        with open(marker) as f:
+            before, _, seen_tree = f.read().strip().partition(" ")
+    except OSError:
+        before, seen_tree = risk.ORDINARY, ""
+    if before == risk.SENSITIVE:
+        return None
+    tree = ledger.snapshot_tree(root)
+    if not tree or tree == seen_tree:
+        return None
+    res = risk.classify_files(diff_files(root, merge_base(root), tree))
+    tier = res["tier"]
+    if risk.RANK[tier] <= risk.RANK.get(before, 0):  # escalations can still raise it
+        tier = risk.effective(tier, ledger.events(root), ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD"))
+    rose = risk.RANK[tier] > risk.RANK.get(before, 0)
+    with open(marker, "w") as f:
+        f.write(f"{tier if rose else before} {tree}")
+    if not rose:
+        return None
+    ledger.log(root, payload, "risk", tier=tier, previous=before,
+               reasons=[ledger.sanitize(r, 120) for r in res["reasons"][:6]])
+    why = "; ".join(res["reasons"][:4]) or "escalated"
+    if tier == risk.SENSITIVE:
+        return (f"Risk is now SENSITIVE ({why}). Before implementing further, consult the `advisor` agent on your "
+                "plan; it is required for this branch. Write the ## Risk section as you go. `reviewer` must review "
+                "the finished diff before `gh pr create`, and the PR title starts with [sensitive]. See CLAUDE.md "
+                "(Risk lifecycle). `ai-risk status` shows what is still missing.")
+    return (f"Risk is now REVIEW ({why}). Have the `reviewer` agent review the finished diff before `gh pr create`, "
+            "and give every finding a disposition in ## Review. `ai-risk status` shows what is still missing.")
+
+
+# --- entry points ------------------------------------------------------------------------------------------------
+
+def hook():
+    if ledger.shadowed_by_image():
+        return 0
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return 0
+    event = payload.get("hook_event_name")
+    try:
+        ledger.handle(payload)  # selfcheck logging for Bash `make check` (PostToolUse and PostToolUseFailure)
+    except Exception:
+        pass
+    if not enabled():
+        return 0
+    try:
+        if event == "PreToolUse" and payload.get("tool_name") == "Bash":
+            reason = pr_gate(payload)
+            if reason:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": reason}}))
+        elif event == "PostToolUse":
+            ctx = reassess(payload)
+            if ctx:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": ctx}}))
+    except Exception as exc:
+        try:
+            root = ledger.repo_root(payload.get("cwd") or ".")
+            ledger._record_error(ledger.ledger_path(root) if root else "", f"gate-{event}", exc)
+        except Exception:
+            pass
+    return 0
+
+
+def cli(argv):
+    ap = argparse.ArgumentParser(prog="ai-risk")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("plan").add_argument("paths", nargs="+")
+    sub.add_parser("status")
+    e = sub.add_parser("escalate")
+    e.add_argument("tier", choices=[risk.REVIEW, risk.SENSITIVE])
+    e.add_argument("--reason", required=True)
+    a = ap.parse_args(argv)
+    root = ledger.repo_root(".")
+    if not root:
+        print("not inside a git repository", file=sys.stderr)
+        return 2
+    if a.cmd == "escalate":
+        ok = ledger.log(root, {}, "risk_escalation", tier=a.tier, reason=ledger.sanitize(a.reason))
+        print(f"risk escalated to {a.tier}" + ("" if ok else " (WARNING: ledger write failed)"))
+        return 0
+    if a.cmd == "plan":
+        rel = [os.path.relpath(os.path.abspath(p), root) for p in a.paths]
+        res = risk.classify_files([{"path": p, "status": "M" if os.path.exists(os.path.join(root, p)) else "A"}
+                                   for p in rel])
+        tier = risk.effective(res["tier"], ledger.events(root), ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD"))
+        missing = []
+    else:
+        req = requirements(root)
+        res, tier, missing = req["classification"], req["tier"], req["missing"]
+    print(f"risk: {tier}" + (f" (escalated from {res['tier']})" if tier != res["tier"] else ""))
+    for r in res["reasons"]:
+        print(f"  - {r}")
+    if a.cmd == "plan":
+        print("  (path signals only; the diff can still raise the tier: added routes, Supabase queries in routers, "
+              "deletions, environment loading, size, scope)")
+    print("required:")
+    for s in risk.required_steps(tier):
+        print(f"  - {s}")
+    for m in missing:
+        print(f"still missing: {m}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli(sys.argv[1:]) if sys.argv[1:] else hook())

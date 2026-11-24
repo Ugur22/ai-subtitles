@@ -1,0 +1,5 @@
+#!/bin/bash
+# The agent's view of the risk gate (tools/harness/gate.py, root-owned in the image): `ai-risk plan PATH...`,
+# `ai-risk status`, `ai-risk escalate review|sensitive --reason TEXT`. It can raise the tier, never lower it.
+export AI_SUBS_LEDGER=/work/.harness/ledger.jsonl AI_SUBS_REVIEW_GATE=1
+exec python3 -I /usr/local/lib/ai-subs-harness/gate.py "$@"

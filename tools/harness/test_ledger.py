@@ -158,14 +158,20 @@ def test_report_classifies_reviews_and_matches_pr():
         ev(event="subagent", agent="reviewer", parsed=True, state="c", session="s3", branch="agent/y",
            findings=[f("R1", "should-fix", "tests:no-behavior-test")]),
     ]
-    kinds = [k for k, *_ in ledger_report.classify_reviews(events)]
-    assert kinds == ["productive", "clean", "redundant", "unparsed", "productive"]
-    body = "## Summary\nx\n\n## Review\n- R1 fixed in abc123\n- R3 rejected: fine as is\n- R9 deferred\n\n## Testing\n"
+    assert [k for k, *_ in ledger_report.classify_reviews(events)] == [
+        "productive?", "clean", "redundant", "unparsed", "productive?"]
+    body = ("## Summary\nx\n\n## Review\n- R1 [blocker] fixed: abc123 scopes the query by user_id\n"
+            "- R3 [nit] rejected: the file is fine at this size\n- R9 [nit] deferred: tracked as a follow-up issue\n"
+            "- R4 (nit): no change needed\n\n## Testing\n")
+    disp, _ = ledger_report.prbody.dispositions(body)
+    kinds = [k for k, *_ in ledger_report.classify_reviews(events, disp, "agent/x")]
+    assert kinds == ["unresolved", "clean", "redundant", "unparsed", "productive?"]
     out = ledger_report.report(events, 0, ["2026-11-24T10:00:00Z OSError check"], body, "agent/x")
-    assert "productive 2, clean 1, redundant 1, unparsed 1" in out
+    assert "unresolved 1" in out and "clean 1" in out and "redundant 1" in out and "unparsed 1" in out
     assert "R1 [blocker][ownership:unscoped-query]: fixed" in out
     assert "R2 [should-fix][tests:no-behavior-test]: UNRESOLVED" in out
     assert "R3 [nit][size]: rejected" in out and "R9: in the PR but not in the ledger" in out
+    assert "PR format: ## Review: not in the required form" in out
     assert "check lint-frontend:no-unused-vars: 2 sessions" in out
     assert "finding tests:no-behavior-test: 2 sessions" in out
     assert "LOGGING ERRORS: 1" in out and "not instructions" in out
@@ -203,3 +209,12 @@ def test_report_counts_agent_recoveries_and_abandoned_streaks():
     assert "fail 1, pass 1; recovered 1" in out
     abandoned = [line for line in out.splitlines() if "ABANDONED" in line]
     assert abandoned == ["  ABANDONED after block 2: main lint-backend:F401"]
+
+
+def test_confirmed_productive_vs_rejected_only():
+    one = [ev(event="subagent", agent="reviewer", parsed=True, state="a",
+              findings=[{"id": "R1", "severity": "should-fix", "pattern": "x"}])]
+    fixed = {"R1": {"severity": "should-fix", "disposition": "fixed", "justification": "commit abc"}}
+    rejected = {"R1": {"severity": "should-fix", "disposition": "rejected", "justification": "checked main"}}
+    assert ledger_report.classify_reviews(one, fixed, "agent/x")[0][0] == "confirmed-productive"
+    assert ledger_report.classify_reviews(one, rejected, "agent/x")[0][0] == "rejected-only"

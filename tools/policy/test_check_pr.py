@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("check_pr", Path(__file__).with_name("check_pr.py"))
@@ -75,3 +76,70 @@ def test_main_reports_and_exits(tmp_path, capsys):
     assert cp.main(str(files), str(reviews), AGENT, HEAD) == 1
     out = capsys.readouterr().out
     assert "guard path" in out and "approving review" in out
+
+
+RISK = """## Risk
+- Impact: local config could load differently
+- Verification: test_settings_sources.py and make check
+- Rollback: revert and redeploy
+- Reversibility: code-only
+- Uncertainty: real backend/.env not exercised
+"""
+REVIEW = "## Review\n- R1 [should-fix] fixed: b07ac76 adds behaviour tests\n"
+
+
+def af(name, patch="", changes=1, status="modified"):
+    return {"filename": name, "status": status, "patch": patch, "changes": changes}
+
+
+def test_agent_sensitive_pr_needs_title_risk_and_review():
+    files = [af("backend/config.py")]
+    found = cp.risk_violations(files, AGENT, "Load settings", "## Summary\nx")
+    text = "\n".join(found)
+    assert "[sensitive]" in text and "## Risk section is missing" in text and "## Review section is missing" in text
+    assert all(v.startswith("risk sensitive (config and secrets loading") for v in found)
+    assert cp.risk_violations(files, AGENT, "[sensitive] Load settings", RISK + REVIEW) == []
+
+
+def test_sensitive_content_from_the_patch_counts():
+    files = [af("backend/routers/video.py", patch='@@ -1 +1,2 @@\n+@router.get("/api/new")\n def x():')]
+    assert any("[sensitive]" in v for v in cp.risk_violations(files, AGENT, "x", REVIEW))
+
+
+def test_review_tier_needs_dispositions_not_none_run():
+    files = [af("backend/main.py")]
+    assert cp.risk_violations(files, AGENT, "x", "## Review\nnone run (Ordinary change)\n")
+    assert cp.risk_violations(files, AGENT, "x", "## Review\nNo findings.\n") == []
+    bad = "## Review\n- R1 [blocker] deferred: will do it later in another PR\n"
+    assert any("can't be deferred" in v for v in cp.risk_violations(files, AGENT, "x", bad))
+
+
+def test_ordinary_agent_pr_and_owner_pr_are_not_burdened():
+    assert cp.risk_violations([af("frontend/src/utils/time.ts")], AGENT, "x", "") == []
+    assert cp.risk_violations([af("backend/config.py")], OWNER, "x", "") == []
+    malformed = "## Review\n- R1 (nit): no change needed\n"
+    assert cp.risk_violations([af("frontend/src/utils/time.ts")], AGENT, "x", malformed)
+
+
+def test_main_reads_pr_json_and_puts_fixable_violations_first(tmp_path, capsys):
+    files = tmp_path / "files.jsonl"
+    files.write_text(json.dumps(af("backend/config.py")) + "\n")
+    reviews = tmp_path / "reviews.json"
+    reviews.write_text("[]")
+    pr = tmp_path / "pr.json"
+    pr.write_text(json.dumps({"title": "x", "body": None}))
+    assert cp.main(str(files), str(reviews), AGENT, HEAD, str(pr)) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("risk sensitive") and "approving review" in lines[-2]
+
+
+def test_policy_loads_only_pure_rules():
+    """The trusted check imports risk and prbody, never the git- and file-touching harness modules."""
+    import subprocess
+    import sys
+    code = ("import importlib.util, sys; p = sys.argv[1]; s = importlib.util.spec_from_file_location('c', p); "
+            "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+            "print(sorted(n for n in ('ledger', 'gate', 'stop_check', 'subprocess') if n in sys.modules))")
+    out = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).with_name("check_pr.py"))],
+                         capture_output=True, text=True, check=True).stdout
+    assert out.strip() == "[]"

@@ -65,7 +65,7 @@ jobs:
       - run: |
           shellcheck -S warning bin/agent tools/agent-container/init-firewall.sh tools/agent-container/agent-checks.sh \
             tools/agent-container/agent-session tools/agent-container/agent-verify \
-            tools/agent-container/git-credential-agent tools/agent-container/gh scripts/hooks/stop-check.sh
+            tools/agent-container/git-credential-agent tools/agent-container/gh tools/agent-container/ai-risk scripts/hooks/stop-check.sh
           python -m json.tool tools/agent-container/managed-settings.json >/dev/null
 
   terraform:

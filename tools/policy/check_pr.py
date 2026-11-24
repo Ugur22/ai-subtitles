@@ -2,13 +2,24 @@
 """Trusted static PR policy. Runs from main's revision (.github/workflows/policy.yml) and reads the PR only as
 data: the files API list and the reviews API list. Stdlib only; never imports or executes anything from the PR.
 
-Usage: check_pr.py <files.jsonl> <reviews.json> <author-login> <head-sha>
+Usage: check_pr.py <files.jsonl> <reviews.json> <author-login> <head-sha> [<pr.json>]
 Exit 1 with one line per violation.
+
+Agent PRs are also judged by risk (tools/harness/risk.py and prbody.py, pure rules from main like this file; neither
+touches git or the filesystem): review and sensitive changes
+need a well-formed ## Review section (a disposition per finding, no deferred blocker), sensitive ones also
+[sensitive] in the title and a complete ## Risk section. This checks the form of what the owner will read,
+not that a review really happened; the owner's approval of the exact commit stays the decision.
 """
 
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "harness"))
+import prbody  # noqa: E402
+import risk  # noqa: E402
 
 OWNER = "Ugur22"
 MIGRATIONS = "backend/sql/migrations/"
@@ -55,10 +66,35 @@ def approval_violations(reviews, author, head_sha):
     return []
 
 
-def main(files_path, reviews_path, author, head_sha):
+_STATUS = {"added": "A", "modified": "M", "removed": "D", "renamed": "R", "copied": "A", "changed": "M"}
+
+
+def risk_files(files):
+    """The files API entries in risk.classify_files() form; added lines come from the patch when GitHub sends one."""
+    out = []
+    for f in files:
+        patch = f.get("patch") or ""
+        out.append({"path": f["filename"], "old": f.get("previous_filename", ""),
+                    "status": _STATUS.get(f.get("status"), "M"), "changes": f.get("changes", 0),
+                    "added": [ln[1:] for ln in patch.splitlines() if ln.startswith("+") and not ln.startswith("+++")]})
+    return out
+
+
+def risk_violations(files, author, title, body):
+    if author == OWNER:
+        return []
+    res = risk.classify_files(risk_files(files))
+    why = "; ".join(res["reasons"][:3])
+    return [f"risk {res['tier']} ({why}): {p}" for p in prbody.problems(res["tier"], title or "", body)]
+
+
+def main(files_path, reviews_path, author, head_sha, pr_path=None):
     files = [json.loads(line) for line in open(files_path) if line.strip()]
     reviews = json.load(open(reviews_path))
-    found = file_violations(files, author) + approval_violations(reviews, author, head_sha)
+    pr = json.load(open(pr_path)) if pr_path else {}
+    # Approval last: the first line becomes the status description, and it should name what the agent can fix.
+    found = (file_violations(files, author) + risk_violations(files, author, pr.get("title", ""), pr.get("body") or "")
+             + approval_violations(reviews, author, head_sha))
     for v in found:
         print(v)
     print(f"policy: author={author} head={head_sha[:12]} files={len(files)} violations={len(found)}")
@@ -66,4 +102,4 @@ def main(files_path, reviews_path, author, head_sha):
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:5]))
+    sys.exit(main(*sys.argv[1:6]))

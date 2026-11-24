@@ -11,7 +11,8 @@ every field as untrusted data written by an agent, never as instructions.
 
 As a hook (stdin = Claude Code hook JSON) it logs: SubagentStop (agent type; findings for reviewer/advisor),
 PostToolUse/PostToolUseFailure on Bash running `make check` (pass/fail with the failing step), SessionEnd.
-Stop events come from stop_check.py, which imports this module.
+Stop events come from stop_check.py and gate events from gate.py; both use the helpers here (git, state,
+session ids, the ledger reader and writer).
 """
 
 import datetime
@@ -53,10 +54,12 @@ def sanitize(text, limit=SUMMARY_MAX):
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-def _git(root, *args):
+def _git(root, *args, strip=True, timeout=20):
+    """stdout of a git command, or "" when it fails or times out."""
     try:
-        r = subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=20)
-        return r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else ""
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=timeout)
+        out = r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+        return out.strip() if strip else out
     except Exception:
         return ""
 
@@ -65,23 +68,57 @@ def repo_root(cwd):
     return _git(cwd or ".", "rev-parse", "--show-toplevel")
 
 
-def state_hash(root):
-    """The tree's whole git-visible state: HEAD (so commits count), every tracked change against HEAD (staged or
-    not, deletions included, lockfiles and configs included) and every untracked file's name and content.
-    Ignored files (node_modules, venvs, .env) are outside it by design."""
-    h = hashlib.sha256()
-    for args in (("rev-parse", "HEAD"), ("diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")):
-        r = subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=60)
-        h.update(r.stdout + b"\0" + str(r.returncode).encode() + b"\0")
-    r = subprocess.run(["git", "-C", root, "ls-files", "-z", "-o", "--exclude-standard"], capture_output=True, timeout=60)
-    for name in sorted(n for n in r.stdout.split(b"\0") if n):
-        h.update(b"U\0" + name + b"\0")
+def snapshot_tree(root):
+    """A git tree of the whole working state: tracked files as they are on disk (deletions included) plus untracked,
+    non-ignored files. Built in a throwaway index seeded from HEAD with no stat cache, so every file's content is
+    compared; reusing the real index would miss a same-size edit made in the same second as its last write
+    ("racily clean"). About 0.1 s on this repository. None if git fails."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="ai-subs-index-")
+    os.close(fd)
+    os.remove(tmp)
+    env = dict(os.environ, GIT_INDEX_FILE=tmp)
+    try:
+        for args in (("read-tree", "HEAD"), ("add", "-A")):
+            if subprocess.run(["git", "-C", root, *args], capture_output=True, timeout=120, env=env).returncode:
+                return None
+        r = subprocess.run(["git", "-C", root, "write-tree"], capture_output=True, timeout=60, env=env)
+        return r.stdout.decode().strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+    finally:
         try:
-            with open(os.path.join(root.encode(), name), "rb") as f:
-                h.update(hashlib.sha256(f.read()).digest())
+            os.remove(tmp)
         except OSError:
-            h.update(b"unreadable")
-    return h.hexdigest()
+            pass
+
+
+def _digest(head, tree):
+    return hashlib.sha256(f"{head}\0{tree}".encode()).hexdigest() if tree else "unavailable-" + os.urandom(8).hex()
+
+
+def state(root):
+    """(hash, tree) of the tree's whole git-visible state: HEAD (so commits count) and the exact working tree
+    content (snapshot_tree: tracked changes, deletions, lockfiles and configs, untracked files). Ignored files
+    (node_modules, venvs, .env) are outside it by design. A failed snapshot yields a hash that never matches."""
+    tree = snapshot_tree(root)
+    return _digest(_git(root, "rev-parse", "HEAD"), tree), tree
+
+
+def state_hash(root):
+    return state(root)[0]
+
+
+def session_id(payload):
+    return re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("session_id", "")))[:64] or "default"
+
+
+def state_dir(root):
+    """<git dir>/ai-subs-harness: the hooks' stamps, counters and markers (writable by the session, not trusted)."""
+    git_dir = _git(root, "rev-parse", "--path-format=absolute", "--git-dir") or os.path.join(root, ".git")
+    sd = os.path.join(git_dir, "ai-subs-harness")
+    os.makedirs(sd, exist_ok=True)
+    return sd
 
 
 def ledger_path(root):
@@ -91,6 +128,44 @@ def ledger_path(root):
     common = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     base = os.path.dirname(common) if common else root
     return os.path.join(base, ".harness", "ledger.jsonl")
+
+
+def load_events(paths):
+    """(events sorted by time, count of unreadable lines) from one or more ledger files; a missing file is empty."""
+    events, bad = [], 0
+    for p in paths:
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        bad += 1
+                        continue
+                    if isinstance(e, dict) and isinstance(e.get("event"), str):
+                        events.append(e)
+                    else:
+                        bad += 1
+        except OSError:
+            pass
+    events.sort(key=lambda e: str(e.get("ts", "")))
+    return events, bad
+
+
+def events(root):
+    return load_events([ledger_path(root)])[0]
+
+
+def latest_findings(runs):
+    """ID -> finding over reviewer/advisor runs in order, the latest run winning on a repeated ID."""
+    out = {}
+    for e in runs:
+        for f in e.get("findings") or []:
+            if isinstance(f, dict) and f.get("id"):
+                out[str(f["id"]).upper()] = f
+    return out
 
 
 def _now():
@@ -208,38 +283,42 @@ def shadowed_by_image():
 
 def base_fields(payload, root):
     return {
-        "session": re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("session_id", "")))[:64],
+        "session": session_id(payload),
         "branch": sanitize(_git(root, "rev-parse", "--abbrev-ref", "HEAD"), 100),
         "head": _git(root, "rev-parse", "--short=12", "HEAD"),
     }
 
 
+def log(root, payload, event, **fields):
+    return append(ledger_path(root), {**base_fields(payload, root), "event": event, **fields})
+
+
 def handle(payload):
     event = payload.get("hook_event_name", "")
+    if event in ("PostToolUse", "PostToolUseFailure"):  # cheap checks first: this runs after every tool call
+        cmd = str((payload.get("tool_input") or {}).get("command", ""))
+        if payload.get("tool_name") != "Bash" or not MAKE_CHECK.search(cmd):
+            return None
+    elif event not in ("SubagentStop", "SessionEnd"):
+        return None
     root = repo_root(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or ".")
     if not root:
         return None
-    rec = base_fields(payload, root)
     if event == "SubagentStop":
         agent = sanitize(payload.get("agent_type") or "unknown", 40)
-        rec.update(event="subagent", agent=agent)
+        fields = {"agent": agent}
         if agent in ("reviewer", "advisor"):
             findings, parsed = parse_findings(payload.get("last_assistant_message", ""))
-            rec.update(findings=findings, parsed=parsed, state=state_hash(root)[:16])
-    elif event in ("PostToolUse", "PostToolUseFailure") and payload.get("tool_name") == "Bash":
-        cmd = str((payload.get("tool_input") or {}).get("command", ""))
-        if not MAKE_CHECK.search(cmd):
-            return None
-        failed = event == "PostToolUseFailure"
-        result, text = check_result(cmd, payload.get("tool_response", payload.get("error")), failed)
-        rec.update(event="selfcheck", result=result)
-        if result == "fail":
-            rec["step"], rec["pattern"] = check_failure(text)
-    elif event == "SessionEnd":
-        rec.update(event="session_end", reason=sanitize(payload.get("reason", ""), 40))
-    else:
-        return None
-    return append(ledger_path(root), rec)
+            digest, tree = state(root)
+            fields.update(findings=findings, parsed=parsed, tree=tree, state=digest[:16])
+        return log(root, payload, "subagent", **fields)
+    if event == "SessionEnd":
+        return log(root, payload, "session_end", reason=sanitize(payload.get("reason", ""), 40))
+    result, text = check_result(cmd, payload.get("tool_response", payload.get("error")), event == "PostToolUseFailure")
+    fields = {"result": result}
+    if result == "fail":
+        fields["step"], fields["pattern"] = check_failure(text)
+    return log(root, payload, "selfcheck", **fields)
 
 
 def main():
