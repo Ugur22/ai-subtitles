@@ -4,6 +4,7 @@
 
 ### Where agents run
 - **Agent container** (`bin/agent`): autonomous development. No permission prompts and no plan approval for ordinary work: implement, test, commit on a feature branch, push, open a PR, watch CI and fix it. The container has no production credentials; its GitHub App token can only push branches and open PRs on this repository. Merging, migrations, tags and deploys stay with the user and are enforced by GitHub, not by these instructions.
+  - Branch from an up-to-date `origin/main` as `agent/<topic>`: the GitHub ruleset rejects any other branch name. Commit with the configured git identity (the GitHub App's bot account); never set `user.name` or `user.email`, and never commit as the user.
 - **Host sessions**: the user's own machine. Commit and push only when asked; never run deploys or migrations (deny rules in `~/.claude/settings.json`).
 
 ### Risk tiers
