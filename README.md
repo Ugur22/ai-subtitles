@@ -57,57 +57,10 @@ Open http://localhost:5173
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    User(["User"])
-
-    subgraph App["Application"]
-        FE("React frontend<br/>Netlify")
-        API("FastAPI API<br/>Cloud Run · CPU")
-    end
-
-    subgraph GPU["GPU worker · Cloud Run Job · L4"]
-        Runner("Job runner")
-        WH("faster-whisper<br/>Transcription")
-        PY("pyannote<br/>Speakers")
-        CL("CLIP + captions<br/>Visual search")
-        AU("PANNs<br/>Audio events")
-    end
-
-    subgraph Data["Data"]
-        SB[("Supabase<br/>Auth · Jobs · Realtime<br/>pgvector")]
-        GCS[("Cloud Storage<br/>Media · Screenshots")]
-    end
-
-    LLM("LLM providers<br/>Grok · OpenAI · Anthropic ·<br/>Groq · DeepSeek · Ollama")
-    Sched(["Cloud Scheduler"])
-
-    User --> FE --> API
-    API -->|dispatch job| Runner
-    Runner --> WH & PY & CL & AU
-    Runner -->|results| SB
-    Runner <--> GCS
-    API <-->|jobs · search| SB
-    SB -.->|live progress| FE
-    FE -.->|signed upload| GCS
-    API -->|chat · RAG| LLM
-    Sched -->|check-stale| API
-
-    classDef app fill:#0f2a3d,stroke:#38a3d8,color:#e6f4fb,stroke-width:1.5px
-    classDef gpu fill:#3d2a10,stroke:#f0a030,color:#fdf0dc,stroke-width:1.5px
-    classDef data fill:#2c1f45,stroke:#a56cf0,color:#f1e8fd,stroke-width:1.5px
-    classDef ai fill:#1f3314,stroke:#7cc043,color:#eaf7dc,stroke-width:1.5px
-    classDef misc fill:#2b2f36,stroke:#8b95a5,color:#eef0f3,stroke-width:1.5px
-
-    class FE,API app
-    class Runner,WH,PY,CL,AU gpu
-    class SB,GCS data
-    class LLM ai
-    class User,Sched misc
-    style App fill:none,stroke:#38a3d8,stroke-dasharray:4 3
-    style GPU fill:none,stroke:#f0a030,stroke-dasharray:4 3
-    style Data fill:none,stroke:#a56cf0,stroke-dasharray:4 3
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.png">
+  <img src="docs/images/architecture.png" alt="The React app uploads media to Cloud Storage and submits jobs to FastAPI. The API starts a Cloud Run GPU worker, which processes media and saves results in Supabase. Supabase streams progress to the browser.">
+</picture>
 
 **Life of a job**
 
