@@ -7,4 +7,18 @@ if ! /usr/local/bin/agent-checks.sh; then
   exit 1
 fi
 cd /work/ai-subtitles || { echo "agent-session: /work/ai-subtitles missing; run bin/agent up" >&2; exit 1; }
+
+# The clone lives in a volume and outlives image rebuilds. Without this, a session reads the CLAUDE.md,
+# agents and hooks of whatever commit it last checked out (seen: a session ran on main from before #62).
+# Only a clean tree is moved; local branches and their commits stay where they are.
+warn() { printf '\nagent-session: WARNING: %s\n\n' "$1" >&2; }
+if ! git fetch -q origin main; then
+  warn "could not fetch origin/main; instructions and agents may be out of date."
+elif [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  warn "uncommitted changes on $(git rev-parse --abbrev-ref HEAD); not updated. main is $(git rev-list --count main..origin/main) commit(s) behind origin/main."
+elif ! { git switch -q main && git merge -q --ff-only origin/main; }; then
+  warn "could not fast-forward main to origin/main; instructions and agents may be out of date."
+else
+  echo "agent-session: on main at $(git rev-parse --short HEAD) (origin/main)"
+fi
 exec claude "$@"

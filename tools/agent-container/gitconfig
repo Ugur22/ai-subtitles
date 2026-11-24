@@ -6,3 +6,7 @@
 	defaultBranch = main
 [push]
 	autoSetupRemote = true
+# Commits from the container are the GitHub App's, never the owner's; GitHub links this address to the bot account.
+[user]
+	name = ugur22-ai-subs-agent[bot]
+	email = 360600933+ugur22-ai-subs-agent[bot]@users.noreply.github.com
