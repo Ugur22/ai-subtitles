@@ -84,7 +84,9 @@ def test_legacy_transcription_routes_are_removed():
     transcription_source = (BACKEND / "routers" / "transcription.py").read_text()
     main_source = (BACKEND / "main.py").read_text()
 
-    assert "LOCAL_MODE: bool = False" in config_source
+    from config import Settings
+
+    assert Settings.model_fields["LOCAL_MODE"].default is False
     assert "ENABLE_LEGACY_TRANSCRIPTION_ENDPOINTS" not in config_source
     for symbol in (
         '"/transcribe/"',
