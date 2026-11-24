@@ -161,9 +161,22 @@ class JobCancelled(Exception):
     """Raised when a job is cancelled mid-pipeline so finally/except handlers can distinguish it from real failures."""
 
 
-def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
+def _diarization_speaker_key(num_speakers, min_speakers, max_speakers) -> str:
     link = linking_signature(settings.DIARIZATION_LINK_MODEL, settings.DIARIZATION_SIMILARITY_THRESHOLD)
     return f"{num_speakers}_{min_speakers}_{max_speakers}|{link}"
+
+
+def _diarization_param_key(num_speakers, min_speakers, max_speakers) -> str:
+    speakers = _diarization_speaker_key(num_speakers, min_speakers, max_speakers)
+    return f"{speakers}|{DIARIZATION_PIPELINE}"
+
+
+def _get_cached_diarization(user_id: str, video_hash: str, param_key: str) -> Optional[dict]:
+    cached = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
+    if cached and cached.get("param_key") != param_key:
+        print("[Worker] Diarization cache param mismatch, invalidating")
+        return None
+    return cached
 
 
 def _check_cancelled(job_id: str) -> None:
@@ -299,7 +312,7 @@ async def _run_diarization_stage(
             )
 
             diarization_key = settings_key(
-                speakers=diarization_param_key,
+                speakers=_diarization_speaker_key(**speaker_bounds),
                 group_seconds=settings.DIARIZATION_CHUNK_DURATION,
                 chunk_seconds=TRANSCRIPTION_CHUNK_SECONDS,
                 total_chunks=len(audio_chunks),
@@ -493,12 +506,8 @@ class BackgroundWorker:
                 requested_language=language, force_language=force_language,
             )
             cached_transcription = PipelineCacheService.get_cached(user_id, video_hash, transcription_stage)
-            cached_diarization = PipelineCacheService.get_cached(user_id, video_hash, "diarization")
-
             diarization_param_key = _diarization_param_key(**speaker_bounds)
-            if cached_diarization and cached_diarization.get("param_key") != diarization_param_key:
-                print("[Worker] Diarization cache param mismatch, invalidating")
-                cached_diarization = None
+            cached_diarization = _get_cached_diarization(user_id, video_hash, diarization_param_key)
 
             suffix = os.path.splitext(filename)[1].lower()
             is_video_format = suffix in {'.mp4', '.mpeg', '.webm', '.mov', '.mkv'}
