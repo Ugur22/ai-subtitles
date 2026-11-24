@@ -25,7 +25,7 @@ def test_app_change_by_agent_passes_file_rules():
 
 def test_agent_cannot_change_any_guard_path():
     for p in [".github/workflows/check.yml", "tools/policy/check_pr.py", "tools/agent-container/agent-checks.sh",
-              "bin/agent", "Makefile", "CLAUDE.md", "pytest.ini", "frontend/tsconfig.app.json", "frontend/package.json",
+              "bin/agent", "tools/harness/stop_check.py", "Makefile", "CLAUDE.md", "pytest.ini", "frontend/tsconfig.app.json", "frontend/package.json",
               ".claude/settings.json", "backend/evals/chat_cases.json", "infra/scripts/deploy_image.sh",
               "infra/terraform/iam.tf", "scripts/githooks/pre-commit"]:
         assert cp.file_violations([f(p)], AGENT), p

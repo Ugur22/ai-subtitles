@@ -2,5 +2,64 @@
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl AI_SUBS_DRAFT_ON_GIVEUP=1 python3 -I /usr/local/lib/ai-subs-harness/stop_check.py",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl python3 -I /usr/local/lib/ai-subs-harness/ledger.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl python3 -I /usr/local/lib/ai-subs-harness/ledger.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl python3 -I /usr/local/lib/ai-subs-harness/ledger.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AI_SUBS_LEDGER=/work/.harness/ledger.jsonl python3 -I /usr/local/lib/ai-subs-harness/ledger.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
 }
