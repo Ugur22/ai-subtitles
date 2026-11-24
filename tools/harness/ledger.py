@@ -138,7 +138,7 @@ _TARGET = re.compile(r"make(?:\[\d+\])?: \*\*\* \[(?:[^\]:]*:\d+: )?([A-Za-z0-9_
 _DETAIL = {
     "lint-backend": re.compile(r"^\S+:\d+:\d+: ([A-Z]{1,4}\d{2,4})\b|^([A-Z]{1,4}\d{3,4}) ", re.M),
     "lint-frontend": re.compile(r"^\s*\d+:\d+\s+error\s+.*?\s{2,}(\S+)\s*$", re.M),
-    "test-backend": re.compile(r"^(?:FAILED|ERROR) (\S+?\.py(?:::\S+)?)", re.M),
+    "test-backend": re.compile(r"^(?:FAILED|ERROR) (?:backend/tests/)?(\S+?\.py(?:::\S+)?)", re.M),
     "typecheck-frontend": re.compile(r"error (TS\d+)"),
     "test-frontend": re.compile(r"(?:FAIL|×|✗)\s+(\S+\.test\.tsx?)"),
 }
@@ -153,7 +153,7 @@ def check_failure(output):
     rx = _DETAIL.get(step)
     d = rx.search(out) if rx else None
     detail = next((g for g in d.groups() if g), "") if d else ""
-    return step, sanitize(f"{step}:{detail}" if detail else step, 80)
+    return step, sanitize(f"{step}:{detail}" if detail else step, 120)
 
 
 def check_result(command, response, failed):
