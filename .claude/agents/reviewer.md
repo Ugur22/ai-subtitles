@@ -25,4 +25,14 @@ Start with `git diff origin/main...HEAD` plus `git diff` for uncommitted work, t
 - **Size**: flag a diff over about 400 changed lines (lockfiles excluded) and say where to split it.
 
 ## Output
-Run `make check` and report its exit code and last lines. Then list findings as `R1`, `R2`, …, each with a severity (`blocker`, `should-fix`, `nit`), `file:line`, the problem, and the concrete input or sequence that breaks. Mark each as confirmed (you traced it) or suspected. Say what you could not verify. If nothing is wrong, say so in one line; do not pad the list.
+Run `make check` and report its exit code and last lines. Then one line per finding, in exactly this form (the ledger parses it):
+
+`R1 [severity][category:pattern] file:line - summary`
+
+- `severity`: `blocker`, `should-fix` or `nit`.
+- `category`: auth, ownership, migration, jobs, stateless, cost, imports, secrets, frontend, tests, guard, size or other.
+- `pattern`: a short kebab-case name for the specific mistake, the same name every time it recurs. Use one of these when it fits, otherwise coin one: `auth:missing-decorator`, `ownership:unscoped-query`, `ownership:null-owner-allowed`, `migration:no-rollback`, `migration:breaks-main`, `jobs:not-idempotent`, `jobs:slot-not-released`, `stateless:local-state`, `cost:unbounded-polling`, `cost:per-item-signing`, `imports:module-level-heavy`, `secrets:logged`, `frontend:any-cast`, `frontend:hardcoded-url`, `tests:no-behavior-test`, `tests:weakened`, `guard:touched`, `size:too-large`.
+- The summary fits in about 120 characters; add `(suspected)` when you did not trace it. Details, including the concrete input or sequence that breaks, go on indented lines below.
+- Never quote secrets, tokens, signed URLs or user data in a finding.
+
+Say what you could not verify. If nothing is wrong, write exactly `No findings.` on its own line; do not pad the list.

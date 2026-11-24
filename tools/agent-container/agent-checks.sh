@@ -57,11 +57,16 @@ check  "net:ipv6-disabled" test "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 
 for f in /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.sha256 /etc/gitconfig \
          /etc/agent-image-commit /usr/local/bin/agent-session /usr/local/bin/agent-checks.sh /usr/local/bin/agent-verify \
          /usr/local/bin/init-firewall.sh /usr/local/bin/git-credential-agent /usr/local/bin/gh \
-         "$(command -v claude)"; do
+         /usr/local/lib/ai-subs-harness/stop_check.py /usr/local/lib/ai-subs-harness/ledger.py \
+         /usr/local/lib/ai-subs-harness/ledger_report.py "$(command -v claude)"; do
   check "immutable:$f" not_writable "$(readlink -f "$f")"
 done
 refute "immutable:/etc/claude-code-dir" mkdir /etc/claude-code/managed-settings.d
 refute "immutable:/usr/local/lib/node_modules" touch /usr/local/lib/node_modules/.agent-probe
+refute "immutable:/usr/local/lib/ai-subs-harness" touch /usr/local/lib/ai-subs-harness/.agent-probe
+# The Stop hook and ledger run from managed settings (not removable by project or user settings) and can run.
+check  "managed-hooks:stop-registered" grep -q 'python3 -I /usr/local/lib/ai-subs-harness/stop_check.py' /etc/claude-code/managed-settings.json
+check  "managed-hooks:harness-readable" test -r /usr/local/lib/ai-subs-harness/stop_check.py -a -r /usr/local/lib/ai-subs-harness/ledger.py
 # Readable by the agent (Claude Code silently drops managed settings it can't read) and unchanged.
 ms_hash=$(sha256sum /etc/claude-code/managed-settings.json 2>/dev/null | cut -d' ' -f1)
 check  "managed-settings:readable-and-hash" test -n "$ms_hash" -a "$ms_hash" = "$(cat /etc/claude-code/managed-settings.sha256 2>/dev/null)"

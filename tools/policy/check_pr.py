@@ -14,7 +14,7 @@ OWNER = "Ugur22"
 MIGRATIONS = "backend/sql/migrations/"
 # Paths that decide whether a change is acceptable, or how the agent is confined: only the owner changes them.
 GUARD = re.compile(
-    r"^(\.github/|tools/policy/|tools/agent-container/|bin/agent$|scripts/hooks/|scripts/githooks/|\.claude/|"
+    r"^(\.github/|tools/policy/|tools/agent-container/|tools/harness/|bin/agent$|scripts/hooks/|scripts/githooks/|\.claude/|"
     r"skills/|\.agents/|infra/|Makefile$|CLAUDE\.md$|AGENTS\.md$|skills-lock\.json$|pytest\.ini$|"
     r"backend/ruff\.toml$|frontend/eslint\.config\.js$|frontend/tsconfig[^/]*\.json$|frontend/vite\.config\.ts$|"
     r"frontend/package\.json$|backend/evals/[^/]*cases[^/]*\.json$)"

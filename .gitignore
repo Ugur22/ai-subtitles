@@ -140,3 +140,6 @@ override.tf.json
 
 # Credentials file written by google-github-actions/auth; ignored so the deploy's clean-tree check passes
 gha-creds-*.json
+
+# Agent ledger (tools/harness/ledger.py): local telemetry, never committed
+.harness/

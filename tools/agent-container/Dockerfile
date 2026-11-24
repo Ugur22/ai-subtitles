@@ -1,6 +1,7 @@
 # Isolated development container for autonomous Claude Code sessions on ai-subs.
 #
-# Built only by `bin/agent build`, from the tools/agent-container/ tree of origin/main (reviewed code).
+# Built only by `bin/agent build`, from the tools/agent-container/ and tools/harness/ trees of origin/main (reviewed
+# code); the build context is the repository root, so paths below are repo-relative.
 # Trust split: everything this image installs is root-owned and read-only to the agent, which runs as `node`
 # (uid 1000). bin/agent starts the container with every capability dropped, no-new-privileges and no sudo,
 # so the agent can't change the firewall (applied from a separate short-lived container), the managed
@@ -30,9 +31,14 @@ RUN python3 -m venv /opt/graphify \
 # Explicit owner, and the directory made first: BuildKit gives an implicitly created parent the file's
 # --chmod (0644, so nobody could enter it), and a tar context carries the builder's uid into the image.
 RUN install -d -o root -g root -m 0755 /etc/claude-code
-COPY --chown=root:root --chmod=0755 agent-session agent-checks.sh agent-verify init-firewall.sh git-credential-agent gh /usr/local/bin/
-COPY --chown=root:root --chmod=0644 managed-settings.json /etc/claude-code/managed-settings.json
-COPY --chown=root:root --chmod=0644 gitconfig /etc/gitconfig
+COPY --chown=root:root --chmod=0755 tools/agent-container/agent-session tools/agent-container/agent-checks.sh tools/agent-container/agent-verify \
+    tools/agent-container/init-firewall.sh tools/agent-container/git-credential-agent tools/agent-container/gh /usr/local/bin/
+COPY --chown=root:root --chmod=0644 tools/agent-container/managed-settings.json /etc/claude-code/managed-settings.json
+COPY --chown=root:root --chmod=0644 tools/agent-container/gitconfig /etc/gitconfig
+# The Stop hook and ledger that managed-settings.json registers: root-owned, so the agent can't edit what runs.
+RUN install -d -o root -g root -m 0755 /usr/local/lib/ai-subs-harness
+COPY --chown=root:root --chmod=0644 tools/harness/ledger.py tools/harness/stop_check.py tools/harness/ledger_report.py \
+    /usr/local/lib/ai-subs-harness/
 RUN sha256sum /etc/claude-code/managed-settings.json | cut -d' ' -f1 > /etc/claude-code/managed-settings.sha256 \
     && echo "${SOURCE_COMMIT}" > /etc/agent-image-commit \
     && mkdir -p /work /home/node/.claude \

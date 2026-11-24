@@ -38,6 +38,12 @@ For a feature that spans backend and frontend, adds a table or a family of endpo
 - **Slices**: independently testable steps in order, each leaving `make check` green. A Sensitive slice (for example a migration) goes first and alone.
 Prototype only when an unknown (library behavior, performance) decides the design, and throw the prototype away.
 
+### Verification loop
+- The Stop hook (`tools/harness/stop_check.py`) runs `make check` whenever the tree's git state changed since its last green run, commits included, and blocks finishing at most 3 times per session. Block 2: if it is the same failure, ask `advisor` before another attempt.
+- Never present red work as done. If you cannot get `make check` green, your final message starts with `NOT READY:` and states the remaining failure, what you tried, and whether `advisor` was consulted; leave or make the PR a draft. After the cap the hook tells the user the work is not done and, in the container, turns the PR into a draft. CI and the `policy` check remain the merge gate.
+- The hook and the ledger it writes (`.harness/ledger.jsonl` on the host, `/work/.harness/` in the container; summarise with `ai-subs-agent ledger`) are telemetry for retrospectives, not proof: their state is writable by the session it observes.
+- `reviewer` and `advisor` report each finding on one line as `R1 [severity][category:pattern] file:line - summary` (`A1` for advisor), or `No findings.`; the ledger parses that line, so keep the format.
+
 ### Releases
 After backend changes, propose the release: merge to `main`, apply any new SQL migration first (only after explicit approval), push a `v*` tag, approve the `deploy` job in GitHub Actions. Suggest the next tag; the user runs these steps. Frontend-only changes need no tag: Netlify deploys on push to `main`. Local `backend/deploy.sh` is an emergency fallback when GitHub Actions is unavailable, run by the user.
 
@@ -45,7 +51,7 @@ After backend changes, propose the release: merge to `main`, apply any new SQL m
 
 ## Verify your work
 
-Run `make check` (offline, about 15 seconds: lint, pytest, tsc) before reporting a task done; a Stop hook enforces it. Paid LLM evals are manual: see `backend/evals/README.md`.
+Run `make check` (offline, about 15 seconds: lint, pytest, tsc, vitest) before reporting a task done; the Stop hook enforces it (see Verification loop). Paid LLM evals are manual: see `backend/evals/README.md`.
 
 ## Deployment
 

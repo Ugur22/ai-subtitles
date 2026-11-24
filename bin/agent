@@ -8,6 +8,8 @@
 #   ai-subs-agent up [--allow-unreviewed]    start the container, apply the firewall, clone, install deps
 #   ai-subs-agent [session] [claude args]    rotate the GitHub token, run the isolation checks, start Claude Code
 #   ai-subs-agent verify [--allow-unreviewed] recreate the container and run the boundary tests
+#   ai-subs-agent ledger [--pr N]            copy the agent ledger to ~/.local/share/ai-subs-agent and summarise it;
+#                                            --pr matches review findings to that PR's `## Review` section
 #   ai-subs-agent shell | down | destroy     debug shell / stop (revokes the token) / remove everything
 #
 # Config, outside the repo: ~/.config/ai-subs-agent/config with APP_ID=, INSTALLATION_ID= and optionally
@@ -65,13 +67,14 @@ cmd_build() {
   if [ "${1:-}" = --from-worktree ]; then
     echo "agent: building from the working tree: UNREVIEWED (verify only, disposable credentials)" >&2
     sha="worktree-$(git -C "$ROOT" rev-parse --short HEAD)"; mode=unreviewed
-    tar -C "$ROOT/tools/agent-container" -cf - . | docker build --pull -t "$NAME:$sha" --build-arg SOURCE_COMMIT="$sha" -
+    tar -C "$ROOT" --exclude=__pycache__ -cf - tools/agent-container tools/harness \
+      | docker build --pull -f tools/agent-container/Dockerfile -t "$NAME:$sha" --build-arg SOURCE_COMMIT="$sha" -
   else
     git -C "$ROOT" fetch -q origin main
     sha=$(git -C "$ROOT" rev-parse origin/main); mode=reviewed
     # git archive of a tree applies no filters or hooks from the checkout: only origin/main's bytes.
-    git -C "$ROOT" archive --format=tar "$sha:tools/agent-container" \
-      | docker build --pull -t "$NAME:${sha:0:12}" --build-arg SOURCE_COMMIT="$sha" -
+    git -C "$ROOT" archive --format=tar "$sha" tools/agent-container tools/harness \
+      | docker build --pull -f tools/agent-container/Dockerfile -t "$NAME:${sha:0:12}" --build-arg SOURCE_COMMIT="$sha" -
     sha=${sha:0:12}
   fi
   echo "$NAME:$sha $mode" > "$CONF_DIR/image"
@@ -166,6 +169,23 @@ cmd_up() { # [--allow-unreviewed]
     echo "agent: workspace ready at /work/ai-subtitles ($(git rev-parse --abbrev-ref HEAD))"'
 }
 
+cmd_ledger() { # [--pr N]
+  local dir="$HOME/.local/share/ai-subs-agent" pr="" branch args=()
+  if [ "${1:-}" = --pr ]; then pr=${2:-}; [[ "$pr" =~ ^[0-9]+$ ]] || die "usage: ledger [--pr NUMBER]"; fi
+  running || die "the container is not running; run up"
+  mkdir -p "$dir"
+  docker cp "$NAME:/work/.harness/." "$dir/" >/dev/null 2>&1 || echo "agent: no ledger in the container yet" >&2
+  if [ -n "$pr" ]; then
+    branch=$(gh pr view "$pr" -R "$REPO_SLUG" --json headRefName --jq .headRefName) || die "gh pr view $pr failed"
+    gh pr view "$pr" -R "$REPO_SLUG" --json body --jq .body | docker exec -i -u node "$NAME" sh -c 'cat > /tmp/agent-pr-body'
+    args=(--pr-body /tmp/agent-pr-body --branch "$branch")
+  fi
+  # The image's root-owned report; the ledger itself is agent-written data.
+  docker exec -u node "$NAME" python3 -I /usr/local/lib/ai-subs-harness/ledger_report.py /work/.harness/ledger.jsonl \
+    ${args[@]+"${args[@]}"}
+  echo "agent: ledger copied to $dir"
+}
+
 cmd_down() { revoke_token; docker rm -f "$NAME" >/dev/null 2>&1 || true; echo "agent: stopped (volumes kept, token revoked)"; }
 
 cmd_token_check() { # setup check: mint, confirm the exact scope, revoke; never prints the token
@@ -254,6 +274,7 @@ case "${1:-session}" in
   up) shift; cmd_up "$@" ;;
   session) shift; cmd_session "$@" ;;
   verify) shift; cmd_verify "$@" ;;
+  ledger) shift; cmd_ledger "$@" ;;
   shell) docker exec -it -u node "$NAME" bash ;;
   down) cmd_down ;;
   destroy) cmd_down >/dev/null

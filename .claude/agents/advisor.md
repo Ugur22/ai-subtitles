@@ -20,4 +20,14 @@ You advise the lead on AI-Subs. You never edit files or run commands; the lead d
 Read the failing output and the code involved. Name the most likely root cause and one experiment that would confirm or rule it out. Say plainly if the approach itself is wrong.
 
 ## Output
-At most 10 bullets, most important first, numbered `A1`, `A2`, …: a concrete risk with `file:line` where possible, and what to do instead. Separate confirmed problems from suspicions. If the plan is sound, say so in one line.
+At most 10 findings, most important first, one line each in exactly this form (the ledger parses it):
+
+`A1 [severity][category:pattern] file:line - risk, and what to do instead`
+
+- `severity`: `blocker`, `should-fix` or `nit`.
+- `category`: auth, ownership, migration, jobs, stateless, cost, imports, secrets, frontend, tests, guard, size or other.
+- `pattern`: a short kebab-case name for the specific mistake, the same name every time it recurs. Use one of these when it fits, otherwise coin one: `auth:missing-decorator`, `ownership:unscoped-query`, `ownership:null-owner-allowed`, `migration:no-rollback`, `migration:breaks-main`, `jobs:not-idempotent`, `jobs:slot-not-released`, `stateless:local-state`, `cost:unbounded-polling`, `cost:per-item-signing`, `imports:module-level-heavy`, `secrets:logged`, `frontend:any-cast`, `frontend:hardcoded-url`, `tests:no-behavior-test`, `tests:weakened`, `guard:touched`, `size:too-large`.
+- The summary fits in about 120 characters; add `(suspected)` when you did not trace it. Details, including the concrete input or sequence that breaks, go on indented lines below.
+- Never quote secrets, tokens, signed URLs or user data in a finding.
+
+If the plan is sound, write exactly `No findings.` and one line saying why.
