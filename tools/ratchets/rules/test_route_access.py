@@ -32,8 +32,8 @@ USERS = {
     "tok-admin": {"id": "admin", "email": "admin@test", "email_confirmed_at": "2026-01-01T00:00:00Z"},
     "tok-unverified": {"id": "user-u", "email": "u@test", "email_confirmed_at": None},
 }
-JOB = {"id": "job-a", "user_id": "user-a", "status": "completed"}
 JOB_TOKEN = "tok-job-a"
+JOB = {"id": "job-a", "user_id": "user-a", "status": "completed", "access_token": JOB_TOKEN}
 
 
 @pytest.fixture(scope="module")
