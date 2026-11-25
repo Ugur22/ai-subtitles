@@ -215,6 +215,60 @@
         "no_new"
       ],
       "why": "an exception for one interval must not cover an identical copy in the same file"
+    },
+    {
+      "id": "job-owner-lookup-unscoped",
+      "file": "backend/routers/jobs.py",
+      "find": "job = JobQueueService.get_job_for_user(job_id, user_id)",
+      "replace": "job = JobQueueService.get_job(job_id)",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "backend/tests/invariants/test_ownership.py",
+        "-k",
+        "test_b_gets_404_for_a_job"
+      ],
+      "why": "require_job_owner must look the job up scoped to the caller, or user B reaches user A's job"
+    },
+    {
+      "id": "transcription-lookup-unscoped",
+      "file": "backend/services/transcription_repository.py",
+      "find": "            .eq(\"video_hash\", video_hash)\n            .eq(\"user_id\", user_id)\n        )\n        if completed_only:",
+      "replace": "            .eq(\"video_hash\", video_hash)\n        )\n        if completed_only:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "backend/tests/invariants/test_ownership.py",
+        "-k",
+        "test_b_gets_404_for_a_transcription"
+      ],
+      "why": "a transcription lookup by video hash must be scoped to the caller, or user B reads user A's transcript"
+    },
+    {
+      "id": "ownerless-job-matches-anonymous",
+      "file": "backend/routers/jobs.py",
+      "find": "if user_id and job.get(\"user_id\") == user_id:",
+      "replace": "if job.get(\"user_id\") == user_id:",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "backend/tests/invariants/test_ownership.py",
+        "-k",
+        "test_ownerless_job_is_no_access_for_every_caller"
+      ],
+      "why": "an anonymous caller (None) must not match a job whose owner is null"
     }
   ]
 }
