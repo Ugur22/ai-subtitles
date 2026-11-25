@@ -335,3 +335,75 @@ def test_pr_commands_must_run_from_the_sessions_checkout(repo, tmp_path):
     assert pre(repo, "gh pr create --head Ugur22:agent/x --title x --body y") is None
     events = [json.loads(x) for x in repo.ledger_file.read_text().splitlines()]
     assert [e["decision"] for e in events if e["event"] == "gate"] == ["deny", "deny", "deny"]
+
+
+def work(repo, tool, **tool_input):
+    return gate.work_gate({"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": str(repo), "session_id": "s",
+                           "tool_input": tool_input})
+
+
+def test_worktree_add_is_refused_but_list_and_remove_are_not(repo):
+    """Seen twice (PR #84 and #101): the agent built in a second worktree the gate and the ledger don't watch."""
+    for cmd in ("git worktree add -b agent/y ../wt", "cd /w && git -C /work/ai-subtitles worktree add ../wt main",
+                "git -c core.x=1 worktree   add ../wt", "/usr/bin/git worktree add ../wt",
+                "git --work-tree /w worktree add ../wt", 'git -C "dir with space" worktree add ../wt',
+                "cd /w\ngit worktree add ../wt", "FOO=1 env git worktree add ../wt"):
+        assert "No `git worktree add`" in work(repo, "Bash", command=cmd), cmd
+    for cmd in ("git worktree list", "git worktree remove ../wt", "git log --grep 'git worktree add'",
+                "ls worktree", 'echo "then git worktree add"',
+                "cat > pr.md <<'EOF'\nRun git worktree add, then\ngit commit\nEOF\ngh pr view"):
+        assert work(repo, "Bash", command=cmd) is None, cmd
+
+
+def test_git_subcommands_parse_command_positions_only():
+    assert gate.git_subcommands("git -C /w --git-dir /w/.git commit -m 'a; b' && git push") == [
+        ("commit", ["-m", "a; b"]), ("push", [])]
+    assert gate.git_subcommands("git commit-tree x | git commit-graph write") == [
+        ("commit-tree", ["x"]), ("commit-graph", ["write"])]
+    assert gate.git_subcommands("echo 'unbalanced") == []
+
+
+def test_sensitive_work_waits_for_advisor_before_edits_and_commits(repo):
+    """Seen in #101: the whole implementation was committed before advisor saw the plan."""
+    assert work(repo, "Bash", command="git commit -qm wip") is None, "ordinary branch"
+    (repo / "backend/config.py").write_text("A = 2\n")
+    assert "no `advisor` run on agent/x" in work(repo, "Bash", command="git add -A && git commit -m impl")
+    assert "no `advisor` run" in work(repo, "Bash", command="git -C . commit --amend --no-edit")
+    for cmd in ("/usr/bin/git commit -m x", "git cherry-pick abc", "git rebase --continue", "git merge main"):
+        assert "no `advisor` run" in work(repo, "Bash", command=cmd), cmd
+    assert work(repo, "Bash", command="git commit-graph write") is None
+    target = str(repo / "backend/config.py")
+    assert work(repo, "Edit", file_path=target) is None, "until the session's tier marker says sensitive"
+    gate.reassess({"hook_event_name": "PostToolUse", "tool_name": "Edit", "cwd": str(repo), "session_id": "s"})
+    assert "Edits on this branch are refused" in work(repo, "Edit", file_path=target)
+    assert "no `advisor` run" in work(repo, "Write", file_path="backend/new.py")
+    assert "no `advisor` run" in work(repo, "MultiEdit", file_path=target)
+    assert "no `advisor` run" in work(repo, "NotebookEdit", notebook_path="backend/n.ipynb")
+    assert work(repo, "Write", file_path="../outside.md") is None, "a relative path out of the checkout"
+    assert work(repo, "Write", file_path="/tmp/pr.md") is None, "files outside the checkout, e.g. a PR description"
+    assert work(repo, "Bash", command="make check") is None
+    subagent(repo, "advisor", "No findings.\n")
+    assert work(repo, "Edit", file_path=target) is None
+    assert work(repo, "Bash", command="git commit -m impl") is None
+    events = [json.loads(x) for x in repo.ledger_file.read_text().splitlines()]
+    assert [(e["point"], e["decision"]) for e in events if e["event"] == "gate"] == [("commit", "deny")] * 6 + [
+        ("edit", "deny")] * 4
+
+
+def test_the_tier_marker_follows_the_branch(repo):
+    (repo / "backend/config.py").write_text("A = 2\n")
+    gate.reassess({"hook_event_name": "PostToolUse", "tool_name": "Edit", "cwd": str(repo), "session_id": "s"})
+    assert "no `advisor` run" in work(repo, "Edit", file_path="backend/config.py")
+    repo.git("stash", "-q")
+    repo.git("switch", "-qc", "agent/clean")
+    assert gate.session_tier(str(repo), {"session_id": "s"}) == risk.ORDINARY
+    assert work(repo, "Edit", file_path="backend/config.py") is None
+
+
+def test_hook_denies_edits_through_the_protocol(repo):
+    (repo / "backend/config.py").write_text("A = 2\n")
+    gate.reassess({"hook_event_name": "PostToolUse", "tool_name": "Edit", "cwd": str(repo), "session_id": "s"})
+    code, out, _ = run_hook(repo, {"hook_event_name": "PreToolUse", "tool_name": "Edit", "cwd": str(repo),
+                                   "session_id": "s", "tool_input": {"file_path": str(repo / "backend/config.py")}})
+    d = json.loads(out)["hookSpecificOutput"]
+    assert code == 0 and d["permissionDecision"] == "deny" and "advisor" in d["permissionDecisionReason"]
