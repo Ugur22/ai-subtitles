@@ -16,18 +16,18 @@ screenshots → analysis → summaries/chapters. Runs as async jobs on Cloud Run
 | Translation | MarianMT (Helsinki-NLP), non-English → English | `services/translation_service.py` |
 | Summarization | BART, section-based summaries with screenshots | `services/summarization_service.py` |
 | Chapters | Semantic topic-shift detection + LLM titles | `routers/chapters.py` |
-| Audio analysis* | PANNs events (laughter/applause/…) + energy | `audio_analyzer.py` |
+| Audio analysis | PANNs events (laughter/applause/…) + energy | `audio_analyzer.py` |
 | Text search | Semantic (MiniLM) + lexical, neighbor expansion | `vector_store.py` |
 | Visual search | CLIP scene embeddings over screenshots | `services/image_embedding_service.py` |
 | Face detection/tagging | InsightFace (ArcFace), tag faces to speaker names | `services/face_service.py` |
-| Speaker recognition* | Voice-print enrollment + identification | `speaker_recognition.py` |
-\* behind feature flags / partially wired.
+| Speaker recognition | Voice-print enrollment + identification | `speaker_recognition.py` |
+Chapters and Summarization are behind the Flagsmith flags `chapters` and `summary`, which are off by default (`services/feature_flags.py`).
 
 ## LLM chat (RAG)
 Streaming chat grounded in a video: multi-modal retrieval (text + CLIP visual + face
 identity + speaker context), follow-up resolution, cross-provider vision fallback.
 - `backend/routers/chat.py`, `backend/llm_providers.py`
-- Providers: Groq (default), xAI/Grok, OpenAI, Anthropic, DeepSeek, Ollama.
+- Providers: xAI/Grok (default), Groq, OpenAI, Anthropic, DeepSeek, Ollama.
 
 ## Outputs
 - Subtitles: SRT + VTT (`services/subtitle_service.py`)

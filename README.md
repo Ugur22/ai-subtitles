@@ -5,20 +5,48 @@ AI video transcription with speaker diarization, multimodal search (transcript, 
 
 ## Features
 
-- **GPU Transcription** - faster-whisper `large-v3` or `large-v3-turbo` (chosen per upload) on an L4 GPU worker (`small` on CPU in local mode)
-- **Speaker Diarization & Recognition** - Chunked pyannote diarization plus saved speaker voiceprints
-- **Multi-format Support** - MP4, MP3, WAV, WebM, MKV, and more
-- **Multi-language** - Auto-detection and translation using MarianMT
-- **Semantic Search** - Transcript search by meaning with pgvector embeddings
-- **Visual Search** - CLIP image embeddings plus vision-model captions, searchable by describing what you see
-- **Face Tags** - Tag people and find where they appear
-- **Audio Analysis** - Detect laughter, applause, music and other sounds (PANNs)
-- **Chapters** - Auto-generated chapters and summaries
-- **RAG Chat** - Ask questions about your video with context-aware answers
-- **Background Jobs** - Async processing with live progress via Supabase Realtime, automatic stale-job recovery, and per-chunk checkpoints so multi-hour files resume across worker runs
-- **Accounts** - Cookie auth, invite codes, quotas/billing tiers, and bring-your-own LLM API keys
-- **Share Links & Subtitle Export** - Public links; WebVTT and SRT with translation
-- **Multiple LLMs** - Grok (default), Groq, OpenAI, Anthropic, DeepSeek, Ollama (local)
+### Available now
+
+**Processing (GPU worker)**
+- **Transcription** - faster-whisper on an L4 GPU. Each upload uses `large-v3` (Accurate, the default) or `large-v3-turbo` (Fast). Local mode uses `small` on CPU. The language is detected automatically, or you can set it.
+- **Speaker diarization** - pyannote, which processes recordings longer than 30 minutes in chunks and links speakers across chunks. Speaker count is detected automatically.
+- **Translation** - MarianMT translates non-English transcripts to English.
+- **Screenshots and visual index** - A frame for each segment plus dense frames every 10 seconds, embedded with CLIP and captioned by a vision model (xAI)
+- **Faces** - Faces are detected with InsightFace (ArcFace). Each person is indexed across the video.
+- **Audio events** - PANNs detects laughter, applause, music and other sounds, plus energy levels.
+- **Media formats** - MP4, MP3, WAV, WebM, MKV and more, with resumable uploads straight to GCS
+
+**In the app**
+- **Transcript view** - Synced video player, speaker filter, jump to a timestamp, and renaming speakers
+- **Speaker recognition** - Enroll a voiceprint, then identify that speaker automatically in new videos.
+- **Face tagging** - Tag a face with a speaker name so search and chat can find that person.
+- **RAG chat** - Streaming answers grounded in a single video. Retrieval combines transcript text (semantic and lexical), visual scenes (CLIP and captions), face identity, audio events and speaker context. Answers include timestamp links, source screenshots and suggested questions.
+- **Person comparison** - In chat, compare one person's appearances side by side on a timeline. You can swap in other moments.
+- **Subtitle export** - SRT and WebVTT, original or translated
+- **Job library** - Live progress through Supabase Realtime, plus cancel, retry, delete and share links (read-only and token-based)
+- **Multiple LLMs** - Grok (default), Groq, OpenAI, Anthropic, DeepSeek, or Ollama (local), with your own API keys stored encrypted per user
+
+**Accounts and operations**
+- **Auth** - Email and password with a cookie session, invite-code registration, email verification and password reset
+- **Plans and quotas** - Free (60 min/month, 30 min per file, no chat), Pro (15 h/month, 3 h per file) and Studio (50 h/month, 6 h per file), with a concurrency cap per plan. Admins are exempt.
+- **Billing** - Stripe Checkout, the customer portal and webhooks, plus a pricing page. Requires the `STRIPE_*` secrets; without them the billing routes return 503.
+- **Admin dashboard** - Usage stats, user management and invite codes
+- **Reliable long jobs** - Per-chunk checkpoints let multi-hour files resume across GPU runs. Jobs that go stale are re-dispatched automatically.
+
+### Behind feature flags
+
+These features are fully built but switched off unless enabled in [Flagsmith](https://flagsmith.com) (`FLAGSMITH_SERVER_KEY` on the backend). Without a key, or before the first successful fetch, every flag is **off**. While a flag is off, the UI hides the tab and the API returns `404`.
+
+| Flag | Feature | API |
+|------|---------|-----|
+| `chapters` | Auto-generated chapters: semantic topic-shift detection with LLM-written titles, shown on the video timeline and in a Chapters tab | `/api/chapters/*` |
+| `summary` | Section summaries with screenshots (local BART model), shown in a Summary tab | `POST /generate_summary/` |
+
+The flag list lives in `backend/services/feature_flags.py` (`KNOWN_FLAGS`). The backend caches Flagsmith values for 15 minutes. The frontend reads them from `GET /api/features` and fails closed: tabs stay hidden while the flags load.
+
+### Pipeline switches (environment)
+
+Each pipeline stage can be turned off in `backend/config.py`. All of them are on by default: `ENABLE_SPEAKER_DIARIZATION`, `ENABLE_VISION_CAPTIONS`, `ENABLE_AUDIO_ANALYSIS`, `VAD_ENABLED`. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Tech Stack
 
