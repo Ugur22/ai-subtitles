@@ -125,6 +125,96 @@
         "webhook"
       ],
       "why": "a forged Stripe event must be rejected before it is processed"
+    },
+    {
+      "id": "heavy-import-at-module-level",
+      "file": "backend/routers/chapters.py",
+      "find": "\nimport asyncio\n",
+      "replace": "\nimport torch\nimport asyncio\n",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_heavy_imports.py",
+        "-k",
+        "no_new"
+      ],
+      "why": "a module-level heavy import in a module without one must fail R2"
+    },
+    {
+      "id": "heavy-import-second-in-a-baselined-file",
+      "file": "backend/dependencies.py",
+      "find": "from faster_whisper import WhisperModel\n",
+      "replace": "from faster_whisper import WhisperModel\nfrom transformers import pipeline\n",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_heavy_imports.py",
+        "-k",
+        "no_new"
+      ],
+      "why": "an exception for one import must not cover a second one in the same file"
+    },
+    {
+      "id": "heavy-module-imported-at-module-level",
+      "file": "backend/routers/chapters.py",
+      "find": "\nimport asyncio\n",
+      "replace": "\nimport asyncio\nfrom services.translation_service import TranslationService\n",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_heavy_imports.py",
+        "-k",
+        "no_new"
+      ],
+      "why": "importing a backend module that loads torch at import time must fail R2 like importing torch"
+    },
+    {
+      "id": "new-interval-poll",
+      "file": "frontend/src/components/features/jobs/ShareJobDialog.tsx",
+      "find": "setTimeout(() => setCopied(false), 2000);",
+      "replace": "setInterval(() => setCopied(false), 2000);",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_polling.py",
+        "-k",
+        "no_new"
+      ],
+      "why": "a new setInterval in a file without one must fail R3"
+    },
+    {
+      "id": "second-interval-in-a-baselined-file",
+      "file": "frontend/src/hooks/useJobTracker.ts",
+      "find": "    return () => clearInterval(intervalId);",
+      "replace": "    const intervalId = setInterval(() => {\n    }, 1000);\n    return () => clearInterval(intervalId);",
+      "test": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tools/ratchets/rules/test_polling.py",
+        "-k",
+        "no_new"
+      ],
+      "why": "an exception for one interval must not cover an identical copy in the same file"
     }
   ]
 }
