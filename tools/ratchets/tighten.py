@@ -16,7 +16,11 @@ sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve
 import ratchet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-RULES = {"route-access": {"collect": "route_access:collect", "validate": "route_access:reason_problem"}}
+RULES = {
+    "heavy-imports": {"collect": "heavy_imports:collect"},
+    "polling": {"collect": "polling:collect"},
+    "route-access": {"collect": "route_access:collect", "validate": "route_access:reason_problem"},
+}
 
 
 def load(spec):
@@ -46,7 +50,7 @@ def tighten(path=ratchet.BASELINE, registry=None, root=ROOT):
 
 
 def add(rule, fp, reason, path=ratchet.BASELINE, registry=None):
-    if len(reason.strip()) < 10:
+    if len(reason.strip()) < ratchet.MIN_REASON:
         raise SystemExit("--reason must say why this exception is acceptable")
     validate = (RULES if registry is None else registry).get(rule, {}).get("validate")
     problem = load(validate)(reason.strip()) if validate else None

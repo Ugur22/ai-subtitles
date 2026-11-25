@@ -1,6 +1,56 @@
 {
   "version": 1,
   "rules": {
+    "heavy-imports": {
+      "allow": {
+        "backend/audio_analyzer.py::<module>::import torch": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/dependencies.py::<module>::from audio_analyzer import AudioAnalyzer": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/dependencies.py::<module>::from faster_whisper import WhisperModel": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/dependencies.py::<module>::from speaker_diarization import SpeakerDiarizer": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/dependencies.py::<module>::import torch": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/evals/diarization_ab.py::<module>::import pyannote.audio # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/evals/diarization_ab.py::<module>::import speaker_diarization # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/evals/diarization_ab.py::<module>::import torch # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/evals/evaluate_retrieval.py::<module>::from services.transcript_embedding_service import ( # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/evals/generate_cases.py::<module>::from services.transcript_embedding_service import DEFAULT_INDEX_CONFIG, INDEX_CONFIGS # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/example_audio_integration.py::<module>::from audio_analyzer import analyze_audio_segment, get_simplified_events": "standalone script, run by hand and never imported by the app",
+        "backend/routers/chat.py::<module>::from services.image_embedding_service import image_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/routers/chat.py::<module>::from services.transcript_embedding_service import transcript_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/routers/diagnostics.py::<module>::import dependencies": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/routers/transcription.py::<module>::from services.summarization_service import SummarizationService": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/routers/transcription.py::<module>::from services.translation_service import TranslationService": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/scripts/diagnose_speaker_embeddings.py::<module>::from speaker_diarization import ChunkedSpeakerDiarizer # noqa: E402": "standalone script, run by hand and never imported by the app",
+        "backend/services/audio_analysis_service.py::<module>::from audio_analyzer import (": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/background_worker.py::<module>::from dependencies import get_whisper_model, get_speaker_diarizer, resolve_whisper_model, unload_whisper_model": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/background_worker.py::<module>::from services.translation_service import TranslationService": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/background_worker.py::<module>::from speaker_diarization import DIARIZATION_PIPELINE, ChunkedSpeakerDiarizer, linking_signature": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/background_worker.py::<module>::from utils.memory_utils import clear_gpu_memory, log_gpu_memory, log_all_memory": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/chat/audio_retrieval.py::<module>::from services.transcript_embedding_service import transcript_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/chat/pipeline.py::<module>::from services.transcript_embedding_service import transcript_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/chat/text_retrieval.py::<module>::from services.transcript_embedding_service import transcript_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/chat/visual_retrieval.py::<module>::from services.image_embedding_service import image_embedding_service": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/image_embedding_service.py::<module>::from sentence_transformers import SentenceTransformer": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/speaker_service.py::<module>::from speaker_diarization import format_speaker_label": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/summarization_service.py::<module>::from transformers import AutoTokenizer, AutoModelForSeq2SeqLM": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/transcript_embedding_service.py::<module>::from sentence_transformers import SentenceTransformer": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/translation_service.py::<module>::from transformers import MarianMTModel, MarianTokenizer": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/services/translation_service.py::<module>::import torch": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/speaker_diarization.py::<module>::from pyannote.audio import Pipeline, Model, Inference": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/speaker_diarization.py::<module>::from pyannote.core import Segment": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/speaker_diarization.py::<module>::import torch": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/speaker_recognition.py::<module>::from pyannote.audio import Inference, Model": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task",
+        "backend/utils/memory_utils.py::<module>::import torch": "legacy: module-level when R2 was introduced (2026-11-25); making it lazy is the separate lazy-imports task"
+      }
+    },
+    "polling": {
+      "allow": {
+        "frontend/src/components/auth/AuthProvider.tsx::await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));": "bounded retry of the session fetch: 3 attempts with linear backoff, stops on 401/403",
+        "frontend/src/components/features/chat/PhaseIndicator.tsx::const id = window.setInterval(() => setTick((t) => t + 1), 1000);": "local re-render tick for elapsed time, no request; cleared when no phase is active",
+        "frontend/src/hooks/useJobTracker.ts::const intervalId = setInterval(() => {": "backend poll every 30 s, only while a job is active; its exit is to be proven by a behavioural test (Phase D5, B4)",
+        "frontend/src/hooks/useSupabaseRealtime.ts::const intervalId = window.setInterval(async () => {": "backend fallback poll every 30 s, only while the job is active; its exit is to be proven by a behavioural test (Phase D5, B4)",
+        "frontend/src/utils/ffmpeg.ts::await new Promise(resolve => setTimeout(resolve, 100));": "waits for the in-browser wasm load already in flight, no request of its own"
+      }
+    },
     "route-access": {
       "allow": {
         "GET /": "public: health check, returns no user data",

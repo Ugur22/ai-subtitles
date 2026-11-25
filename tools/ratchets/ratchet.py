@@ -15,6 +15,7 @@ judges with main's rules.
 """
 
 import json
+import os
 import re
 import warnings
 from pathlib import Path
@@ -29,6 +30,31 @@ def normalise(line):
 def fingerprint(path, line, function=None):
     parts = [str(path), function, normalise(line)] if function is not None else [str(path), normalise(line)]
     return "::".join(parts)
+
+
+def record_unique(out, fp, detail):
+    key, n = fp, 1
+    while key in out:
+        n += 1
+        key = f"{fp}#{n}"
+    out[key] = detail
+
+
+def source_files(root, subdir, suffixes, skip_dirs, is_test):
+    root = Path(root)
+    for dirpath, dirnames, filenames in os.walk(root / subdir):
+        dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs and not d.startswith("."))
+        for name in sorted(filenames):
+            if name.endswith(suffixes) and not is_test(name):
+                path = Path(dirpath) / name
+                yield path.relative_to(root).as_posix(), path.read_text(encoding="utf-8")
+
+
+MIN_REASON = 10
+
+
+def short_reasons(rule, path=BASELINE):
+    return {fp: why for fp, why in allowed(rule, path).items() if len(why.strip()) < MIN_REASON}
 
 
 def load(path=BASELINE):

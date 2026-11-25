@@ -28,6 +28,13 @@ def test_fingerprints_name_one_violation_not_a_file():
     assert a != ratchet.fingerprint("backend/x.py", "import torch", "other")
 
 
+def test_identical_lines_get_their_own_fingerprint():
+    out = {}
+    for _ in range(3):
+        ratchet.record_unique(out, "a.ts::setInterval(f, 1)", "setInterval")
+    assert list(out) == ["a.ts::setInterval(f, 1)", "a.ts::setInterval(f, 1)#2", "a.ts::setInterval(f, 1)#3"]
+
+
 def test_a_known_exception_does_not_cover_a_second_violation_in_the_same_file(tmp_path):
     p = baseline(tmp_path, {"heavy": {"allow": {"x.py::f::import torch": "legacy loader"}}})
     current = {"x.py::f::import torch": "ok", "x.py::g::import torch": "new"}
