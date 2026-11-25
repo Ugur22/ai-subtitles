@@ -5,6 +5,9 @@ Three moments, one set of requirements (requirements()):
 - PostToolUse (Edit/Write/Bash): reclassify the branch; the first time a session's tier rises, tell the agent
   what that tier requires (advisor before implementing sensitive work, reviewer before the PR). Never blocks.
 - PreToolUse on `gh pr create|edit|ready`: deny until the requirements hold and the description is complete.
+- PreToolUse on `git worktree add` (always denied), and on commit-making git commands and the edit tools while the
+  branch is sensitive with no `advisor` run: deny, so the plan reaches advisor before the code does. Edits made
+  through Bash (sed, tee) aren't seen; the commit check still is.
 - Stop (stop_check.py, after `make check` is green): the fallback; blocks at most 3 times, then NOT READY.
 
 Requirements for tier review or sensitive: a `reviewer` run tied to the current code (a git tree snapshot), or
@@ -270,6 +273,121 @@ def pr_gate(payload):
     return f"Risk tier {req['tier']} ({why}). Before this PR command can run:\n- " + "\n- ".join(problems)
 
 
+# --- PreToolUse: no worktrees; advisor before sensitive work goes further ----------------------------------------
+
+_SEPARATORS = frozenset({";", "&&", "||", "|", "&", "(", ")", "\n"})
+_PREFIXES = frozenset({"sudo", "env", "command", "exec", "time", "nice", "nohup"})
+_GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+                                "--config-env", "--exec-path"})
+_COMMIT_MAKING = frozenset({"commit", "merge", "cherry-pick", "revert", "am", "rebase"})
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+
+
+def without_heredoc_bodies(command):
+    out, end = [], None
+    for line in command.split("\n"):
+        if end is not None:
+            end = None if line.strip() == end else end
+            continue
+        out.append(line)
+        m = _HEREDOC.search(line)
+        end = m.group(2) if m else None
+    return "\n".join(out)
+
+
+def git_subcommands(command):
+    """[(subcommand, args)] for every `git` run as a command (not text inside a quoted string or a heredoc)."""
+    try:
+        lex = shlex.shlex(without_heredoc_bodies(command).replace("\n", " \n "), posix=True,
+                          punctuation_chars=";&|()")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return []
+    found, i, start = [], 0, True
+    while i < len(tokens):
+        t = tokens[i]
+        if t in _SEPARATORS:
+            start = True
+        elif start and (t in _PREFIXES or re.fullmatch(r"\w+=\S*", t)):
+            pass
+        elif start and os.path.basename(t) == "git":
+            j = i + 1
+            while j < len(tokens) and tokens[j].startswith("-") and tokens[j] not in _SEPARATORS:
+                j += 2 if tokens[j] in _GIT_VALUE_OPTIONS else 1
+            k = j
+            while k < len(tokens) and tokens[k] not in _SEPARATORS:
+                k += 1
+            if j < k:
+                found.append((tokens[j], tokens[j + 1:k]))
+            i, start = k, False
+            continue
+        else:
+            start = False
+        i += 1
+    return found
+
+
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def advisor_first(root, payload, point):
+    """The reason to stop, while the branch is sensitive and has no `advisor` run yet; None otherwise."""
+    events = ledger.events(root)
+    branch = ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if runs(events, branch, "advisor"):
+        return None
+    req = requirements(root, events=events)
+    if req["tier"] != risk.SENSITIVE:
+        return None
+    ledger.log(root, payload, "gate", point=point, decision="deny", tier=req["tier"], missing=["advisor"])
+    why = "; ".join(req["classification"]["reasons"][:4]) or "escalated"
+    return (f"Risk tier sensitive ({why}) and no `advisor` run on {branch} yet. Give `advisor` your plan before "
+            f"implementing further or committing (CLAUDE.md, Risk lifecycle 1): put the plan in the advisor prompt, "
+            f"or write it to a file outside the checkout. {'Edits' if point == 'edit' else 'Commits'} on this "
+            f"branch are refused until advisor has run on it (runs count per branch name).")
+
+
+def tier_marker(root, payload):
+    branch = re.sub(r"[^A-Za-z0-9_.-]", "_", ledger._git(root, "rev-parse", "--abbrev-ref", "HEAD") or "HEAD")
+    return os.path.join(ledger.state_dir(root), f"tier-{ledger.session_id(payload)}-{branch}")
+
+
+def session_tier(root, payload):
+    try:
+        with open(tier_marker(root, payload)) as f:
+            return f.read().split(" ", 1)[0]
+    except OSError:
+        return risk.ORDINARY
+
+
+def inside(root, path):
+    return bool(path) and os.path.realpath(os.path.join(root, path)).startswith(os.path.realpath(root) + os.sep)
+
+
+def work_gate(payload):
+    """None to allow, or the reason to deny: `git worktree add`, and edits or commits on a sensitive branch before
+    `advisor` has run. Edits read the session's tier marker first, so ordinary work pays nothing extra."""
+    root = ledger.repo_root(payload.get("cwd") or ".")
+    if not root:
+        return None
+    tool, tool_input = payload.get("tool_name"), payload.get("tool_input") or {}
+    if tool == "Bash":
+        command = str(tool_input.get("command", ""))
+        subs = git_subcommands(command)
+        if any(sub == "worktree" and args[:1] == ["add"] for sub, args in subs):
+            ledger.log(root, payload, "gate", point="worktree", decision="deny")
+            return (f"No `git worktree add` here: one session, one checkout ({root}). The review gate and the ledger "
+                    "only see this checkout. Switch branches in it; park uncommitted work with `git stash -u`.")
+        return advisor_first(root, payload, "commit") if any(sub in _COMMIT_MAKING for sub, _ in subs) else None
+    if tool in EDIT_TOOLS:
+        path = tool_input.get("file_path") or tool_input.get("notebook_path")
+        if inside(root, path) and session_tier(root, payload) == risk.SENSITIVE:
+            return advisor_first(root, payload, "edit")
+    return None
+
+
 # --- PostToolUse: reassess the tier while working ----------------------------------------------------------------
 
 def reassess(payload):
@@ -278,7 +396,7 @@ def reassess(payload):
     root = ledger.repo_root(payload.get("cwd") or ".")
     if not root:
         return None
-    marker = os.path.join(ledger.state_dir(root), f"tier-{ledger.session_id(payload)}")
+    marker = tier_marker(root, payload)
     try:
         with open(marker) as f:
             before, _, seen_tree = f.read().strip().partition(" ")
@@ -327,8 +445,8 @@ def hook():
     if not enabled():
         return 0
     try:
-        if event == "PreToolUse" and payload.get("tool_name") == "Bash":
-            reason = pr_gate(payload)
+        if event == "PreToolUse":
+            reason = (pr_gate(payload) if payload.get("tool_name") == "Bash" else None) or work_gate(payload)
             if reason:
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                          "permissionDecisionReason": reason}}))
