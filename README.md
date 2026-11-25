@@ -1,52 +1,31 @@
 # AI Subtitles
 
-AI video transcription with speaker diarization, multimodal search (transcript, visuals, audio, faces), and RAG-powered chat. Heavy processing runs on a Cloud Run GPU job; the API stays on a cheap CPU service.
+AI video transcription with speaker diarization, translation, and RAG-powered chat grounded in the transcript, visuals, faces and audio. Heavy processing runs on a Cloud Run GPU job; the API stays on a cheap CPU service.
 <img width="1056" alt="AI Subs upload screen" src="docs/images/app-screenshot.png" />
 
 ## Features
 
-### Available now
-
-**Processing (GPU worker)**
-- **Transcription** - faster-whisper on an L4 GPU. Each upload uses `large-v3` (Accurate, the default) or `large-v3-turbo` (Fast). Local mode uses `small` on CPU. The language is detected automatically, or you can set it.
-- **Speaker diarization** - pyannote, which processes recordings longer than 30 minutes in chunks and links speakers across chunks. Speaker count is detected automatically.
-- **Translation** - MarianMT translates non-English transcripts to English.
-- **Screenshots and visual index** - A frame for each segment plus dense frames every 10 seconds, embedded with CLIP and captioned by a vision model (xAI)
-- **Faces** - Faces are detected with InsightFace (ArcFace). Each person is indexed across the video.
-- **Audio events** - PANNs detects laughter, applause, music and other sounds, plus energy levels.
-- **Media formats** - MP4, MP3, WAV, WebM, MKV and more, with resumable uploads straight to GCS
-
-**In the app**
-- **Transcript view** - Synced video player, speaker filter, jump to a timestamp, and renaming speakers
-- **Speaker recognition** - Enroll a voiceprint, then identify that speaker automatically in new videos.
-- **Face tagging** - Tag a face with a speaker name so search and chat can find that person.
-- **RAG chat** - Streaming answers grounded in a single video. Retrieval combines transcript text (semantic and lexical), visual scenes (CLIP and captions), face identity, audio events and speaker context. Answers include timestamp links, source screenshots and suggested questions.
-- **Person comparison** - In chat, compare one person's appearances side by side on a timeline. You can swap in other moments.
+- **Transcription** - faster-whisper on an L4 GPU, `large-v3` (Accurate) or `large-v3-turbo` (Fast) per upload, with language auto-detection
+- **Speakers** - pyannote diarization, plus voiceprint enrollment to recognise known speakers in new videos
+- **Translation** - MarianMT, non-English to English
+- **Faces** - InsightFace detection across the video; tag a face with a speaker name
+- **Audio events** - Laughter, applause, music and other sounds (PANNs)
+- **RAG chat** - Streaming answers grounded in the video's transcript, visuals (CLIP and vision captions), faces and audio, with timestamp links, source screenshots and side-by-side person comparison
 - **Subtitle export** - SRT and WebVTT, original or translated
-- **Job library** - Live progress through Supabase Realtime, plus cancel, retry, delete and share links (read-only and token-based)
-- **Multiple LLMs** - Grok (default), Groq, OpenAI, Anthropic, DeepSeek, or Ollama (local), with your own API keys stored encrypted per user
-
-**Accounts and operations**
-- **Auth** - Email and password with a cookie session, invite-code registration, email verification and password reset
-- **Plans and quotas** - Free (60 min/month, 30 min per file, no chat), Pro (15 h/month, 3 h per file) and Studio (50 h/month, 6 h per file), with a concurrency cap per plan. Admins are exempt.
-- **Billing** - Stripe Checkout, the customer portal and webhooks, plus a pricing page. Requires the `STRIPE_*` secrets; without them the billing routes return 503.
-- **Admin dashboard** - Usage stats, user management and invite codes
-- **Reliable long jobs** - Per-chunk checkpoints let multi-hour files resume across GPU runs. Jobs that go stale are re-dispatched automatically.
+- **Job library** - Live progress, cancel, retry, delete, and read-only share links; long files resume across GPU runs
+- **Multiple LLMs** - Grok (default), Groq, OpenAI, Anthropic, DeepSeek or Ollama, with per-user encrypted API keys
+- **Accounts** - Email/password auth, invite codes, Free/Pro/Studio quotas, optional Stripe billing, admin dashboard
 
 ### Behind feature flags
 
-These features are fully built but switched off unless enabled in [Flagsmith](https://flagsmith.com) (`FLAGSMITH_SERVER_KEY` on the backend). Without a key, or before the first successful fetch, every flag is **off**. While a flag is off, the UI hides the tab and the API returns `404`.
+Built but off unless enabled in [Flagsmith](https://flagsmith.com) (`FLAGSMITH_SERVER_KEY`, see [Configuration](docs/CONFIGURATION.md#feature-flags-flagsmith)). While a flag is off, the tab is hidden and its API returns `404`.
 
-| Flag | Feature | API |
-|------|---------|-----|
-| `chapters` | Auto-generated chapters: semantic topic-shift detection with LLM-written titles, shown on the video timeline and in a Chapters tab | `/api/chapters/*` |
-| `summary` | Section summaries with screenshots (local BART model), shown in a Summary tab | `POST /generate_summary/` |
+| Flag | Feature |
+|------|---------|
+| `chapters` | Auto-generated chapters with LLM titles, on the timeline and in a Chapters tab |
+| `summary` | Section summaries with screenshots (local BART), in a Summary tab |
 
-The flag list lives in `backend/services/feature_flags.py` (`KNOWN_FLAGS`). The backend caches Flagsmith values for 15 minutes. The frontend reads them from `GET /api/features` and fails closed: tabs stay hidden while the flags load.
-
-### Pipeline switches (environment)
-
-Each pipeline stage can be turned off in `backend/config.py`. All of them are on by default: `ENABLE_SPEAKER_DIARIZATION`, `ENABLE_VISION_CAPTIONS`, `ENABLE_AUDIO_ANALYSIS`, `VAD_ENABLED`. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+Details per feature, with key files: [docs/FEATURES.md](docs/FEATURES.md). Pipeline stages can be switched off with `ENABLE_*` variables: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Tech Stack
 
@@ -97,7 +76,7 @@ Open http://localhost:5173
 3. The worker transcribes in 5-minute chunks and checkpoints each one, then diarizes, extracts screenshots, computes embeddings, and translates. Media goes through GCS, results land in Supabase.
 4. A GPU execution can run for at most one hour. If a file needs longer, the worker stops at a chunk boundary and starts a new execution for the same job, which resumes from the checkpoints.
 5. Supabase Realtime pushes progress to the browser. Cloud Scheduler calls `check-stale` every 5 minutes to re-dispatch jobs whose worker died and to retry a timed-out job once.
-6. Search and chat are served by the CPU API from pgvector, with answers generated by the configured LLM provider.
+6. Chat is served by the CPU API with retrieval from pgvector, with answers generated by the configured LLM provider.
 
 There is no Kubernetes cluster and no separate queue service; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains why.
 
@@ -115,6 +94,7 @@ With `LOCAL_MODE=true`, GCS and the Cloud Run Job are replaced by local disk and
 
 ## Documentation
 
+- [Features](docs/FEATURES.md) - What the platform does, with key files
 - [Configuration Guide](docs/CONFIGURATION.md) - All environment variables
 - [API Reference](docs/API.md) - Complete endpoint documentation
 - [Architecture](docs/ARCHITECTURE.md) - Detailed system diagrams

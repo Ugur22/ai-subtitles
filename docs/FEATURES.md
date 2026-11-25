@@ -17,11 +17,9 @@ screenshots → analysis → summaries/chapters. Runs as async jobs on Cloud Run
 | Summarization | BART, section-based summaries with screenshots | `services/summarization_service.py` |
 | Chapters | Semantic topic-shift detection + LLM titles | `routers/chapters.py` |
 | Audio analysis | PANNs events (laughter/applause/…) + energy | `audio_analyzer.py` |
-| Text search | Semantic (MiniLM) + lexical, neighbor expansion | `vector_store.py` |
-| Visual search | CLIP scene embeddings over screenshots | `services/image_embedding_service.py` |
 | Face detection/tagging | InsightFace (ArcFace), tag faces to speaker names | `services/face_service.py` |
 | Speaker recognition | Voice-print enrollment + identification | `speaker_recognition.py` |
-Chapters and Summarization are behind the Flagsmith flags `chapters` and `summary`, which are off by default (`services/feature_flags.py`).
+Chapters and Summarization are behind the Flagsmith flags `chapters` and `summary`, off by default. Flags are listed in `KNOWN_FLAGS` (`services/feature_flags.py`); the backend is the only Flagsmith client and caches values (`FLAG_CACHE_SECONDS`), the browser reads them from `GET /api/features` and hides flagged tabs until they load, and flagged routes return 404 while off.
 
 ## LLM chat (RAG)
 Streaming chat grounded in a video: multi-modal retrieval (text + CLIP visual + face
@@ -40,7 +38,6 @@ identity + speaker context), follow-up resolution, cross-provider vision fallbac
 - Upload & transcribe (drag-drop, language select, background/local) — `features/transcription/`
 - Transcript view + edit speaker names, filter by speaker, jump-to-time, SRT download — `TranscriptSegmentList.tsx`, `SubtitleControls.tsx`
 - Job library: status sections, load/delete/cancel, pagination — `features/jobs/JobPanel.tsx`
-- Search: text (semantic toggle) + visual tabs — `features/search/`
 - Chat panel with streaming + markdown + timestamp links — `features/chat/ChatPanel.tsx`
 - Summaries + chapters panels — `features/summary/`, `features/chapters/`
 - Speaker management + enrollment, face tagging overlay — `features/speakers/`, `features/face-tagging/`
