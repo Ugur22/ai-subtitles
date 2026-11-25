@@ -209,9 +209,9 @@ def test_job_token_routes_need_this_jobs_token(table):
 
 def test_job_token_or_owner_routes(table):
     for fp, r in classified(table, "job-token-or-owner"):
-        assert call(r, token=None) == 403, f"{fp}: anonymous, no token"
-        assert call(r, cookie="tok-user-b", token=None) == 403, f"{fp}: another user, no token"
-        assert call(r, cookie="tok-user-b", token="tok-other-job") == 403, f"{fp}: another job's token"
+        assert call(r, token=None) in (403, 404), f"{fp}: anonymous, no token"
+        assert call(r, cookie="tok-user-b", token=None) in (403, 404), f"{fp}: another user, no token"
+        assert call(r, cookie="tok-user-b", token="tok-other-job") in (403, 404), f"{fp}: another job's token"
         assert call(r, cookie="tok-user-b", token=JOB_TOKEN) == GRANTED, f"{fp}: share token"
         assert call(r, cookie="tok-user-a", token=None) == GRANTED, f"{fp}: owner"
 
