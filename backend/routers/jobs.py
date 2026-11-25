@@ -7,6 +7,7 @@ maintaining an active connection.
 """
 import asyncio
 import logging
+import secrets
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -242,26 +243,32 @@ def require_job_access(job_id: str, token: Optional[str], user_id: Optional[str]
         Job dict if access granted
 
     Raises:
-        HTTPException: 403 if no valid access, 404 if job not found
+        HTTPException: 404 if the job is missing OR the caller has no access.
+            Both answers are identical so a caller cannot confirm that a job id
+            exists, and both cost the same single query.
     """
     from services.job_queue_service import JobQueueService
 
+    not_found = HTTPException(status_code=404, detail="Job not found")
+
     job = JobQueueService.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise not_found
 
-    # Check token access (for shared links)
-    if token and verify_token(job_id, token):
+    # Check token access (for shared links) against the row already fetched,
+    # rather than a second query that only an existing job would pay for.
+    # Compared as bytes: compare_digest rejects non-ASCII str with a TypeError.
+    stored_token = job.get("access_token") or ""
+    if token and stored_token and secrets.compare_digest(
+        stored_token.encode(), token.encode()
+    ):
         return job
 
     # Check ownership (authenticated user owns this job)
     if user_id and job.get("user_id") == user_id:
         return job
 
-    raise HTTPException(
-        status_code=403,
-        detail="Access denied. Provide valid token or access your own jobs."
-    )
+    raise not_found
 
 
 def require_job_owner(job_id: str, user_id: str) -> dict:
@@ -429,8 +436,7 @@ async def get_job_status(
 
     Raises:
         401: Not authenticated
-        403: Not owner and no valid token
-        404: Job not found
+        404: Job not found, or not owner and no valid token (same answer)
     """
     # Get authenticated user ID
     user_id = request.state.user["id"]
