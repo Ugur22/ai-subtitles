@@ -1,14 +1,9 @@
-"""Ratchet route-access: every route of the app is access-controlled, or explicitly classified.
+"""Protected endpoints are identified by the wrapper's code object, not by a name: `functools.wraps` copies names."""
 
-A route is protected when its registered endpoint is the wrapper of `require_auth` or `require_admin`
-(backend/middleware/auth.py), identified by the wrapper's code object, not by a name: `functools.wraps` copies
-names. Every other route (a public auth flow, a per-job token, a signed webhook, framework docs) is a violation
-unless baseline.json lists its `METHOD path` with a class prefix and a reason. test_route_access.py then checks
-each class's behaviour, so the classification is proven, not trusted.
-"""
-
+import functools
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 CLASSES = ("public", "job-token", "job-token-or-owner", "webhook", "framework")
@@ -21,6 +16,19 @@ def app():
     return main.app
 
 
+def entry_class(why):
+    return why.partition(":")[0].strip()
+
+
+def reason_problem(why):
+    if entry_class(why) not in CLASSES:
+        return f"must start with one of {', '.join(CLASSES)} and a colon"
+    if len(why.partition(":")[2].strip()) < 10:
+        return "needs a reason after the class"
+    return None
+
+
+@functools.lru_cache(maxsize=None)
 def protection_codes():
     import middleware.auth as auth
 
@@ -30,20 +38,25 @@ def protection_codes():
     return {auth.require_auth(handler).__code__: "user", auth.require_admin(handler).__code__: "admin"}
 
 
+class Route(NamedTuple):
+    fingerprint: str
+    protection: object  # "user", "admin", or None when no decorator protects it
+    route: object
+
+
 def routes(application=None):
-    """[(fingerprint, class or None, route)] for every route and method; class None = not decorator-protected."""
     application = application or app()
     codes = protection_codes()
     out = []
     for r in application.routes:
         endpoint = getattr(r, "endpoint", None)
-        kind = codes.get(getattr(endpoint, "__code__", None))
+        protection = codes.get(getattr(endpoint, "__code__", None))
         for method in sorted(getattr(r, "methods", None) or {"MOUNT"}):
             if method != "HEAD":
-                out.append((f"{method} {r.path}", kind, r))
+                out.append(Route(f"{method} {r.path}", protection, r))
     return out
 
 
-def collect(root=ROOT, application=None):
+def collect(_root=None, application=None):
     return {fp: f"{getattr(r.endpoint, '__module__', '?')}.{getattr(r.endpoint, '__name__', '?')}"
-            for fp, kind, r in routes(application) if kind is None}
+            for fp, protection, r in routes(application) if protection is None}

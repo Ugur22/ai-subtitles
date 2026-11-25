@@ -35,7 +35,7 @@ def dirty(root, rel):
     return bool(r.stdout.strip())
 
 
-def check(m, root):
+def check(m, root, unmutated_results=None):
     """(status, detail): killed | survived | stale | broken | dirty."""
     path = root / m["file"]
     cwd = root / m.get("cwd", ".")
@@ -45,7 +45,11 @@ def check(m, root):
     if original is None or original.count(m["find"]) != 1:
         n = 0 if original is None else original.count(m["find"])
         return "stale", f"`find` occurs {n} times in {m['file']} (needs exactly 1)"
-    code, out = run(m["test"], cwd)
+    cache = {} if unmutated_results is None else unmutated_results
+    key = (tuple(m["test"]), str(cwd))
+    if key not in cache:
+        cache[key] = run(m["test"], cwd)
+    code, out = cache[key]
     if code != 0:
         return "broken", f"the test fails without the mutation:\n{out}"
     try:
@@ -65,9 +69,9 @@ def main(argv=None):
     mutations = json.loads(Path(a.file).read_text()).get("mutations", [])
     if a.only:
         mutations = [m for m in mutations if m["id"] == a.only]
-    root, bad = Path(a.root), 0
+    root, bad, unmutated_results = Path(a.root), 0, {}
     for m in mutations:
-        status, detail = check(m, root)
+        status, detail = check(m, root, unmutated_results)
         ok = status == "killed"
         bad += not ok
         print(f"{'PASS' if ok else 'FAIL'} {m['id']}: {status}" + (f" - {detail}" if detail else ""))

@@ -152,3 +152,10 @@ def test_invariant_tests_are_add_only_for_agents():
         assert any("protected invariant test" in v for v in cp.file_violations([f(inv, status)], AGENT)), status
     assert cp.file_violations([f("backend/tests/x.py", "renamed", old=inv)], AGENT)
     assert cp.file_violations([f(inv, "modified")], OWNER) == []
+
+
+def test_pytest_config_that_would_reach_the_ratchet_run_is_guarded():
+    """`pytest tools/ratchets/rules` also loads conftest.py and the nearest pytest config above it."""
+    for p in ("conftest.py", "tools/conftest.py", "tools/pytest.ini", "tools/pyproject.toml", "tools/setup.cfg"):
+        assert cp.file_violations([f(p, "added")], AGENT), p
+    assert cp.file_violations([f("backend/tests/conftest.py", "added")], AGENT) == []

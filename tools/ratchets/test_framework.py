@@ -44,7 +44,7 @@ def test_stale_exceptions_warn_but_never_fail(tmp_path):
 
 def test_tighten_only_removes_and_add_needs_a_reason(tmp_path):
     p = baseline(tmp_path, {"r": {"allow": {"keep": "still there", "gone": "fixed since"}}})
-    removed = tighten.tighten(p, {"r": lambda root: {"keep": "x", "brand-new": "x"}}, tmp_path)
+    removed = tighten.tighten(p, {"r": {"collect": lambda root: {"keep": "x", "brand-new": "x"}}}, tmp_path)
     assert removed == ["r: gone"]
     assert ratchet.allowed("r", p) == {"keep": "still there"}, "a new violation is never added by tightening"
     with pytest.raises(SystemExit):
@@ -106,3 +106,23 @@ def test_shipped_files_are_well_formed():
     assert isinstance(ratchet.load(), dict)
     for m in json.loads((HERE / "mutations.json").read_text())["mutations"]:
         assert {"id", "file", "find", "replace", "test", "why"} <= set(m), m.get("id")
+
+
+def test_controls_sharing_a_test_run_it_unmodified_once(repo, monkeypatch):
+    calls = []
+    real = run_mutations.run
+    monkeypatch.setattr(run_mutations, "run", lambda cmd, cwd: calls.append(cmd) or real(cmd, cwd))
+    unmutated_results = {}
+    run_mutations.check(mutation(), repo, unmutated_results)
+    run_mutations.check(mutation(id="m2", replace="False"), repo, unmutated_results)
+    assert len(calls) == 3, "one unmodified run, then one mutated run per control"
+
+
+def test_add_applies_the_rules_own_reason_check(tmp_path):
+    p = baseline(tmp_path, {})
+    registry = tighten.RULES
+    sys.path.insert(0, str(HERE / "rules"))
+    with pytest.raises(SystemExit, match="must start with one of"):
+        tighten.add("route-access", "GET /x", "a reason without any class prefix", p, registry)
+    tighten.add("route-access", "GET /x", "public: static page with no user data", p, registry)
+    assert ratchet.allowed("route-access", p) == {"GET /x": "public: static page with no user data"}

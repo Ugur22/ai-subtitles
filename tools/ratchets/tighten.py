@@ -16,10 +16,12 @@ sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve
 import ratchet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-RULES = {"route-access": "route_access:collect"}  # rule name -> "module:function" (modules in rules/)
+RULES = {"route-access": {"collect": "route_access:collect", "validate": "route_access:reason_problem"}}
 
 
-def collector(spec):
+def load(spec):
+    if callable(spec):
+        return spec
     module, func = spec.split(":")
     return getattr(importlib.import_module(module), func)
 
@@ -34,7 +36,7 @@ def tighten(path=ratchet.BASELINE, registry=None, root=ROOT):
     rules = ratchet.load(path)
     removed = []
     for rule, spec in registry.items():
-        current = collector(spec)(root) if isinstance(spec, str) else spec(root)
+        current = load(spec["collect"])(root)
         _, stale = ratchet.compare(rule, current, path)
         for fp in stale:
             rules[rule]["allow"].pop(fp)
@@ -43,9 +45,13 @@ def tighten(path=ratchet.BASELINE, registry=None, root=ROOT):
     return removed
 
 
-def add(rule, fp, reason, path=ratchet.BASELINE):
+def add(rule, fp, reason, path=ratchet.BASELINE, registry=None):
     if len(reason.strip()) < 10:
         raise SystemExit("--reason must say why this exception is acceptable")
+    validate = (RULES if registry is None else registry).get(rule, {}).get("validate")
+    problem = load(validate)(reason.strip()) if validate else None
+    if problem:
+        raise SystemExit(f"--reason for {rule} {problem}")
     rules = ratchet.load(path)
     rules.setdefault(rule, {"allow": {}})["allow"][fp] = reason.strip()
     save(rules, path)
