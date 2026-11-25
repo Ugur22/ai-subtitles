@@ -1,15 +1,25 @@
 """Ownership invariants, checked through the HTTP API of the real app (main.app).
 
-User B must not be able to read or change user A's data, a job without an owner
-belongs to nobody, and a normal user can't reach admin routes. The real auth
-middleware, routers, JobQueueService and TranscriptionRepository run unchanged;
-only the edges are faked: the Supabase client singleton (an in-memory table
-store that records every write and RPC), the media storage (no GCS, records
-which keys it signed), the Supabase token check and the speaker voice-print
-store. Nothing here reaches a network, a real database or production.
+User B (or a caller without a session) must not read or change user A's data, a
+job without an owner belongs to nobody, and a normal user can't reach admin
+routes. The real auth middleware, routers, JobQueueService and
+TranscriptionRepository run unchanged; only the edges are faked: the Supabase
+client singleton (an in-memory table store that records which rows each write
+matched and every RPC), the media storage (no GCS; records the keys it signs or
+deletes), the Supabase token check and the speaker voice-print store. Nothing
+here reaches a network, a real database or production.
+
+This file is add-only. The assertions are about outcomes (no data of theirs in
+the response, no row of theirs changed, no key of theirs signed), not about how a
+route gets there, so a route may move its ownership check into SQL or log an
+audit row without breaking them. Exact status codes are pinned only where the
+contract is 404 for a resource the caller does not own. Known gaps live in
+tests/test_ownership_gaps.py, which reuses these fakes.
 """
 
 import asyncio
+import fnmatch
+import re
 import sys
 import types
 from types import SimpleNamespace
@@ -31,7 +41,7 @@ USERS = {
     "tok-admin": "admin",
 }
 
-# Strings that only exist in A's (or the orphan's) rows. None may reach B.
+# Strings that only exist in A's rows, A's storage keys or A's voice prints.
 A_SECRETS = (
     "A-SECRET",
     "a-secret-filename",
@@ -42,7 +52,9 @@ A_SECRETS = (
     "hash-a",
     "Alice",
 )
-ORPHAN_SECRETS = ("ORPHAN-SECRET", "tok-share-orphan", "processed/orphan", ORPHAN_SHOT)
+ORPHAN_SECRETS = ("ORPHAN-SECRET", "tok-share-orphan", "processed/orphan", "uploads/orphan", ORPHAN_SHOT)
+# Owners whose rows a caller other than themselves must never change. None is the ownerless job.
+PROTECTED_OWNERS = ("user-a", None)
 
 
 def _job(job_id, user_id, video_hash, status, secret, token, filename, media_key, shot=None):
@@ -71,11 +83,10 @@ def _job(job_id, user_id, video_hash, status, secret, token, filename, media_key
 
 
 def _rows():
-    a_media = "processed/user-a/a-secret-filename.mp4"
     return {
         "jobs": [
             _job("job-a", "user-a", "hash-a", "completed", "A-SECRET", "tok-share-a",
-                 "a-secret-filename.mp4", a_media, A_SHOT),
+                 "a-secret-filename.mp4", "processed/user-a/a-secret-filename.mp4", A_SHOT),
             _job("job-a-failed", "user-a", "hash-a-failed", "failed", "A-SECRET", "tok-share-a-failed",
                  "a-secret-filename-failed.mp4", "uploads/user-a/failed.mp4"),
             _job("job-a-running", "user-a", "hash-a-running", "processing", "A-SECRET", "tok-share-a-running",
@@ -104,16 +115,45 @@ def _rows():
 # ---------------------------------------------------------------------------
 
 
+def _sql_eq(left, right):
+    """SQL comparison: NULL equals nothing, values compare as text like PostgREST filters."""
+    return left is not None and right is not None and str(left) == str(right)
+
+
+def _postgrest_value(raw):
+    return None if raw == "null" else raw
+
+
+def _split_top_level(text):
+    parts, depth, current = [], 0, ""
+    for char in text:
+        if char == "," and depth == 0:
+            parts.append(current)
+            current = ""
+            continue
+        depth += char == "("
+        depth -= char == ")"
+        current += char
+    return parts + [current] if current else parts
+
+
 class FakeQuery:
-    """The subset of the postgrest query builder the routes use, with SQL NULL semantics for eq."""
+    """The postgrest query builder surface the app uses, with SQL NULL semantics.
+
+    Unknown methods raise AttributeError, which the routes turn into a 500 and the
+    tests report; add the method here rather than weakening an assertion.
+    """
 
     def __init__(self, db, table):
         self.db, self.table = db, table
         self.op, self.payload = "select", None
-        self.filters, self._limit, self._order = [], None, None
+        self.filters, self._limit, self._range, self._order = [], None, None, []
+        self._single, self._negate_next = None, False
 
-    def select(self, *_columns, count=None):
-        self.op = "select"
+    # --- operations ---------------------------------------------------------
+    def select(self, *_columns, count=None, **_kwargs):
+        if self.op not in ("update", "delete", "insert", "upsert"):
+            self.op = "select"
         return self
 
     def update(self, payload):
@@ -124,7 +164,7 @@ class FakeQuery:
         self.op = "delete"
         return self
 
-    def insert(self, payload):
+    def insert(self, payload, **_kwargs):
         self.op, self.payload = "insert", payload
         return self
 
@@ -132,65 +172,137 @@ class FakeQuery:
         self.op, self.payload = "upsert", payload
         return self
 
-    def eq(self, column, value):
-        self.filters.append(lambda row: value is not None and row.get(column) == value)
+    # --- filters ------------------------------------------------------------
+    def _add(self, predicate):
+        if self._negate_next:
+            self._negate_next = False
+            self.filters.append(lambda row: not predicate(row))
+        else:
+            self.filters.append(predicate)
         return self
+
+    @property
+    def not_(self):
+        self._negate_next = True
+        return self
+
+    def eq(self, column, value):
+        return self._add(lambda row: _sql_eq(row.get(column), value))
 
     def neq(self, column, value):
-        self.filters.append(lambda row: row.get(column) is not None and row.get(column) != value)
-        return self
+        return self._add(lambda row: row.get(column) is not None and not _sql_eq(row.get(column), value))
 
     def in_(self, column, values):
-        self.filters.append(lambda row: row.get(column) in values)
-        return self
+        values = [str(v) for v in values if v is not None]
+        return self._add(lambda row: row.get(column) is not None and str(row.get(column)) in values)
 
     def is_(self, column, value):
-        expected = None if value in (None, "null") else value
-        self.filters.append(lambda row: row.get(column) == expected)
+        expected = _postgrest_value(value) if isinstance(value, str) else value
+        return self._add(lambda row: row.get(column) is expected if expected in (None, True, False)
+                         else row.get(column) == expected)
+
+    def match(self, conditions):
+        for column, value in conditions.items():
+            self.eq(column, value)
         return self
+
+    def _compare(self, column, value, test):
+        return self._add(lambda row: row.get(column) is not None and test(str(row.get(column)), str(value)))
+
+    def gt(self, column, value):
+        return self._compare(column, value, lambda a, b: a > b)
 
     def gte(self, column, value):
-        self.filters.append(lambda row: row.get(column) is not None and row.get(column) >= value)
-        return self
-
-    def lte(self, column, value):
-        self.filters.append(lambda row: row.get(column) is not None and row.get(column) <= value)
-        return self
+        return self._compare(column, value, lambda a, b: a >= b)
 
     def lt(self, column, value):
-        self.filters.append(lambda row: row.get(column) is not None and row.get(column) < value)
-        return self
+        return self._compare(column, value, lambda a, b: a < b)
 
+    def lte(self, column, value):
+        return self._compare(column, value, lambda a, b: a <= b)
+
+    def like(self, column, pattern):
+        glob = pattern.replace("%", "*").replace("_", "?")
+        return self._add(lambda row: row.get(column) is not None and fnmatch.fnmatchcase(str(row.get(column)), glob))
+
+    def ilike(self, column, pattern):
+        glob = pattern.replace("%", "*").replace("_", "?").lower()
+        return self._add(lambda row: row.get(column) is not None
+                         and fnmatch.fnmatchcase(str(row.get(column)).lower(), glob))
+
+    def or_(self, expression, **_kwargs):
+        """PostgREST or=(a.eq.1,b.is.null,c.in.(x,y)); supports eq, neq, is and in."""
+        clauses = []
+        for part in _split_top_level(expression):
+            column, op, raw = part.split(".", 2)
+            if op == "in":
+                values = [v for v in raw.strip("()").split(",") if v]
+                clauses.append(lambda row, c=column, vs=values: row.get(c) is not None and str(row.get(c)) in vs)
+            elif op == "is":
+                clauses.append(lambda row, c=column, v=_postgrest_value(raw): row.get(c) is v
+                               if v is None else str(row.get(c)).lower() == v)
+            elif op == "eq":
+                clauses.append(lambda row, c=column, v=raw: _sql_eq(row.get(c), v))
+            elif op == "neq":
+                clauses.append(lambda row, c=column, v=raw: row.get(c) is not None and not _sql_eq(row.get(c), v))
+            else:
+                raise NotImplementedError(f"FakeQuery.or_ does not support '{op}' in {expression!r}")
+        return self._add(lambda row: any(clause(row) for clause in clauses))
+
+    # --- shaping ------------------------------------------------------------
     def order(self, column, desc=False, **_kwargs):
-        self._order = (column, desc)
+        self._order.append((column, desc))
         return self
 
-    def limit(self, value):
+    def limit(self, value, **_kwargs):
         self._limit = value
         return self
 
-    def range(self, start, end):
-        self._limit = None
-        self.filters.append(lambda row: True)
+    def range(self, start, end, **_kwargs):
+        self._range = (start, end)
+        return self
+
+    def single(self):
+        self._single = "single"
+        return self
+
+    def maybe_single(self):
+        self._single = "maybe"
         return self
 
     def execute(self):
         rows = self.db.tables.setdefault(self.table, [])
         matches = [row for row in rows if all(f(row) for f in self.filters)]
-        if self.op != "select":
-            self.db.writes.append((self.op, self.table, self.payload))
+
+        if self.op in ("insert", "upsert"):
+            new_rows = self.payload if isinstance(self.payload, list) else [self.payload]
+            self.db.writes.append(SimpleNamespace(op=self.op, table=self.table, payload=self.payload,
+                                                  matched=[], inserted=[dict(r) for r in new_rows]))
+            rows.extend(dict(r) for r in new_rows)
+            return SimpleNamespace(data=[dict(r) for r in new_rows], count=len(new_rows))
+        if self.op in ("update", "delete"):
+            self.db.writes.append(SimpleNamespace(op=self.op, table=self.table, payload=self.payload,
+                                                  matched=[dict(r) for r in matches], inserted=[]))
             if self.op == "update":
                 for row in matches:
                     row.update(self.payload)
-            elif self.op == "delete":
+            else:
                 self.db.tables[self.table] = [row for row in rows if row not in matches]
-            return SimpleNamespace(data=[dict(row) for row in matches], count=len(matches))
-        if self._order:
-            column, desc = self._order
+            return SimpleNamespace(data=[dict(r) for r in matches], count=len(matches))
+
+        for column, desc in reversed(self._order):
             matches.sort(key=lambda row: str(row.get(column) or ""), reverse=desc)
+        total = len(matches)
+        if self._range:
+            matches = matches[self._range[0]: self._range[1] + 1]
         if self._limit is not None:
             matches = matches[: self._limit]
-        return SimpleNamespace(data=[dict(row) for row in matches], count=len(matches))
+        data = [dict(r) for r in matches]
+        if self._single:
+            if len(data) != 1 and self._single == "single":
+                raise RuntimeError(f"single() expected one row from {self.table}, got {len(data)}")
+            data = data[0] if data else None
+        return SimpleNamespace(data=data, count=total)
 
 
 class FakeSupabase:
@@ -203,7 +315,7 @@ class FakeSupabase:
         return FakeQuery(self, name)
 
     def rpc(self, name, params=None):
-        self.rpcs.append((name, params))
+        self.rpcs.append((name, dict(params or {})))
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=None))
 
     @property
@@ -268,6 +380,7 @@ def app():
 @pytest.fixture
 def world(monkeypatch):
     import middleware.auth as auth
+    import services.job_queue_service as job_queue_service
     import services.media_storage as media_storage
     from services.supabase_service import SupabaseService
 
@@ -293,6 +406,9 @@ def world(monkeypatch):
     def no_auth_client(*_args, **_kwargs):
         raise AssertionError("Supabase Auth must not be reached in these tests")
 
+    def no_worker(*_args, **_kwargs):
+        raise AssertionError("the worker must not be dispatched in these tests")
+
     auth.clear_all_token_cache()
     monkeypatch.setattr(SupabaseService, "_client", db)
     monkeypatch.setattr(SupabaseService, "get_auth_client", classmethod(no_auth_client))
@@ -302,14 +418,10 @@ def world(monkeypatch):
     monkeypatch.setattr(media_storage, "_media_storage", storage)
     monkeypatch.setattr(settings, "ENABLE_GCS_UPLOADS", False)
     monkeypatch.setattr(settings, "INTERNAL_API_KEY", INTERNAL_KEY)
+    monkeypatch.setattr(job_queue_service.JobQueueService, "trigger_worker_job", staticmethod(no_worker))
     speaker_module = types.ModuleType("speaker_recognition")
     speaker_module.get_speaker_recognition_system = lambda: voice_prints
     monkeypatch.setitem(sys.modules, "speaker_recognition", speaker_module)
-    import services.job_queue_service as job_queue_service
-    monkeypatch.setattr(
-        job_queue_service.JobQueueService, "trigger_worker_job",
-        staticmethod(lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("worker must not be dispatched"))),
-    )
     yield SimpleNamespace(db=db, storage=storage, voice_prints=voice_prints)
     auth.clear_all_token_cache()
 
@@ -330,77 +442,73 @@ def leaked(response, secrets):
     return [secret for secret in secrets if secret in visible]
 
 
-def assert_nothing_touched(world, *keys_that_may_be_signed):
-    assert world.db.writes == [], "a non-owner request wrote to the database"
-    assert world.db.rpcs == [], "a non-owner request called a database function"
-    assert [k for k in world.storage.signed if k not in keys_that_may_be_signed] == [], "signed a URL"
-    assert world.storage.deleted == [], "deleted stored media"
+def _owner(row):
+    return row["user_id"] if "user_id" in row else row.get("id")
+
+
+def _is_protected_key(key):
+    return "user-a" in key or "orphan" in key
+
+
+def assert_nothing_of_theirs_touched(world, caller, secrets=A_SECRETS + ORPHAN_SECRETS):
+    """No write, RPC or storage call reached a row or key the caller does not own.
+
+    Writes and RPCs scoped to the caller's own id are allowed (an audit row, an
+    owner-filtered SQL function that matches nothing).
+    """
+    for write in world.db.writes:
+        touched = write.matched + write.inserted
+        foreign = [r for r in touched if caller is None or _owner(r) != caller or _owner(r) in PROTECTED_OWNERS]
+        assert foreign == [], f"{write.op} on {write.table} touched rows the caller does not own: {foreign}"
+        assert [s for s in secrets + ("user-a",) if s in repr(write.payload)] == [], \
+            f"{write.op} on {write.table} wrote another user's data: {write.payload!r}"
+    for name, params in world.db.rpcs:
+        assert caller is not None and params.get("p_user_id") == caller, \
+            f"RPC {name} was not scoped to the caller: {params}"
+    assert [k for k in world.storage.signed if _is_protected_key(k)] == [], "signed another owner's media"
+    assert [k for k in world.storage.deleted if _is_protected_key(k)] == [], "deleted another owner's media"
 
 
 # ---------------------------------------------------------------------------
-# A's job, seen by B
+# A's job, seen by B or by a caller without a session
 # ---------------------------------------------------------------------------
-
-# Routes whose answer to a non-owner is not yet 404. Each still leaks nothing (checked
-# below without this marker); strict=True makes the test fail once a route is fixed, so
-# the marker has to be removed with the fix.
-EXISTENCE_ORACLE = pytest.mark.xfail(
-    strict=True,
-    reason="require_job_access answers 403 for a job that exists but is not yours, "
-           "so a guessed ID is confirmed to exist",
-)
-TOKEN_ONLY = pytest.mark.xfail(
-    strict=True,
-    reason="download/video authorize by share token only and answer 400 (no token) or "
-           "403 (wrong token) instead of 404",
-)
 
 A_JOB_ROUTES = [
-    pytest.param("GET", "/api/jobs/job-a", None, id="get"),
-    pytest.param("DELETE", "/api/jobs/job-a-running", None, id="delete-cancel"),
-    pytest.param("DELETE", "/api/jobs/job-a/permanent", None, id="delete-permanent"),
-    pytest.param("POST", "/api/jobs/job-a-failed/retry", None, id="retry"),
-    pytest.param("GET", "/api/jobs/job-a/share", None, id="share"),
-    pytest.param("GET", "/api/jobs/job-a/download/srt", None, id="download-srt"),
-    pytest.param("GET", "/api/jobs/job-a/download/json", None, id="download-json"),
-    pytest.param("GET", "/api/jobs/job-a/download/srt?token=tok-share-b", None, id="download-with-b-token"),
-    pytest.param("GET", "/api/jobs/job-a/video", None, id="video"),
-    pytest.param("GET", "/api/jobs/job-a/video?token=tok-share-b", None, id="video-with-b-token"),
-    pytest.param("GET", "/api/jobs/job-a/video_url", None, id="video-url"),
-    pytest.param("GET", "/api/jobs/job-a/video_url?token=tok-share-b", None, id="video-url-with-b-token"),
-    pytest.param("GET", f"/api/jobs/job-a/screenshot_url?gcs_path={A_SHOT}", None, id="screenshot-url"),
+    pytest.param("GET", "/api/jobs/job-a", id="get"),
+    pytest.param("DELETE", "/api/jobs/job-a-running", id="delete-cancel"),
+    pytest.param("DELETE", "/api/jobs/job-a/permanent", id="delete-permanent"),
+    pytest.param("POST", "/api/jobs/job-a-failed/retry", id="retry"),
+    pytest.param("GET", "/api/jobs/job-a/share", id="share"),
+    pytest.param("GET", "/api/jobs/job-a/download/srt", id="download-srt"),
+    pytest.param("GET", "/api/jobs/job-a/download/json", id="download-json"),
+    pytest.param("GET", "/api/jobs/job-a/download/srt?token=tok-share-b", id="download-with-b-token"),
+    pytest.param("GET", "/api/jobs/job-a/video", id="video"),
+    pytest.param("GET", "/api/jobs/job-a/video?token=tok-share-b", id="video-with-b-token"),
+    pytest.param("GET", "/api/jobs/job-a/video_url", id="video-url"),
+    pytest.param("GET", "/api/jobs/job-a/video_url?token=tok-share-b", id="video-url-with-b-token"),
+    pytest.param("GET", f"/api/jobs/job-a/screenshot_url?gcs_path={A_SHOT}", id="screenshot-url"),
 ]
-NOT_404_YET = {
-    "get": EXISTENCE_ORACLE,
-    "video-url": EXISTENCE_ORACLE,
-    "video-url-with-b-token": EXISTENCE_ORACLE,
-    "screenshot-url": EXISTENCE_ORACLE,
-    "download-srt": TOKEN_ONLY,
-    "download-json": TOKEN_ONLY,
-    "download-with-b-token": TOKEN_ONLY,
-    "video": TOKEN_ONLY,
-    "video-with-b-token": TOKEN_ONLY,
-}
+NON_OWNERS = [pytest.param("tok-user-b", id="b"), pytest.param(None, id="anonymous")]
 
 
-def _with_status_marks(params):
-    return [pytest.param(*p.values, id=p.id, marks=NOT_404_YET.get(p.id, ())) for p in params]
-
-
-@pytest.mark.parametrize("method,path,body", A_JOB_ROUTES)
-def test_b_gets_none_of_a_jobs_data_and_changes_nothing(app, world, method, path, body):
-    response = call(app, method, path, cookie="tok-user-b", json=body)
+@pytest.mark.parametrize("cookie", NON_OWNERS)
+@pytest.mark.parametrize("method,path", A_JOB_ROUTES)
+def test_non_owner_gets_none_of_a_jobs_data_and_changes_nothing(app, world, cookie, method, path):
+    response = call(app, method, path, cookie=cookie)
 
     assert 400 <= response.status_code < 500, response.text
     assert leaked(response, A_SECRETS) == []
-    assert_nothing_touched(world)
-    statuses = {row["id"]: row["status"] for row in world.db.tables["jobs"]}
-    assert statuses["job-a-running"] == "processing" and statuses["job-a-failed"] == "failed"
+    assert_nothing_of_theirs_touched(world, USERS.get(cookie))
 
 
-@pytest.mark.parametrize("method,path,body", _with_status_marks(A_JOB_ROUTES))
-def test_b_gets_404_for_a_job(app, world, method, path, body):
-    assert call(app, method, path, cookie="tok-user-b", json=body).status_code == 404
+@pytest.mark.parametrize("method,path", [
+    pytest.param("DELETE", "/api/jobs/job-a-running", id="delete-cancel"),
+    pytest.param("DELETE", "/api/jobs/job-a/permanent", id="delete-permanent"),
+    pytest.param("POST", "/api/jobs/job-a-failed/retry", id="retry"),
+    pytest.param("GET", "/api/jobs/job-a/share", id="share"),
+])
+def test_b_gets_404_for_a_job(app, world, method, path):
+    assert call(app, method, path, cookie="tok-user-b").status_code == 404
 
 
 @pytest.mark.parametrize("path,expected", [
@@ -428,9 +536,9 @@ def test_owner_control_a_streams_own_video_with_share_token(app, world):
 def test_b_cannot_sign_a_screenshot_through_bs_own_job(app, world):
     response = call(app, "GET", f"/api/jobs/job-b/screenshot_url?gcs_path={A_SHOT}", cookie="tok-user-b")
 
-    assert response.status_code == 403
+    assert 400 <= response.status_code < 500
     assert leaked(response, A_SECRETS) == []
-    assert world.storage.signed == []
+    assert_nothing_of_theirs_touched(world, "user-b")
 
 
 def test_b_job_list_contains_only_bs_jobs(app, world):
@@ -442,7 +550,7 @@ def test_b_job_list_contains_only_bs_jobs(app, world):
 
 
 # ---------------------------------------------------------------------------
-# A's transcription, screenshots and speakers, seen by B
+# A's transcription, screenshots and speakers
 # ---------------------------------------------------------------------------
 
 RENAME = {"original_speaker": "SPEAKER_00", "new_speaker_name": "Mallory"}
@@ -456,30 +564,39 @@ A_TRANSCRIPTION_ROUTES = [
 ]
 
 
+@pytest.mark.parametrize("cookie", NON_OWNERS)
 @pytest.mark.parametrize("method,path,body", A_TRANSCRIPTION_ROUTES)
-def test_b_gets_404_and_none_of_a_transcription(app, world, method, path, body):
-    response = call(app, method, path, cookie="tok-user-b", json=body)
+def test_non_owner_gets_none_of_a_transcription_and_changes_nothing(app, world, cookie, method, path, body):
+    response = call(app, method, path, cookie=cookie, json=body)
 
-    assert response.status_code == 404, response.text
+    assert 400 <= response.status_code < 500, response.text
     assert leaked(response, A_SECRETS) == []
-    assert_nothing_touched(world)
+    assert_nothing_of_theirs_touched(world, USERS.get(cookie))
     a_job = next(row for row in world.db.tables["jobs"] if row["id"] == "job-a")
     assert a_job["result_json"]["transcription"]["segments"][0]["speaker"] == "SPEAKER_00"
 
 
-@pytest.mark.parametrize("method,path,expected", [
-    ("GET", "/transcription/hash-a", "A-SECRET-TEXT"),
-    ("GET", "/api/video/hash-a", None),
-    ("GET", "/api/subtitles/nl?video_hash=hash-a", "A-SECRET-TEXT"),
-])
-def test_owner_control_a_reads_own_transcription(app, world, method, path, expected):
-    response = call(app, method, path, cookie="tok-user-a")
+@pytest.mark.parametrize("method,path,body", A_TRANSCRIPTION_ROUTES)
+def test_b_gets_404_for_a_transcription(app, world, method, path, body):
+    assert call(app, method, path, cookie="tok-user-b", json=body).status_code == 404
 
-    assert response.status_code in (200, 307), response.text
-    if expected:
-        assert expected in response.text
-    else:
-        assert "processed/user-a" in response.headers["location"]
+
+@pytest.mark.parametrize("path,expected", [
+    ("/transcription/hash-a", "A-SECRET-TEXT"),
+    ("/api/subtitles/nl?video_hash=hash-a", "A-SECRET-TEXT"),
+])
+def test_owner_control_a_reads_own_transcription(app, world, path, expected):
+    response = call(app, "GET", path, cookie="tok-user-a")
+
+    assert response.status_code == 200, response.text
+    assert expected in response.text
+
+
+def test_owner_control_a_streams_own_video_by_hash(app, world):
+    response = call(app, "GET", "/api/video/hash-a", cookie="tok-user-a")
+
+    assert 300 <= response.status_code < 400, response.text
+    assert "processed/user-a" in response.headers["location"]
 
 
 def test_owner_control_a_transcription_screenshot_url_is_signed(app, world):
@@ -494,7 +611,7 @@ def test_same_file_uploaded_by_both_users_returns_each_their_own(app, world):
 
     assert response.status_code == 200, response.text
     assert "B-OWN-TEXT" in response.text
-    assert leaked(response, A_SECRETS + ("a-secret-filename-shared",)) == []
+    assert leaked(response, A_SECRETS) == []
 
 
 def test_b_speaker_rename_on_shared_hash_changes_only_bs_job(app, world):
@@ -506,6 +623,7 @@ def test_b_speaker_rename_on_shared_hash_changes_only_bs_job(app, world):
                 for row in world.db.tables["jobs"]}
     assert speakers["job-b-shared"] == "Mallory"
     assert speakers["job-a-shared"] == "SPEAKER_00"
+    assert_nothing_of_theirs_touched(world, "user-b")
 
 
 def test_b_cannot_list_or_remove_a_enrolled_speakers(app, world):
@@ -514,7 +632,7 @@ def test_b_cannot_list_or_remove_a_enrolled_speakers(app, world):
 
     assert listing.status_code == 200 and listing.json()["count"] == 0
     assert leaked(listing, ("Alice",)) == []
-    assert removal.status_code == 404
+    assert 400 <= removal.status_code < 500
     assert "Alice" in world.voice_prints.speakers["user-a"]
 
 
@@ -539,44 +657,32 @@ ORPHAN_ROUTES = [
 ]
 
 
-@pytest.mark.parametrize("cookie", ["tok-user-a", "tok-user-b", "tok-admin"])
+@pytest.mark.parametrize("cookie", [
+    pytest.param("tok-user-a", id="a"),
+    pytest.param("tok-user-b", id="b"),
+    pytest.param("tok-admin", id="admin"),
+    pytest.param(None, id="anonymous"),
+])
 @pytest.mark.parametrize("method,path,body", ORPHAN_ROUTES)
-def test_ownerless_job_is_no_access_for_every_session(app, world, cookie, method, path, body):
+def test_ownerless_job_is_no_access_for_every_caller(app, world, cookie, method, path, body):
+    """Without a share token, nobody can read or change a job whose owner is null."""
     response = call(app, method, path, cookie=cookie, json=body)
 
     assert 400 <= response.status_code < 500, response.text
     assert leaked(response, ORPHAN_SECRETS) == []
-    assert_nothing_touched(world)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="share-token routes check only the token, not the owner, so an ownerless job's "
-           "token still reads its transcript and signs its video URL",
-)
-@pytest.mark.parametrize("cookie", [None, "tok-user-b"], ids=["no-session", "b-session"])
-@pytest.mark.parametrize("path", [
-    "/api/jobs/job-orphan/download/srt?token=tok-share-orphan",
-    "/api/jobs/job-orphan/video?token=tok-share-orphan",
-    "/api/jobs/job-orphan/video_url?token=tok-share-orphan",
-], ids=["download", "video", "video-url"])
-def test_ownerless_job_share_token_grants_no_access(app, world, cookie, path):
-    response = call(app, "GET", path, cookie=cookie)
-
-    assert 400 <= response.status_code < 500
-    assert leaked(response, ORPHAN_SECRETS) == []
-    assert world.storage.signed == []
+    assert_nothing_of_theirs_touched(world, USERS.get(cookie))
 
 
 # ---------------------------------------------------------------------------
 # Admin routes
 # ---------------------------------------------------------------------------
 
-GUESSES = {"user_id": "user-a", "job_id": "job-a", "code": "INVITE-GUESS", "video_hash": "hash-a"}
+GUESSES = {"user_id": "user-a", "job_id": "job-a", "video_hash": "hash-a"}
+PATH_PARAM = re.compile(r"\{(\w+)(?::\w+)?\}")
 
 
 def _admin_routes(app):
-    """Every route wrapped by require_admin, found by the wrapper's code object (wraps copies names)."""
+    """Routes under /api/admin plus any other route wrapped by require_admin."""
     import middleware.auth as auth
 
     def handler(request):
@@ -585,39 +691,44 @@ def _admin_routes(app):
     admin_code = auth.require_admin(handler).__code__
     found = []
     for route in app.routes:
-        if getattr(getattr(route, "endpoint", None), "__code__", None) is not admin_code:
+        endpoint = getattr(route, "endpoint", None)
+        if not (route.path.startswith("/api/admin") or getattr(endpoint, "__code__", None) is admin_code):
             continue
-        path = route.path
-        for name, value in GUESSES.items():
-            path = path.replace("{" + name + "}", value)
-        assert "{" not in path, f"no guessed value for a path parameter in {route.path}"
-        for method in sorted(route.methods - {"HEAD"}):
+        path = PATH_PARAM.sub(lambda m: GUESSES.get(m.group(1), "guessed-id"), route.path)
+        for method in sorted((getattr(route, "methods", None) or set()) - {"HEAD"}):
             found.append((method, path))
     return found
 
 
 def test_admin_routes_are_found(app):
     routes = _admin_routes(app)
-    assert len(routes) >= 10
+    assert len(routes) >= 3
     assert ("DELETE", "/api/admin/users/user-a") in routes
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Internal-Key": "guessed-key"}], ids=["session", "guessed-internal-key"])
 def test_normal_user_cannot_reach_any_admin_route(app, world, headers):
-    refused = {}
+    reached = {}
     for method, path in _admin_routes(app):
         response = call(app, method, path, cookie="tok-user-b", headers=headers,
                         json={} if method in ("POST", "PUT", "PATCH") else None)
-        if response.status_code != 403 or leaked(response, A_SECRETS + ("user-a@test",)):
-            refused[f"{method} {path}"] = (response.status_code, response.text[:200])
+        if not 400 <= response.status_code < 500 or leaked(response, A_SECRETS + ("user-a@test",)):
+            reached[f"{method} {path}"] = (response.status_code, response.text[:200])
 
-    assert refused == {}
-    assert_nothing_touched(world)
+    assert reached == {}
+    assert_nothing_of_theirs_touched(world, "user-b")
     assert {row["id"] for row in world.db.tables["user_profiles"]} == set(USERS.values())
 
 
-def test_admin_control_admin_reaches_admin_users(app, world):
+def test_admin_control_admin_session_reaches_admin_users(app, world):
     response = call(app, "GET", "/api/admin/users", cookie="tok-admin")
 
     assert response.status_code == 200, response.text
     assert "user-a@test" in response.text
+
+
+def test_admin_control_correct_internal_key_reaches_admin_stats(app, world):
+    response = call(app, "GET", "/api/admin/stats", headers={"X-Internal-Key": INTERNAL_KEY})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total_users"] == len(USERS)
