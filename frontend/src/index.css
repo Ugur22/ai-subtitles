@@ -498,6 +498,7 @@ button.badge-default:hover { color: var(--text-primary); }
 
 /* ─── Sidebar (persistent left nav) ─────────────────────────────────────────── */
 .sidebar {
+  --sidebar-duration: 220ms;
   position: sticky;
   top: 0;
   align-self: start;
@@ -513,8 +514,8 @@ button.badge-default:hover { color: var(--text-primary); }
   overflow: visible;
   z-index: 20;
   transition:
-    width 260ms var(--ease-out),
-    padding 260ms var(--ease-out);
+    width var(--sidebar-duration) var(--ease-out),
+    padding var(--sidebar-duration) var(--ease-out);
 }
 
 .sidebar.is-collapsed {
@@ -524,10 +525,11 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 
 .sidebar-top {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   padding-bottom: 14px;
+  transition: padding-bottom var(--sidebar-duration) var(--ease-out);
 }
 
 .brand {
@@ -538,6 +540,8 @@ button.badge-default:hover { color: var(--text-primary); }
   text-decoration: none;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+  transition: padding var(--sidebar-duration) var(--ease-out);
 }
 
 .brand-mark {
@@ -545,6 +549,9 @@ button.badge-default:hover { color: var(--text-primary); }
   height: 28px;
   flex-shrink: 0;
   display: block;
+  transition:
+    width var(--sidebar-duration) var(--ease-out),
+    height var(--sidebar-duration) var(--ease-out);
 }
 
 .brand-word {
@@ -555,9 +562,6 @@ button.badge-default:hover { color: var(--text-primary); }
   white-space: nowrap;
   opacity: 1;
   transform: translateX(0);
-  transition:
-    opacity 180ms ease,
-    transform 220ms var(--ease-out);
 }
 .brand-word span {
   color: var(--text-quaternary);
@@ -565,6 +569,11 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 
 .sidebar-collapse {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  animation: sidebar-control-in-expanded 160ms var(--ease-out) 120ms both;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -612,9 +621,13 @@ button.badge-default:hover { color: var(--text-primary); }
   text-align: left;
   text-decoration: none;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    padding var(--sidebar-duration) var(--ease-out);
   position: relative;
   width: 100%;
+  min-height: 36px;
   font-family: inherit;
   overflow: hidden;
 }
@@ -647,14 +660,16 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 .nav-item-icon svg { width: 16px; height: 16px; }
 .nav-item.is-active .nav-item-icon { color: var(--accent); }
-.nav-item-label { flex: 1; min-width: 0; }
+.nav-item-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* Expanding: labels fade in once there is room. Collapsing: they leave at once. */
+.brand-word,
 .nav-item-label,
 .nav-item-count,
 .user-who,
 .user-caret {
   transition:
-    opacity 160ms ease,
-    transform 220ms var(--ease-out);
+    opacity 160ms ease 80ms,
+    transform 200ms var(--ease-out) 80ms;
 }
 .nav-item-count {
   margin-left: auto;
@@ -671,23 +686,19 @@ button.badge-default:hover { color: var(--text-primary); }
   opacity: 0;
   transform: translateX(-8px);
   pointer-events: none;
+  transition:
+    opacity 90ms ease,
+    transform 160ms var(--ease-out);
 }
 
+/* Collapsed: the toggle sits under the logo; everything centres on x = 36px of the 72px rail. */
 .sidebar.is-collapsed .sidebar-top {
-  flex-direction: column;
-  justify-content: center;
-  gap: 10px;
-  padding-bottom: 16px;
+  padding-bottom: 62px;
 }
 
 .sidebar.is-collapsed .brand {
-  flex: 0 0 auto;
-  width: 100%;
-  justify-content: center;
-  padding-left: 0;
+  padding-left: 10px;
   padding-right: 0;
-  gap: 0;
-  overflow: hidden;
 }
 
 .sidebar.is-collapsed .brand-mark {
@@ -695,38 +706,16 @@ button.badge-default:hover { color: var(--text-primary); }
   height: 32px;
 }
 
-.sidebar.is-collapsed .brand-word {
-  width: 0;
-  max-width: 0;
-  overflow: hidden;
-}
-
 .sidebar.is-collapsed .sidebar-collapse {
-  position: static;
-  width: 36px;
-  height: 36px;
-  box-shadow: none;
-  transform: none;
-}
-
-.sidebar.is-collapsed .sidebar-collapse:hover {
-  transform: none;
+  top: 50px;
+  right: auto;
+  left: calc(50% - 18px);
+  animation-name: sidebar-control-in-collapsed;
 }
 
 .sidebar.is-collapsed .nav-item {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
-  min-height: 36px;
-  gap: 0;
-}
-
-.sidebar.is-collapsed .nav-item-label,
-.sidebar.is-collapsed .nav-item-count {
-  width: 0;
-  max-width: 0;
-  overflow: hidden;
-  margin: 0;
+  padding-left: 18px;
+  padding-right: 18px;
 }
 
 .sidebar.is-collapsed .nav-item.is-active::before {
@@ -734,17 +723,8 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 
 .sidebar.is-collapsed .user-card {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
-  gap: 0;
-}
-
-.sidebar.is-collapsed .user-who,
-.sidebar.is-collapsed .user-caret {
-  width: 0;
-  max-width: 0;
-  overflow: hidden;
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 .sidebar-foot {
@@ -753,13 +733,24 @@ button.badge-default:hover { color: var(--text-primary); }
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  transition: padding-top var(--sidebar-duration) var(--ease-out);
 }
-.user-menu { position: relative; flex: 1; min-width: 0; }
+.user-menu {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin-right: 66px; /* room for .sidebar-foot-actions */
+  transition: margin-right var(--sidebar-duration) var(--ease-out);
+}
 .sidebar-foot-actions {
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  right: 0;
   display: flex;
+  align-items: center;
   gap: 2px;
-  flex-shrink: 0;
+  animation: sidebar-control-in-expanded 160ms var(--ease-out) 120ms both;
 }
 .sidebar-icon-btn {
   display: inline-flex;
@@ -779,12 +770,28 @@ button.badge-default:hover { color: var(--text-primary); }
   color: var(--text-primary);
 }
 .sidebar-icon-btn svg { width: 16px; height: 16px; }
+/* Collapsed: settings and theme stack above the avatar. */
 .sidebar.is-collapsed .sidebar-foot {
-  flex-direction: column-reverse;
-  gap: 8px;
+  padding-top: 84px;
 }
-.sidebar.is-collapsed .user-menu { width: 100%; }
-.sidebar.is-collapsed .sidebar-foot-actions { flex-direction: column; }
+.sidebar.is-collapsed .user-menu { margin-right: 0; }
+.sidebar.is-collapsed .sidebar-foot-actions {
+  bottom: auto;
+  right: auto;
+  left: calc(50% - 15px);
+  flex-direction: column;
+  animation-name: sidebar-control-in-collapsed;
+}
+
+/* Two identical keyframes so the fade replays on every toggle. */
+@keyframes sidebar-control-in-expanded {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sidebar-control-in-collapsed {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .sidebar-user-menu-items {
   position: absolute;
   right: 0;
@@ -812,7 +819,9 @@ button.badge-default:hover { color: var(--text-primary); }
   padding: 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 150ms var(--ease-out);
+  transition:
+    background-color 150ms var(--ease-out),
+    padding var(--sidebar-duration) var(--ease-out);
   width: 100%;
   background: transparent;
   border: 0;
@@ -841,6 +850,7 @@ button.badge-default:hover { color: var(--text-primary); }
   line-height: 1.3;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 .user-who strong {
   font-size: 13px;
@@ -867,13 +877,9 @@ button.badge-default:hover { color: var(--text-primary); }
 /* ─── App shell (sidebar + main grid) ───────────────────────────────────────── */
 .app-shell {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: auto 1fr;
   min-height: 100vh;
   background: var(--bg-base);
-  transition: grid-template-columns 260ms var(--ease-out);
-}
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 72px 1fr;
 }
 .app-shell > main {
   min-width: 0;
@@ -882,16 +888,13 @@ button.badge-default:hover { color: var(--text-primary); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-shell,
   .sidebar,
-  .brand-word,
-  .nav-item-label,
-  .nav-item-count,
-  .user-who,
-  .user-caret,
-  .sidebar-collapse,
-  .sidebar-collapse svg {
+  .sidebar *,
+  .sidebar *::before {
     transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
   }
 }
 
