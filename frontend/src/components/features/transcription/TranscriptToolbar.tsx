@@ -2,11 +2,10 @@ import type { Dispatch, SetStateAction } from "react";
 import type { TranscriptionResponse } from "../../../services/api";
 import { formatSpeakerLabel } from "../../../utils/speaker";
 import type { SpeakerManagementState } from "./hooks/useSpeakerManagement";
-import type { TranscriptSegment } from "./segments";
+import { formatSegmentCount, speakerFilterCountLabel } from "./segments";
 
 interface TranscriptToolbarProps {
   transcription: TranscriptionResponse;
-  displayedSegments: TranscriptSegment[];
   uniqueSpeakers: string[];
   showTranslation: boolean;
   setShowTranslation: (show: boolean) => void;
@@ -19,7 +18,6 @@ interface TranscriptToolbarProps {
 
 export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
   transcription,
-  displayedSegments,
   uniqueSpeakers,
   showTranslation,
   setShowTranslation,
@@ -81,7 +79,9 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
             }}
           >
             <span>{filteredSpeaker ? formatSpeakerLabel(filteredSpeaker) : 'Speakers'}</span>
-            <span style={{ opacity: 0.6 }}>({displayedSegments.length})</span>
+            <span style={{ opacity: 0.6 }}>
+              {speakerFilterCountLabel(transcription?.transcription.segments ?? [], uniqueSpeakers, filteredSpeaker)}
+            </span>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: speakerDropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 150ms ease' }}>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
@@ -110,7 +110,7 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
                 >
                   <span style={{ fontWeight: 500 }}>All speakers</span>
                   <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                    {transcription?.transcription.segments.length}
+                    {formatSegmentCount(transcription?.transcription.segments.length ?? 0)}
                   </span>
                 </button>
 
@@ -158,7 +158,7 @@ export const TranscriptToolbar: React.FC<TranscriptToolbarProps> = ({
                         </span>
                       </div>
                       <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                        {segmentCount}
+                        {formatSegmentCount(segmentCount)}
                       </span>
                     </button>
                   );

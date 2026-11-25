@@ -353,7 +353,7 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                 >
                   <div className="rp-tabs">
                     {([
-                      { key: 'transcript', label: 'Transcript', count: transcription?.transcription.segments.length },
+                      { key: 'transcript', label: 'Transcript' },
                       { key: 'chat',       label: 'Chat' },
                       { key: 'chapters',   label: 'Chapters',   count: chaptersHook.chapters.length },
                       { key: 'summary',    label: 'Summary' },
@@ -380,7 +380,6 @@ export const TranscriptionUpload: React.FC<TranscriptionUploadProps> = ({
                         <>
                           <TranscriptToolbar
                             transcription={transcription}
-                            displayedSegments={displayedSegments}
                             uniqueSpeakers={uniqueSpeakers}
                             showTranslation={showTranslation}
                             setShowTranslation={setShowTranslation}

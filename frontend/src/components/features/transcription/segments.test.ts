@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterDisplayedSegments, listUniqueSpeakers, type TranscriptSegment } from "./segments";
+import { filterDisplayedSegments, listUniqueSpeakers, speakerFilterCountLabel, type TranscriptSegment } from "./segments";
 
 function segment(id: string, speaker: string, isSilent = false): TranscriptSegment {
   return { id, speaker, is_silent: isSilent, start_time: "00:00:00", end_time: "00:00:01", text: id } as TranscriptSegment;
@@ -23,5 +23,16 @@ describe("filterDisplayedSegments", () => {
 describe("listUniqueSpeakers", () => {
   it("returns sorted distinct speakers and skips empty labels", () => {
     expect(listUniqueSpeakers([segment("1", "B"), segment("2", "A"), segment("3", "B"), segment("4", "")])).toEqual(["A", "B"]);
+  });
+});
+
+describe("speakerFilterCountLabel", () => {
+  it("counts distinct speakers, not segments, when no speaker is selected", () => {
+    expect(speakerFilterCountLabel(segments, listUniqueSpeakers(segments), null)).toBe("(2)");
+  });
+
+  it("counts the selected speaker's segments, with the unit", () => {
+    expect(speakerFilterCountLabel(segments, listUniqueSpeakers(segments), "A")).toBe("· 2 segments");
+    expect(speakerFilterCountLabel(segments, listUniqueSpeakers(segments), "B")).toBe("· 1 segment");
   });
 });
