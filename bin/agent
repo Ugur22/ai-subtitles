@@ -272,7 +272,7 @@ case "${1:-session}" in
   token-check) cmd_token_check ;;
   build) shift; cmd_build "$@" ;;
   up) shift; cmd_up "$@" ;;
-  session) shift; cmd_session "$@" ;;
+  session) shift || true; cmd_session "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   ledger) shift; cmd_ledger "$@" ;;
   shell) docker exec -it -u node "$NAME" bash ;;
