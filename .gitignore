@@ -74,6 +74,7 @@ backend/transcriptions.db
 .claude/*
 !.claude/settings.json
 !.claude/agents/
+!.claude/rules/
 graphify-out/
 .agent/
 .agents/

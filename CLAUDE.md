@@ -1,5 +1,14 @@
 # AI-Subs Project Notes
 
+## Overview
+AI-Subs transcribes, diarizes, translates and indexes uploaded video and audio, and lets users search and chat over the result.
+- **Backend** (`backend/`): FastAPI on a CPU Cloud Run Service (`main.py`, `routers/`, `services/`); the pipeline runs in a separate GPU Cloud Run Job (`worker_main.py`), dispatched per job through the job queue.
+- **Frontend** (`frontend/`): React, Vite and TypeScript on Netlify, which proxies `/api/*` to Cloud Run.
+- **Data**: Supabase Postgres (with pgvector), accessed with the service key; media in GCS.
+- Architecture: `docs/ARCHITECTURE.md`. Infrastructure: `docs/INFRASTRUCTURE.md`.
+
+Path-specific rules live in `.claude/rules/` and load when you work on matching files: `backend.md`, `frontend.md`, `worker-and-jobs.md`, `database-and-migrations.md`, `infrastructure.md`. Everything below applies everywhere.
+
 ## Claude Behavior Rules
 
 ### Where agents run
@@ -90,15 +99,15 @@ Run `make check` (offline, about 30 seconds: lint, pytest, the ratchets, tsc, vi
 
 ## Deployment
 
-- **GCP project**: `ai-subs-poc`, region `us-central1`
-- **Cloud Run**: CPU service `ai-subs-backend` plus a separate GPU worker job, both built and deployed by `infra/scripts/deploy_image.sh` (run by `backend/deploy.sh` and `.github/workflows/deploy.yml`), which is the source of truth for resources, secrets and env vars; IAM, monitoring and the CI deployer are in `infra/terraform` (see `docs/INFRASTRUCTURE.md`)
-- **Artifact Registry**: repo is `ai-subs-repo` (NOT `ai-subs`)
-- Run deploys from your own terminal with Owner credentials, never from inside a Claude Code session: the agent's shell uses a read-only service account (`~/.config/gcloud-agent`)
-- Scheduler jobs, GCS layout, GPU quota and LLM provider notes: `docs/GCP_OPERATIONS.md`
+- Run deploys from your own terminal with Owner credentials, never from inside a Claude Code session: the agent's shell uses a read-only service account (`~/.config/gcloud-agent`).
+- GCP project, Cloud Run Service and worker Job, Terraform, Artifact Registry, IAM, secrets and rollback: `.claude/rules/infrastructure.md`, `docs/INFRASTRUCTURE.md` and `docs/GCP_OPERATIONS.md`.
 
-## Models
+## Enforcement commands
 
-What is baked into the Docker image: `backend/download_models.py`. Runtime defaults (Whisper size, embedding model): `backend/config.py`.
+- `make check` (full offline check), `make check-fast` (lint; the PostToolUse hook `scripts/hooks/post-edit.sh`), `make test-ratchets`, `make mutation-check`.
+- `ai-risk plan <files>`, `ai-risk status`, `ai-risk escalate <tier> --reason "..."` (container; `tools/harness/risk.py`, `gate.py`).
+- Stop hook `scripts/hooks/stop-check.sh` → `tools/harness/stop_check.py`; ledger `tools/harness/ledger.py`, summarised with `ai-subs-agent ledger`.
+- PR form and guard paths: the trusted `policy` check, `tools/policy/check_pr.py`.
 
 ## graphify
 
