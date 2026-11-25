@@ -1,6 +1,6 @@
 """Known gaps in the ownership invariants, tracked as open follow-ups.
 
-Each gap has two tests:
+Each open gap has two tests:
 - a strict xfail stating the invariant. It starts passing once the gap is fixed,
   which fails the suite until the marker is removed.
 - a companion that pins today's behaviour (no crash, the answer the gap
@@ -52,7 +52,7 @@ DENIED = [
 
 
 @pytest.mark.parametrize("path,cookie", DENIED)
-def test_gap_b_gets_404_for_a_job(app, world, path, cookie):
+def test_denied_job_is_404(app, world, path, cookie):
     response = inv.call(app, "GET", path, cookie=cookie)
 
     assert response.status_code == 404, response.text
