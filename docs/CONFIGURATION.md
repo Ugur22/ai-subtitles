@@ -61,11 +61,11 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 XAI_API_KEY=your_xai_api_key
 ```
 
-### Visual Search (CLIP)
+### Visual Index (CLIP and captions)
 
 ```bash
-ENABLE_VISUAL_SEARCH=true
-CLIP_MODEL=ViT-B/32
+CLIP_MODEL=clip-ViT-B-32
+ENABLE_VISION_CAPTIONS=true   # vision-model captions for screenshots (xAI)
 ```
 
 ### Audio Analysis
@@ -100,6 +100,22 @@ PROCESSING_REALTIME_FACTOR=0.35  # Only used for log warnings about very long fi
 ```
 
 A worker execution transcribes in 5-minute chunks and checkpoints each one. When its time budget is used it hands the job to a new execution. `CLOUD_RUN_TASK_TIMEOUT` is set by `backend/deploy.sh` and should not be set by hand.
+
+### Feature Flags (Flagsmith)
+
+```bash
+FLAGSMITH_SERVER_KEY=ser.xxx   # without it, every flag (chapters, summary) is off
+```
+
+### Billing (Stripe, optional)
+
+```bash
+STRIPE_SECRET_KEY=sk_...       # without it, checkout, portal and webhook return 503
+STRIPE_PRO_PRICE_ID=price_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+Plan limits are defined in `PLAN_LIMITS` (`backend/middleware/quota.py`).
 
 ### Supabase (Job Queue)
 
